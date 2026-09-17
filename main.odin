@@ -16,7 +16,7 @@ import "core:time"
 
 // Only referenced inside `when ODIN_DEBUG`; @(require) keeps release builds from
 // rejecting the import as unused.
-@(require) import "lifetime"
+@(require) import "debug"
 import "ntfs"
 
 TOP_N :: 20
@@ -30,11 +30,11 @@ debug_main :: proc() -> int {
 	// Assertion failures print a call chain in every build; symbols need -debug.
 	context.assertion_failure_proc = trace.assertion_failure_proc
 	when ODIN_DEBUG {
-		la: lifetime.Allocator
-		lifetime.init(&la, context.allocator)
-		defer lifetime.destroy(&la)
-		defer lifetime.report(&la)
-		context.allocator = lifetime.allocator(&la)
+		da: debug.Allocator
+		debug.init(&da, context.allocator)
+		defer debug.destroy(&da)
+		defer debug.report(&da)
+		context.allocator = debug.allocator(&da)
 	}
 	return run()
 }

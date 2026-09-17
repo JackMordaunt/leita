@@ -15,7 +15,7 @@ BUILD := build
 FLAGS := -vet -strict-style
 EXE   := $(if $(filter Windows_NT,$(OS)),.exe,)
 
-SRC := $(wildcard *.odin) $(wildcard ntfs/*.odin) $(wildcard lifetime/*.odin)
+SRC := $(wildcard *.odin) $(wildcard ntfs/*.odin) $(wildcard debug/*.odin)
 
 .PHONY: all debug release test check clean
 
