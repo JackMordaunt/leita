@@ -32,6 +32,15 @@ Fresh non-zeroed memory is filled with 0xCD, freed memory with 0xDD, and guards 
 0xFD. Seeing 0xCDCDCDCD or 0xDDDDDDDD in a value tells you which kind of bug you are
 looking at.
 
+With -sanitize:address the allocator also poisons its guards and every freed block
+through base:sanitizer, so an instrumented read or write into them traps at the
+faulting instruction instead of being noticed at the next check. That closes the gap
+a pure allocator has: reads past the end and reads after free. On Windows this is the
+only way ASan sees Odin heap blocks at all, because the default allocator uses
+HeapAlloc rather than the libc malloc that ASan intercepts. When ASan reports, a
+death callback appends which block the address belongs to, where it was allocated,
+and where it was freed, since ASan itself only knows the address is poisoned.
+
 Usage (debug builds only, compile with -debug so call chains symbolize):
 
 	import "core:debug/trace"
@@ -64,6 +73,7 @@ Phase names must outlive the allocator; pass string literals.
 package debug
 
 import "base:runtime"
+import "base:sanitizer"
 import "core:debug/trace"
 import "core:fmt"
 import "core:mem"
@@ -76,6 +86,9 @@ GUARD            :: #config(DEBUG_ALLOC_GUARD, 16)
 QUARANTINE_BYTES :: #config(DEBUG_ALLOC_QUARANTINE, 16 * 1024 * 1024)
 FAIL_FAST        :: #config(DEBUG_ALLOC_FAIL_FAST, false)
 BACKTRACES       :: #config(DEBUG_ALLOC_BACKTRACES, true)
+
+// True when the program was built with -sanitize:address.
+ASAN :: .Address in ODIN_SANITIZER_FLAGS
 
 PATTERN_GUARD :: 0xFD
 PATTERN_DEAD  :: 0xDD
@@ -203,6 +216,10 @@ init :: proc(da: ^Allocator, backing: mem.Allocator, internals := context.alloca
 	append(&da.phases, da.phase)
 	da.fail_fast = FAIL_FAST
 	da.root = normalize(filepath.dir(loc.file_path), internals)
+	when ASAN {
+		asan_owner = da
+		sanitizer.address_set_death_callback(asan_death)
+	}
 }
 
 // Release everything, including blocks the program never freed. Call report first.
@@ -213,6 +230,11 @@ destroy :: proc(da: ^Allocator) {
 	}
 	for _, d in da.dead {
 		backing_free(da, d.raw, d.total)
+	}
+	when ASAN {
+		if asan_owner == da {
+			asan_owner = nil
+		}
 	}
 	delete(da.live)
 	delete(da.dead)
@@ -311,6 +333,8 @@ raw_alloc :: proc(da: ^Allocator, size, alignment: int, zeroed: bool, loc: runti
 	} else {
 		mem.set(raw_data(user), PATTERN_FRESH, size)
 	}
+	sanitizer.address_poison(raw[:front])
+	sanitizer.address_poison(raw[front + size:])
 	l = Live{raw = raw_data(raw), total = total, front = front, size = size, alignment = align}
 	return l, user, nil
 }
@@ -452,6 +476,8 @@ do_resize :: proc(da: ^Allocator, ptr: rawptr, old_size, size, alignment: int, z
 @(private)
 retire :: proc(da: ^Allocator, l: Live, ptr: rawptr, loc: runtime.Source_Code_Location, by_resize: bool) {
 	mem.set(ptr, PATTERN_DEAD, l.size)
+	// From the user block to the end of the backing allocation is now off limits.
+	sanitizer.address_poison(ptr, l.total - l.front)
 	delete_key(&da.live, ptr)
 	da.live_bytes -= l.size
 	free_site := make_site(da, loc)
@@ -516,9 +542,20 @@ flush_quarantine :: proc(da: ^Allocator, stage: string, loc: runtime.Source_Code
 	da.dead_bytes = 0
 }
 
+// The backing allocator will hand this memory out again to code that is not ours,
+// so every trace of poison must be gone before it goes back.
 @(private)
 backing_free :: proc(da: ^Allocator, raw: rawptr, total: int) {
+	sanitizer.address_unpoison(raw, total)
 	da.backing.procedure(da.backing.data, .Free, 0, 0, raw, total)
+}
+
+// Overwrite a poisoned region without tripping the sanitizer, then re-poison it.
+@(private)
+refill :: proc(ptr: rawptr, len: int, pattern: byte) {
+	sanitizer.address_unpoison(ptr, len)
+	mem.set(ptr, pattern, len)
+	sanitizer.address_poison(ptr, len)
 }
 
 // ---- verification ---------------------------------------------------------------
@@ -543,7 +580,7 @@ verify_guards :: proc(da: ^Allocator, l: Live, stage: string, loc: runtime.Sourc
 			kind = .Underflow, ptr = user_ptr, size = l.size,
 			alloc = l.alloc, has_alloc = true, op = make_site(da, loc), stage = stage, corruption = c,
 		})
-		mem.set(l.raw, PATTERN_GUARD, l.front) // report each corruption once
+		refill(l.raw, l.front, PATTERN_GUARD) // report each corruption once
 	}
 	if c, bad := scan(block[l.front + l.size:], PATTERN_GUARD); bad {
 		c.offset += l.size
@@ -551,7 +588,7 @@ verify_guards :: proc(da: ^Allocator, l: Live, stage: string, loc: runtime.Sourc
 			kind = .Overflow, ptr = user_ptr, size = l.size,
 			alloc = l.alloc, has_alloc = true, op = make_site(da, loc), stage = stage, corruption = c,
 		})
-		mem.set(raw_data(block[l.front + l.size:]), PATTERN_GUARD, GUARD)
+		refill(raw_data(block[l.front + l.size:]), GUARD, PATTERN_GUARD)
 	}
 }
 
@@ -564,13 +601,13 @@ verify_poison :: proc(da: ^Allocator, d: Dead, ptr: rawptr, stage: string, loc: 
 			first_free = d.free, has_first_free = true, by_resize = d.by_resize,
 			op = make_site(da, loc), stage = stage, corruption = c,
 		})
-		mem.set(ptr, PATTERN_DEAD, d.size)
+		refill(ptr, d.size, PATTERN_DEAD)
 	}
 }
 
 // Find bytes that differ from `pattern`. Returns the first offset, how many differ,
 // and up to eight of the offending values.
-@(private)
+@(private, no_sanitize_address)
 scan :: proc(b: []byte, pattern: byte) -> (c: Corruption, bad: bool) {
 	first := -1
 	for x, i in b {
@@ -622,6 +659,87 @@ raise :: proc(da: ^Allocator, issue: Issue) {
 	print_issue(da, iss)
 	if da.fail_fast {
 		panic("debug allocator: allocation bug detected, see the issue printed above")
+	}
+}
+
+// ---- address sanitizer ----------------------------------------------------------
+
+// The allocator whose blocks the death callback describes. One debug allocator per
+// process is the intended use.
+@(private)
+asan_owner: ^Allocator
+
+/*
+Runs while ASan is printing its report, before the process aborts. ASan knows the
+address is poisoned but not what it was; this adds the block, its allocation site,
+and its free site, which is what the reader needs to fix the bug.
+*/
+@(private)
+asan_death :: proc "c" (pc, bp, sp, addr_unused: rawptr, is_write_unused: i32, access_size_unused: uint) {
+	// The runtime invokes this without arguments; the parameters hold whatever was in
+	// the registers. The report accessors are the reliable source.
+	_, _, _, _, _, _ = pc, bp, sp, addr_unused, is_write_unused, access_size_unused
+	context = runtime.default_context()
+	da := asan_owner
+	if da == nil || !sanitizer.address_report_present() {
+		return
+	}
+	addr := sanitizer.address_get_report_address()
+	is_write := sanitizer.address_get_report_access_type() == .write
+	access_size := sanitizer.address_get_report_access_size()
+	context.allocator = da.internals
+	// The fault may have happened inside the allocator with the mutex held; describing
+	// the address is worth more than strict locking in a process that is about to die.
+	locked := sync.mutex_try_lock(&da.mutex)
+	defer if locked {
+		sync.mutex_unlock(&da.mutex)
+	}
+
+	fmt.eprintln()
+	fmt.eprintfln("== debug allocator: about the faulting address %p (%s of %d byte(s)) ==", addr, "write" if is_write else "read", access_size)
+	a := uintptr(addr)
+	for user, l in da.live {
+		lo := uintptr(l.raw)
+		if a < lo || a >= lo + uintptr(l.total) {
+			continue
+		}
+		describe_offset(a, uintptr(user), l.size)
+		fmt.eprintln("   the block is still live")
+		print_site(da, "allocated ", l.alloc)
+		if l.resizes > 0 {
+			fmt.eprintfln("   resized    %d time(s), last at %s:%d", l.resizes, display_path(da, l.last_resize.file_path), l.last_resize.line)
+		}
+		fmt.eprintln("   meaning    an access outside a live block's bounds. Check the index or length used for this access against the allocation size above.")
+		return
+	}
+	for user, d in da.dead {
+		lo := uintptr(d.raw)
+		if a < lo || a >= lo + uintptr(d.total) {
+			continue
+		}
+		describe_offset(a, uintptr(user), d.size)
+		print_site(da, "allocated ", d.alloc)
+		print_site(da, "moved by  " if d.by_resize else "freed     ", d.free)
+		if d.by_resize {
+			fmt.eprintln("   meaning    the block was moved by a resize and this access used the old address. A pointer or slice into a dynamic array was kept across an append; re-fetch it after growing.")
+		} else {
+			fmt.eprintln("   meaning    use after free. The accessor holds a dangling pointer to a block freed at the site above.")
+		}
+		return
+	}
+	fmt.eprintln("   not inside any block this allocator has handed out or is holding in quarantine")
+	fmt.eprintfln("   phase=%s  tick=%d  issues so far=%d", da.phase, da.seq, len(da.issues))
+}
+
+@(private)
+describe_offset :: proc(a, user: uintptr, size: int) {
+	switch {
+	case a < user:
+		fmt.eprintfln("   %d byte(s) before the start of a %d-byte block", user - a, size)
+	case a >= user + uintptr(size):
+		fmt.eprintfln("   %d byte(s) past the end of a %d-byte block", a - (user + uintptr(size)), size)
+	case:
+		fmt.eprintfln("   %d byte(s) into a %d-byte block", a - user, size)
 	}
 }
 
