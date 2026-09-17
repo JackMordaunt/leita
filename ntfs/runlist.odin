@@ -57,6 +57,9 @@ decode_runlist :: proc(b: []byte, first_vcn: u64, allocator := context.allocator
 		append(&out, run)
 		vcn += length
 	}
+	// The caller frees the result as a plain slice, so its length must equal the
+	// allocation. Trim the dynamic array's spare capacity before handing it over.
+	shrink(&out)
 	return out[:], .None
 }
 
