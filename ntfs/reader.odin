@@ -109,7 +109,7 @@ read_mft_from_volume :: proc(v: ^Volume, opts := Read_Options{}, allocator := co
 	}
 
 	record_count := int(mft_bytes / u64(record_size))
-	if init_err := mft_init(&m, record_count, allocator); init_err != nil {
+	if init_err := mft_init(&m, record_count, cluster, allocator); init_err != nil {
 		return {}, init_err
 	}
 	m.boot = boot

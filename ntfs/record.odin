@@ -111,11 +111,25 @@ Attribute :: struct {
 	runlist:          []byte, // raw mapping pairs; decode with decode_runlist
 }
 
-// Bytes this attribute extent actually occupies on disk. Resident values live inside
-// the record and cost nothing extra. Compressed and sparse attributes report their
-// logical allocation in allocated_size, so the real figure is compressed_size.
-attr_disk_size :: proc "contextless" (a: Attribute) -> u64 {
+/*
+Bytes this attribute extent actually occupies on disk.
+
+Resident values live inside the record and cost nothing extra. For non-resident
+extents the run list is authoritative: it says exactly which clusters are allocated,
+which is correct for plain, compressed, and sparse attributes alike, and for the
+system files whose headers claim allocation they do not have. Each extent's run list
+covers only that extent's VCN range, so summing over every extent of a fragmented
+attribute gives the whole. The header sizes are only a fallback for a malformed run
+list, and then only on the first extent, since later extents repeat them.
+*/
+attr_disk_size :: proc "contextless" (a: Attribute, bytes_per_cluster: u64) -> u64 {
 	if !a.non_resident {
+		return 0
+	}
+	if clusters, ok := runlist_allocated_clusters(a.runlist); ok {
+		return clusters * bytes_per_cluster
+	}
+	if a.lowest_vcn != 0 {
 		return 0
 	}
 	if .Compressed in a.flags || .Sparse in a.flags {

@@ -60,6 +60,35 @@ decode_runlist :: proc(b: []byte, first_vcn: u64, allocator := context.allocator
 	return out[:], .None
 }
 
+/*
+Count the clusters a run list actually allocates, skipping sparse runs, without
+building the run array. This is the ground truth for disk usage: allocated_size in
+the attribute header is logical for compressed and sparse attributes, and some system
+files ($BadClus:$Bad, which spans the whole volume) have entirely unallocated run
+lists with no sparse flag at all.
+*/
+runlist_allocated_clusters :: proc "contextless" (b: []byte) -> (clusters: u64, ok: bool) {
+	i := 0
+	for i < len(b) {
+		h := b[i]
+		i += 1
+		if h == 0 {
+			return clusters, true
+		}
+		len_size := int(h & 0xF)
+		ofs_size := int(h >> 4)
+		if len_size == 0 || len_size > 8 || ofs_size > 8 || i + len_size + ofs_size > len(b) {
+			return 0, false
+		}
+		length := read_uint_le(b[i:i + len_size])
+		i += len_size + ofs_size
+		if ofs_size != 0 {
+			clusters += length
+		}
+	}
+	return clusters, true
+}
+
 // Total clusters covered by a run list, including sparse runs.
 runlist_clusters :: proc(runs: []Run) -> u64 {
 	total: u64

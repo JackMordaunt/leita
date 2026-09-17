@@ -37,16 +37,18 @@ Mft_Stats :: struct {
 }
 
 Mft :: struct {
-	entries:   []Entry,
-	links:     [dynamic]Hard_Link,
-	boot:      Boot_Sector,
-	stats:     Mft_Stats,
-	names:     virtual.Arena, // backing store for every name string; never moves
-	allocator: mem.Allocator,
+	entries:           []Entry,
+	links:             [dynamic]Hard_Link,
+	boot:              Boot_Sector,
+	bytes_per_cluster: u64,
+	stats:             Mft_Stats,
+	names:             virtual.Arena, // backing store for every name string; never moves
+	allocator:         mem.Allocator,
 }
 
-mft_init :: proc(m: ^Mft, record_count: int, allocator := context.allocator) -> Error {
+mft_init :: proc(m: ^Mft, record_count: int, bytes_per_cluster: u64, allocator := context.allocator) -> Error {
 	m.allocator = allocator
+	m.bytes_per_cluster = bytes_per_cluster
 	entries, err := make([]Entry, record_count, allocator)
 	if err != nil {
 		return .Out_Of_Memory
@@ -131,21 +133,18 @@ mft_add_record :: proc(m: ^Mft, record_number: u32, rec: []byte) -> Error {
 			}
 		case .Data:
 			if a.non_resident {
-				// Only the first extent carries the sizes; later extents repeat them.
-				if a.lowest_vcn == 0 {
-					e.allocated += attr_disk_size(a)
-					if len(a.name) == 0 {
-						e.size = a.data_size
-					}
+				// Every extent contributes its own clusters, but only the first carries the
+				// logical size; later extents repeat it.
+				e.allocated += attr_disk_size(a, m.bytes_per_cluster)
+				if a.lowest_vcn == 0 && len(a.name) == 0 {
+					e.size = a.data_size
 				}
 			} else if len(a.name) == 0 {
 				e.size = u64(len(a.value))
 			}
 		case:
 			// Directory indexes, bitmaps, reparse data, and EFS streams occupy clusters too.
-			if a.non_resident && a.lowest_vcn == 0 {
-				e.allocated += attr_disk_size(a)
-			}
+			e.allocated += attr_disk_size(a, m.bytes_per_cluster)
 		}
 	}
 	return .None
