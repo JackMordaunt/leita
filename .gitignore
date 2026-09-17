@@ -1,0 +1,8 @@
+*.exe
+*.pdb
+*.obj
+*.ilk
+*.exp
+*.lib
+*.dSYM/
+/build/
