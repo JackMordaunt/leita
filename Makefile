@@ -20,7 +20,7 @@ FLAGS := -vet -strict-style
 SAN   ?= -sanitize:address
 EXE   := $(if $(filter Windows_NT,$(OS)),.exe,)
 
-SRC := $(wildcard *.odin) $(wildcard ntfs/*.odin) $(wildcard debug/*.odin) $(wildcard flow/*.odin) $(wildcard scan/*.odin)
+SRC := $(wildcard *.odin) $(wildcard ntfs/*.odin) $(wildcard debug/*.odin) $(wildcard flow/*.odin) $(wildcard scan/*.odin) $(wildcard walk/*.odin)
 
 .PHONY: all debug release test check clean
 
