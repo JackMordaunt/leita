@@ -11,40 +11,28 @@ import "scan"
 /*
 Stand in for a UI.
 
-A real one repaints on a timer and must never block on the scan, so this runs the
-reader on its own thread and polls from here at the frame interval. What it prints
-each frame is what a UI could draw at that moment: the answer as it stood, not the
-answer it will eventually be.
+Three threads, as the scan is meant to run: readers filling the table, a builder
+owning the tree and everything derived from it, and this loop drawing. The point of
+the arrangement is that a frame costs the same whatever the volume holds, because it
+reads a published snapshot of twenty rows rather than the tree.
 
-The point is to find out what the seam has to provide. Everything the loop touches
-has to be safe to read while a reader is writing it, and cheap enough to do sixty
-times a second.
+Nothing here waits on the builder. If a build pass is mid-write the loop draws the
+answer from the last one.
 */
 FRAME :: 16 * time.Millisecond
 
-Live :: struct {
-	volume: string,
-	opts:   ntfs.Read_Options,
-	table:  ^ntfs.Mft,
-	err:    ntfs.Error,
-	done:   b32,
+@(private = "file")
+Reader :: struct {
+	volume:   string,
+	opts:     ntfs.Read_Options,
+	table:    ^ntfs.Mft,
+	err:      ntfs.Error,
+	scanning: b32,
 }
 
 run_live :: proc(volume: string, mount: string, opts: ntfs.Read_Options) -> int {
 	m: ntfs.Mft
 	defer ntfs.mft_destroy(&m)
-
-	l := Live {
-		volume = volume,
-		opts   = opts,
-		table  = &m,
-	}
-	worker := thread.create_and_start_with_poly_data(&l, scan_thread)
-	if worker == nil {
-		fmt.eprintln("error: could not start the scan")
-		return 1
-	}
-	defer thread.destroy(worker)
 
 	t: scan.Tree
 	if err := scan.tree_init(&t, 1); err != nil {
@@ -53,59 +41,62 @@ run_live :: proc(volume: string, mount: string, opts: ntfs.Read_Options) -> int 
 	}
 	defer scan.tree_destroy(&t)
 
-	projection: ntfs.Projection
-	defer ntfs.projection_destroy(&projection)
-	roll: Rollup
-	defer rollup_destroy(&roll)
+	out: scan.Publisher
+	started := time.tick_now()
 
-	start := time.tick_now()
-	frames := 0
-	settled := 0 // consecutive frames whose top twenty has not moved
-	previous: [TOP_N]Sized
+	r := Reader{volume = volume, opts = opts, table = &m, scanning = true}
+	b := Builder {
+		table    = &m,
+		tree     = &t,
+		out      = &out,
+		mount    = mount,
+		scanning = &r.scanning,
+		started  = started,
+	}
+
+	reader := thread.create_and_start_with_poly_data(&r, read_thread)
+	if reader == nil {
+		fmt.eprintln("error: could not start the reader")
+		return 1
+	}
+	defer thread.destroy(reader)
+
+	builder := thread.create_and_start_with_poly_data(&b, build_thread)
+	if builder == nil {
+		fmt.eprintln("error: could not start the builder")
+		return 1
+	}
+	defer thread.destroy(builder)
+	defer ntfs.projection_destroy(&b.projection)
+	defer rollup_destroy(&b.roll)
+
+	frames, drawn, missed := 0, 0, 0
+	last: scan.Snapshot
+	have := false
 
 	for {
-		finished := bool(sync.atomic_load(&l.done))
 		frame_start := time.tick_now()
+		finished := bool(sync.atomic_load(&b.done))
 
-		if ntfs.mft_ready(&m) {
-			t_project := time.tick_now()
-			if err := ntfs.to_tree(&m, &t, &projection); err != nil {
-				fmt.eprintfln("error: %v", err)
-				return 1
-			}
-			d_project := time.tick_since(t_project)
-			// Only what became final this frame, plus whatever is still waiting on an
-			// ancestor. Totals carry over rather than being rebuilt.
-			t_roll := time.tick_now()
-			rollup_advance(&roll, &t, projection.fresh[:])
-			d_roll := time.tick_since(t_roll)
-
-			t_rank := time.tick_now()
-			top: [TOP_N]Sized
-			count := rank(&t, roll.totals[:], top[:])
-			d_rank := time.tick_since(t_rank)
-			if count > 0 {
-				scan.node(&t, t.root).name = mount
-			}
-
-			if same_ranking(top, previous) {
-				settled += 1
-			} else {
-				settled = 0
-			}
-			previous = top
-
+		// The whole frame. Everything below is twenty rows and their paths.
+		if s, ok := scan.current(&out); ok {
+			last = s
+			have = true
+			drawn += 1
+		} else {
+			missed += 1
+		}
+		if have && last.count > 0 {
 			fmt.printfln(
-				"frame %3d %6.0f ms %8d nodes %6d fresh %6d pending | project %5.2f roll %5.2f rank %5.2f total %5.2f ms",
+				"frame %3d %6.0f ms %8d nodes %6d pending  %10s  %s  frame %5.2f ms%s",
 				frames,
-				time.duration_milliseconds(time.tick_since(start)),
-				t.nodes_done,
-				len(projection.fresh),
-				len(roll.pending),
-				time.duration_milliseconds(d_project),
-				time.duration_milliseconds(d_roll),
-				time.duration_milliseconds(d_rank),
+				last.elapsed,
+				last.nodes,
+				last.pending,
+				human(last.rows[0].bytes),
+				scan.path(&t, last.rows[0].node, context.temp_allocator),
 				time.duration_milliseconds(time.tick_since(frame_start)),
+				last.complete ? "  (final)" : "",
 			)
 			free_all(context.temp_allocator)
 		}
@@ -114,53 +105,37 @@ run_live :: proc(volume: string, mount: string, opts: ntfs.Read_Options) -> int 
 		if finished {
 			break
 		}
-		// Sleep the rest of the frame, or not at all if the work overran it.
 		if spent := time.tick_since(frame_start); spent < FRAME {
 			time.sleep(FRAME - spent)
 		}
 	}
-	thread.join(worker)
+	thread.join(reader)
+	thread.join(builder)
 
-	// The scan is over, so anything still pending was waiting on a parent that will
-	// never come, and extension records may have grown a size after it was charged.
-	// One exact pass settles both.
-	if ntfs.mft_ready(&m) {
-		// Redo every record: a size settled mid-scan misses whatever extension
-		// records added to it afterwards.
-		ntfs.projection_reset(&projection)
-		t.count = 0
-		ntfs.to_tree(&m, &t, &projection)
-		resize(&roll.totals, int(t.count))
-		for i in 0 ..< len(roll.totals) {
-			roll.totals[i] = 0
-		}
-		roll_up(&t, roll.totals[:])
-		scan.node(&t, t.root).name = mount
-	}
-
-	if l.err != nil {
-		fmt.eprintfln("error: %v", l.err)
+	if r.err != nil {
+		fmt.eprintfln("error: %v", r.err)
 		return 1
 	}
 	fmt.println()
-	fmt.printfln("scan finished in %.0f ms over %d frames", time.duration_milliseconds(time.tick_since(start)), frames)
-	print_largest(&t, roll.totals[:], .files)
-	print_largest(&t, roll.totals[:], .directories)
+	fmt.printfln(
+		"scan finished in %.0f ms over %d frames, %d drawn, %d skipped mid-write",
+		time.duration_milliseconds(time.tick_since(started)),
+		frames,
+		drawn,
+		missed,
+	)
+	print_largest(&t, b.roll.totals[:], .files)
+	print_largest(&t, b.roll.totals[:], .directories)
 	return 0
 }
 
 @(private = "file")
-scan_thread :: proc(l: ^Live) {
-	l.err = ntfs.read_mft(l.volume, l.table, l.opts)
-	sync.atomic_store(&l.done, true)
+read_thread :: proc(r: ^Reader) {
+	r.err = ntfs.read_mft(r.volume, r.table, r.opts)
+	sync.atomic_store(&r.scanning, false)
 }
 
 @(private = "file")
-same_ranking :: proc(a, b: [TOP_N]Sized) -> bool {
-	for i in 0 ..< TOP_N {
-		if a[i].record != b[i].record {
-			return false
-		}
-	}
-	return true
+build_thread :: proc(b: ^Builder) {
+	builder_run(b)
 }

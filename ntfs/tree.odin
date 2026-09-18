@@ -16,6 +16,10 @@ rooted at itself forever.
 incremental consumer has to do.
 */
 Projection :: struct {
+	// What to call the root. NTFS names it ".", which says nothing in a path, and the
+	// caller is the one that knows where the volume is mounted. Setting it here rather
+	// than afterwards keeps a watching thread from ever catching the placeholder.
+	root_name:  string,
 	links_done: int,
 	settled:    []u64, // one bit per record
 	fresh:      [dynamic]u32,
@@ -134,9 +138,10 @@ to_tree :: proc(m: ^Mft, t: ^scan.Tree, p: ^Projection) -> scan.Error {
 	}
 	p.links_done = len(m.links)
 
-	// NTFS names its root ".", which says nothing useful in a path. The caller knows
-	// where the volume is mounted and renames it.
 	t.root = RECORD_ROOT
+	if p.root_name != "" {
+		scan.node(t, RECORD_ROOT).name = p.root_name
+	}
 	t.nodes_done = used
 	t.bytes_done = bytes
 	return .None
