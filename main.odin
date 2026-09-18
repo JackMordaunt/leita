@@ -43,17 +43,22 @@ run :: proc() -> int {
 	defer free_all(context.temp_allocator)
 
 	target := "C:"
-	if len(os.args) > 1 {
-		target = os.args[1]
-	}
-	if target == "-h" || target == "--help" || target == "/?" {
-		fmt.println("usage: sonar [drive-or-image]   (default C:)")
-		return 0
+	opts: ntfs.Read_Options
+	for arg in os.args[1:] {
+		switch arg {
+		case "-h", "--help", "/?":
+			fmt.println("usage: sonar [drive-or-image] [--buffered]   (default C:)")
+			return 0
+		case "--buffered":
+			opts.io_mode = .Buffered
+		case:
+			target = arg
+		}
 	}
 
-	fmt.printfln("sonar: reading MFT of %s", target)
+	fmt.printfln("sonar: reading MFT of %s (%v io)", target, opts.io_mode)
 	start := time.tick_now()
-	m, err := ntfs.read_mft(target)
+	m, err := ntfs.read_mft(target, opts)
 	if err != nil {
 		#partial switch err {
 		case .Access_Denied:

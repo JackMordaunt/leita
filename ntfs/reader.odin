@@ -10,13 +10,30 @@ IO_ALIGN :: 4096
 
 DEFAULT_CHUNK_SIZE :: 16 * mem.Megabyte
 
+/*
+How volume reads reach memory.
+
+Buffered reads pass through the Windows cache manager, which copies every byte into
+the system cache and then again into our buffer, and evicts whatever the user had
+cached to make room. Unbuffered reads land in our buffer directly. The MFT is read
+once from front to back and never re-read, so the cache earns nothing here.
+
+Unbuffered reads require the buffer address, the file offset, and the length to be
+sector aligned, which the reader already satisfies by working in whole clusters.
+*/
+IO_Mode :: enum {
+	Unbuffered, // default
+	Buffered,
+}
+
 Read_Options :: struct {
 	chunk_size: int, // bytes per volume read; 0 selects DEFAULT_CHUNK_SIZE
+	io_mode:    IO_Mode,
 }
 
 // Open `path` (drive letter or image file) and read its whole MFT into a table.
 read_mft :: proc(path: string, opts := Read_Options{}, allocator := context.allocator) -> (m: Mft, err: Error) {
-	v, open_err := volume_open(path)
+	v, open_err := volume_open(path, opts.io_mode)
 	if open_err != nil {
 		return {}, open_err
 	}
@@ -138,8 +155,11 @@ read_mft_from_volume :: proc(v: ^Volume, opts := Read_Options{}, allocator := co
 	record_number: u32 = 0
 	for offset: u64 = 0; offset < mft_bytes; offset += u64(chunk) {
 		n := int(min(u64(chunk), mft_bytes - offset))
+		// Unbuffered reads must cover whole sectors. The run list is cluster granular,
+		// so rounding the last chunk up to a cluster never reads past the allocation.
+		read_n := min(int((u64(n) + cluster - 1) / cluster * cluster), chunk)
 		io_start := time.tick_now()
-		if read_err := read_logical(&reader, offset, buf[:n]); read_err != nil {
+		if read_err := read_logical(&reader, offset, buf[:read_n]); read_err != nil {
 			return {}, read_err
 		}
 		m.stats.io_ns += i64(time.tick_since(io_start))

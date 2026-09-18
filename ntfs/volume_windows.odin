@@ -20,11 +20,14 @@ and why every read must be a whole number of sectors at a sector-aligned offset.
 FILE_SHARE_WRITE is required: the volume is mounted and in use, and opening it without
 sharing writes would fail.
 */
-volume_open :: proc(path: string) -> (v: Volume, err: Error) {
+volume_open :: proc(path: string, mode := IO_Mode.Unbuffered) -> (v: Volume, err: Error) {
 	name := path
 	if is_drive_spec(path) {
 		name = strings.concatenate({`\\.\`, path[:1], ":"}, context.temp_allocator)
 	}
+	// FILE_FLAG_SEQUENTIAL_SCAN is a hint to the cache manager, so it means nothing
+	// once the cache is out of the path.
+	flags := win.FILE_FLAG_SEQUENTIAL_SCAN if mode == .Buffered else win.FILE_FLAG_NO_BUFFERING
 	wname := win.utf8_to_wstring(name, context.temp_allocator)
 	h := win.CreateFileW(
 		wname,
@@ -32,7 +35,7 @@ volume_open :: proc(path: string) -> (v: Volume, err: Error) {
 		win.FILE_SHARE_READ | win.FILE_SHARE_WRITE | win.FILE_SHARE_DELETE,
 		nil,
 		win.OPEN_EXISTING,
-		win.FILE_FLAG_SEQUENTIAL_SCAN,
+		flags,
 		nil,
 	)
 	if h == win.INVALID_HANDLE_VALUE {

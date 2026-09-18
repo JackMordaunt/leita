@@ -7,8 +7,8 @@ Volume :: struct {
 	_: int,
 }
 
-volume_open :: proc(path: string) -> (v: Volume, err: Error) {
-	_ = path
+volume_open :: proc(path: string, mode := IO_Mode.Unbuffered) -> (v: Volume, err: Error) {
+	_, _ = path, mode
 	return {}, .Unsupported_Platform
 }
 
