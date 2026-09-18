@@ -288,7 +288,9 @@ read_mft_from_volume :: proc(v: ^Volume, opts := Read_Options{}, allocator := co
 	m.stats.workers = u64(live)
 
 	// 5. Read and fold, every worker on its own chunk.
-	flow.each(chunks[:], workers[:live], read_chunk, .Mixed)
+	// The width is already decided by how many workers were built; the load only has
+	// to match the one they were sized with.
+	flow.each(chunks[:], workers[:live], read_chunk, .Io)
 	for &w in workers[:live] {
 		if w.err != nil {
 			return {}, w.err
