@@ -20,6 +20,7 @@ import "core:time"
 // rejecting the import as unused.
 @(require) import "debug"
 import "ntfs"
+import "scan"
 
 TOP_N :: 20
 
@@ -77,9 +78,34 @@ run :: proc() -> int {
 		}
 	}
 
-	fmt.printfln("sonar: reading MFT of %s (%v io)", target, opts.io_mode)
+	// Resolve once, so the reader is chosen from what the OS says rather than from
+	// the shape of the string.
+	resolved, resolve_err := scan.resolve(target)
+	if resolve_err != nil {
+		fmt.eprintfln("error: cannot scan %s: %v", target, resolve_err)
+		return 1
+	}
+	defer scan.target_destroy(&resolved)
+
+	choice := scan.choose(resolved, scan.elevated())
+	fmt.printfln(
+		"sonar: %s on %s (%v, %v engine, %v io)",
+		resolved.root if resolved.root != "" else resolved.mount,
+		resolved.volume,
+		resolved.fs,
+		choice.engine,
+		opts.io_mode,
+	)
+	if choice.elevation_would_help {
+		fmt.eprintln("note: this volume reads far faster from an administrator prompt")
+	}
+	if choice.engine != .Mft {
+		fmt.eprintfln("error: no reader for %v yet; only the NTFS master file table is implemented", choice.engine)
+		return 1
+	}
+
 	start := time.tick_now()
-	m, err := ntfs.read_mft(target, opts)
+	m, err := ntfs.read_mft(resolved.volume, opts)
 	if err != nil {
 		#partial switch err {
 		case .Access_Denied:
@@ -87,7 +113,7 @@ run :: proc() -> int {
 		case .Not_Ntfs:
 			fmt.eprintln("error: not an NTFS volume")
 		case .Open_Failed:
-			fmt.eprintfln("error: could not open %s", target)
+			fmt.eprintfln("error: could not open %s", resolved.volume)
 		case:
 			fmt.eprintfln("error: %v", err)
 		}
@@ -96,10 +122,8 @@ run :: proc() -> int {
 	defer ntfs.mft_destroy(&m)
 	elapsed := time.tick_since(start)
 
-	prefix := ""
-	if len(target) <= 3 {
-		prefix = fmt.tprintf("%c:", target[0])
-	}
+	// Paths come back rooted at the volume, so they read better with its mount point.
+	prefix := strings.trim_suffix(resolved.mount, `\`)
 
 	print_summary(&m, elapsed)
 	t_files := time.tick_now()
