@@ -7,8 +7,7 @@ syscall per directory and learns nothing the OS does not hand it. That makes it 
 fallback rather than the default, and the yardstick a specialised reader is measured
 against.
 
-Unlike the MFT reader it has no native form of its own. A directory listing is
-already the shape of the tree, so it writes straight into it.
+A directory listing is already the shape of the tree, so it writes straight into it.
 */
 package walk
 

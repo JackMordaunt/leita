@@ -48,6 +48,7 @@ run :: proc() -> int {
 
 	target := "C:"
 	opts: ntfs.Read_Options
+	wcfg: walk.Config
 	for arg in os.args[1:] {
 		switch arg {
 		case "-h", "--help", "/?":
@@ -68,6 +69,10 @@ run :: proc() -> int {
 			case strings.has_prefix(arg, "--workers="):
 				if n, parsed := strconv.parse_int(arg[len("--workers="):]); parsed {
 					opts.workers = n
+				}
+			case strings.has_prefix(arg, "--walk-workers="):
+				if n, parsed := strconv.parse_int(arg[len("--walk-workers="):]); parsed {
+					wcfg.workers = n
 				}
 			case strings.has_prefix(arg, "--chunk="):
 				if n, parsed := strconv.parse_int(arg[len("--chunk="):]); parsed {
@@ -144,7 +149,7 @@ run :: proc() -> int {
 		scan.node(&t, t.root).name = scan.intern(&rw, strings.trim_suffix(resolved.mount, `\`))
 	case .Walk:
 		root := resolved.mount if resolved.root == "" else fmt.tprintf("%s%s", strings.trim_suffix(resolved.mount, `\`), resolved.root)
-		if err := walk.scan(root, &t); err != nil {
+		if err := walk.scan(root, &t, wcfg); err != nil {
 			fmt.eprintfln("error: walking %s: %v", root, err)
 			return 1
 		}
