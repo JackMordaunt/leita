@@ -29,11 +29,15 @@ Hard_Link :: struct {
 }
 
 Mft_Stats :: struct {
-	records:      u64, // record slots in $MFT
-	records_read: u64, // slots that held a FILE record
-	records_bad:  u64, // FILE records whose fixups failed
-	in_use:       u64,
-	directories:  u64,
+	records:            u64, // record slots in $MFT
+	records_read:       u64, // slots that held a FILE record
+	records_bad:        u64, // FILE records whose fixups failed
+	in_use:             u64,
+	directories:        u64,
+	// Files whose unnamed $DATA fits inside their MFT record. They occupy no clusters
+	// of their own, so their bytes are charged to $MFT rather than to their directory.
+	resident_files:     u64,
+	resident_bytes:     u64,
 }
 
 Mft :: struct {
@@ -141,6 +145,8 @@ mft_add_record :: proc(m: ^Mft, record_number: u32, rec: []byte) -> Error {
 				}
 			} else if len(a.name) == 0 {
 				e.size = u64(len(a.value))
+				m.stats.resident_files += 1
+				m.stats.resident_bytes += u64(len(a.value))
 			}
 		case:
 			// Directory indexes, bitmaps, reparse data, and EFS streams occupy clusters too.

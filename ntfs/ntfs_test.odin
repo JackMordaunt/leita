@@ -475,3 +475,26 @@ test_path :: proc(t: ^testing.T) {
 	testing.expect_value(t, mft_path(&m, RECORD_ROOT, context.temp_allocator), `\`)
 	testing.expect_value(t, mft_path(&m, 66, context.temp_allocator), `<orphan>\stale.tmp`)
 }
+
+// ---- resident data ------------------------------------------------------------------
+
+@(test)
+test_resident_file_costs_no_clusters :: proc(t: ^testing.T) {
+	rec := build_record(
+		{
+			resident(.File_Name, file_name_value(make_ref(RECORD_ROOT, 5), "tiny.txt", .Win32)),
+			resident(.Data, transmute([]byte)string("hello")),
+		},
+	)
+	m: Mft
+	testing.expect_value(t, mft_init(&m, 128, 4096), Error.None)
+	defer mft_destroy(&m)
+	add(t, &m, rec)
+
+	// The bytes live inside the MFT record, so the file itself allocates nothing and
+	// the stats record what the directory totals will therefore miss.
+	testing.expect_value(t, m.entries[100].size, u64(5))
+	testing.expect_value(t, m.entries[100].allocated, u64(0))
+	testing.expect_value(t, m.stats.resident_files, u64(1))
+	testing.expect_value(t, m.stats.resident_bytes, u64(5))
+}
