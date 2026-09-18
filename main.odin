@@ -21,6 +21,7 @@ import "core:time"
 @(require) import "debug"
 import "ntfs"
 import "scan"
+import "walk"
 
 TOP_N :: 20
 
@@ -99,63 +100,145 @@ run :: proc() -> int {
 	if choice.elevation_would_help {
 		fmt.eprintln("note: this volume reads far faster from an administrator prompt")
 	}
-	if choice.engine != .Mft {
-		fmt.eprintfln("error: no reader for %v yet; only the NTFS master file table is implemented", choice.engine)
+	if choice.engine == .None {
+		fmt.eprintfln("error: nothing here can be scanned")
 		return 1
 	}
+
+	t: scan.Tree
+	if err := scan.tree_init(&t, 8); err != nil {
+		fmt.eprintfln("error: %v", err)
+		return 1
+	}
+	defer scan.tree_destroy(&t)
 
 	start := time.tick_now()
-	m, err := ntfs.read_mft(resolved.volume, opts)
-	if err != nil {
-		#partial switch err {
-		case .Access_Denied:
-			fmt.eprintln("error: access denied. Reading a raw volume needs an administrator prompt.")
-		case .Not_Ntfs:
-			fmt.eprintln("error: not an NTFS volume")
-		case .Open_Failed:
-			fmt.eprintfln("error: could not open %s", resolved.volume)
-		case:
-			fmt.eprintfln("error: %v", err)
+	// The one place a reader is chosen. Each fills the same tree; the MFT reader also
+	// keeps its own table, which carries what only NTFS knows.
+	m: ntfs.Mft
+	have_mft := false
+	switch choice.engine {
+	case .Mft:
+		table, err := ntfs.read_mft(resolved.volume, opts)
+		if err != nil {
+			#partial switch err {
+			case .Access_Denied:
+				fmt.eprintln("error: access denied. Reading a raw volume needs an administrator prompt.")
+			case .Not_Ntfs:
+				fmt.eprintln("error: not an NTFS volume")
+			case .Open_Failed:
+				fmt.eprintfln("error: could not open %s", resolved.volume)
+			case:
+				fmt.eprintfln("error: %v", err)
+			}
+			return 1
 		}
-		return 1
+		m = table
+		have_mft = true
+		if err := ntfs.to_tree(&m, &t); err != nil {
+			fmt.eprintfln("error: %v", err)
+			return 1
+		}
+		// The table calls its root ".", so paths would lose the drive it came from.
+		rw := scan.writer(&t, 0)
+		scan.node(&t, t.root).name = scan.intern(&rw, strings.trim_suffix(resolved.mount, `\`))
+	case .Walk:
+		root := resolved.mount if resolved.root == "" else fmt.tprintf("%s%s", strings.trim_suffix(resolved.mount, `\`), resolved.root)
+		if err := walk.scan(root, &t); err != nil {
+			fmt.eprintfln("error: walking %s: %v", root, err)
+			return 1
+		}
+	case .None:
 	}
-	defer ntfs.mft_destroy(&m)
+	defer if have_mft {
+		ntfs.mft_destroy(&m)
+	}
 	elapsed := time.tick_since(start)
 
-	// Paths come back rooted at the volume, so they read better with its mount point.
-	prefix := strings.trim_suffix(resolved.mount, `\`)
-
-	print_summary(&m, elapsed)
-	t_files := time.tick_now()
-	print_largest_files(&m, prefix)
-	d_files := time.tick_since(t_files)
-	t_dirs := time.tick_now()
-	print_largest_directories(&m, prefix)
-	d_dirs := time.tick_since(t_dirs)
-	fmt.println()
-	mft_bytes := m.stats.planned_bytes + m.stats.skipped_bytes
-	if mft_bytes > 0 {
-		fmt.printfln(
-			"plan       read %s of %s in %d extents on %d workers, skipped %s (%.1f%%) of dead records",
-			human(m.stats.planned_bytes),
-			human(mft_bytes),
-			m.stats.extents,
-			m.stats.workers,
-			human(m.stats.skipped_bytes),
-			100 * f64(m.stats.skipped_bytes) / f64(mft_bytes),
-		)
+	if have_mft {
+		print_native(&m, elapsed)
 	}
-	// Summed across workers, so these exceed the wall clock when the scan ran wide.
-	fmt.printfln("phase io      %.0f ms across workers", f64(m.stats.io_ns) / 1e6)
-	fmt.printfln("phase parse   %.0f ms across workers", f64(m.stats.parse_ns) / 1e6)
-	fmt.printfln("phase bitmap  %.0f ms", f64(m.stats.bitmap_ns) / 1e6)
-	fmt.printfln("phase files   %.0f ms", time.duration_milliseconds(d_files))
-	fmt.printfln("phase dirs    %.0f ms", time.duration_milliseconds(d_dirs))
-	fmt.printfln("phase total   %.0f ms", time.duration_milliseconds(time.tick_since(start)))
+	fmt.println()
+	fmt.printfln("tree       %d slots, %d used, read in %.0f ms", t.count, t.nodes_done, time.duration_milliseconds(elapsed))
+
+	totals := make([]u64, t.count)
+	defer delete(totals)
+	roll_up(&t, totals)
+
+	print_largest(&t, totals, .files)
+	print_largest(&t, totals, .directories)
 	return 0
 }
 
-print_summary :: proc(m: ^ntfs.Mft, elapsed: time.Duration) {
+/*
+Credit every node's bytes to each of its ancestors.
+
+An extra name for a file counted elsewhere is skipped, or the file would be charged
+to every directory it is linked into. The depth cap guards against a cycle that a
+corrupt source could produce.
+*/
+roll_up :: proc(t: ^scan.Tree, totals: []u64) {
+	for i in 0 ..< t.count {
+		n := scan.node(t, i)
+		if .Used not_in n.flags || .Extra_Name in n.flags {
+			continue
+		}
+		if .Directory in n.flags {
+			totals[i] += n.disk
+		}
+		cur := i
+		for depth := 0; depth < 64; depth += 1 {
+			p := scan.node(t, cur).parent
+			if p == cur || p >= t.count {
+				break
+			}
+			totals[p] += n.disk
+			cur = p
+		}
+	}
+}
+
+Kind :: enum {
+	files,
+	directories,
+}
+
+print_largest :: proc(t: ^scan.Tree, totals: []u64, kind: Kind) {
+	top: [TOP_N]Sized
+	count := 0
+	for i in 0 ..< t.count {
+		n := scan.node(t, i)
+		if .Used not_in n.flags {
+			continue
+		}
+		bytes: u64
+		switch kind {
+		case .files:
+			if .Directory in n.flags || .Extra_Name in n.flags {
+				continue
+			}
+			bytes = n.disk
+		case .directories:
+			if .Directory not_in n.flags {
+				continue
+			}
+			bytes = totals[i]
+		}
+		if bytes == 0 {
+			continue
+		}
+		top_n(top[:], &count, Sized{bytes = bytes, record = i})
+	}
+	fmt.println()
+	fmt.printfln("largest %v (%d)", kind, count)
+	for s in top[:count] {
+		fmt.printfln("  %10s  %s", human(s.bytes), scan.path(t, s.record, context.temp_allocator))
+	}
+}
+
+// What only the NTFS reader knows, kept because the tree cannot carry it.
+print_native :: proc(m: ^ntfs.Mft, elapsed: time.Duration) {
+
 	files: u64
 	allocated: u64
 	for e in m.entries {
@@ -215,67 +298,6 @@ top_n :: proc(top: []Sized, count: ^int, cand: Sized) {
 	top[i] = cand
 	if count^ < len(top) {
 		count^ += 1
-	}
-}
-
-print_largest_files :: proc(m: ^ntfs.Mft, prefix: string) {
-	top: [TOP_N]Sized
-	count := 0
-	for e, i in m.entries {
-		if .In_Use not_in e.flags || .Directory in e.flags || e.allocated == 0 {
-			continue
-		}
-		top_n(top[:], &count, Sized{bytes = e.allocated, record = u32(i)})
-	}
-	fmt.println()
-	fmt.printfln("largest files (%d)", count)
-	for s in top[:count] {
-		fmt.printfln("  %10s  %s%s", human(s.bytes), prefix, ntfs.mft_path(m, s.record, context.temp_allocator))
-	}
-}
-
-/*
-Directory sizes are the point of the tool. Each entry's allocation is credited to
-every ancestor by walking parent references; average depth is under ten, so this is a
-single cheap pass even on millions of records. Entries whose parent chain is broken
-(deleted directory, stale reference) stop at the last valid ancestor.
-*/
-print_largest_directories :: proc(m: ^ntfs.Mft, prefix: string) {
-	totals := make([]u64, len(m.entries))
-	defer delete(totals)
-
-	for e, i in m.entries {
-		if .In_Use not_in e.flags || e.name == "" {
-			continue
-		}
-		if .Directory in e.flags {
-			totals[i] += e.allocated
-		}
-		cur := e
-		for depth := 0; depth < 64; depth += 1 {
-			if !ntfs.entry_parent_valid(m, cur) {
-				break
-			}
-			totals[cur.parent] += e.allocated
-			if cur.parent == ntfs.RECORD_ROOT {
-				break
-			}
-			cur = m.entries[cur.parent]
-		}
-	}
-
-	top: [TOP_N]Sized
-	count := 0
-	for e, i in m.entries {
-		if .In_Use not_in e.flags || .Directory not_in e.flags || totals[i] == 0 {
-			continue
-		}
-		top_n(top[:], &count, Sized{bytes = totals[i], record = u32(i)})
-	}
-	fmt.println()
-	fmt.printfln("largest directories (%d)", count)
-	for s in top[:count] {
-		fmt.printfln("  %10s  %s%s", human(s.bytes), prefix, ntfs.mft_path(m, s.record, context.temp_allocator))
 	}
 }
 
