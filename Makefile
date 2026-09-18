@@ -20,7 +20,7 @@ FLAGS := -vet -strict-style
 SAN   ?= -sanitize:address
 EXE   := $(if $(filter Windows_NT,$(OS)),.exe,)
 
-SRC := $(wildcard *.odin) $(wildcard ntfs/*.odin) $(wildcard debug/*.odin) $(wildcard flow/*.odin)
+SRC := $(wildcard *.odin) $(wildcard ntfs/*.odin) $(wildcard debug/*.odin) $(wildcard flow/*.odin) $(wildcard scan/*.odin)
 
 .PHONY: all debug release test check clean
 
@@ -39,6 +39,7 @@ $(BUILD)/release/sonar$(EXE): $(SRC) | $(BUILD)/release
 test: | $(BUILD)/test
 	$(ODIN) test ntfs -debug $(SAN) $(FLAGS) -out:$(BUILD)/test/ntfs$(EXE)
 	$(ODIN) test flow -debug $(SAN) $(FLAGS) -out:$(BUILD)/test/flow$(EXE)
+	$(ODIN) test scan -debug $(SAN) $(FLAGS) -out:$(BUILD)/test/scan$(EXE)
 
 check:
 	$(ODIN) check . $(FLAGS)
