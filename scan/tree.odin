@@ -18,6 +18,10 @@ Node :: struct {
 
 Node_Flag :: enum u8 {
 	Used, // written by a reader; an untouched slot has this clear
+	// The parent link is final. A reader that learns of a child before its holding
+	// directory leaves this clear until the parent turns up, because until then the
+	// node cannot be told apart from one that has no parent at all.
+	Settled,
 	Directory,
 	Reparse, // junction, symlink or cloud placeholder: its target is counted elsewhere
 	Extra_Name, // another name for a node already counted, so rolling up must skip it

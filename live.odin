@@ -54,8 +54,9 @@ run_live :: proc(volume: string, mount: string, opts: ntfs.Read_Options) -> int 
 	defer scan.tree_destroy(&t)
 
 	projection: ntfs.Projection
-	totals: [dynamic]u64
-	defer delete(totals)
+	defer ntfs.projection_destroy(&projection)
+	roll: Rollup
+	defer rollup_destroy(&roll)
 
 	start := time.tick_now()
 	frames := 0
@@ -72,14 +73,12 @@ run_live :: proc(volume: string, mount: string, opts: ntfs.Read_Options) -> int 
 				fmt.eprintfln("error: %v", err)
 				return 1
 			}
-			resize(&totals, int(t.count))
-			for i in 0 ..< len(totals) {
-				totals[i] = 0
-			}
-			roll_up(&t, totals[:])
+			// Only what became final this frame, plus whatever is still waiting on an
+			// ancestor. Totals carry over rather than being rebuilt.
+			rollup_advance(&roll, &t, projection.fresh[:])
 
 			top: [TOP_N]Sized
-			count := rank(&t, totals[:], top[:])
+			count := rank(&t, roll.totals[:], top[:])
 			if count > 0 {
 				scan.node(&t, t.root).name = mount
 			}
@@ -92,12 +91,13 @@ run_live :: proc(volume: string, mount: string, opts: ntfs.Read_Options) -> int 
 			previous = top
 
 			fmt.printfln(
-				"frame %3d  %6.0f ms  %8d nodes  %10s  top1 %s  frame cost %.1f ms  settled %d",
+				"frame %3d  %6.0f ms  %8d nodes  %6d fresh  %6d pending  %10s  cost %5.1f ms  stable %d",
 				frames,
 				time.duration_milliseconds(time.tick_since(start)),
 				t.nodes_done,
+				len(projection.fresh),
+				len(roll.pending),
 				human(count > 0 ? top[0].bytes : 0),
-				count > 0 ? scan.path(&t, top[0].record, context.temp_allocator) : "-",
 				time.duration_milliseconds(time.tick_since(frame_start)),
 				settled,
 			)
@@ -115,14 +115,31 @@ run_live :: proc(volume: string, mount: string, opts: ntfs.Read_Options) -> int 
 	}
 	thread.join(worker)
 
+	// The scan is over, so anything still pending was waiting on a parent that will
+	// never come, and extension records may have grown a size after it was charged.
+	// One exact pass settles both.
+	if ntfs.mft_ready(&m) {
+		// Redo every record: a size settled mid-scan misses whatever extension
+		// records added to it afterwards.
+		ntfs.projection_reset(&projection)
+		t.count = 0
+		ntfs.to_tree(&m, &t, &projection)
+		resize(&roll.totals, int(t.count))
+		for i in 0 ..< len(roll.totals) {
+			roll.totals[i] = 0
+		}
+		roll_up(&t, roll.totals[:])
+		scan.node(&t, t.root).name = mount
+	}
+
 	if l.err != nil {
 		fmt.eprintfln("error: %v", l.err)
 		return 1
 	}
 	fmt.println()
 	fmt.printfln("scan finished in %.0f ms over %d frames", time.duration_milliseconds(time.tick_since(start)), frames)
-	print_largest(&t, totals[:], .files)
-	print_largest(&t, totals[:], .directories)
+	print_largest(&t, roll.totals[:], .files)
+	print_largest(&t, roll.totals[:], .directories)
 	return 0
 }
 

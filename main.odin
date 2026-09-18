@@ -151,6 +151,7 @@ run :: proc() -> int {
 		}
 		have_mft = true
 		projection: ntfs.Projection
+		defer ntfs.projection_destroy(&projection)
 		if err := ntfs.to_tree(&m, &t, &projection); err != nil {
 			fmt.eprintfln("error: %v", err)
 			return 1

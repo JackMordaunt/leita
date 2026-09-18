@@ -144,6 +144,31 @@ entry_published :: proc(e: ^Entry) -> bool {
 	return .In_Use in transmute(Record_Flags)sync.atomic_load((^u16)(&e.flags))
 }
 
+/*
+An entry's parent, and whether that answer can still change.
+
+A parent record that has not been published yet may turn out to hold this name, so
+the link is not final until it appears. One that has been published and does not
+match never will be, which is just as final as a valid answer and lets the node be
+charged instead of waiting forever.
+
+The returned index is the entry's own when it has no usable parent.
+*/
+entry_parent_settled :: proc(m: ^Mft, i: u32) -> (parent: u32, settled: bool) {
+	e := &m.entries[i]
+	if int(e.parent) >= len(m.entries) || e.parent == i {
+		return i, true
+	}
+	p := &m.entries[e.parent]
+	if !entry_published(p) {
+		return i, false
+	}
+	if .Directory in p.flags && p.sequence == e.parent_sequence {
+		return e.parent, true
+	}
+	return i, true
+}
+
 // Fold each worker's private results into the table. Only these needed merging;
 // entries were written into slots no other worker could reach.
 mft_merge_sinks :: proc(m: ^Mft) {

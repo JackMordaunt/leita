@@ -54,7 +54,7 @@ scan :: proc(root: string, t: ^scan.Tree, cfg := Config{}) -> Error {
 	n := scan.node(t, first)
 	n.parent = first // a root holds itself
 	n.name = scan.intern(&w, root)
-	n.flags = {.Used, .Directory}
+	n.flags = {.Used, .Settled, .Directory}
 	t.root = first
 
 	workers := cfg.workers
@@ -158,7 +158,8 @@ walk_dir :: proc(d: Dir, w: ^Worker) -> bool {
 		n.parent = d.index
 		n.name = scan.intern(&w.writer, info.name)
 		n.size = u64(max(info.size, 0))
-		n.flags = {.Used}
+		// A walker reaches a child through its parent, so the link is never in doubt.
+		n.flags = {.Used, .Settled}
 
 		switch info.type {
 		case .Directory:

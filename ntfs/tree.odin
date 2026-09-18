@@ -1,9 +1,52 @@
 package ntfs
 
+import "core:mem"
+
 import "../scan"
 
 /*
-Project a finished table into the normalised tree.
+Carried between projections so repeating one is cheap and adds nothing twice.
+
+`settled` remembers which records have been folded in for good. A record is only
+finished with once its parent reference is final, because a parent not yet published
+may still turn out to hold the name, and a node written before then would be left
+rooted at itself forever.
+
+`fresh` is what became final since the last call, which is the only work an
+incremental consumer has to do.
+*/
+Projection :: struct {
+	links_done: int,
+	settled:    []u64, // one bit per record
+	fresh:      [dynamic]u32,
+	allocator:  mem.Allocator,
+}
+
+/*
+Forget what has been projected, so the next call redoes every record.
+
+A settled record is skipped on later calls, which is what makes a frame cheap, but it
+also means its size is never re-read. Extension records add to a base record after it
+was published, and a badly fragmented file can hold most of its allocation there, so
+a projection taken during a scan under-reports them. Call this once the scan has
+finished to get an exact answer.
+*/
+projection_reset :: proc(p: ^Projection) {
+	for i in 0 ..< len(p.settled) {
+		p.settled[i] = 0
+	}
+	p.links_done = 0
+	clear(&p.fresh)
+}
+
+projection_destroy :: proc(p: ^Projection) {
+	delete(p.settled, p.allocator)
+	delete(p.fresh)
+	p^ = {}
+}
+
+/*
+Project a table into the normalised tree, or bring an earlier projection up to date.
 
 The table stays the native form and keeps what only NTFS has: record and sequence
 numbers, per-stream allocation, the resident-file accounting. A caller wanting the
@@ -13,31 +56,43 @@ with the other readers.
 Record numbers become node indices unchanged, so the tree has a slot per record slot,
 including the dead ones. That wastes the slots but keeps every parent reference valid
 without a second mapping, and a dead slot is simply not marked used.
-*/
-/*
-Carried between projections so repeating one is cheap and adds nothing twice.
-*/
-Projection :: struct {
-	links_done: int,
-}
 
+Safe to call while a scan runs: only records the reader has finished with are read,
+and names are borrowed from the table's arenas rather than copied, so repeating this
+allocates nothing. The table must therefore outlive the tree.
+*/
 to_tree :: proc(m: ^Mft, t: ^scan.Tree, p: ^Projection) -> scan.Error {
 	if err := scan.reserve(t, u32(len(m.entries))); err != nil {
 		return err
 	}
+	if p.settled == nil {
+		p.allocator = t.allocator
+		bits, err := make([]u64, (len(m.entries) + 63) / 64, p.allocator)
+		if err != nil {
+			return .Out_Of_Memory
+		}
+		p.settled = bits
+		p.fresh.allocator = p.allocator
+	}
+	clear(&p.fresh)
+
 	w := scan.writer(t, 0)
 	used, bytes: u64
 
-	for i in 0 ..< len(m.entries) {
+	for i in 0 ..< u32(len(m.entries)) {
+		if marked(p.settled, i) {
+			used += 1
+			bytes += m.entries[i].allocated
+			continue
+		}
 		e := &m.entries[i]
-		// Only entries the reader has finished with, so a name is never half written.
+		// Only records the reader has finished with, so a name is never half written.
 		if !entry_published(e) || e.name == "" {
 			continue
 		}
-		n := scan.node(t, u32(i))
+		n := scan.node(t, i)
 		// Borrowed, not copied: names live in the table's arenas and stay put for its
-		// life, so repeating this projection allocates nothing. The table must
-		// therefore outlive the tree.
+		// life, so repeating this projection allocates nothing.
 		n.name = e.name
 		n.size = e.size
 		n.disk = e.allocated
@@ -48,17 +103,22 @@ to_tree :: proc(m: ^Mft, t: ^scan.Tree, p: ^Projection) -> scan.Error {
 		if .Reparse_Point in e.attributes {
 			n.flags |= {.Reparse}
 		}
-		// A parent that has been recycled since this name was written points at a
-		// different file now, so the node is rooted at itself and reads as orphaned.
-		n.parent = e.parent if entry_parent_valid(m, e^) else u32(i)
+
+		parent, settled := entry_parent_settled(m, i)
+		n.parent = parent
+		if settled {
+			n.flags |= {.Settled}
+			mark(p.settled, i)
+			append(&p.fresh, i)
+		}
 		used += 1
 		bytes += e.allocated
 	}
 
 	// Extra names for a file already counted. They belong in the tree so a file can
-	// be found at every path it has, but their bytes must not be counted twice.
-	// Only the ones not projected before, or repeating this would add a node per
-	// link every time. Links are merged when the scan ends, so this is empty until.
+	// be found at every path it has, but their bytes must not be counted twice. Only
+	// the ones not done before, or repeating this would add a node per link each
+	// time. Links are merged when the scan ends, so this is empty until then.
 	for l in m.links[p.links_done:] {
 		index, err := scan.claim(&w, 1)
 		if err != nil {
@@ -69,14 +129,25 @@ to_tree :: proc(m: ^Mft, t: ^scan.Tree, p: ^Projection) -> scan.Error {
 		n.name = l.name
 		n.disk = m.entries[l.record].allocated
 		n.size = m.entries[l.record].size
-		n.flags = {.Used, .Extra_Name}
+		n.flags = {.Used, .Settled, .Extra_Name}
+		append(&p.fresh, index)
 	}
+	p.links_done = len(m.links)
 
 	// NTFS names its root ".", which says nothing useful in a path. The caller knows
 	// where the volume is mounted and renames it.
-	p.links_done = len(m.links)
 	t.root = RECORD_ROOT
 	t.nodes_done = used
 	t.bytes_done = bytes
 	return .None
+}
+
+@(private)
+marked :: proc(b: []u64, i: u32) -> bool {
+	return b[i >> 6] & (1 << uint(i & 63)) != 0
+}
+
+@(private)
+mark :: proc(b: []u64, i: u32) {
+	b[i >> 6] |= 1 << uint(i & 63)
 }
