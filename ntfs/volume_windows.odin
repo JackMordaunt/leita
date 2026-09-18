@@ -1,12 +1,22 @@
 #+build windows
 package ntfs
 
+import "core:mem"
 import "core:strings"
 import win "core:sys/windows"
 
-// Read-only handle to a raw volume (`\\.\C:`) or to an image file containing one.
+/*
+Read-only handle to a raw volume (`\\.\C:`) or to an image file containing one.
+
+The resolved name and mode are kept so `volume_clone` can open another handle to the
+same place. Windows serialises I/O on a synchronous handle, so threads reading
+concurrently need a handle each or they queue behind one another.
+*/
 Volume :: struct {
-	handle: win.HANDLE,
+	handle:    win.HANDLE,
+	name:      string, // device path, owned
+	mode:      IO_Mode,
+	allocator: mem.Allocator,
 }
 
 @(private)
@@ -20,7 +30,7 @@ and why every read must be a whole number of sectors at a sector-aligned offset.
 FILE_SHARE_WRITE is required: the volume is mounted and in use, and opening it without
 sharing writes would fail.
 */
-volume_open :: proc(path: string, mode := IO_Mode.Unbuffered) -> (v: Volume, err: Error) {
+volume_open :: proc(path: string, mode := IO_Mode.Unbuffered, allocator := context.allocator) -> (v: Volume, err: Error) {
 	name := path
 	if is_drive_spec(path) {
 		name = strings.concatenate({`\\.\`, path[:1], ":"}, context.temp_allocator)
@@ -44,14 +54,27 @@ volume_open :: proc(path: string, mode := IO_Mode.Unbuffered) -> (v: Volume, err
 		}
 		return {}, .Open_Failed
 	}
-	return Volume{handle = h}, .None
+	owned, clone_err := strings.clone(name, allocator)
+	if clone_err != nil {
+		win.CloseHandle(h)
+		return {}, .Out_Of_Memory
+	}
+	return Volume{handle = h, name = owned, mode = mode, allocator = allocator}, .None
+}
+
+// Another handle to the same volume, for a thread that needs to read independently.
+volume_clone :: proc(v: ^Volume, allocator := context.allocator) -> (Volume, Error) {
+	return volume_open(v.name, v.mode, allocator)
 }
 
 volume_close :: proc(v: ^Volume) {
 	if v.handle != nil && v.handle != win.INVALID_HANDLE_VALUE {
 		win.CloseHandle(v.handle)
 	}
-	v.handle = nil
+	if v.name != "" {
+		delete(v.name, v.allocator)
+	}
+	v^ = {}
 }
 
 // Fill `buf` from `offset`. Both must be sector-aligned for a raw volume.

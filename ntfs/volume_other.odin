@@ -7,8 +7,13 @@ Volume :: struct {
 	_: int,
 }
 
-volume_open :: proc(path: string, mode := IO_Mode.Unbuffered) -> (v: Volume, err: Error) {
-	_, _ = path, mode
+volume_open :: proc(path: string, mode := IO_Mode.Unbuffered, allocator := context.allocator) -> (v: Volume, err: Error) {
+	_, _, _ = path, mode, allocator
+	return {}, .Unsupported_Platform
+}
+
+volume_clone :: proc(v: ^Volume, allocator := context.allocator) -> (Volume, Error) {
+	_, _ = v, allocator
 	return {}, .Unsupported_Platform
 }
 
