@@ -116,10 +116,10 @@ Worker :: struct {
 
 @(private)
 walk_dir :: proc(d: Dir, w: ^Worker) -> bool {
+	defer delete(d.path, w.allocator)
 	if scan.cancelled(w.writer.tree) {
 		return false
 	}
-	defer delete(d.path, w.allocator)
 	f, open_err := os.open(d.path)
 	if open_err != nil {
 		// A directory we may not read is not a reason to abandon the scan; it is
