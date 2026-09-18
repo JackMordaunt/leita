@@ -41,6 +41,10 @@ Mft_Stats :: struct {
 	// Clusters $Bitmap reports as allocated; 0 when it could not be read. This is the
 	// file system's own total, independent of the per-file sums.
 	allocated_clusters: u64,
+	// What the read plan decided, from $MFT's own $BITMAP of live record slots.
+	planned_bytes:      u64,
+	skipped_bytes:      u64,
+	extents:            u64,
 	// Phase timings, nanoseconds.
 	io_ns:              i64,
 	parse_ns:           i64,

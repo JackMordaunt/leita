@@ -12,6 +12,8 @@ package main
 import "core:debug/trace"
 import "core:fmt"
 import "core:os"
+import "core:strconv"
+import "core:strings"
 import "core:time"
 
 // Only referenced inside `when ODIN_DEBUG`; @(require) keeps release builds from
@@ -47,12 +49,22 @@ run :: proc() -> int {
 	for arg in os.args[1:] {
 		switch arg {
 		case "-h", "--help", "/?":
-			fmt.println("usage: sonar [drive-or-image] [--buffered]   (default C:)")
+			fmt.println("usage: sonar [drive-or-image] [--buffered] [--no-skip] [--min-skip=<bytes>]")
 			return 0
 		case "--buffered":
 			opts.io_mode = .Buffered
+		case "--no-skip":
+			opts.min_skip = -1
 		case:
-			target = arg
+			// --min-skip=<bytes> tunes how long a run of dead records must be before
+			// breaking the sequential read to jump over it pays for itself.
+			if strings.has_prefix(arg, "--min-skip=") {
+				if n, parsed := strconv.parse_int(arg[len("--min-skip="):]); parsed {
+					opts.min_skip = n
+				}
+			} else {
+				target = arg
+			}
 		}
 	}
 
@@ -88,6 +100,17 @@ run :: proc() -> int {
 	print_largest_directories(&m, prefix)
 	d_dirs := time.tick_since(t_dirs)
 	fmt.println()
+	mft_bytes := m.stats.planned_bytes + m.stats.skipped_bytes
+	if mft_bytes > 0 {
+		fmt.printfln(
+			"plan       read %s of %s in %d extents, skipped %s (%.1f%%) of dead records",
+			human(m.stats.planned_bytes),
+			human(mft_bytes),
+			m.stats.extents,
+			human(m.stats.skipped_bytes),
+			100 * f64(m.stats.skipped_bytes) / f64(mft_bytes),
+		)
+	}
 	fmt.printfln("phase io      %.0f ms", f64(m.stats.io_ns) / 1e6)
 	fmt.printfln("phase parse   %.0f ms", f64(m.stats.parse_ns) / 1e6)
 	fmt.printfln("phase bitmap  %.0f ms", f64(m.stats.bitmap_ns) / 1e6)
