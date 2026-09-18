@@ -24,11 +24,9 @@ Snapshot :: struct {
 /*
 Hands a snapshot from the thread building it to the thread drawing it.
 
-A sequence number is raised before a write and again after, so it is odd only while
-the data is in flux. A reader takes a copy and checks the number is unchanged and
-even; if not it takes another. That is what keeps a frame from ever waiting on a
-build step, however long the step takes: the reader either gets the new answer or
-keeps the one it already had.
+A sequence number is odd only while a write is in flux. A reader copies, then checks
+the number is unchanged and even. A frame therefore never waits on a build: it gets
+the new answer, or keeps the one it had.
 */
 Publisher :: struct {
 	seq:  u32,
@@ -41,14 +39,28 @@ publish :: proc(p: ^Publisher, s: Snapshot) {
 	sync.atomic_add(&p.seq, 1)
 }
 
-// The latest complete snapshot. Fails only if the builder wrote several times during
-// the attempt, in which case the caller draws what it drew last frame.
+/*
+Attempts before giving up.
+
+Enough to cover one write, which copies a few hundred bytes and so takes tens of
+nanoseconds against under ten for an attempt. Beyond that the builder has been
+descheduled partway through and no amount of spinning will help, while a caller that
+keeps last frame's answer has lost nothing.
+*/
+@(private)
+ATTEMPTS :: 4
+
+// The latest complete snapshot. Fails while a write is in flux, which is the
+// caller's cue to keep the frame it already has.
 current :: proc(p: ^Publisher) -> (s: Snapshot, ok: bool) {
-	for _ in 0 ..< 16 {
+	for _ in 0 ..< ATTEMPTS {
 		before := sync.atomic_load(&p.seq)
 		if before & 1 != 0 {
 			continue // a write is in progress
 		}
+		// Both loads are sequentially consistent, which is what stops the compiler
+		// hoisting this copy above the first or sinking it below the second. Moving it
+		// either way turns a correct seqlock into one that returns torn data silently.
 		s = p.data
 		if sync.atomic_load(&p.seq) == before {
 			return s, true
