@@ -2,7 +2,7 @@
 #
 #   make            debug build with AddressSanitizer   -> build/debug/sonar.exe
 #   make release    optimised build                     -> build/release/sonar.exe
-#   make test       run the ntfs tests under ASan       -> build/test/ntfs.exe
+#   make test       run the package tests under ASan    -> build/test/
 #   make check      type-check both modes without producing a binary
 #   make clean      remove build/
 #
@@ -20,7 +20,7 @@ FLAGS := -vet -strict-style
 SAN   ?= -sanitize:address
 EXE   := $(if $(filter Windows_NT,$(OS)),.exe,)
 
-SRC := $(wildcard *.odin) $(wildcard ntfs/*.odin) $(wildcard debug/*.odin)
+SRC := $(wildcard *.odin) $(wildcard ntfs/*.odin) $(wildcard debug/*.odin) $(wildcard flow/*.odin)
 
 .PHONY: all debug release test check clean
 
@@ -38,6 +38,7 @@ $(BUILD)/release/sonar$(EXE): $(SRC) | $(BUILD)/release
 
 test: | $(BUILD)/test
 	$(ODIN) test ntfs -debug $(SAN) $(FLAGS) -out:$(BUILD)/test/ntfs$(EXE)
+	$(ODIN) test flow -debug $(SAN) $(FLAGS) -out:$(BUILD)/test/flow$(EXE)
 
 check:
 	$(ODIN) check . $(FLAGS)
