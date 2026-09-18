@@ -49,7 +49,7 @@ run :: proc() -> int {
 	for arg in os.args[1:] {
 		switch arg {
 		case "-h", "--help", "/?":
-			fmt.println("usage: sonar [drive-or-image] [--buffered] [--no-skip] [--min-skip=<bytes>]")
+			fmt.println("usage: sonar [drive] [--buffered] [--no-skip] [--min-skip=N] [--workers=N] [--chunk=N]")
 			return 0
 		case "--buffered":
 			opts.io_mode = .Buffered
@@ -58,11 +58,20 @@ run :: proc() -> int {
 		case:
 			// --min-skip=<bytes> tunes how long a run of dead records must be before
 			// breaking the sequential read to jump over it pays for itself.
-			if strings.has_prefix(arg, "--min-skip=") {
+			switch {
+			case strings.has_prefix(arg, "--min-skip="):
 				if n, parsed := strconv.parse_int(arg[len("--min-skip="):]); parsed {
 					opts.min_skip = n
 				}
-			} else {
+			case strings.has_prefix(arg, "--workers="):
+				if n, parsed := strconv.parse_int(arg[len("--workers="):]); parsed {
+					opts.workers = n
+				}
+			case strings.has_prefix(arg, "--chunk="):
+				if n, parsed := strconv.parse_int(arg[len("--chunk="):]); parsed {
+					opts.chunk_size = n
+				}
+			case:
 				target = arg
 			}
 		}
@@ -103,16 +112,18 @@ run :: proc() -> int {
 	mft_bytes := m.stats.planned_bytes + m.stats.skipped_bytes
 	if mft_bytes > 0 {
 		fmt.printfln(
-			"plan       read %s of %s in %d extents, skipped %s (%.1f%%) of dead records",
+			"plan       read %s of %s in %d extents on %d workers, skipped %s (%.1f%%) of dead records",
 			human(m.stats.planned_bytes),
 			human(mft_bytes),
 			m.stats.extents,
+			m.stats.workers,
 			human(m.stats.skipped_bytes),
 			100 * f64(m.stats.skipped_bytes) / f64(mft_bytes),
 		)
 	}
-	fmt.printfln("phase io      %.0f ms", f64(m.stats.io_ns) / 1e6)
-	fmt.printfln("phase parse   %.0f ms", f64(m.stats.parse_ns) / 1e6)
+	// Summed across workers, so these exceed the wall clock when the scan ran wide.
+	fmt.printfln("phase io      %.0f ms across workers", f64(m.stats.io_ns) / 1e6)
+	fmt.printfln("phase parse   %.0f ms across workers", f64(m.stats.parse_ns) / 1e6)
 	fmt.printfln("phase bitmap  %.0f ms", f64(m.stats.bitmap_ns) / 1e6)
 	fmt.printfln("phase files   %.0f ms", time.duration_milliseconds(d_files))
 	fmt.printfln("phase dirs    %.0f ms", time.duration_milliseconds(d_dirs))
