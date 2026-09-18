@@ -45,23 +45,50 @@ Mft_Stats :: struct {
 	planned_bytes:      u64,
 	skipped_bytes:      u64,
 	extents:            u64,
+	workers:            u64, // threads the scan actually ran on
 	// Phase timings, nanoseconds.
 	io_ns:              i64,
 	parse_ns:           i64,
 	bitmap_ns:          i64,
 }
 
+/*
+A record that belongs to a base record elsewhere in the table.
+
+Its attributes are credited to the base entry, which another worker may own, so it
+cannot be folded in during a parallel pass. The bytes are copied because the read
+buffer is reused for the next chunk.
+*/
+Deferred :: struct {
+	record: u32,
+	bytes:  []byte,
+}
+
+/*
+Where one worker puts what it produces.
+
+Entries are written straight into the table at their own record numbers, which no
+two workers share, so only these need merging afterwards. The arena outlives the run
+because every `Entry.name` points into it.
+*/
+Sink :: struct {
+	names:    virtual.Arena,
+	links:    [dynamic]Hard_Link,
+	deferred: [dynamic]Deferred,
+	stats:    Mft_Stats,
+}
+
 Mft :: struct {
 	entries:           []Entry,
 	links:             [dynamic]Hard_Link,
+	sinks:             []Sink, // one per worker; kept alive for the names they hold
 	boot:              Boot_Sector,
 	bytes_per_cluster: u64,
 	stats:             Mft_Stats,
-	names:             virtual.Arena, // backing store for every name string; never moves
 	allocator:         mem.Allocator,
 }
 
-mft_init :: proc(m: ^Mft, record_count: int, bytes_per_cluster: u64, allocator := context.allocator) -> Error {
+mft_init :: proc(m: ^Mft, record_count: int, bytes_per_cluster: u64, sinks := 1, allocator := context.allocator) -> Error {
 	m.allocator = allocator
 	m.bytes_per_cluster = bytes_per_cluster
 	entries, err := make([]Entry, record_count, allocator)
@@ -70,10 +97,14 @@ mft_init :: proc(m: ^Mft, record_count: int, bytes_per_cluster: u64, allocator :
 	}
 	m.entries = entries
 	m.links = make([dynamic]Hard_Link, allocator)
-	if virtual.arena_init_growing(&m.names) != nil {
-		delete(m.entries, allocator)
-		delete(m.links)
-		return .Out_Of_Memory
+	m.sinks = make([]Sink, max(sinks, 1), allocator)
+	for &s in m.sinks {
+		if virtual.arena_init_growing(&s.names) != nil {
+			mft_destroy(m)
+			return .Out_Of_Memory
+		}
+		s.links.allocator = allocator
+		s.deferred.allocator = allocator
 	}
 	m.stats.records = u64(record_count)
 	return .None
@@ -82,8 +113,32 @@ mft_init :: proc(m: ^Mft, record_count: int, bytes_per_cluster: u64, allocator :
 mft_destroy :: proc(m: ^Mft) {
 	delete(m.entries, m.allocator)
 	delete(m.links)
-	virtual.arena_destroy(&m.names)
+	for &s in m.sinks {
+		delete(s.links)
+		delete(s.deferred)
+		virtual.arena_destroy(&s.names)
+	}
+	delete(m.sinks, m.allocator)
 	m^ = {}
+}
+
+// Fold each worker's private results into the table. Only these needed merging;
+// entries were written into slots no other worker could reach.
+mft_merge_sinks :: proc(m: ^Mft) {
+	for &s in m.sinks {
+		m.stats.records_read += s.stats.records_read
+		m.stats.records_bad += s.stats.records_bad
+		m.stats.in_use += s.stats.in_use
+		m.stats.directories += s.stats.directories
+		m.stats.resident_files += s.stats.resident_files
+		m.stats.resident_bytes += s.stats.resident_bytes
+		m.stats.io_ns += s.stats.io_ns
+		m.stats.parse_ns += s.stats.parse_ns
+		for l in s.links {
+			append(&m.links, l)
+		}
+		clear(&s.links)
+	}
 }
 
 /*
@@ -98,7 +153,7 @@ attribute anyway.
 Records not in use are skipped entirely. Their contents are stale and may point at
 records that have since been reused.
 */
-mft_add_record :: proc(m: ^Mft, record_number: u32, rec: []byte) -> Error {
+mft_add_record :: proc(m: ^Mft, record_number: u32, rec: []byte, sink: ^Sink) -> Error {
 	if len(rec) < size_of(Record_Header) {
 		return .Bad_Record
 	}
@@ -125,9 +180,9 @@ mft_add_record :: proc(m: ^Mft, record_number: u32, rec: []byte) -> Error {
 		e.sequence = h.sequence
 		e.link_count = h.link_count
 		e.flags = h.flags
-		m.stats.in_use += 1
+		sink.stats.in_use += 1
 		if .Directory in h.flags {
-			m.stats.directories += 1
+			sink.stats.directories += 1
 		}
 	}
 
@@ -144,7 +199,7 @@ mft_add_record :: proc(m: ^Mft, record_number: u32, rec: []byte) -> Error {
 			}
 		case .File_Name:
 			if fn, fn_ok := file_name(a); fn_ok {
-				add_name(m, owner, fn)
+				add_name(m, owner, fn, sink)
 			}
 		case .Data:
 			if a.non_resident {
@@ -156,8 +211,8 @@ mft_add_record :: proc(m: ^Mft, record_number: u32, rec: []byte) -> Error {
 				}
 			} else if len(a.name) == 0 {
 				e.size = u64(len(a.value))
-				m.stats.resident_files += 1
-				m.stats.resident_bytes += u64(len(a.value))
+				sink.stats.resident_files += 1
+				sink.stats.resident_bytes += u64(len(a.value))
 			}
 		case:
 			// Directory indexes, bitmaps, reparse data, and EFS streams occupy clusters too.
@@ -175,13 +230,13 @@ pointing at the same parent. The alias is not a separate link, so it is skipped
 whenever a proper name exists. Any further Win32 or POSIX name is a real hard link.
 */
 @(private)
-add_name :: proc(m: ^Mft, owner: u32, fn: File_Name) {
+add_name :: proc(m: ^Mft, owner: u32, fn: File_Name, sink: ^Sink) {
 	e := &m.entries[owner]
 	parent := u32(ref_record(fn.parent))
 	parent_seq := ref_sequence(fn.parent)
 
 	if e.name == "" {
-		e.name = intern_utf16(m, fn.name)
+		e.name = intern_utf16(sink, fn.name)
 		e.parent = parent
 		e.parent_sequence = parent_seq
 		e.namespace = fn.namespace
@@ -192,29 +247,29 @@ add_name :: proc(m: ^Mft, owner: u32, fn: File_Name) {
 	}
 	if e.namespace == .Dos {
 		// The alias arrived first; the real name replaces it.
-		e.name = intern_utf16(m, fn.name)
+		e.name = intern_utf16(sink, fn.name)
 		e.parent = parent
 		e.parent_sequence = parent_seq
 		e.namespace = fn.namespace
 		return
 	}
-	name := intern_utf16(m, fn.name)
+	name := intern_utf16(sink, fn.name)
 	if name == e.name && parent == e.parent {
 		return
 	}
-	append(&m.links, Hard_Link{record = owner, parent = parent, name = name})
+	append(&sink.links, Hard_Link{record = owner, parent = parent, name = name})
 }
 
 // Copy a UTF-16LE name into the arena as UTF-8. Names are at most 255 code units.
 @(private)
-intern_utf16 :: proc(m: ^Mft, name: []u16) -> string {
+intern_utf16 :: proc(sink: ^Sink, name: []u16) -> string {
 	runes: [256]rune
 	n := utf16.decode(runes[:], name)
 	total := 0
 	for r in runes[:n] {
 		total += utf8.rune_size(r)
 	}
-	buf, err := make([]byte, total, virtual.arena_allocator(&m.names))
+	buf, err := make([]byte, total, virtual.arena_allocator(&sink.names))
 	if err != nil {
 		return ""
 	}

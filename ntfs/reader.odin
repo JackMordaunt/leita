@@ -1,14 +1,33 @@
 package ntfs
 
 import "core:mem"
+import "core:mem/virtual"
 import "core:time"
+
+import "../flow"
 
 // Alignment for I/O buffers. Raw volume reads want sector alignment; 4 KiB covers
 // every sector size in use.
 @(private)
 IO_ALIGN :: 4096
 
-DEFAULT_CHUNK_SIZE :: 16 * mem.Megabyte
+// Bytes per read. Smaller than a serial reader would want: queue depth comes from
+// the number of workers, and smaller chunks divide more evenly between them.
+DEFAULT_CHUNK_SIZE :: 4 * mem.Megabyte
+
+/*
+Readers to run concurrently.
+
+Measured by sweeping this on a live NVMe volume: one reader takes 1807 ms, two take
+1338, and four through eight all sit at about 1310. Past that it degrades, and
+thirty-two takes 2339 ms, worse than reading serially. Aggregate read time grows in
+step with the count throughout, which is what a device already at its limit looks
+like: extra readers divide the same bandwidth rather than adding to it.
+
+So this is not a function of the core count. Four sits in the flat part of the curve
+with margin for a device that does want more depth.
+*/
+DEFAULT_WORKERS :: 4
 
 /*
 How volume reads reach memory.
@@ -43,6 +62,7 @@ Read_Options :: struct {
 	chunk_size: int, // bytes per volume read; 0 selects DEFAULT_CHUNK_SIZE
 	io_mode:    IO_Mode,
 	min_skip:   int, // 0 selects DEFAULT_MIN_SKIP; negative reads the whole table
+	workers:    int, // 0 selects DEFAULT_WORKERS
 }
 
 // Open `path` (drive letter or image file) and read its whole MFT into a table.
@@ -156,18 +176,7 @@ read_mft_from_volume :: proc(v: ^Volume, opts := Read_Options{}, allocator := co
 		return {}, .Mft_Data_Missing
 	}
 
-	record_count := int(mft_bytes / u64(record_size))
-	if init_err := mft_init(&m, record_count, cluster, allocator); init_err != nil {
-		return {}, init_err
-	}
-	m.boot = boot
-	// From here on, failures must release the table.
-	ok := false
-	defer if !ok {
-		mft_destroy(&m)
-	}
-
-	// 3. Stream the table.
+	// 3. Plan what to read, and cut it into chunks small enough to hand out.
 	chunk := opts.chunk_size
 	if chunk <= 0 {
 		chunk = DEFAULT_CHUNK_SIZE
@@ -175,14 +184,8 @@ read_mft_from_volume :: proc(v: ^Volume, opts := Read_Options{}, allocator := co
 	// A chunk must hold whole records and whole clusters so every read stays aligned.
 	unit := max(record_size, int(cluster))
 	chunk = max(chunk / unit, 1) * unit
-	buf, buf_alloc_err := mem.alloc_bytes(chunk, IO_ALIGN, allocator)
-	if buf_alloc_err != nil {
-		return {}, .Out_Of_Memory
-	}
-	defer mem.free_bytes(buf, allocator)
 
-	// Decide what to read. Without the slot bitmap, or with skipping turned off, the
-	// plan is the whole table, which is what the reader did before.
+	// Without the slot bitmap, or with skipping turned off, the plan is the whole table.
 	extents: []Read_Extent
 	defer delete(extents, allocator)
 	if slot_bitmap != nil && opts.min_skip >= 0 {
@@ -202,55 +205,198 @@ read_mft_from_volume :: proc(v: ^Volume, opts := Read_Options{}, allocator := co
 		whole[0] = Read_Extent{0, mft_bytes}
 		extents = whole
 	}
-	for e in extents {
-		m.stats.planned_bytes += e.length
-	}
-	m.stats.skipped_bytes = mft_bytes - m.stats.planned_bytes
-	m.stats.extents = u64(len(extents))
 
-	reader := Extent_Reader{v = v, runs = runs, cluster = cluster}
+	chunks := make([dynamic]Chunk, allocator)
+	defer delete(chunks)
+	planned_bytes: u64
 	for e in extents {
+		planned_bytes += e.length
 		for offset := e.offset; offset < e.offset + e.length; offset += u64(chunk) {
-			n := int(min(u64(chunk), e.offset + e.length - offset))
-			// Unbuffered reads must cover whole sectors. The run list is cluster
-			// granular, so rounding up never reads past the attribute's allocation.
-			read_n := min(int((u64(n) + cluster - 1) / cluster * cluster), chunk)
-			io_start := time.tick_now()
-			if read_err := read_logical(&reader, offset, buf[:read_n]); read_err != nil {
-				return {}, read_err
-			}
-			m.stats.io_ns += i64(time.tick_since(io_start))
-			parse_start := time.tick_now()
-			defer m.stats.parse_ns += i64(time.tick_since(parse_start))
-			for start := 0; start + record_size <= n; start += record_size {
-				rec := buf[start:start + record_size]
-				// Extents may skip forward, so the slot number comes from the offset.
-				record_number := u32((offset + u64(start)) / u64(record_size))
-				// Slots never written are all zeros; skip them silently.
-				if rd32(rec, 0) != RECORD_MAGIC {
-					continue
-				}
-				m.stats.records_read += 1
-				if apply_fixups(rec) != nil {
-					m.stats.records_bad += 1
-					continue
-				}
-				if add_err := mft_add_record(&m, record_number, rec); add_err != nil {
-					m.stats.records_bad += 1
-				}
-			}
+			append(&chunks, Chunk{offset, min(u64(chunk), e.offset + e.length - offset)})
 		}
 	}
+
+	// 4. Size the pool. The limit is the measured one, not the machine's, because the
+	// drive saturates long before the cores do.
+	worker_count := flow.width(len(chunks), .Io, limit = opts.workers if opts.workers > 0 else DEFAULT_WORKERS)
+
+	record_count := int(mft_bytes / u64(record_size))
+	if init_err := mft_init(&m, record_count, cluster, worker_count, allocator); init_err != nil {
+		return {}, init_err
+	}
+	m.boot = boot
+	// From here on, failures must release the table.
+	ok := false
+	defer if !ok {
+		mft_destroy(&m)
+	}
+	m.stats.planned_bytes = planned_bytes
+	m.stats.skipped_bytes = mft_bytes - planned_bytes
+	m.stats.extents = u64(len(extents))
+
+	workers, workers_err := make([]Worker, worker_count, allocator)
+	if workers_err != nil {
+		return {}, .Out_Of_Memory
+	}
+	defer delete(workers, allocator)
+
+	// Windows serialises I/O on one handle, so a worker that shares it would queue
+	// behind its neighbours instead of adding queue depth. Each takes its own.
+	live := 0
+	for i in 0 ..< worker_count {
+		w := &workers[i]
+		w.mft = &m
+		w.sink = &m.sinks[i]
+		w.record_size = record_size
+		w.cluster = cluster
+		wv, clone_err := volume_clone(v, allocator)
+		if clone_err != nil {
+			break
+		}
+		wbuf, buf_err := mem.alloc_bytes(chunk, IO_ALIGN, allocator)
+		if buf_err != nil {
+			volume_close(&wv)
+			break
+		}
+		w.volume = wv
+		w.owns_volume = true
+		w.buf = wbuf
+		w.reader = Extent_Reader{v = &w.volume, runs = runs, cluster = cluster}
+		live += 1
+	}
+	if live == 0 {
+		// No second handle to be had, so fall back to reading on the caller's.
+		w := &workers[0]
+		wbuf, buf_err := mem.alloc_bytes(chunk, IO_ALIGN, allocator)
+		if buf_err != nil {
+			return {}, .Out_Of_Memory
+		}
+		w.volume = v^
+		w.buf = wbuf
+		w.reader = Extent_Reader{v = &w.volume, runs = runs, cluster = cluster}
+		live = 1
+	}
+	defer {
+		for i in 0 ..< live {
+			w := &workers[i]
+			if w.owns_volume {
+				volume_close(&w.volume)
+			}
+			mem.free_bytes(w.buf, allocator)
+		}
+	}
+	m.stats.workers = u64(live)
+
+	// 5. Read and fold, every worker on its own chunk.
+	flow.each(chunks[:], workers[:live], read_chunk, .Mixed)
+	for &w in workers[:live] {
+		if w.err != nil {
+			return {}, w.err
+		}
+	}
+
+	// 6. Extension records were held back because they credit a base record another
+	// worker may own. Every base record is in place now, so they fold in serially.
+	for &w in workers[:live] {
+		for d in w.sink.deferred {
+			if add_err := mft_add_record(&m, d.record, d.bytes, w.sink); add_err != nil {
+				w.sink.stats.records_bad += 1
+			}
+		}
+		clear(&w.sink.deferred)
+	}
+
 	// $Bitmap is the file system's own count of used clusters, which checks the sums
 	// built above. Failing to read it costs nothing else, so the table still stands.
 	bitmap_start := time.tick_now()
-	if c, bitmap_err := read_bitmap_clusters(&reader, boot, buf, allocator); bitmap_err == nil {
+	if c, bitmap_err := read_bitmap_clusters(&workers[0].reader, boot, workers[0].buf, allocator); bitmap_err == nil {
 		m.stats.allocated_clusters = c
 	}
 	m.stats.bitmap_ns = i64(time.tick_since(bitmap_start))
 
+	mft_merge_sinks(&m)
 	ok = true
 	return m, .None
+}
+
+// A slice of the MFT's logical address space small enough to be one read, and the
+// unit of parallel work: one worker claims it, reads it, and folds it in.
+@(private)
+Chunk :: struct {
+	offset: u64,
+	length: u64,
+}
+
+/*
+One worker's private world for a parallel scan.
+
+Everything here belongs to a single worker except `mft`, and every write into that
+lands at a record number no other worker claims. Extension records are the exception
+and are held in the sink rather than written across the divide.
+*/
+@(private)
+Worker :: struct {
+	mft:          ^Mft,
+	sink:         ^Sink,
+	volume:       Volume,
+	owns_volume:  bool,
+	reader:       Extent_Reader,
+	buf:          []byte,
+	record_size:  int,
+	cluster:      u64,
+	err:          Error,
+}
+
+@(private)
+read_chunk :: proc(c: Chunk, w: ^Worker) -> bool {
+	n := int(c.length)
+	// Unbuffered reads must cover whole sectors. The run list is cluster granular, so
+	// rounding up never reads past the attribute's allocation.
+	read_n := min(int((c.length + w.cluster - 1) / w.cluster * w.cluster), len(w.buf))
+	io_start := time.tick_now()
+	if read_err := read_logical(&w.reader, c.offset, w.buf[:read_n]); read_err != nil {
+		w.err = read_err
+		return false
+	}
+	w.sink.stats.io_ns += i64(time.tick_since(io_start))
+
+	parse_start := time.tick_now()
+	defer w.sink.stats.parse_ns += i64(time.tick_since(parse_start))
+	for start := 0; start + w.record_size <= n; start += w.record_size {
+		rec := w.buf[start:start + w.record_size]
+		// Chunks skip forward, so the slot number comes from the offset.
+		record := u32((c.offset + u64(start)) / u64(w.record_size))
+		// Slots never written are all zeros; skip them silently.
+		if rd32(rec, 0) != RECORD_MAGIC {
+			continue
+		}
+		w.sink.stats.records_read += 1
+		if apply_fixups(rec) != nil {
+			w.sink.stats.records_bad += 1
+			continue
+		}
+		if record_header(rec).base_record != 0 {
+			hold_extension_record(w, record, rec)
+			continue
+		}
+		if add_err := mft_add_record(w.mft, record, rec, w.sink); add_err != nil {
+			w.sink.stats.records_bad += 1
+		}
+	}
+	return true
+}
+
+// Copy an extension record into the sink's arena, since the buffer is about to be
+// reused for the next chunk.
+@(private)
+hold_extension_record :: proc(w: ^Worker, record: u32, rec: []byte) {
+	bytes, err := make([]byte, len(rec), virtual.arena_allocator(&w.sink.names))
+	if err != nil {
+		w.sink.stats.records_bad += 1
+		return
+	}
+	copy(bytes, rec)
+	append(&w.sink.deferred, Deferred{record = record, bytes = bytes})
 }
 
 // Read a whole attribute into memory: a copy of the value when resident, or the

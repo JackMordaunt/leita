@@ -176,7 +176,8 @@ build_record :: proc(
 @(private = "file")
 add :: proc(t: ^testing.T, m: ^Mft, rec: []byte) {
 	testing.expect_value(t, apply_fixups(rec), Error.None)
-	testing.expect_value(t, mft_add_record(m, record_header(rec).record_number, rec), Error.None)
+	testing.expect_value(t, mft_add_record(m, record_header(rec).record_number, rec, &m.sinks[0]), Error.None)
+	mft_merge_sinks(m)
 }
 
 // ---- boot sector --------------------------------------------------------------------
@@ -273,7 +274,7 @@ test_resident_file :: proc(t: ^testing.T) {
 		},
 	)
 	m: Mft
-	testing.expect_value(t, mft_init(&m, 128, 4096), Error.None)
+	testing.expect_value(t, mft_init(&m, 128, 4096, 1), Error.None)
 	defer mft_destroy(&m)
 	add(t, &m, rec)
 
@@ -302,7 +303,7 @@ test_dos_name_first_is_replaced :: proc(t: ^testing.T) {
 		},
 	)
 	m: Mft
-	testing.expect_value(t, mft_init(&m, 128, 4096), Error.None)
+	testing.expect_value(t, mft_init(&m, 128, 4096, 1), Error.None)
 	defer mft_destroy(&m)
 	add(t, &m, rec)
 	testing.expect_value(t, m.entries[100].name, "long name.txt")
@@ -325,7 +326,7 @@ test_nonresident_streams :: proc(t: ^testing.T) {
 		},
 	)
 	m: Mft
-	testing.expect_value(t, mft_init(&m, 128, 4096), Error.None)
+	testing.expect_value(t, mft_init(&m, 128, 4096, 1), Error.None)
 	defer mft_destroy(&m)
 	add(t, &m, rec)
 
@@ -347,7 +348,7 @@ test_fragmented_extents_sum_their_own_clusters :: proc(t: ^testing.T) {
 		},
 	)
 	m: Mft
-	testing.expect_value(t, mft_init(&m, 128, 4096), Error.None)
+	testing.expect_value(t, mft_init(&m, 128, 4096, 1), Error.None)
 	defer mft_destroy(&m)
 	add(t, &m, rec)
 	testing.expect_value(t, m.entries[100].allocated, u64(8192))
@@ -366,7 +367,7 @@ test_unallocated_runlist_counts_nothing :: proc(t: ^testing.T) {
 		record_number = RECORD_BAD_CLUS,
 	)
 	m: Mft
-	testing.expect_value(t, mft_init(&m, 128, 4096), Error.None)
+	testing.expect_value(t, mft_init(&m, 128, 4096, 1), Error.None)
 	defer mft_destroy(&m)
 	add(t, &m, rec)
 	testing.expect_value(t, m.entries[RECORD_BAD_CLUS].allocated, u64(0))
@@ -398,7 +399,7 @@ test_extension_record_and_hard_links :: proc(t: ^testing.T) {
 		base = make_ref(100, 9),
 	)
 	m: Mft
-	testing.expect_value(t, mft_init(&m, 128, 4096), Error.None)
+	testing.expect_value(t, mft_init(&m, 128, 4096, 1), Error.None)
 	defer mft_destroy(&m)
 
 	// The extension arrives before its base, as it can on disk.
@@ -429,7 +430,7 @@ test_free_record_is_ignored :: proc(t: ^testing.T) {
 		flags = {},
 	)
 	m: Mft
-	testing.expect_value(t, mft_init(&m, 128, 4096), Error.None)
+	testing.expect_value(t, mft_init(&m, 128, 4096, 1), Error.None)
 	defer mft_destroy(&m)
 	add(t, &m, rec)
 	testing.expect_value(t, m.entries[100].name, "")
@@ -441,7 +442,7 @@ test_free_record_is_ignored :: proc(t: ^testing.T) {
 @(test)
 test_path :: proc(t: ^testing.T) {
 	m: Mft
-	testing.expect_value(t, mft_init(&m, 128, 4096), Error.None)
+	testing.expect_value(t, mft_init(&m, 128, 4096, 1), Error.None)
 	defer mft_destroy(&m)
 
 	root := make_ref(RECORD_ROOT, 5)
@@ -505,7 +506,7 @@ test_resident_file_costs_no_clusters :: proc(t: ^testing.T) {
 		},
 	)
 	m: Mft
-	testing.expect_value(t, mft_init(&m, 128, 4096), Error.None)
+	testing.expect_value(t, mft_init(&m, 128, 4096, 1), Error.None)
 	defer mft_destroy(&m)
 	add(t, &m, rec)
 
