@@ -476,6 +476,24 @@ test_path :: proc(t: ^testing.T) {
 	testing.expect_value(t, mft_path(&m, 66, context.temp_allocator), `<orphan>\stale.tmp`)
 }
 
+// ---- bitmap -------------------------------------------------------------------------
+
+@(test)
+test_count_set_bits :: proc(t: ^testing.T) {
+	testing.expect_value(t, count_set_bits(nil), u64(0))
+	testing.expect_value(t, count_set_bits([]byte{0xFF}), u64(8))
+
+	// Nine bytes exercises both the eight-byte chunk loop and the trailing bytes.
+	nine := []byte{0xFF, 0x00, 0x0F, 0xF0, 0x01, 0x80, 0xAA, 0x55, 0x03}
+	testing.expect_value(t, count_set_bits(nine), u64(28))
+
+	all := make([]byte, 64, context.temp_allocator)
+	for i in 0 ..< len(all) {
+		all[i] = 0xFF
+	}
+	testing.expect_value(t, count_set_bits(all), u64(512))
+}
+
 // ---- resident data ------------------------------------------------------------------
 
 @(test)

@@ -38,6 +38,9 @@ Mft_Stats :: struct {
 	// of their own, so their bytes are charged to $MFT rather than to their directory.
 	resident_files:     u64,
 	resident_bytes:     u64,
+	// Clusters $Bitmap reports as allocated; 0 when it could not be read. This is the
+	// file system's own total, independent of the per-file sums.
+	allocated_clusters: u64,
 }
 
 Mft :: struct {

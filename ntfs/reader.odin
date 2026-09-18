@@ -157,6 +157,12 @@ read_mft_from_volume :: proc(v: ^Volume, opts := Read_Options{}, allocator := co
 			}
 		}
 	}
+	// $Bitmap is the file system's own count of used clusters, which checks the sums
+	// built above. Failing to read it costs nothing else, so the table still stands.
+	if c, bitmap_err := read_bitmap_clusters(&reader, boot, buf, allocator); bitmap_err == nil {
+		m.stats.allocated_clusters = c
+	}
+
 	ok = true
 	return m, .None
 }
@@ -176,6 +182,10 @@ read_logical :: proc(r: ^Extent_Reader, offset: u64, buf: []byte) -> Error {
 	for done < len(buf) {
 		pos := offset + u64(done)
 		vcn := pos / r.cluster
+		// The cursor only walks forward, so rewind it when a read goes backwards.
+		if r.cursor >= len(r.runs) || r.runs[r.cursor].vcn > vcn {
+			r.cursor = 0
+		}
 		for r.cursor < len(r.runs) && r.runs[r.cursor].vcn + r.runs[r.cursor].length <= vcn {
 			r.cursor += 1
 		}
