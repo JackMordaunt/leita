@@ -82,21 +82,30 @@ scan :: proc(root: string, t: ^scan.Tree, cfg := Config{}) -> Error {
 	seed := []Dir{{index = first, path = strings.clone(root, allocator)}}
 	flow.manage(seed, states, walk_dir, hand_over)
 
+	for &s in states {
+		if s.err != nil {
+			return s.err
+		}
+	}
 	if scan.cancelled(t) {
 		return .Cancelled
 	}
 	return .None
 }
 
-// Move what a worker found into the queue. Serialised by `manage`, so this is the
-// one place the set of directories still to walk is touched.
+// Move what a worker found into the queue, and judge whatever it could not read.
+// Serialised by `manage`, so this is the one place the set of directories still to
+// walk is touched.
 @(private)
-hand_over :: proc(w: ^Worker, queue: ^[dynamic]Dir) -> bool {
-	for d in w.found {
-		append(queue, d)
+hand_over :: proc(d: Dir, ok: bool, w: ^Worker, queue: ^[dynamic]Dir) -> bool {
+	for found in w.found {
+		append(queue, found)
 	}
 	clear(&w.found)
-	return !scan.cancelled(w.writer.tree)
+	// A directory that would not open is worth nothing and is not worth retrying,
+	// but it is no reason to abandon the rest of the volume. Running out of room
+	// for the tree is, since everything after it would be missing silently.
+	return w.err == nil && !scan.cancelled(w.writer.tree)
 }
 
 // A directory waiting to be read, and the node already standing for it.
@@ -111,6 +120,7 @@ Worker :: struct {
 	writer:    scan.Writer,
 	found:     [dynamic]Dir,
 	follow:    bool,
+	err:       Error, // why this worker gave up, which only the manager acts on
 	allocator: mem.Allocator,
 }
 
@@ -122,9 +132,7 @@ walk_dir :: proc(d: Dir, w: ^Worker) -> bool {
 	}
 	f, open_err := os.open(d.path)
 	if open_err != nil {
-		// A directory we may not read is not a reason to abandon the scan; it is
-		// simply worth nothing. Permission denied is normal on a live system.
-		return true
+		return false
 	}
 	defer os.close(f)
 
@@ -139,6 +147,7 @@ walk_dir :: proc(d: Dir, w: ^Worker) -> bool {
 		}
 		index, claim_err := scan.claim(&w.writer, 1)
 		if claim_err != nil {
+			w.err = .Out_Of_Memory
 			return false
 		}
 		n := scan.node(w.writer.tree, index)

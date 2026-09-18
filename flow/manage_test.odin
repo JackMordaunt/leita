@@ -31,12 +31,12 @@ descend :: proc(item: int, v: ^Visit) -> bool {
 }
 
 @(private = "file")
-hand_over :: proc(v: ^Visit, queue: ^[dynamic]int) -> bool {
+hand_over :: proc(item: int, ok: bool, v: ^Visit, queue: ^[dynamic]int) -> bool {
 	for c in v.found {
 		append(queue, c)
 	}
 	clear(&v.found)
-	return true
+	return ok
 }
 
 @(private = "file")
@@ -127,7 +127,7 @@ test_manage_spreads_across_workers :: proc(t: ^testing.T) {
 }
 
 @(test)
-test_manage_stops_when_work_returns_false :: proc(t: ^testing.T) {
+test_manage_stops_when_the_manager_returns_false :: proc(t: ^testing.T) {
 	// One worker keeps this exact: with several, those already holding an item
 	// finish it, which is the documented behaviour.
 	one := visitors(1, stop = 0)
@@ -142,4 +142,51 @@ test_manage_tolerates_an_empty_seed :: proc(t: ^testing.T) {
 	manage([]int{}, v, descend, hand_over)
 	count, _ := totals(v)
 	testing.expect_value(t, count, 0)
+}
+
+// A failed item is the manager's to judge, and the judgement it cannot make without
+// being told which item failed is to try that one again.
+@(private = "file")
+Attempt :: struct {
+	id:    int,
+	tries: int,
+}
+
+@(private = "file")
+Flaky :: struct {
+	seen: [dynamic]Attempt,
+}
+
+@(private = "file")
+refuse_twice :: proc(item: Attempt, f: ^Flaky) -> bool {
+	append(&f.seen, item)
+	return !(item.id == 1 && item.tries < 2)
+}
+
+@(private = "file")
+retry :: proc(item: Attempt, ok: bool, f: ^Flaky, queue: ^[dynamic]Attempt) -> bool {
+	if !ok {
+		append(queue, Attempt{id = item.id, tries = item.tries + 1})
+	}
+	return true
+}
+
+@(test)
+test_manage_requeues_a_failed_item :: proc(t: ^testing.T) {
+	// One worker keeps the count exact; the point is the shape, not the width.
+	f := make([]Flaky, 1, context.temp_allocator)
+	f[0].seen = make([dynamic]Attempt, context.temp_allocator)
+	seed := []Attempt{{id = 0}, {id = 1}, {id = 2}}
+	manage(seed, f, refuse_twice, retry)
+
+	// Three items, one of them attempted three times, and the run carried on past
+	// the failures rather than ending at the first.
+	testing.expect_value(t, len(f[0].seen), 5)
+	tries := 0
+	for a in f[0].seen {
+		if a.id == 1 {
+			tries += 1
+		}
+	}
+	testing.expect_value(t, tries, 3)
 }

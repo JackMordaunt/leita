@@ -6,26 +6,24 @@ import "core:thread"
 /*
 Run work over a set that grows as the work discovers more of it.
 
-`work` runs on many threads at once; `found` runs on one at a time, and is the only
-thing that puts items in the queue. Workers take the next item the moment one exists
-rather than in rounds, so a shape only learned by walking it never stalls waiting for
-a round to end.
+`seed` starts the queue; every later item arrives through `manager`, which runs one
+at a time. `work` runs on many threads at once, taking the next item the moment one
+exists rather than in rounds.
 
 Each worker owns one slot of `states`, so `work` needs no locks, exactly as in `each`.
-What a worker discovers goes in its own slot; `found` moves it into the queue and is
-serialised, so deciding what to explore next needs no reasoning about order.
+`manager` sees that slot beside the item that filled it, and queues whatever comes
+next, that item included.
 
-Either procedure returning false ends the run: no further items are handed out, and
-workers finish the item in hand. Report the reason through the state.
+`work` returning false marks the item failed, not the run. `manager` returning false
+ends the run; workers finish the item in hand and report through their state.
 
-`len(states)` sets the width, capped by what the machine can use. The threads are
-started once for the whole traversal rather than once per round.
+`len(states)` sets the width, capped by what the machine can use.
 */
 manage :: proc(
 	seed: []$I,
 	states: []$S,
 	work: proc(item: I, state: ^S) -> bool,
-	found: proc(state: ^S, queue: ^[dynamic]I) -> bool,
+	manager: proc(item: I, ok: bool, state: ^S, queue: ^[dynamic]I) -> bool,
 	load := Load.Io,
 ) {
 	if len(seed) == 0 || len(states) == 0 {
@@ -34,7 +32,7 @@ manage :: proc(
 	q: Queue(I, S)
 	q.states = states
 	q.work = work
-	q.found = found
+	q.manager = manager
 	q.items = make([dynamic]I, context.allocator)
 	defer delete(q.items)
 	append(&q.items, ..seed)
@@ -65,15 +63,15 @@ manage :: proc(
 
 @(private)
 Queue :: struct($I: typeid, $S: typeid) {
-	items:  [dynamic]I,
-	head:   int,
-	active: int, // workers holding an item, which may yet produce more
-	over:   bool,
-	mutex:  sync.Mutex,
-	wake:   sync.Cond,
-	states: []S,
-	work:   proc(item: I, state: ^S) -> bool,
-	found:  proc(state: ^S, queue: ^[dynamic]I) -> bool,
+	items:   [dynamic]I,
+	head:    int,
+	active:  int, // workers holding an item, which may yet produce more
+	over:    bool,
+	mutex:   sync.Mutex,
+	wake:    sync.Cond,
+	states:  []S,
+	work:    proc(item: I, state: ^S) -> bool,
+	manager: proc(item: I, ok: bool, state: ^S, queue: ^[dynamic]I) -> bool,
 }
 
 @(private)
@@ -119,7 +117,9 @@ drain :: proc(q: ^Queue($I, $S), index: int) {
 
 		sync.mutex_lock(&q.mutex)
 		q.active -= 1
-		if !ok || !q.found(state, &q.items) {
+		// The manager runs for a failed item too: deciding what a failure means is
+		// the whole of its job.
+		if !q.manager(item, ok, state, &q.items) {
 			q.over = true
 		}
 		sync.cond_broadcast(&q.wake)
