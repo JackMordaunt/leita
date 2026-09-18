@@ -98,7 +98,27 @@ print_summary :: proc(m: ^ntfs.Mft, elapsed: time.Duration) {
 	fmt.printfln("volume     %s, %d B clusters, %d B records", human(volume_bytes), m.boot.bytes_per_cluster, m.boot.record_size)
 	fmt.printfln("mft        %d slots, %d records, %d unreadable, read in %.0f ms", m.stats.records, m.stats.records_read, m.stats.records_bad, time.duration_milliseconds(elapsed))
 	fmt.printfln("in use     %d files, %d directories, %d extra hard links", files, m.stats.directories, len(m.links))
-	fmt.printfln("allocated  %s across all data streams and indexes", human(allocated))
+	fmt.printfln("attributed %s summed from every file run list", human(allocated))
+
+	/*
+	$Bitmap counts allocated clusters without consulting a single file, so comparing it
+	against the sum above checks the run list decoding. The two should agree closely;
+	a wide gap means clusters are allocated that no file claims, which is a parsing bug
+	rather than missing disk space.
+	*/
+	on_disk := m.stats.allocated_clusters * u64(m.boot.bytes_per_cluster)
+	if on_disk > 0 {
+		fmt.printfln("on disk    %s marked allocated in $Bitmap", human(on_disk))
+		if on_disk >= allocated {
+			gap := on_disk - allocated
+			fmt.printfln("unclaimed  %s (%.2f%%) allocated but charged to no file", human(gap), 100 * f64(gap) / f64(on_disk))
+		} else {
+			fmt.printfln("overcount  %s more attributed than $Bitmap reports allocated", human(allocated - on_disk))
+		}
+	}
+	if m.stats.resident_files > 0 {
+		fmt.printfln("resident   %d files hold %s inside their MFT records, charged to $MFT", m.stats.resident_files, human(m.stats.resident_bytes))
+	}
 }
 
 Sized :: struct {
