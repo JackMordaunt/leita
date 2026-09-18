@@ -4,8 +4,9 @@ Package flow holds this project's concurrency shapes.
 Every shape obeys one rule: a worker owns its state and never shares it. Locks are
 then unnecessary, and the caller merges the states once the run is over.
 
-	width  how many workers a piece of work deserves
-	each   claim items from a shared counter until they run out
+	width   how many workers a piece of work deserves
+	each    claim items from a shared counter until they run out
+	manage  the same, for work that discovers more of itself as it goes
 */
 package flow
 

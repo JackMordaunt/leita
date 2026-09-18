@@ -1,0 +1,145 @@
+package flow
+
+import "core:testing"
+
+// A binary tree flattened into indices: node i holds 2i+1 and 2i+2. Walking it is
+// the shape manage is for, since a worker only learns of a node by visiting its
+// parent, and it is deterministic enough to check exactly.
+@(private = "file")
+NODES :: 20_000
+
+@(private = "file")
+Visit :: struct {
+	seen:  [dynamic]int,
+	found: [dynamic]int,
+	stop:  int, // visit this node and the run ends; -1 for never
+	sink:  int, // keeps the busy loop below from being optimised away
+}
+
+@(private = "file")
+descend :: proc(item: int, v: ^Visit) -> bool {
+	append(&v.seen, item)
+	if item == v.stop {
+		return false
+	}
+	for c in ([]int{2 * item + 1, 2 * item + 2}) {
+		if c < NODES {
+			append(&v.found, c)
+		}
+	}
+	return true
+}
+
+@(private = "file")
+hand_over :: proc(v: ^Visit, queue: ^[dynamic]int) -> bool {
+	for c in v.found {
+		append(queue, c)
+	}
+	clear(&v.found)
+	return true
+}
+
+@(private = "file")
+visitors :: proc(n: int, stop := -1) -> []Visit {
+	v := make([]Visit, n, context.temp_allocator)
+	for i in 0 ..< n {
+		v[i] = Visit {
+			seen  = make([dynamic]int, context.temp_allocator),
+			found = make([dynamic]int, context.temp_allocator),
+			stop  = stop,
+		}
+	}
+	return v
+}
+
+@(private = "file")
+totals :: proc(v: []Visit) -> (count, sum: int) {
+	for s in v {
+		for i in s.seen {
+			count += 1
+			sum += i
+		}
+	}
+	return
+}
+
+@(test)
+test_manage_reaches_every_node_once :: proc(t: ^testing.T) {
+	v := visitors(8)
+	manage([]int{0}, v, descend, hand_over)
+
+	// The count proves how many were visited and the sum proves which, so together
+	// they rule out one node twice and another never.
+	count, sum := totals(v)
+	testing.expect_value(t, count, NODES)
+	testing.expect_value(t, sum, NODES * (NODES - 1) / 2)
+}
+
+@(test)
+test_manage_agrees_with_one_worker :: proc(t: ^testing.T) {
+	// A single worker runs inline with no threads at all, which is the yardstick the
+	// concurrent run has to match.
+	one := visitors(1)
+	manage([]int{0}, one, descend, hand_over)
+	count, sum := totals(one)
+	testing.expect_value(t, count, NODES)
+	testing.expect_value(t, sum, NODES * (NODES - 1) / 2)
+}
+
+@(private = "file")
+HEAVY :: 400
+
+// A node has to cost appreciably more than starting a thread, or the calling thread
+// drains the queue before the others are scheduled and the split says nothing. That
+// is a property of the work, not of the traversal.
+@(private = "file")
+descend_slowly :: proc(item: int, v: ^Visit) -> bool {
+	acc := 0
+	for i in 0 ..< 400_000 {
+		acc += i ~ item
+	}
+	v.sink += acc & 1
+	append(&v.seen, item)
+	for c in ([]int{2 * item + 1, 2 * item + 2}) {
+		if c < HEAVY {
+			append(&v.found, c)
+		}
+	}
+	return true
+}
+
+@(test)
+test_manage_spreads_across_workers :: proc(t: ^testing.T) {
+	v := visitors(4)
+	manage([]int{0}, v, descend_slowly, hand_over)
+
+	count, sum := totals(v)
+	testing.expect_value(t, count, HEAVY)
+	testing.expect_value(t, sum, HEAVY * (HEAVY - 1) / 2)
+
+	busy := 0
+	for s in v {
+		if len(s.seen) > 0 {
+			busy += 1
+		}
+	}
+	testing.expect(t, busy > 1, "the traversal stayed on a single worker")
+}
+
+@(test)
+test_manage_stops_when_work_returns_false :: proc(t: ^testing.T) {
+	// One worker keeps this exact: with several, those already holding an item
+	// finish it, which is the documented behaviour.
+	one := visitors(1, stop = 0)
+	manage([]int{0}, one, descend, hand_over)
+	count, _ := totals(one)
+	testing.expect_value(t, count, 1)
+}
+
+@(test)
+test_manage_tolerates_an_empty_seed :: proc(t: ^testing.T) {
+	v := visitors(4)
+	manage([]int{}, v, descend, hand_over)
+	count, _ := totals(v)
+	testing.expect_value(t, count, 0)
+}
