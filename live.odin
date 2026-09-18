@@ -68,17 +68,22 @@ run_live :: proc(volume: string, mount: string, opts: ntfs.Read_Options) -> int 
 		frame_start := time.tick_now()
 
 		if ntfs.mft_ready(&m) {
-			// Both of these have to be cheap, because they run every frame.
+			t_project := time.tick_now()
 			if err := ntfs.to_tree(&m, &t, &projection); err != nil {
 				fmt.eprintfln("error: %v", err)
 				return 1
 			}
+			d_project := time.tick_since(t_project)
 			// Only what became final this frame, plus whatever is still waiting on an
 			// ancestor. Totals carry over rather than being rebuilt.
+			t_roll := time.tick_now()
 			rollup_advance(&roll, &t, projection.fresh[:])
+			d_roll := time.tick_since(t_roll)
 
+			t_rank := time.tick_now()
 			top: [TOP_N]Sized
 			count := rank(&t, roll.totals[:], top[:])
+			d_rank := time.tick_since(t_rank)
 			if count > 0 {
 				scan.node(&t, t.root).name = mount
 			}
@@ -91,15 +96,16 @@ run_live :: proc(volume: string, mount: string, opts: ntfs.Read_Options) -> int 
 			previous = top
 
 			fmt.printfln(
-				"frame %3d  %6.0f ms  %8d nodes  %6d fresh  %6d pending  %10s  cost %5.1f ms  stable %d",
+				"frame %3d %6.0f ms %8d nodes %6d fresh %6d pending | project %5.2f roll %5.2f rank %5.2f total %5.2f ms",
 				frames,
 				time.duration_milliseconds(time.tick_since(start)),
 				t.nodes_done,
 				len(projection.fresh),
 				len(roll.pending),
-				human(count > 0 ? top[0].bytes : 0),
+				time.duration_milliseconds(d_project),
+				time.duration_milliseconds(d_roll),
+				time.duration_milliseconds(d_rank),
 				time.duration_milliseconds(time.tick_since(frame_start)),
-				settled,
 			)
 			free_all(context.temp_allocator)
 		}
