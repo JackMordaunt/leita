@@ -65,14 +65,19 @@ Read_Options :: struct {
 	workers:    int, // 0 selects DEFAULT_WORKERS
 }
 
-// Open `path` (drive letter or image file) and read its whole MFT into a table.
-read_mft :: proc(path: string, opts := Read_Options{}, allocator := context.allocator) -> (m: Mft, err: Error) {
+/*
+Open `path` (drive letter or image file) and read its whole MFT into `m`.
+
+The caller owns the table rather than receiving it at the end, so another thread can
+watch it fill. `mft_ready` says when there is anything to watch.
+*/
+read_mft :: proc(path: string, m: ^Mft, opts := Read_Options{}, allocator := context.allocator) -> Error {
 	v, open_err := volume_open(path, opts.io_mode)
 	if open_err != nil {
-		return {}, open_err
+		return open_err
 	}
 	defer volume_close(&v)
-	return read_mft_from_volume(&v, opts, allocator)
+	return read_mft_from_volume(&v, m, opts, allocator)
 }
 
 /*
@@ -88,19 +93,19 @@ The MFT is addressed as a contiguous logical byte range and `read_logical` maps 
 chunk onto physical runs, so a record straddling two runs (possible when a cluster is
 smaller than a record) is handled without special cases.
 */
-read_mft_from_volume :: proc(v: ^Volume, opts := Read_Options{}, allocator := context.allocator) -> (m: Mft, err: Error) {
+read_mft_from_volume :: proc(v: ^Volume, m: ^Mft, opts := Read_Options{}, allocator := context.allocator) -> Error {
 	// 1. Boot sector.
 	boot_buf, boot_alloc_err := mem.alloc_bytes(IO_ALIGN, IO_ALIGN, allocator)
 	if boot_alloc_err != nil {
-		return {}, .Out_Of_Memory
+		return .Out_Of_Memory
 	}
 	defer mem.free_bytes(boot_buf, allocator)
 	if read_err := volume_read_at(v, boot_buf, 0); read_err != nil {
-		return {}, read_err
+		return read_err
 	}
 	boot, boot_err := parse_boot_sector(boot_buf)
 	if boot_err != nil {
-		return {}, boot_err
+		return boot_err
 	}
 	cluster := u64(boot.bytes_per_cluster)
 	record_size := int(boot.record_size)
@@ -109,18 +114,18 @@ read_mft_from_volume :: proc(v: ^Volume, opts := Read_Options{}, allocator := co
 	rec0_len := max(record_size, IO_ALIGN)
 	rec0_buf, rec0_alloc_err := mem.alloc_bytes(rec0_len, IO_ALIGN, allocator)
 	if rec0_alloc_err != nil {
-		return {}, .Out_Of_Memory
+		return .Out_Of_Memory
 	}
 	defer mem.free_bytes(rec0_buf, allocator)
 	if read_err := volume_read_at(v, rec0_buf, boot.mft_lcn * cluster); read_err != nil {
-		return {}, read_err
+		return read_err
 	}
 	rec0 := rec0_buf[:record_size]
 	if fix_err := apply_fixups(rec0); fix_err != nil {
-		return {}, fix_err
+		return fix_err
 	}
 	if .In_Use not_in record_header(rec0).flags {
-		return {}, .Bad_Record
+		return .Bad_Record
 	}
 
 	runs: []Run
@@ -145,21 +150,21 @@ read_mft_from_volume :: proc(v: ^Volume, opts := Read_Options{}, allocator := co
 		#partial switch a.type {
 		case .Data:
 			if !a.non_resident {
-				return {}, .Mft_Data_Missing
+				return .Mft_Data_Missing
 			}
 			if found {
 				continue
 			}
 			decoded, run_err := decode_runlist(a.runlist, 0, allocator)
 			if run_err != nil {
-				return {}, run_err
+				return run_err
 			}
 			runs = decoded
 			mft_bytes = a.data_size
 			// If the run list in record 0 stops short of the data size, the rest of the
 			// mapping lives in extension records reached via $ATTRIBUTE_LIST.
 			if runlist_clusters(runs) * cluster < mft_bytes {
-				return {}, .Mft_Spans_Extension_Records
+				return .Mft_Spans_Extension_Records
 			}
 			found = true
 		case .Bitmap:
@@ -173,7 +178,7 @@ read_mft_from_volume :: proc(v: ^Volume, opts := Read_Options{}, allocator := co
 		}
 	}
 	if !found {
-		return {}, .Mft_Data_Missing
+		return .Mft_Data_Missing
 	}
 
 	// 3. Plan what to read, and cut it into chunks small enough to hand out.
@@ -200,7 +205,7 @@ read_mft_from_volume :: proc(v: ^Volume, opts := Read_Options{}, allocator := co
 	if extents == nil {
 		whole, extent_alloc_err := make([]Read_Extent, 1, allocator)
 		if extent_alloc_err != nil {
-			return {}, .Out_Of_Memory
+			return .Out_Of_Memory
 		}
 		whole[0] = Read_Extent{0, mft_bytes}
 		extents = whole
@@ -221,14 +226,15 @@ read_mft_from_volume :: proc(v: ^Volume, opts := Read_Options{}, allocator := co
 	worker_count := flow.width(len(chunks), .Io, limit = opts.workers if opts.workers > 0 else DEFAULT_WORKERS)
 
 	record_count := int(mft_bytes / u64(record_size))
-	if init_err := mft_init(&m, record_count, cluster, worker_count, allocator); init_err != nil {
-		return {}, init_err
+	if init_err := mft_init(m, record_count, cluster, worker_count, allocator); init_err != nil {
+		return init_err
 	}
 	m.boot = boot
+	mft_set_ready(m)
 	// From here on, failures must release the table.
 	ok := false
 	defer if !ok {
-		mft_destroy(&m)
+		mft_destroy(m)
 	}
 	m.stats.planned_bytes = planned_bytes
 	m.stats.skipped_bytes = mft_bytes - planned_bytes
@@ -236,7 +242,7 @@ read_mft_from_volume :: proc(v: ^Volume, opts := Read_Options{}, allocator := co
 
 	workers, workers_err := make([]Worker, worker_count, allocator)
 	if workers_err != nil {
-		return {}, .Out_Of_Memory
+		return .Out_Of_Memory
 	}
 	defer delete(workers, allocator)
 
@@ -245,7 +251,7 @@ read_mft_from_volume :: proc(v: ^Volume, opts := Read_Options{}, allocator := co
 	live := 0
 	for i in 0 ..< worker_count {
 		w := &workers[i]
-		w.mft = &m
+		w.mft = m
 		w.sink = &m.sinks[i]
 		w.record_size = record_size
 		w.cluster = cluster
@@ -269,7 +275,7 @@ read_mft_from_volume :: proc(v: ^Volume, opts := Read_Options{}, allocator := co
 		w := &workers[0]
 		wbuf, buf_err := mem.alloc_bytes(chunk, IO_ALIGN, allocator)
 		if buf_err != nil {
-			return {}, .Out_Of_Memory
+			return .Out_Of_Memory
 		}
 		w.volume = v^
 		w.buf = wbuf
@@ -293,7 +299,7 @@ read_mft_from_volume :: proc(v: ^Volume, opts := Read_Options{}, allocator := co
 	flow.each(chunks[:], workers[:live], read_chunk, .Io)
 	for &w in workers[:live] {
 		if w.err != nil {
-			return {}, w.err
+			return w.err
 		}
 	}
 
@@ -301,7 +307,7 @@ read_mft_from_volume :: proc(v: ^Volume, opts := Read_Options{}, allocator := co
 	// worker may own. Every base record is in place now, so they fold in serially.
 	for &w in workers[:live] {
 		for d in w.sink.deferred {
-			if add_err := mft_add_record(&m, d.record, d.bytes, w.sink); add_err != nil {
+			if add_err := mft_add_record(m, d.record, d.bytes, w.sink); add_err != nil {
 				w.sink.stats.records_bad += 1
 			}
 		}
@@ -316,9 +322,9 @@ read_mft_from_volume :: proc(v: ^Volume, opts := Read_Options{}, allocator := co
 	}
 	m.stats.bitmap_ns = i64(time.tick_since(bitmap_start))
 
-	mft_merge_sinks(&m)
+	mft_merge_sinks(m)
 	ok = true
-	return m, .None
+	return .None
 }
 
 // A slice of the MFT's logical address space small enough to be one read, and the

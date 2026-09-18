@@ -3,6 +3,7 @@ package ntfs
 import "core:mem"
 import "core:mem/virtual"
 import "core:strings"
+import "core:sync"
 import "core:unicode/utf16"
 import "core:unicode/utf8"
 
@@ -86,6 +87,7 @@ Mft :: struct {
 	bytes_per_cluster: u64,
 	stats:             Mft_Stats,
 	allocator:         mem.Allocator,
+	ready:             b32, // the table exists and may be read while it fills
 }
 
 mft_init :: proc(m: ^Mft, record_count: int, bytes_per_cluster: u64, sinks := 1, allocator := context.allocator) -> Error {
@@ -120,6 +122,26 @@ mft_destroy :: proc(m: ^Mft) {
 	}
 	delete(m.sinks, m.allocator)
 	m^ = {}
+}
+
+// Say the table is sized and safe to watch. Until then there is nothing to read.
+mft_set_ready :: proc(m: ^Mft) {
+	sync.atomic_store(&m.ready, true)
+}
+
+mft_ready :: proc(m: ^Mft) -> bool {
+	return bool(sync.atomic_load(&m.ready))
+}
+
+/*
+Whether an entry is finished and safe for another thread to read.
+
+Folding writes an entry's flags last, so a reader that sees them set is looking at a
+record whose name and sizes are already in place. Without that order a watcher could
+catch a half-written name, which is a pointer and a length written separately.
+*/
+entry_published :: proc(e: ^Entry) -> bool {
+	return .In_Use in transmute(Record_Flags)sync.atomic_load((^u16)(&e.flags))
 }
 
 // Fold each worker's private results into the table. Only these needed merging;
@@ -176,10 +198,10 @@ mft_add_record :: proc(m: ^Mft, record_number: u32, rec: []byte, sink: ^Sink) ->
 		return .Bad_Record
 	}
 	e := &m.entries[owner]
-	if owner == record_number {
+	publish := owner == record_number
+	if publish {
 		e.sequence = h.sequence
 		e.link_count = h.link_count
-		e.flags = h.flags
 		sink.stats.in_use += 1
 		if .Directory in h.flags {
 			sink.stats.directories += 1
@@ -218,6 +240,10 @@ mft_add_record :: proc(m: ^Mft, record_number: u32, rec: []byte, sink: ^Sink) ->
 			// Directory indexes, bitmaps, reparse data, and EFS streams occupy clusters too.
 			e.allocated += attr_disk_size(a, m.bytes_per_cluster)
 		}
+	}
+	// Last, and atomically: this is what tells a watching thread the entry is whole.
+	if publish {
+		sync.atomic_store((^u16)(&e.flags), transmute(u16)h.flags)
 	}
 	return .None
 }

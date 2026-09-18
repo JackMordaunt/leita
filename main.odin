@@ -49,11 +49,14 @@ run :: proc() -> int {
 	target := "C:"
 	opts: ntfs.Read_Options
 	wcfg: walk.Config
+	live := false
 	for arg in os.args[1:] {
 		switch arg {
 		case "-h", "--help", "/?":
-			fmt.println("usage: sonar [drive] [--buffered] [--no-skip] [--min-skip=N] [--workers=N] [--chunk=N]")
+			fmt.println("usage: sonar [drive] [--live] [--buffered] [--no-skip] [--min-skip=N] [--workers=N] [--chunk=N]")
 			return 0
+		case "--live":
+			live = true
 		case "--buffered":
 			opts.io_mode = .Buffered
 		case "--no-skip":
@@ -110,6 +113,14 @@ run :: proc() -> int {
 		return 1
 	}
 
+	if live {
+		if choice.engine != .Mft {
+			fmt.eprintln("error: live mode needs the MFT reader")
+			return 1
+		}
+		return run_live(resolved.volume, strings.trim_suffix(resolved.mount, `\`), opts)
+	}
+
 	t: scan.Tree
 	if err := scan.tree_init(&t, 8); err != nil {
 		fmt.eprintfln("error: %v", err)
@@ -124,7 +135,7 @@ run :: proc() -> int {
 	have_mft := false
 	switch choice.engine {
 	case .Mft:
-		table, err := ntfs.read_mft(resolved.volume, opts)
+		err := ntfs.read_mft(resolved.volume, &m, opts)
 		if err != nil {
 			#partial switch err {
 			case .Access_Denied:
@@ -138,9 +149,9 @@ run :: proc() -> int {
 			}
 			return 1
 		}
-		m = table
 		have_mft = true
-		if err := ntfs.to_tree(&m, &t); err != nil {
+		projection: ntfs.Projection
+		if err := ntfs.to_tree(&m, &t, &projection); err != nil {
 			fmt.eprintfln("error: %v", err)
 			return 1
 		}
@@ -206,6 +217,22 @@ roll_up :: proc(t: ^scan.Tree, totals: []u64) {
 Kind :: enum {
 	files,
 	directories,
+}
+
+// The directories that hold the most, largest first.
+rank :: proc(t: ^scan.Tree, totals: []u64, top: []Sized) -> int {
+	count := 0
+	for i in 0 ..< t.count {
+		n := scan.node(t, i)
+		if .Used not_in n.flags || .Directory not_in n.flags {
+			continue
+		}
+		if totals[i] == 0 {
+			continue
+		}
+		top_n(top, &count, Sized{bytes = totals[i], record = i})
+	}
+	return count
 }
 
 print_largest :: proc(t: ^scan.Tree, totals: []u64, kind: Kind) {
