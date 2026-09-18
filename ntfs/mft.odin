@@ -41,6 +41,10 @@ Mft_Stats :: struct {
 	// Clusters $Bitmap reports as allocated; 0 when it could not be read. This is the
 	// file system's own total, independent of the per-file sums.
 	allocated_clusters: u64,
+	// Phase timings, nanoseconds.
+	io_ns:              i64,
+	parse_ns:           i64,
+	bitmap_ns:          i64,
 }
 
 Mft :: struct {

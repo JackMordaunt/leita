@@ -1,6 +1,7 @@
 package ntfs
 
 import "core:mem"
+import "core:time"
 
 // Alignment for I/O buffers. Raw volume reads want sector alignment; 4 KiB covers
 // every sector size in use.
@@ -137,9 +138,13 @@ read_mft_from_volume :: proc(v: ^Volume, opts := Read_Options{}, allocator := co
 	record_number: u32 = 0
 	for offset: u64 = 0; offset < mft_bytes; offset += u64(chunk) {
 		n := int(min(u64(chunk), mft_bytes - offset))
+		io_start := time.tick_now()
 		if read_err := read_logical(&reader, offset, buf[:n]); read_err != nil {
 			return {}, read_err
 		}
+		m.stats.io_ns += i64(time.tick_since(io_start))
+		parse_start := time.tick_now()
+		defer m.stats.parse_ns += i64(time.tick_since(parse_start))
 		for start := 0; start + record_size <= n; start += record_size {
 			rec := buf[start:start + record_size]
 			defer record_number += 1
@@ -159,9 +164,11 @@ read_mft_from_volume :: proc(v: ^Volume, opts := Read_Options{}, allocator := co
 	}
 	// $Bitmap is the file system's own count of used clusters, which checks the sums
 	// built above. Failing to read it costs nothing else, so the table still stands.
+	bitmap_start := time.tick_now()
 	if c, bitmap_err := read_bitmap_clusters(&reader, boot, buf, allocator); bitmap_err == nil {
 		m.stats.allocated_clusters = c
 	}
+	m.stats.bitmap_ns = i64(time.tick_since(bitmap_start))
 
 	ok = true
 	return m, .None

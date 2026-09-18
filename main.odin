@@ -76,8 +76,19 @@ run :: proc() -> int {
 	}
 
 	print_summary(&m, elapsed)
+	t_files := time.tick_now()
 	print_largest_files(&m, prefix)
+	d_files := time.tick_since(t_files)
+	t_dirs := time.tick_now()
 	print_largest_directories(&m, prefix)
+	d_dirs := time.tick_since(t_dirs)
+	fmt.println()
+	fmt.printfln("phase io      %.0f ms", f64(m.stats.io_ns) / 1e6)
+	fmt.printfln("phase parse   %.0f ms", f64(m.stats.parse_ns) / 1e6)
+	fmt.printfln("phase bitmap  %.0f ms", f64(m.stats.bitmap_ns) / 1e6)
+	fmt.printfln("phase files   %.0f ms", time.duration_milliseconds(d_files))
+	fmt.printfln("phase dirs    %.0f ms", time.duration_milliseconds(d_dirs))
+	fmt.printfln("phase total   %.0f ms", time.duration_milliseconds(time.tick_since(start)))
 	return 0
 }
 
