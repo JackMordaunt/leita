@@ -38,10 +38,10 @@ Error :: enum {
 /*
 Walk `root` into the tree.
 
-Directories are the unit of work: each yields its entries and queues the directories
-among them. Work is found as it goes rather than known up front, so a batch of
-discovered directories is walked, and what that batch discovers becomes the next one.
-Every worker writes only into slots it claimed, so nothing here is synchronised.
+Directories are the unit of work and each yields more of them, which is the shape
+`flow.manage` exists for: a worker takes the next directory the moment one is known
+rather than waiting for a level to finish. Every worker writes only into slots it
+claimed, so nothing here is synchronised except the queue itself.
 */
 scan :: proc(root: string, t: ^scan.Tree, cfg := Config{}) -> Error {
 	allocator := context.allocator
@@ -61,56 +61,42 @@ scan :: proc(root: string, t: ^scan.Tree, cfg := Config{}) -> Error {
 	if workers <= 0 {
 		workers = DEFAULT_WORKERS
 	}
-
-	// Directories discovered but not yet walked. One generation is handed to the
-	// workers while the next accumulates in their own lists.
-	pending := make([dynamic]Dir, allocator)
-	defer delete(pending)
-	append(&pending, Dir{index = first, path = strings.clone(root, allocator)})
-
 	// One writer per worker, and a writer needs an arena of its own, so the tree
 	// caps how wide this can run.
 	workers = min(workers, len(t.arenas))
+
 	states := make([]Worker, workers, allocator)
 	defer delete(states, allocator)
-
-	next := make([dynamic]Dir, allocator)
-	defer delete(next)
-
-	for len(pending) > 0 {
-		if scan.cancelled(t) {
-			return .Cancelled
-		}
-		// Size the pool to the generation: a directory with two children should not
-		// pay to start eight threads.
-		n_workers := scan.width_for(len(pending), workers)
-		for i in 0 ..< n_workers {
-			states[i] = Worker {
-				writer    = scan.writer(t, i),
-				found     = make([dynamic]Dir, allocator),
-				follow    = cfg.follow,
-				allocator = allocator,
-			}
-		}
-
-		flow.each(pending[:], states[:n_workers], walk_dir, .Io)
-
-		clear(&next)
-		for &s in states[:n_workers] {
-			for d in s.found {
-				append(&next, d)
-			}
-			delete(s.found)
-		}
-		for d in pending {
-			delete(d.path, allocator)
-		}
-		clear(&pending)
-		for d in next {
-			append(&pending, d)
+	for i in 0 ..< workers {
+		states[i] = Worker {
+			writer    = scan.writer(t, i),
+			found     = make([dynamic]Dir, allocator),
+			follow    = cfg.follow,
+			allocator = allocator,
 		}
 	}
+	defer for &s in states {
+		delete(s.found)
+	}
+
+	seed := []Dir{{index = first, path = strings.clone(root, allocator)}}
+	flow.manage(seed, states, walk_dir, hand_over)
+
+	if scan.cancelled(t) {
+		return .Cancelled
+	}
 	return .None
+}
+
+// Move what a worker found into the queue. Serialised by `manage`, so this is the
+// one place the set of directories still to walk is touched.
+@(private)
+hand_over :: proc(w: ^Worker, queue: ^[dynamic]Dir) -> bool {
+	for d in w.found {
+		append(queue, d)
+	}
+	clear(&w.found)
+	return !scan.cancelled(w.writer.tree)
 }
 
 // A directory waiting to be read, and the node already standing for it.
@@ -133,6 +119,7 @@ walk_dir :: proc(d: Dir, w: ^Worker) -> bool {
 	if scan.cancelled(w.writer.tree) {
 		return false
 	}
+	defer delete(d.path, w.allocator)
 	f, open_err := os.open(d.path)
 	if open_err != nil {
 		// A directory we may not read is not a reason to abandon the scan; it is
