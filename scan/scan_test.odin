@@ -16,11 +16,30 @@ test_choose_prefers_the_mft_when_it_can_be_read :: proc(t: ^testing.T) {
 
 @(test)
 test_choose_walks_what_it_cannot_read_directly :: proc(t: ^testing.T) {
-	// Elevation buys nothing on these, so it must not be suggested.
-	for fs in ([]Filesystem{.Refs, .Exfat, .Fat32, .Network}) {
-		c := choose(Target{fs = fs, volume = `\\.\D:`}, elevated = true)
+	// Elevation buys nothing on these, so it must not be suggested. A mount point is
+	// what makes a target walkable, and `resolve` sets one for everything that has a
+	// directory tree behind it.
+	for fs in ([]Filesystem{.Refs, .Exfat, .Fat32, .Network, .Other}) {
+		c := choose(Target{fs = fs, volume = `\\.\D:`, mount = `D:\`}, elevated = true)
 		testing.expect_value(t, c.engine, Engine.Walk)
 		testing.expect(t, !c.elevation_would_help)
+	}
+}
+
+@(test)
+test_choose_reads_an_image_without_elevation :: proc(t: ^testing.T) {
+	// An image is a file like any other: opening it is the whole of the permission
+	// needed, so asking for more would send a reader that cannot work.
+	image := Target{fs = .Ntfs, volume = "disk.img", image = true}
+	testing.expect_value(t, choose(image, elevated = false).engine, Engine.Mft)
+}
+
+@(test)
+test_choose_gives_up_on_a_volume_it_cannot_name :: proc(t: ^testing.T) {
+	// A raw device or an image whose filesystem went unrecognised has no tree to
+	// walk, so offering the walker would report an empty volume as an answer.
+	for v in ([]Target{{volume = "/dev/sda1"}, {volume = "disk.img", image = true}}) {
+		testing.expect_value(t, choose(v, elevated = true).engine, Engine.None)
 	}
 }
 

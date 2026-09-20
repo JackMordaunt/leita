@@ -22,12 +22,13 @@ Target :: struct {
 }
 
 Filesystem :: enum {
-	Unknown,
+	Unknown, // nothing could be learned about it
 	Ntfs,
 	Refs,
 	Exfat,
 	Fat32,
 	Network,
+	Other, // named, but no reader here knows it: walking is all that is left
 }
 
 /*
@@ -84,12 +85,17 @@ filter the result, never a reason to reject the reader.
 */
 choose :: proc(t: Target, elevated: bool) -> Choice {
 	if t.fs == .Ntfs {
-		if elevated {
+		// An image is an ordinary file, so reading one needs no more than opening it.
+		// It is the raw handle onto a mounted volume that has to be granted.
+		if elevated || t.image {
 			return {engine = .Mft}
 		}
 		return {engine = .Walk, elevation_would_help = true}
 	}
-	if t.fs == .Unknown && t.volume == "" {
+	// Nothing mounted means no directory tree to enumerate. A raw volume and an image
+	// are both bytes until a reader that knows the filesystem inside says otherwise,
+	// so an unrecognised one has nothing to offer rather than something to walk.
+	if t.mount == "" {
 		return {engine = .None}
 	}
 	return {engine = .Walk}

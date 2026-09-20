@@ -16,6 +16,7 @@ package scan
 Error :: enum {
 	None,
 	Target_Not_Found,
+	Access_Denied, // the volume exists but this process may not read it
 	Out_Of_Memory,
 	Unsupported_Platform,
 }
