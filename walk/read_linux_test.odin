@@ -34,7 +34,11 @@ test_a_sparse_file_is_charged_what_it_occupies :: proc(t: ^testing.T) {
 	// The same length, actually written.
 	body := make([]byte, 1 << 20, context.temp_allocator)
 	slice.fill(body, 'x')
-	testing.expect(t, os.write_entire_file(fmt.tprintf("%s/solid.bin", root), body) == nil, "could not write")
+	testing.expect(
+		t,
+		os.write_entire_file(fmt.tprintf("%s/solid.bin", root), body) == nil,
+		"could not write",
+	)
 
 	tree: shared.Tree
 	testing.expect_value(t, shared.tree_init(&tree, 1), shared.Error.None)

@@ -4,7 +4,10 @@ import "core:testing"
 
 @(test)
 test_choose_prefers_the_mft_when_it_can_be_read :: proc(t: ^testing.T) {
-	ntfs := Target{fs = .Ntfs, volume = `\\.\C:`}
+	ntfs := Target {
+		fs     = .Ntfs,
+		volume = `\\.\C:`,
+	}
 	testing.expect_value(t, choose(ntfs, elevated = true).engine, Engine.Mft)
 
 	// Without the privilege the reader is unavailable rather than merely slower, so
@@ -30,7 +33,11 @@ test_choose_walks_what_it_cannot_read_directly :: proc(t: ^testing.T) {
 test_choose_reads_an_image_without_elevation :: proc(t: ^testing.T) {
 	// An image is a file like any other: opening it is the whole of the permission
 	// needed, so asking for more would send a reader that cannot work.
-	image := Target{fs = .Ntfs, volume = "disk.img", image = true}
+	image := Target {
+		fs     = .Ntfs,
+		volume = "disk.img",
+		image  = true,
+	}
 	testing.expect_value(t, choose(image, elevated = false).engine, Engine.Mft)
 }
 

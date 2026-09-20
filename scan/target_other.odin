@@ -125,7 +125,14 @@ The longest mount point that prefixes the path wins, which is what makes a files
 mounted inside another resolve to the inner one. Names are returned owned.
 */
 @(private = "file")
-mounted_at :: proc(path: string, allocator := context.allocator) -> (device, mount: string, fs: Filesystem, found: bool) {
+mounted_at :: proc(
+	path: string,
+	allocator := context.allocator,
+) -> (
+	device, mount: string,
+	fs: Filesystem,
+	found: bool,
+) {
 	when ODIN_OS != .Linux {
 		// Other unixes report their mounts through getmntinfo rather than a file.
 		return "", "", .Unknown, false

@@ -20,15 +20,15 @@ readers have finished with, charges it, and publishes. If a pass takes longer th
 frame the UI simply draws the previous answer.
 */
 Builder :: struct {
-	table:     ^ntfs.Mft,
-	tree:      ^scan.Tree,
-	out:       ^scan.Publisher,
-	mount:     string,
-	scanning:  ^b32, // cleared by the reader thread when the table is finished
-	started:   time.Tick,
+	table:      ^ntfs.Mft,
+	tree:       ^scan.Tree,
+	out:        ^scan.Publisher,
+	mount:      string,
+	scanning:   ^b32, // cleared by the reader thread when the table is finished
+	started:    time.Tick,
 	projection: ntfs.Projection,
-	roll:      Rollup,
-	done:      b32,
+	roll:       Rollup,
+	done:       b32,
 }
 
 builder_run :: proc(b: ^Builder) {
@@ -88,7 +88,10 @@ builder_pass :: proc(b: ^Builder, exact: bool) {
 		complete = exact,
 	}
 	for i in 0 ..< count {
-		s.rows[i] = {node = top[i].record, bytes = top[i].bytes}
+		s.rows[i] = {
+			node  = top[i].record,
+			bytes = top[i].bytes,
+		}
 	}
 	scan.publish(b.out, s)
 }

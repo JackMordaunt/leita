@@ -33,7 +33,14 @@ Reading a block device is a matter of permissions on the device rather than of
 privilege as it is on Windows: membership of the group owning it is what grants it,
 and a group added to a live session only takes effect on the next login.
 */
-volume_open :: proc(path: string, mode := IO_Mode.Unbuffered, allocator := context.allocator) -> (v: Volume, err: Error) {
+volume_open :: proc(
+	path: string,
+	mode := IO_Mode.Unbuffered,
+	allocator := context.allocator,
+) -> (
+	v: Volume,
+	err: Error,
+) {
 	f, open_err := os.open(path, {.Read})
 	if open_err != nil {
 		if open_err == io.Error.Permission_Denied {

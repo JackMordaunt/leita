@@ -65,12 +65,12 @@ target_destroy :: proc(t: ^Target) {
 // themselves, which keeps this package free of a dependency on any of them.
 Engine :: enum {
 	None, // nothing here can be scanned
-	Mft,  // read the NTFS master file table whole
+	Mft, // read the NTFS master file table whole
 	Walk, // enumerate directories
 }
 
 Choice :: struct {
-	engine: Engine,
+	engine:               Engine,
 	// The MFT reader is far faster but needs a raw volume handle. When this is set,
 	// Walk is what will run unless the caller elevates and asks again.
 	elevation_would_help: bool,

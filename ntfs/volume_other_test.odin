@@ -43,7 +43,13 @@ test_volume_read_at_offsets :: proc(t: ^testing.T) {
 		off, size := span[0], span[1]
 		buf := make([]byte, size, context.temp_allocator)
 		testing.expect_value(t, volume_read_at(&v, buf, u64(off)), Error.None)
-		testing.expectf(t, slice.equal(buf, content[off:off + size]), "wrong bytes at %d for %d", off, size)
+		testing.expectf(
+			t,
+			slice.equal(buf, content[off:off + size]),
+			"wrong bytes at %d for %d",
+			off,
+			size,
+		)
 	}
 }
 

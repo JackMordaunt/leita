@@ -79,13 +79,28 @@ test_path_walks_to_a_root :: proc(t: ^testing.T) {
 	first, _ := claim(&w, 3)
 	testing.expect_value(t, first, u32(0))
 
-	node(&tree, 0)^ = Node{parent = 0, name = "C:", flags = {.Used, .Directory}}
-	node(&tree, 1)^ = Node{parent = 0, name = "Windows", flags = {.Used, .Directory}}
-	node(&tree, 2)^ = Node{parent = 1, name = "notepad.exe", flags = {.Used}}
+	node(&tree, 0)^ = Node {
+		parent = 0,
+		name   = "C:",
+		flags  = {.Used, .Directory},
+	}
+	node(&tree, 1)^ = Node {
+		parent = 0,
+		name   = "Windows",
+		flags  = {.Used, .Directory},
+	}
+	node(&tree, 2)^ = Node {
+		parent = 1,
+		name   = "notepad.exe",
+		flags  = {.Used},
+	}
 
 	// Written with the separator of the machine showing the path, not the one the
 	// names came from, so this is built rather than spelled.
-	want := strings.concatenate({"C:", SEPARATOR, "Windows", SEPARATOR, "notepad.exe"}, context.temp_allocator)
+	want := strings.concatenate(
+		{"C:", SEPARATOR, "Windows", SEPARATOR, "notepad.exe"},
+		context.temp_allocator,
+	)
 	testing.expect_value(t, path(&tree, 2, context.temp_allocator), want)
 	testing.expect_value(t, path(&tree, 0, context.temp_allocator), "C:")
 }
@@ -98,8 +113,16 @@ test_path_stops_at_a_cycle :: proc(t: ^testing.T) {
 	defer tree_destroy(&tree)
 	w := writer(&tree)
 	claim(&w, 2)
-	node(&tree, 0)^ = Node{parent = 1, name = "a", flags = {.Used, .Directory}}
-	node(&tree, 1)^ = Node{parent = 0, name = "b", flags = {.Used, .Directory}}
+	node(&tree, 0)^ = Node {
+		parent = 1,
+		name   = "a",
+		flags  = {.Used, .Directory},
+	}
+	node(&tree, 1)^ = Node {
+		parent = 0,
+		name   = "b",
+		flags  = {.Used, .Directory},
+	}
 
 	p := path(&tree, 0, context.temp_allocator)
 	testing.expect(t, len(p) > 0, "a cycle produced no path at all")

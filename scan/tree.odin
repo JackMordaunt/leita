@@ -48,12 +48,12 @@ identifier. One that discovers as it goes calls `claim` for a run of slots. Eith
 way a slot belongs to one worker, so filling it needs no lock.
 */
 Tree :: struct {
-	blocks:    [MAX_BLOCKS]^Block,
-	count:     u32, // slots handed out
-	committed: u32, // slots backed by an allocated block
-	mutex:     sync.Mutex, // guards block allocation only
-	arenas:    []virtual.Arena, // one per writer; names live here for the tree's life
-	root:      u32,
+	blocks:     [MAX_BLOCKS]^Block,
+	count:      u32, // slots handed out
+	committed:  u32, // slots backed by an allocated block
+	mutex:      sync.Mutex, // guards block allocation only
+	arenas:     []virtual.Arena, // one per writer; names live here for the tree's life
+	root:       u32,
 	// Polled by a UI rather than pushed to it, so sampling costs a reader nothing.
 	nodes_done: u64,
 	bytes_done: u64,

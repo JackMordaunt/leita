@@ -34,11 +34,19 @@ fixture :: proc(t: ^testing.T, name: string) -> string {
 	}
 	testing.expect(t, os.make_directory(root) == nil, "could not make the root")
 	testing.expect(t, os.make_directory(fmt.tprintf("%s/sub", root)) == nil, "could not make sub")
-	testing.expect(t, os.make_directory(fmt.tprintf("%s/sub/deep", root)) == nil, "could not make deep")
+	testing.expect(
+		t,
+		os.make_directory(fmt.tprintf("%s/sub/deep", root)) == nil,
+		"could not make deep",
+	)
 	write(t, fmt.tprintf("%s/a.txt", root), 100)
 	write(t, fmt.tprintf("%s/sub/b.txt", root), 5000)
 	write(t, fmt.tprintf("%s/sub/deep/c.txt", root), 1)
-	testing.expect(t, os.symlink("sub", fmt.tprintf("%s/link", root)) == nil, "could not make the symlink")
+	testing.expect(
+		t,
+		os.symlink("sub", fmt.tprintf("%s/link", root)) == nil,
+		"could not make the symlink",
+	)
 	return root
 }
 
