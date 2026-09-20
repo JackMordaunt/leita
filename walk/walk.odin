@@ -19,9 +19,8 @@ import "../flow"
 import "../scan"
 
 Config :: struct {
-	workers:   int, // 0 selects DEFAULT_WORKERS
-	follow:    bool, // descend through symlinks and junctions; loops are not detected
-	allocator: mem.Allocator,
+	workers: int, // 0 selects DEFAULT_WORKERS
+	follow:  bool, // descend through symlinks and junctions; loops are not detected
 }
 
 // Directory reads are latency bound and hold no core while they wait, so more
