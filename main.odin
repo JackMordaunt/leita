@@ -155,41 +155,16 @@ run :: proc() -> int {
 		time.duration_milliseconds(elapsed),
 	)
 
-	totals := make([]u64, t.count)
-	defer delete(totals)
-	roll_up(&t, totals)
+	// The same charging the live scan does, run once over a tree nobody is still
+	// filling. A node left uncharged here has an ancestor that never resolved, and
+	// another pass would not change that.
+	roll: Rollup
+	defer rollup_destroy(&roll)
+	rollup_advance(&roll, &t)
 
-	print_largest(&t, totals, .files)
-	print_largest(&t, totals, .directories)
+	print_largest(&t, roll.totals[:], .files)
+	print_largest(&t, roll.totals[:], .directories)
 	return 0
-}
-
-/*
-Credit every node's bytes to each of its ancestors.
-
-An extra name for a file counted elsewhere is skipped, or the file would be charged
-to every directory it is linked into. The depth cap guards against a cycle that a
-corrupt source could produce.
-*/
-roll_up :: proc(t: ^scan.Tree, totals: []u64) {
-	for i in 0 ..< t.count {
-		n := scan.node(t, i)
-		if .Used not_in n.flags || .Extra_Name in n.flags {
-			continue
-		}
-		if .Directory in n.flags {
-			totals[i] += n.disk
-		}
-		cur := i
-		for depth := 0; depth < 64; depth += 1 {
-			p := scan.node(t, cur).parent
-			if p == cur || p >= t.count {
-				break
-			}
-			totals[p] += n.disk
-			cur = p
-		}
-	}
 }
 
 Kind :: enum {
@@ -218,20 +193,21 @@ rank :: proc(t: ^scan.Tree, totals: []u64, top: []Sized) -> int {
 print_largest :: proc(t: ^scan.Tree, totals: []u64, kind: Kind) {
 	top: [TOP_N]Sized
 	count := 0
-	for i in 0 ..< t.count {
+	for i in 0 ..< u32(len(totals)) {
 		n := scan.node(t, i)
-		if .Used not_in n.flags {
+		flags := scan.node_flags(n)
+		if .Used not_in flags {
 			continue
 		}
 		bytes: u64
 		switch kind {
 		case .files:
-			if .Directory in n.flags || .Extra_Name in n.flags {
+			if .Directory in flags || .Extra_Name in flags {
 				continue
 			}
 			bytes = n.disk
 		case .directories:
-			if .Directory not_in n.flags {
+			if .Directory not_in flags {
 				continue
 			}
 			bytes = totals[i]
