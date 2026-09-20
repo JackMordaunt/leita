@@ -1,3 +1,4 @@
+#+build !linux
 package walk
 
 import "core:os"
@@ -6,9 +7,9 @@ import "core:strings"
 /*
 Read one directory through core:os.
 
-The portable reader: whatever the platform, core:os describes every entry and this
-records what the tree keeps. It asks for a great deal more than that per entry, which
-is the cost of not knowing which platform it is on.
+The reader that works anywhere. core:os describes every entry in full and this keeps
+the part the tree records, which is most of what it costs: not knowing the platform
+means not knowing which of that description was worth asking for.
 */
 @(private)
 read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
