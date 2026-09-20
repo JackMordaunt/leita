@@ -80,7 +80,7 @@ scan :: proc(root: string, t: ^scan.Tree, cfg := Config{}) -> Error {
 	}
 
 	seed := []Dir{{index = first, path = strings.clone(root, allocator)}}
-	flow.manage(seed, states, walk_dir, hand_over)
+	flow.manage(seed, states, walk_dir, hand_over, drop)
 
 	for &s in states {
 		if s.err != nil {
@@ -106,6 +106,15 @@ hand_over :: proc(d: Dir, ok: bool, w: ^Worker, queue: ^[dynamic]Dir) -> bool {
 	// but it is no reason to abandon the rest of the volume. Running out of room
 	// for the tree is, since everything after it would be missing silently.
 	return w.err == nil && !scan.cancelled(w.writer.tree)
+}
+
+// A directory a stopped scan never reached. `walk_dir` frees what it is handed; this
+// is the other half, since cancelling mid-volume otherwise strands a path per
+// directory found but not yet walked. Runs on the thread that called `scan`, and
+// paths are cloned from that context, so the two allocators are the same one.
+@(private)
+drop :: proc(d: Dir) {
+	delete(d.path, context.allocator)
 }
 
 // A directory waiting to be read, and the node already standing for it.
