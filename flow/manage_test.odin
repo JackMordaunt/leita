@@ -39,17 +39,34 @@ hand_over :: proc(item: int, ok: bool, v: ^Visit, queue: ^[dynamic]int) -> bool 
 	return ok
 }
 
+/*
+Worker states, each holding what its worker saw.
+
+The dynamic arrays are deliberately not on the temp allocator. A dynamic array
+remembers the allocator it was made with, and these are appended to from every
+worker at once, so a per-thread arena belonging to whichever thread built them would
+be grown from all of them without a lock. That miscounted a node roughly once in
+twelve runs. `delete` them with `release`.
+*/
 @(private = "file")
 visitors :: proc(n: int, stop := -1) -> []Visit {
 	v := make([]Visit, n, context.temp_allocator)
 	for i in 0 ..< n {
 		v[i] = Visit {
-			seen  = make([dynamic]int, context.temp_allocator),
-			found = make([dynamic]int, context.temp_allocator),
+			seen  = make([dynamic]int, context.allocator),
+			found = make([dynamic]int, context.allocator),
 			stop  = stop,
 		}
 	}
 	return v
+}
+
+@(private = "file")
+release :: proc(v: []Visit) {
+	for s in v {
+		delete(s.seen)
+		delete(s.found)
+	}
 }
 
 @(private = "file")
@@ -66,6 +83,7 @@ totals :: proc(v: []Visit) -> (count, sum: int) {
 @(test)
 test_manage_reaches_every_node_once :: proc(t: ^testing.T) {
 	v := visitors(8)
+	defer release(v)
 	manage([]int{0}, v, descend, hand_over)
 
 	// The count proves how many were visited and the sum proves which, so together
@@ -80,6 +98,7 @@ test_manage_agrees_with_one_worker :: proc(t: ^testing.T) {
 	// A single worker runs inline with no threads at all, which is the yardstick the
 	// concurrent run has to match.
 	one := visitors(1)
+	defer release(one)
 	manage([]int{0}, one, descend, hand_over)
 	count, sum := totals(one)
 	testing.expect_value(t, count, NODES)
@@ -111,6 +130,7 @@ descend_slowly :: proc(item: int, v: ^Visit) -> bool {
 @(test)
 test_manage_spreads_across_workers :: proc(t: ^testing.T) {
 	v := visitors(4)
+	defer release(v)
 	manage([]int{0}, v, descend_slowly, hand_over)
 
 	count, sum := totals(v)
@@ -131,6 +151,7 @@ test_manage_stops_when_the_manager_returns_false :: proc(t: ^testing.T) {
 	// One worker keeps this exact: with several, those already holding an item
 	// finish it, which is the documented behaviour.
 	one := visitors(1, stop = 0)
+	defer release(one)
 	manage([]int{0}, one, descend, hand_over)
 	count, _ := totals(one)
 	testing.expect_value(t, count, 1)
@@ -139,6 +160,7 @@ test_manage_stops_when_the_manager_returns_false :: proc(t: ^testing.T) {
 @(test)
 test_manage_tolerates_an_empty_seed :: proc(t: ^testing.T) {
 	v := visitors(4)
+	defer release(v)
 	manage([]int{}, v, descend, hand_over)
 	count, _ := totals(v)
 	testing.expect_value(t, count, 0)
