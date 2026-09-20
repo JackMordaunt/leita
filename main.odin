@@ -133,6 +133,11 @@ run :: proc() -> int {
 	// keeps its own table, which carries what only NTFS knows.
 	m: ntfs.Mft
 	have_mft := false
+	// Registered before the read, not after the switch: projecting the table can fail,
+	// and a defer below that point never covers the return it takes.
+	defer if have_mft {
+		ntfs.mft_destroy(&m)
+	}
 	switch choice.engine {
 	case .Mft:
 		err := ntfs.read_mft(resolved.volume, &m, opts)
@@ -166,9 +171,6 @@ run :: proc() -> int {
 			return 1
 		}
 	case .None:
-	}
-	defer if have_mft {
-		ntfs.mft_destroy(&m)
 	}
 	elapsed := time.tick_since(start)
 
