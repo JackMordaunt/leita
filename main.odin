@@ -103,7 +103,7 @@ run :: proc() -> int {
 	choice := scan.choose(resolved, scan.elevated())
 	fmt.printfln(
 		"sonar: %s on %s (%v, %v engine, %v io)",
-		resolved.root if resolved.root != "" else resolved.mount,
+		scan.location(resolved, context.temp_allocator),
 		resolved.volume,
 		resolved.fs,
 		choice.engine,
@@ -122,7 +122,7 @@ run :: proc() -> int {
 			fmt.eprintln("error: live mode needs the MFT reader")
 			return 1
 		}
-		return run_live(resolved.volume, strings.trim_suffix(resolved.mount, `\`), opts)
+		return run_live(resolved.volume, scan.top(resolved), opts)
 	}
 
 	t: scan.Tree
@@ -165,11 +165,11 @@ run :: proc() -> int {
 			fmt.eprintfln("error: %v", err)
 			return 1
 		}
-		// The table calls its root ".", so paths would lose the drive it came from.
+		// The table calls its root ".", so paths would lose the volume it came from.
 		rw := scan.writer(&t, 0)
-		scan.node(&t, t.root).name = scan.intern(&rw, strings.trim_suffix(resolved.mount, `\`))
+		scan.node(&t, t.root).name = scan.intern(&rw, scan.top(resolved))
 	case .Walk:
-		root := resolved.mount if resolved.root == "" else fmt.tprintf("%s%s", strings.trim_suffix(resolved.mount, `\`), resolved.root)
+		root := scan.location(resolved, context.temp_allocator)
 		if err := walk.scan(root, &t, wcfg); err != nil {
 			fmt.eprintfln("error: walking %s: %v", root, err)
 			return 1

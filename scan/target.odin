@@ -1,6 +1,7 @@
 package scan
 
 import "core:mem"
+import "core:strings"
 
 /*
 What the user asked to scan, resolved once so no backend has to re-derive it.
@@ -27,6 +28,28 @@ Filesystem :: enum {
 	Exfat,
 	Fat32,
 	Network,
+}
+
+/*
+The top of the target, named as a path: where the volume is mounted, or the volume
+itself when nothing has it mounted. No trailing separator, so a subtree joins on.
+*/
+top :: proc(t: Target) -> string {
+	if t.mount == "" {
+		return t.volume
+	}
+	if len(t.mount) > 1 {
+		return strings.trim_right(t.mount, `\/`)
+	}
+	return t.mount
+}
+
+// The full path of what will be scanned: the top, and the subtree below it.
+location :: proc(t: Target, allocator := context.allocator) -> string {
+	if t.root == "" {
+		return strings.clone(top(t), allocator)
+	}
+	return strings.concatenate({top(t), t.root}, allocator)
 }
 
 target_destroy :: proc(t: ^Target) {
