@@ -40,6 +40,7 @@ test: | $(BUILD)/test
 	$(ODIN) test ntfs -debug $(SAN) $(FLAGS) -out:$(BUILD)/test/ntfs$(EXE)
 	$(ODIN) test flow -debug $(SAN) $(FLAGS) -out:$(BUILD)/test/flow$(EXE)
 	$(ODIN) test scan -debug $(SAN) $(FLAGS) -out:$(BUILD)/test/scan$(EXE)
+	$(ODIN) test walk -debug $(SAN) $(FLAGS) -out:$(BUILD)/test/walk$(EXE)
 
 check:
 	$(ODIN) check . $(FLAGS)
