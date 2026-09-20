@@ -74,7 +74,7 @@ Every node on the way up must be settled, not merely present: an unsettled one i
 rooted at itself for now and would look like the top of the tree. Returning false
 leaves it uncharged, which is the whole of what has to be remembered about it.
 */
-@(private = "file")
+@(private)
 charge :: proc(r: ^Rollup, t: ^scan.Tree, i: u32) -> bool {
 	n := scan.node(t, i)
 	flags := scan.node_flags(n)
@@ -108,12 +108,12 @@ charge :: proc(r: ^Rollup, t: ^scan.Tree, i: u32) -> bool {
 	return true
 }
 
-@(private = "file")
+@(private)
 marked :: proc(b: []u64, i: u32) -> bool {
 	return b[i >> 6] & (1 << uint(i & 63)) != 0
 }
 
-@(private = "file")
+@(private)
 mark :: proc(b: []u64, i: u32) {
 	b[i >> 6] |= 1 << uint(i & 63)
 }

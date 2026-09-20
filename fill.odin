@@ -101,7 +101,7 @@ and the tree restated, which is how a watcher learns its totals have to start ov
 The root is named inside the projection rather than afterwards: the table calls it
 ".", and a watcher has been known to catch the dot.
 */
-@(private = "file")
+@(private)
 fill_mft :: proc(f: ^Fill) {
 	p: ntfs.Projection
 	p.root_name = scan.top(f.target)
@@ -145,7 +145,7 @@ fill_mft :: proc(f: ^Fill) {
 	scan.restate(f.tree)
 }
 
-@(private = "file")
+@(private)
 fill_mft_read :: proc(f: ^Fill) {
 	f.mft_err = ntfs.read_mft(f.target.volume, &f.table, f.opts)
 	sync.atomic_store(&f.reading, false)
@@ -153,7 +153,7 @@ fill_mft_read :: proc(f: ^Fill) {
 
 // Walk directories straight into the tree. Nothing is restated: a walk reaches a child
 // through its parent, so a node is final when it is written, watched or not.
-@(private = "file")
+@(private)
 fill_walk :: proc(f: ^Fill) {
 	root := scan.location(f.target, context.allocator)
 	defer delete(root)

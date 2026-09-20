@@ -148,7 +148,7 @@ answers all of those at once and costs one handle.
 FILE_SHARE_WRITE is required: the volume is mounted and in use, so asking to exclude
 writers would fail for a reason that has nothing to do with permission.
 */
-@(private = "file")
+@(private)
 can_open :: proc(path: string) -> bool {
 	if path == "" {
 		return false

@@ -80,7 +80,7 @@ resolve :: proc(
 // Whether a volume opens for raw reading. Unix keeps that answer in the device's
 // permissions and the groups held rather than in the process, so opening it is the
 // only test that covers every reason it might be refused.
-@(private = "file")
+@(private)
 can_open :: proc(path: string) -> bool {
 	if path == "" {
 		return false
@@ -100,7 +100,7 @@ Every one of these writes its name into the boot sector, at one of two offsets: 
 OEM field for the NTFS family, and the type field further in for FAT. Reading 512
 bytes is enough to tell them apart, and enough to say that none of them match.
 */
-@(private = "file")
+@(private)
 signature :: proc(path: string) -> (Filesystem, Error) {
 	f, open_err := os.open(path, {.Read})
 	if open_err != nil {
@@ -143,7 +143,7 @@ there.
 The longest mount point that prefixes the path wins, which is what makes a filesystem
 mounted inside another resolve to the inner one. Names are returned owned.
 */
-@(private = "file")
+@(private)
 mounted_at :: proc(
 	path: string,
 	allocator := context.allocator,
@@ -189,12 +189,12 @@ mounted_at :: proc(
 	}
 }
 
-@(private = "file")
+@(private)
 PROC_MOUNTS :: "/proc/mounts"
 
 // Whether `path` lies at or below `mount`. A prefix is not enough: /home does not
 // cover /home2, only /home and what is under it.
-@(private = "file")
+@(private)
 covers :: proc(mount, path: string) -> bool {
 	if !strings.has_prefix(path, mount) {
 		return false
@@ -203,7 +203,7 @@ covers :: proc(mount, path: string) -> bool {
 }
 
 // The mount table escapes the characters that would otherwise end a field.
-@(private = "file")
+@(private)
 unescape :: proc(s: string, allocator := context.allocator) -> string {
 	if !strings.contains(s, `\`) {
 		return s
@@ -225,7 +225,7 @@ unescape :: proc(s: string, allocator := context.allocator) -> string {
 
 // Only the filesystems a reader here could specialise for are named; everything else
 // is walkable and nothing more.
-@(private = "file")
+@(private)
 filesystem_from_name :: proc(name: string) -> Filesystem {
 	switch name {
 	case "ntfs", "ntfs3":
