@@ -2,7 +2,7 @@
 sonar: find out what is using the disk.
 
 Usage:
-	sonar [drive-or-image]        default C:
+	sonar [drive-or-image] [flags]     -h lists the flags
 
 Reads the volume's MFT directly and prints the largest files and directories. Reading
 a live volume needs an elevated prompt.
@@ -13,8 +13,6 @@ import "core:debug/trace"
 import "core:flags"
 import "core:fmt"
 import "core:os"
-import "core:strconv"
-import "core:strings"
 import "core:time"
 
 @(require) import "debug"
@@ -24,6 +22,26 @@ import "walk"
 
 // Largest N files/folders to print.
 TOP_N :: 20
+
+PROGRAM :: "sonar"
+
+/*
+What the command line can set.
+
+Read in UNIX style, so `--flag`, `--flag=value` and `--flag value` all work, and `-h`
+prints this. A count left at zero means the reader chooses its own, rather than
+having a second set of defaults to keep in step here.
+*/
+Options :: struct {
+	target:       string `args:"pos=0" usage:"Drive, device, image or directory to scan. Defaults to your home directory."`,
+	live:         bool `usage:"Draw the answer as it is found rather than once at the end."`,
+	buffered:     bool `usage:"Read the volume through the system cache rather than around it."`,
+	no_skip:      bool `usage:"Read runs of dead MFT records rather than jumping over them."`,
+	min_skip:     int `usage:"Shortest run of dead records worth jumping over, in bytes."`,
+	workers:      int `usage:"MFT readers to run at once."`,
+	walk_workers: int `usage:"Directory readers to run at once."`,
+	chunk:        int `usage:"Bytes per volume read."`,
+}
 
 main :: proc() {
 	os.exit(run())
@@ -42,50 +60,28 @@ run :: proc() -> int {
 
 	context.assertion_failure_proc = trace.assertion_failure_proc
 
-	target := os.user_home_dir(context.allocator) or_else "/"
-	opts: ntfs.Read_Options
-	wcfg: walk.Config
-	live := false
+	opt: Options
+	if err := flags.parse(&opt, os.args[1:], .Unix); err != nil {
+		// print_errors writes usage for a help request and the reason for anything
+		// else, so the only decision left here is what to exit with.
+		flags.print_errors(Options, err, PROGRAM, .Unix)
+		_, asked_for_help := err.(flags.Help_Request)
+		return 0 if asked_for_help else 1
+	}
 
-	for arg in os.args[1:] {
-		switch arg {
-		case "-h", "--help", "/?":
-			fmt.println(
-				"usage: sonar [drive] [--live] [--buffered] [--no-skip] [--min-skip=N] [--workers=N] [--walk-workers=N] [--chunk=N]",
-			)
-			return 0
-		case "--live":
-			live = true
-		case "--buffered":
-			opts.io_mode = .Buffered
-		case "--no-skip":
-			opts.min_skip = -1
-		case:
-			// --min-skip=<bytes> tunes how long a run of dead records must be before
-			// breaking the sequential read to jump over it pays for itself.
-			ok := true
-			switch {
-			case strings.has_prefix(arg, "--min-skip="):
-				opts.min_skip, ok = number(arg)
-			case strings.has_prefix(arg, "--workers="):
-				opts.workers, ok = number(arg)
-			case strings.has_prefix(arg, "--walk-workers="):
-				wcfg.workers, ok = number(arg)
-			case strings.has_prefix(arg, "--chunk="):
-				opts.chunk_size, ok = number(arg)
-			case strings.has_prefix(arg, "-"):
-				// Anything else starting with a dash is a mistyped option. Taking it
-				// for the target would report that the volume cannot be found.
-				fmt.eprintfln("error: unknown option %s", arg)
-				return 1
-			case:
-				target = arg
-			}
-			if !ok {
-				fmt.eprintfln("error: %s needs a number", arg)
-				return 1
-			}
-		}
+	target := opt.target
+	if target == "" {
+		target = os.user_home_dir(context.temp_allocator) or_else "/"
+	}
+	opts := ntfs.Read_Options {
+		chunk_size = opt.chunk,
+		io_mode    = .Buffered if opt.buffered else .Unbuffered,
+		// Negative reads every record; zero leaves the reader its own default.
+		min_skip   = -1 if opt.no_skip else opt.min_skip,
+		workers    = opt.workers,
+	}
+	wcfg := walk.Config {
+		workers = opt.walk_workers,
 	}
 
 	// Resolve once, so the reader is chosen from what the OS says rather than from
@@ -114,7 +110,7 @@ run :: proc() -> int {
 		return 1
 	}
 
-	if live {
+	if opt.live {
 		if choice.engine != .Mft {
 			fmt.eprintln("error: live mode needs the MFT reader")
 			return 1
@@ -195,16 +191,6 @@ run :: proc() -> int {
 	print_largest(&t, totals, .files)
 	print_largest(&t, totals, .directories)
 	return 0
-}
-
-// The value of a `--name=value` option.
-@(private = "file")
-number :: proc(arg: string) -> (int, bool) {
-	i := strings.index_byte(arg, '=')
-	if i < 0 {
-		return 0, false
-	}
-	return strconv.parse_int(arg[i + 1:])
 }
 
 /*
