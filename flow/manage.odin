@@ -17,6 +17,10 @@ next, that item included.
 `work` returning false marks the item failed, not the run. `manager` returning false
 ends the run; workers finish the item in hand and report through their state.
 
+Every item reaches `work` or `discard`, never both and never neither. A stopped run
+leaves items queued that nothing else can reach, so an item owning memory needs
+`discard` to release it.
+
 `len(states)` sets the width, capped by what the machine can use.
 */
 manage :: proc(
@@ -24,6 +28,7 @@ manage :: proc(
 	states: []$S,
 	work: proc(item: I, state: ^S) -> bool,
 	manager: proc(item: I, ok: bool, state: ^S, queue: ^[dynamic]I) -> bool,
+	discard: proc(item: I) = nil,
 	load := Load.Io,
 ) {
 	if len(seed) == 0 || len(states) == 0 {
@@ -35,6 +40,8 @@ manage :: proc(
 	q.manager = manager
 	q.items = make([dynamic]I, context.allocator)
 	defer delete(q.items)
+	// Runs before the delete above, while the queue still holds what was never taken.
+	defer sweep(&q, discard)
 	append(&q.items, ..seed)
 
 	pool := min(len(states), width(1 << 30, load))
@@ -59,6 +66,18 @@ manage :: proc(
 	for t in threads[:started] {
 		thread.destroy(t)
 	}
+}
+
+// Release what the run never took, once every worker has stopped.
+@(private)
+sweep :: proc(q: ^Queue($I, $S), discard: proc(item: I)) {
+	if discard == nil {
+		return
+	}
+	for item in q.items[q.head:] {
+		discard(item)
+	}
+	q.head = len(q.items)
 }
 
 @(private)
