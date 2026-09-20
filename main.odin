@@ -53,7 +53,9 @@ run :: proc() -> int {
 	for arg in os.args[1:] {
 		switch arg {
 		case "-h", "--help", "/?":
-			fmt.println("usage: sonar [drive] [--live] [--buffered] [--no-skip] [--min-skip=N] [--workers=N] [--chunk=N]")
+			fmt.println(
+				"usage: sonar [drive] [--live] [--buffered] [--no-skip] [--min-skip=N] [--workers=N] [--walk-workers=N] [--chunk=N]",
+			)
 			return 0
 		case "--live":
 			live = true
@@ -64,25 +66,27 @@ run :: proc() -> int {
 		case:
 			// --min-skip=<bytes> tunes how long a run of dead records must be before
 			// breaking the sequential read to jump over it pays for itself.
+			ok := true
 			switch {
 			case strings.has_prefix(arg, "--min-skip="):
-				if n, parsed := strconv.parse_int(arg[len("--min-skip="):]); parsed {
-					opts.min_skip = n
-				}
+				opts.min_skip, ok = number(arg)
 			case strings.has_prefix(arg, "--workers="):
-				if n, parsed := strconv.parse_int(arg[len("--workers="):]); parsed {
-					opts.workers = n
-				}
+				opts.workers, ok = number(arg)
 			case strings.has_prefix(arg, "--walk-workers="):
-				if n, parsed := strconv.parse_int(arg[len("--walk-workers="):]); parsed {
-					wcfg.workers = n
-				}
+				wcfg.workers, ok = number(arg)
 			case strings.has_prefix(arg, "--chunk="):
-				if n, parsed := strconv.parse_int(arg[len("--chunk="):]); parsed {
-					opts.chunk_size = n
-				}
+				opts.chunk_size, ok = number(arg)
+			case strings.has_prefix(arg, "-"):
+				// Anything else starting with a dash is a mistyped option. Taking it
+				// for the target would report that the volume cannot be found.
+				fmt.eprintfln("error: unknown option %s", arg)
+				return 1
 			case:
 				target = arg
+			}
+			if !ok {
+				fmt.eprintfln("error: %s needs a number", arg)
+				return 1
 			}
 		}
 	}
@@ -187,6 +191,16 @@ run :: proc() -> int {
 	print_largest(&t, totals, .files)
 	print_largest(&t, totals, .directories)
 	return 0
+}
+
+// The value of a `--name=value` option.
+@(private = "file")
+number :: proc(arg: string) -> (int, bool) {
+	i := strings.index_byte(arg, '=')
+	if i < 0 {
+		return 0, false
+	}
+	return strconv.parse_int(arg[i + 1:])
 }
 
 /*
