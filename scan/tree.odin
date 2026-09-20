@@ -58,6 +58,7 @@ Tree :: struct {
 	nodes_done: u64,
 	bytes_done: u64,
 	cancel:     b32,
+	restated:   b32,
 	allocator:  mem.Allocator,
 }
 
@@ -122,6 +123,23 @@ node :: proc(t: ^Tree, i: u32) -> ^Node {
 	return &t.blocks[i >> BLOCK_SHIFT][i & (BLOCK_NODES - 1)]
 }
 
+/*
+Finish a node, once everything else about it is written.
+
+Flags go last and atomically, so a reader that sees them is looking at a node whose
+name, sizes and parent are already in place. Without that order a watcher could charge
+a node for a size that had not been stored yet.
+*/
+node_publish :: proc(n: ^Node, flags: Node_Flags) {
+	sync.atomic_store((^u8)(&n.flags), transmute(u8)flags)
+}
+
+// A node's flags, read as a watcher must. Pairs with `node_publish`: an untouched slot
+// reads back empty, and a written one reads back whole.
+node_flags :: proc(n: ^Node) -> Node_Flags {
+	return transmute(Node_Flags)sync.atomic_load((^u8)(&n.flags))
+}
+
 // Copy a name into this writer's arena, where it stays valid for the tree's life.
 intern :: proc(w: ^Writer, name: string) -> string {
 	buf, err := make([]byte, len(name), virtual.arena_allocator(w.arena))
@@ -160,6 +178,17 @@ width_for :: proc(items, most: int) -> int {
 	return max(min(items, most), 1)
 }
 
+/*
+Slots that can be addressed right now.
+
+`claim` takes its range before allocating the block that backs it, so the count alone
+runs ahead of what exists. Whichever is smaller is the part a watcher may look at; a
+slot claimed but not yet written reads back with no flags set and is simply skipped.
+*/
+slots :: proc(t: ^Tree) -> u32 {
+	return min(sync.atomic_load(&t.count), sync.atomic_load(&t.committed))
+}
+
 // A reader checks this between units of work so a UI can call the scan off.
 cancelled :: proc(t: ^Tree) -> bool {
 	return bool(sync.atomic_load(&t.cancel))
@@ -167,6 +196,25 @@ cancelled :: proc(t: ^Tree) -> bool {
 
 cancel :: proc(t: ^Tree) {
 	sync.atomic_store(&t.cancel, true)
+}
+
+/*
+Say that what was read out of this tree before may be wrong.
+
+A reader that can only learn a node's final size late has to write some of them twice,
+and anything derived from the first writing has to be thrown away rather than added
+to. Set once the restatement is complete, so whoever acts on it sees the finished
+tree rather than one mid-rewrite.
+
+This is the only thing above the readers that has to be understood about any of them.
+*/
+restate :: proc(t: ^Tree) {
+	sync.atomic_store(&t.restated, true)
+}
+
+// Whether the tree has been restated since this was last asked, clearing it.
+taken_restated :: proc(t: ^Tree) -> bool {
+	return bool(sync.atomic_exchange(&t.restated, false))
 }
 
 progress :: proc(t: ^Tree, nodes, bytes: u64) {
@@ -216,7 +264,7 @@ path :: proc(t: ^Tree, i: u32, allocator := context.allocator) -> string {
 		chain[depth] = cur
 		depth += 1
 		n := node(t, cur)
-		if n.parent == cur || n.parent >= t.count {
+		if n.parent == cur || n.parent >= slots(t) {
 			break
 		}
 		cur = n.parent
@@ -224,6 +272,10 @@ path :: proc(t: ^Tree, i: u32, allocator := context.allocator) -> string {
 
 	sb := strings.builder_make(allocator)
 	for j := depth - 1; j >= 0; j -= 1 {
+		// Reading the flags first is what makes the name safe to read at all.
+		if .Used not_in node_flags(node(t, chain[j])) {
+			continue
+		}
 		name := node(t, chain[j]).name
 		if name == "" {
 			continue

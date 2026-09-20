@@ -69,9 +69,9 @@ run :: proc() -> int {
 		return 0 if asked_for_help else 1
 	}
 
-	target := opt.target
-	if target == "" {
-		target = os.user_home_dir(context.temp_allocator) or_else "/"
+	target_str := opt.target
+	if target_str == "" {
+		target_str = os.user_home_dir(context.temp_allocator) or_else "/"
 	}
 	opts := ntfs.Read_Options {
 		chunk_size = opt.chunk,
@@ -84,44 +84,40 @@ run :: proc() -> int {
 		workers = opt.walk_workers,
 	}
 
-	// Resolve once, so the reader is chosen from what the OS says rather than from
-	// the shape of the string, and comes back with it.
-	resolved, choice, resolve_err := scan.resolve(target)
+	target, engine, resolve_err := scan.resolve(target_str)
 	if resolve_err != nil {
-		fmt.eprintfln("error: cannot scan %s: %v", target, resolve_err)
+		fmt.eprintfln("error: cannot scan %s: %v", target_str, resolve_err)
 		return 1
 	}
-	defer scan.target_destroy(&resolved)
+	defer scan.target_destroy(&target)
 
 	fmt.printfln(
 		"sonar: %s on %s (%v, %v engine, %v io)",
-		scan.location(resolved, context.temp_allocator),
-		resolved.volume,
-		resolved.fs,
-		choice.engine,
+		scan.location(target, context.temp_allocator),
+		target.volume,
+		target.fs,
+		engine.engine,
 		opts.io_mode,
 	)
-	if choice.permission_would_help {
+
+	if engine.permission_would_help {
 		when ODIN_OS == .Windows {
 			fmt.eprintln("note: this volume reads far faster from an administrator prompt")
 		} else {
 			fmt.eprintfln(
 				"note: this volume reads far faster with permission to open %s directly",
-				resolved.volume,
+				target.volume,
 			)
 		}
 	}
-	if choice.engine == .None {
+
+	if engine.engine == .None {
 		fmt.eprintfln("error: nothing here can be scanned")
 		return 1
 	}
 
 	if opt.live {
-		if choice.engine != .Mft {
-			fmt.eprintln("error: live mode needs the MFT reader")
-			return 1
-		}
-		return run_live(resolved.volume, scan.top(resolved), opts)
+		return run_live(target, engine, opts, wcfg)
 	}
 
 	t: scan.Tree
@@ -141,9 +137,9 @@ run :: proc() -> int {
 	defer if have_mft {
 		ntfs.mft_destroy(&m)
 	}
-	switch choice.engine {
+	switch engine.engine {
 	case .Mft:
-		err := ntfs.read_mft(resolved.volume, &m, opts)
+		err := ntfs.read_mft(target.volume, &m, opts)
 		if err != nil {
 			#partial switch err {
 			case .Access_Denied:
@@ -153,7 +149,7 @@ run :: proc() -> int {
 			case .Not_Ntfs:
 				fmt.eprintln("error: not an NTFS volume")
 			case .Open_Failed:
-				fmt.eprintfln("error: could not open %s", resolved.volume)
+				fmt.eprintfln("error: could not open %s", target.volume)
 			case:
 				fmt.eprintfln("error: %v", err)
 			}
@@ -168,9 +164,9 @@ run :: proc() -> int {
 		}
 		// The table calls its root ".", so paths would lose the volume it came from.
 		rw := scan.writer(&t, 0)
-		scan.node(&t, t.root).name = scan.intern(&rw, scan.top(resolved))
+		scan.node(&t, t.root).name = scan.intern(&rw, scan.top(target))
 	case .Walk:
-		root := scan.location(resolved, context.temp_allocator)
+		root := scan.location(target, context.temp_allocator)
 		if err := walk.scan(root, &t, wcfg); err != nil {
 			fmt.eprintfln("error: walking %s: %v", root, err)
 			return 1
@@ -235,9 +231,11 @@ Kind :: enum {
 // The directories that hold the most, largest first.
 rank :: proc(t: ^scan.Tree, totals: []u64, top: []Sized) -> int {
 	count := 0
-	for i in 0 ..< t.count {
-		n := scan.node(t, i)
-		if .Used not_in n.flags || .Directory not_in n.flags {
+	// Bounded by the totals rather than the tree: a reader may hand out more slots
+	// while this runs, and those have not been charged yet.
+	for i in 0 ..< u32(len(totals)) {
+		f := scan.node_flags(scan.node(t, i))
+		if .Used not_in f || .Directory not_in f {
 			continue
 		}
 		if totals[i] == 0 {

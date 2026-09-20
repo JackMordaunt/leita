@@ -88,6 +88,7 @@ Mft :: struct {
 	stats:             Mft_Stats,
 	allocator:         mem.Allocator,
 	ready:             b32, // the table exists and may be read while it fills
+	complete:          b32, // nothing further will be added to it
 }
 
 mft_init :: proc(
@@ -137,6 +138,16 @@ mft_set_ready :: proc(m: ^Mft) {
 
 mft_ready :: proc(m: ^Mft) -> bool {
 	return bool(sync.atomic_load(&m.ready))
+}
+
+// Say the table is finished. Hard links are merged in at the very end, so anything
+// reading them concurrently has to wait for this.
+mft_set_complete :: proc(m: ^Mft) {
+	sync.atomic_store(&m.complete, true)
+}
+
+mft_complete :: proc(m: ^Mft) -> bool {
+	return bool(sync.atomic_load(&m.complete))
 }
 
 /*

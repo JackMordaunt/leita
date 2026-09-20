@@ -3,11 +3,10 @@ package main
 import "core:sync"
 import "core:time"
 
-import "ntfs"
 import "scan"
 
 /*
-Owns the tree and everything derived from it.
+Owns everything derived from the tree.
 
 Between the readers and the UI there has to be somewhere the graph work happens.
 Ancestors are shared between readers, so charging one from several threads would need
@@ -15,20 +14,20 @@ atomics on every total; giving a single thread sole ownership removes that entir
 The UI is kept out for the opposite reason: its frame must cost the same whatever the
 volume holds, so it reads a published snapshot rather than the tree.
 
-This runs as fast as it can rather than on a clock. Each pass folds whatever the
-readers have finished with, charges it, and publishes. If a pass takes longer than a
-frame the UI simply draws the previous answer.
+Nothing here knows which reader is filling the tree. A reader settles nodes and, if it
+has to correct itself, restates; those two are the whole of what passes between them.
+
+This runs as fast as it can rather than on a clock. Each pass charges whatever is newly
+settled, ranks it, and publishes. If a pass takes longer than a frame the UI simply
+draws the previous answer.
 */
 Builder :: struct {
-	table:      ^ntfs.Mft,
-	tree:       ^scan.Tree,
-	out:        ^scan.Publisher,
-	mount:      string,
-	scanning:   ^b32, // cleared by the reader thread when the table is finished
-	started:    time.Tick,
-	projection: ntfs.Projection,
-	roll:       Rollup,
-	done:       b32,
+	tree:     ^scan.Tree,
+	out:      ^scan.Publisher,
+	scanning: ^b32, // cleared once nothing is filling the tree any more
+	started:  time.Tick,
+	roll:     Rollup,
+	done:     b32,
 }
 
 builder_run :: proc(b: ^Builder) {
@@ -41,41 +40,24 @@ builder_run :: proc(b: ^Builder) {
 		// still sees everything and this loop takes one more turn rather than missing
 		// the last of it.
 		finished := !bool(sync.atomic_load(b.scanning))
-
-		if ntfs.mft_ready(b.table) {
-			b.projection.root_name = b.mount
-			builder_pass(b, exact = finished)
-		}
+		builder_pass(b, complete = finished)
 		if finished {
 			return
 		}
 	}
 }
 
-// One pass: fold what is newly readable, charge it, rank it, publish it.
+// One pass: charge what is newly settled, rank it, publish it.
 @(private = "file")
-builder_pass :: proc(b: ^Builder, exact: bool) {
-	if exact {
-		// A record settled mid-scan misses whatever extension records added to it
-		// afterwards, so the last pass redoes every one of them. The tree is not
-		// emptied first: a UI resolves the paths of the rows it drew from it, and an
-		// empty tree would hand that thread a truncated one. Redoing a projection
-		// rewrites each slot where it already sat.
-		ntfs.projection_reset(&b.projection)
+builder_pass :: proc(b: ^Builder, complete: bool) {
+	// A reader that corrects itself invalidates every total drawn from what it said
+	// before, so those start again rather than being added to. It restates only once
+	// the rewrite is finished, so one pass over the tree is enough to replace them.
+	if scan.taken_restated(b.tree) {
+		rollup_restate(&b.roll)
 	}
-	if err := ntfs.to_tree(b.table, b.tree, &b.projection); err != nil {
-		return
-	}
-	if exact {
-		resize(&b.roll.totals, int(b.tree.count))
-		for i in 0 ..< len(b.roll.totals) {
-			b.roll.totals[i] = 0
-		}
-		clear(&b.roll.pending)
-		roll_up(b.tree, b.roll.totals[:])
-	} else {
-		rollup_advance(&b.roll, b.tree, b.projection.fresh[:])
-	}
+	rollup_advance(&b.roll, b.tree)
+
 	top: [scan.TOP_ROWS]Sized
 	count := rank(b.tree, b.roll.totals[:], top[:])
 
@@ -83,9 +65,9 @@ builder_pass :: proc(b: ^Builder, exact: bool) {
 		count    = count,
 		nodes    = b.tree.nodes_done,
 		bytes    = b.tree.bytes_done,
-		pending  = len(b.roll.pending),
+		pending  = b.roll.pending,
 		elapsed  = time.duration_milliseconds(time.tick_since(b.started)),
-		complete = exact,
+		complete = complete,
 	}
 	for i in 0 ..< count {
 		s.rows[i] = {

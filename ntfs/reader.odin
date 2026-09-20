@@ -353,6 +353,7 @@ read_mft_from_volume :: proc(
 	m.stats.bitmap_ns = i64(time.tick_since(bitmap_start))
 
 	mft_merge_sinks(m)
+	mft_set_complete(m)
 	ok = true
 	return .None
 }

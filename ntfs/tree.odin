@@ -22,7 +22,6 @@ Projection :: struct {
 	root_name:  string,
 	links_done: int,
 	settled:    []u64, // one bit per record
-	fresh:      [dynamic]u32,
 	allocator:  mem.Allocator,
 }
 
@@ -40,12 +39,10 @@ projection_reset :: proc(p: ^Projection) {
 		p.settled[i] = 0
 	}
 	p.links_done = 0
-	clear(&p.fresh)
 }
 
 projection_destroy :: proc(p: ^Projection) {
 	delete(p.settled, p.allocator)
-	delete(p.fresh)
 	p^ = {}
 }
 
@@ -66,10 +63,15 @@ and names are borrowed from the table's arenas rather than copied, so repeating 
 allocates nothing. The table must therefore outlive the tree.
 */
 to_tree :: proc(m: ^Mft, t: ^scan.Tree, p: ^Projection) -> scan.Error {
+	// Hard links are merged into the table in one go at the very end, so reading them
+	// before that would race the reader appending them, and would size the tree from
+	// a count that was still growing.
+	links := len(m.links) if mft_complete(m) else 0
+
 	// Records take slot per slot, extra names the range directly above them. Sizing
 	// for both up front is what lets a replay land on the same slots as the pass
 	// before it, so repeating one never has to empty the tree first.
-	if err := scan.reserve(t, u32(len(m.entries) + len(m.links))); err != nil {
+	if err := scan.reserve(t, u32(len(m.entries) + links)); err != nil {
 		return err
 	}
 	if p.settled == nil {
@@ -79,9 +81,7 @@ to_tree :: proc(m: ^Mft, t: ^scan.Tree, p: ^Projection) -> scan.Error {
 			return .Out_Of_Memory
 		}
 		p.settled = bits
-		p.fresh.allocator = p.allocator
 	}
-	clear(&p.fresh)
 
 	used, bytes: u64
 
@@ -102,21 +102,22 @@ to_tree :: proc(m: ^Mft, t: ^scan.Tree, p: ^Projection) -> scan.Error {
 		n.name = e.name
 		n.size = e.size
 		n.disk = e.allocated
-		n.flags = {.Used}
+
+		flags := scan.Node_Flags{.Used}
 		if .Directory in e.flags {
-			n.flags |= {.Directory}
+			flags |= {.Directory}
 		}
 		if .Reparse_Point in e.attributes {
-			n.flags |= {.Reparse}
+			flags |= {.Reparse}
 		}
-
 		parent, settled := entry_parent_settled(m, i)
 		n.parent = parent
 		if settled {
-			n.flags |= {.Settled}
+			flags |= {.Settled}
 			mark(p.settled, i)
-			append(&p.fresh, i)
 		}
+		// Last, so a builder watching this tree never sees a node before its parent.
+		scan.node_publish(n, flags)
 		used += 1
 		bytes += e.allocated
 	}
@@ -126,17 +127,16 @@ to_tree :: proc(m: ^Mft, t: ^scan.Tree, p: ^Projection) -> scan.Error {
 	// sits at its ordinal above the record range, so a link written twice is written
 	// to the same slot. Links are merged when the scan ends, so this is empty
 	// until then.
-	for l, k in m.links[p.links_done:] {
+	for l, k in m.links[p.links_done:links] {
 		index := u32(len(m.entries) + p.links_done + k)
 		n := scan.node(t, index)
 		n.parent = l.parent
 		n.name = l.name
 		n.disk = m.entries[l.record].allocated
 		n.size = m.entries[l.record].size
-		n.flags = {.Used, .Settled, .Extra_Name}
-		append(&p.fresh, index)
+		scan.node_publish(n, {.Used, .Settled, .Extra_Name})
 	}
-	p.links_done = len(m.links)
+	p.links_done = links
 
 	t.root = RECORD_ROOT
 	if p.root_name != "" {

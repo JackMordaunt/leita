@@ -175,18 +175,20 @@ record :: proc(w: ^Worker, parent: u32, e: Entry) -> (index: u32, descend: bool,
 	n.parent = parent
 	n.name = scan.intern(&w.writer, e.name)
 	n.size = e.size
-	// A walker reaches a child through its parent, so the link is never in doubt.
-	n.flags = {.Used, .Settled}
 
+	// A walker reaches a child through its parent, so the link is never in doubt.
+	flags := scan.Node_Flags{.Used, .Settled}
 	switch {
 	case e.directory:
-		n.flags |= {.Directory}
+		flags |= {.Directory}
 		descend = true
 	case e.symlink:
-		n.flags |= {.Reparse}
+		flags |= {.Reparse}
 		descend = w.follow
 	case:
 		n.disk = e.disk
 	}
+	// Last, so a builder watching this tree never sees a node before its size.
+	scan.node_publish(n, flags)
 	return index, descend, true
 }
