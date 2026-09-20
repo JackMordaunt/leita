@@ -30,7 +30,6 @@ DEFAULT_WORKERS :: 8
 
 Error :: enum {
 	None,
-	Open_Failed,
 	Out_Of_Memory,
 	Cancelled,
 }
