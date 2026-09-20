@@ -57,9 +57,11 @@ builder_run :: proc(b: ^Builder) {
 builder_pass :: proc(b: ^Builder, exact: bool) {
 	if exact {
 		// A record settled mid-scan misses whatever extension records added to it
-		// afterwards, so the last pass redoes every one of them.
+		// afterwards, so the last pass redoes every one of them. The tree is not
+		// emptied first: a UI resolves the paths of the rows it drew from it, and an
+		// empty tree would hand that thread a truncated one. Redoing a projection
+		// rewrites each slot where it already sat.
 		ntfs.projection_reset(&b.projection)
-		b.tree.count = 0
 	}
 	if err := ntfs.to_tree(b.table, b.tree, &b.projection); err != nil {
 		return
