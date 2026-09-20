@@ -10,6 +10,7 @@ a live volume needs an elevated prompt.
 package main
 
 import "core:debug/trace"
+import "core:flags"
 import "core:fmt"
 import "core:os"
 import "core:strconv"
@@ -21,6 +22,7 @@ import "ntfs"
 import "scan"
 import "walk"
 
+// Largest N files/folders to print.
 TOP_N :: 20
 
 main :: proc() {
@@ -38,7 +40,6 @@ run :: proc() -> int {
 
 	defer free_all(context.temp_allocator)
 
-	// Assertion failures print a call chain in every build; symbols need -debug.
 	context.assertion_failure_proc = trace.assertion_failure_proc
 
 	target := os.user_home_dir(context.allocator) or_else "/"
