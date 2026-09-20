@@ -8,11 +8,13 @@ fallback rather than the default, and the yardstick a specialised reader is meas
 against.
 
 A directory listing is already the shape of the tree, so it writes straight into it.
+Reading one directory is the only part that differs by platform, and it is the part
+worth specialising: `read_dir` is portable through core:os everywhere but Linux,
+which asks the kernel directly.
 */
 package walk
 
 import "core:mem"
-import "core:os"
 import "core:strings"
 
 import "../flow"
@@ -137,66 +139,54 @@ walk_dir :: proc(d: Dir, w: ^Worker) -> bool {
 	if scan.cancelled(w.writer.tree) {
 		return false
 	}
-	f, open_err := os.open(d.path)
-	if open_err != nil {
-		return false
-	}
-	defer os.close(f)
-
-	it := os.read_directory_iterator_create(f)
-	defer os.read_directory_iterator_destroy(&it)
-
-	nodes: u64
-	bytes: u64
-	for info in os.read_directory_iterator(&it) {
-		if _, err := os.read_directory_iterator_error(&it); err != nil {
-			continue
-		}
-		index, claim_err := scan.claim(&w.writer, 1)
-		if claim_err != nil {
-			w.err = .Out_Of_Memory
-			return false
-		}
-		n := scan.node(w.writer.tree, index)
-		n.parent = d.index
-		n.name = scan.intern(&w.writer, info.name)
-		n.size = u64(max(info.size, 0))
-		// A walker reaches a child through its parent, so the link is never in doubt.
-		n.flags = {.Used, .Settled}
-
-		switch info.type {
-		case .Directory:
-			n.flags |= {.Directory}
-			append(&w.found, Dir{index = index, path = strings.clone(info.fullpath, w.allocator)})
-		case .Symlink:
-			n.flags |= {.Reparse}
-			if w.follow {
-				append(&w.found, Dir{index = index, path = strings.clone(info.fullpath, w.allocator)})
-			}
-		case .Undetermined, .Regular, .Named_Pipe, .Socket, .Character_Device, .Block_Device:
-			// core:os reports the logical length and nothing about allocation, so
-			// the on-disk figure is the best estimate available here: the size
-			// rounded up to a block. A reader that talks to the filesystem directly
-			// knows the real answer; this one cannot.
-			n.disk = round_up(n.size, BLOCK_ESTIMATE)
-		}
-		nodes += 1
-		bytes += n.disk
-	}
+	nodes, bytes, ok := read_dir(d, w)
 	scan.progress(w.writer.tree, nodes, bytes)
-	return true
+	return ok
 }
 
-// Without filesystem-specific knowledge the allocation unit is a guess, and four
-// kilobytes is the common one. It makes small files cost something rather than
-// nothing, which matters more than being exactly right.
+// One entry as a directory read describes it, before it becomes a node. `disk` is
+// whatever the platform could learn about allocation; every reader fills it, since
+// only the reader knows how good its own answer is.
 @(private)
-BLOCK_ESTIMATE :: 4096
+Entry :: struct {
+	name:      string,
+	size:      u64,
+	disk:      u64,
+	directory: bool,
+	symlink:   bool,
+}
 
+/*
+Record one entry against the directory holding it.
+
+`descend` marks an entry to walk in turn: a directory, or a symlink when the caller
+asked for those to be followed. Shared so that what a node means cannot drift between
+one platform's reader and another's.
+*/
 @(private)
-round_up :: proc(v, unit: u64) -> u64 {
-	if v == 0 {
-		return 0
+record :: proc(w: ^Worker, parent: u32, e: Entry) -> (index: u32, descend: bool, ok: bool) {
+	slot, err := scan.claim(&w.writer, 1)
+	if err != nil {
+		w.err = .Out_Of_Memory
+		return 0, false, false
 	}
-	return (v + unit - 1) / unit * unit
+	index = slot
+	n := scan.node(w.writer.tree, index)
+	n.parent = parent
+	n.name = scan.intern(&w.writer, e.name)
+	n.size = e.size
+	// A walker reaches a child through its parent, so the link is never in doubt.
+	n.flags = {.Used, .Settled}
+
+	switch {
+	case e.directory:
+		n.flags |= {.Directory}
+		descend = true
+	case e.symlink:
+		n.flags |= {.Reparse}
+		descend = w.follow
+	case:
+		n.disk = e.disk
+	}
+	return index, descend, true
 }

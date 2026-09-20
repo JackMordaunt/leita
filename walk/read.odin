@@ -1,0 +1,70 @@
+package walk
+
+import "core:os"
+import "core:strings"
+
+/*
+Read one directory through core:os.
+
+The portable reader: whatever the platform, core:os describes every entry and this
+records what the tree keeps. It asks for a great deal more than that per entry, which
+is the cost of not knowing which platform it is on.
+*/
+@(private)
+read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
+	f, open_err := os.open(d.path)
+	if open_err != nil {
+		return 0, 0, false
+	}
+	defer os.close(f)
+
+	it := os.read_directory_iterator_create(f)
+	defer os.read_directory_iterator_destroy(&it)
+
+	for info in os.read_directory_iterator(&it) {
+		if _, err := os.read_directory_iterator_error(&it); err != nil {
+			continue
+		}
+		e := Entry {
+			name      = info.name,
+			size      = u64(max(info.size, 0)),
+			directory = info.type == .Directory,
+			symlink   = info.type == .Symlink,
+		}
+		if !e.directory && !e.symlink {
+			// core:os reports the logical length and nothing about allocation, so the
+			// on-disk figure is the best estimate available here: the size rounded up
+			// to a block.
+			e.disk = round_up(e.size, BLOCK_ESTIMATE)
+		}
+		index, descend, recorded := record(w, d.index, e)
+		if !recorded {
+			return nodes, bytes, false
+		}
+		if descend {
+			path, clone_err := strings.clone(info.fullpath, w.allocator)
+			if clone_err != nil {
+				w.err = .Out_Of_Memory
+				return nodes, bytes, false
+			}
+			append(&w.found, Dir{index = index, path = path})
+		}
+		nodes += 1
+		bytes += e.disk
+	}
+	return nodes, bytes, true
+}
+
+// Without filesystem-specific knowledge the allocation unit is a guess, and four
+// kilobytes is the common one. It makes small files cost something rather than
+// nothing, which matters more than being exactly right.
+@(private)
+BLOCK_ESTIMATE :: 4096
+
+@(private)
+round_up :: proc(v, unit: u64) -> u64 {
+	if v == 0 {
+		return 0
+	}
+	return (v + unit - 1) / unit * unit
+}
