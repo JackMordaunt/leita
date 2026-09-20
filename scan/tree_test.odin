@@ -1,5 +1,6 @@
 package scan
 
+import "core:strings"
 import "core:testing"
 
 @(private = "file")
@@ -82,7 +83,10 @@ test_path_walks_to_a_root :: proc(t: ^testing.T) {
 	node(&tree, 1)^ = Node{parent = 0, name = "Windows", flags = {.Used, .Directory}}
 	node(&tree, 2)^ = Node{parent = 1, name = "notepad.exe", flags = {.Used}}
 
-	testing.expect_value(t, path(&tree, 2, context.temp_allocator), `C:\Windows\notepad.exe`)
+	// Written with the separator of the machine showing the path, not the one the
+	// names came from, so this is built rather than spelled.
+	want := strings.concatenate({"C:", SEPARATOR, "Windows", SEPARATOR, "notepad.exe"}, context.temp_allocator)
+	testing.expect_value(t, path(&tree, 2, context.temp_allocator), want)
 	testing.expect_value(t, path(&tree, 0, context.temp_allocator), "C:")
 }
 

@@ -195,6 +195,12 @@ grow :: proc(t: ^Tree, needed: u32) -> bool {
 	return true
 }
 
+// Paths are written for the machine showing them rather than for the filesystem they
+// came from, so an NTFS volume read from unix still prints something the shell there
+// would take back.
+@(private)
+SEPARATOR :: `\` when ODIN_OS == .Windows else "/"
+
 /*
 Rebuild a node's path by following parents to a root.
 
@@ -222,15 +228,14 @@ path :: proc(t: ^Tree, i: u32, allocator := context.allocator) -> string {
 		if name == "" {
 			continue
 		}
-		// The root carries its own separator on Windows, so joining blindly would
-		// double it.
-		if strings.builder_len(sb) > 0 && !strings.has_suffix(strings.to_string(sb), `\`) {
-			strings.write_byte(&sb, '\\')
+		// The root carries its own separator, so joining blindly would double it.
+		if strings.builder_len(sb) > 0 && !strings.has_suffix(strings.to_string(sb), SEPARATOR) {
+			strings.write_string(&sb, SEPARATOR)
 		}
 		strings.write_string(&sb, name)
 	}
 	if strings.builder_len(sb) == 0 {
-		strings.write_byte(&sb, '\\')
+		strings.write_string(&sb, SEPARATOR)
 	}
 	return strings.to_string(sb)
 }
