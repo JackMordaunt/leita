@@ -25,7 +25,7 @@ answer from the last one.
 FRAME :: 16 * time.Millisecond
 
 run_live :: proc(f: ^Fill) -> int {
-	out: scan.Publisher
+	out: Publisher
 	started := time.tick_now()
 
 	f.watched = true
@@ -54,14 +54,14 @@ run_live :: proc(f: ^Fill) -> int {
 	defer rollup_destroy(&b.roll)
 
 	frames, drawn, missed := 0, 0, 0
-	last: scan.Snapshot
+	last: Snapshot
 	have := false
 
 	for {
 		frame_start := time.tick_now()
 		finished := bool(sync.atomic_load(&b.done))
 
-		if s, ok := scan.current(&out); ok {
+		if s, ok := current(&out); ok {
 			last = s
 			have = true
 			drawn += 1

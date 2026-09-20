@@ -41,6 +41,7 @@ test: | $(BUILD)/test
 	$(ODIN) test flow -debug $(SAN) $(FLAGS) -out:$(BUILD)/test/flow$(EXE)
 	$(ODIN) test scan -debug $(SAN) $(FLAGS) -out:$(BUILD)/test/scan$(EXE)
 	$(ODIN) test walk -debug $(SAN) $(FLAGS) -out:$(BUILD)/test/walk$(EXE)
+	$(ODIN) test . -debug $(SAN) $(FLAGS) -out:$(BUILD)/test/main$(EXE)
 
 check:
 	$(ODIN) check . $(FLAGS)

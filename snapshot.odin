@@ -1,8 +1,6 @@
-package scan
+package main
 
 import "core:sync"
-
-TOP_ROWS :: 20
 
 Row :: struct {
 	node:  u32,
@@ -12,7 +10,7 @@ Row :: struct {
 // What a UI draws: a fixed number of rows and a few counters, whatever the size of
 // the volume behind it.
 Snapshot :: struct {
-	rows:     [TOP_ROWS]Row,
+	rows:     [TOP_N]Row,
 	count:    int,
 	nodes:    u64, // records folded so far
 	bytes:    u64,

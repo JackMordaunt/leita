@@ -1,4 +1,4 @@
-package scan
+package main
 
 import "core:testing"
 

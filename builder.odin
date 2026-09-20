@@ -23,7 +23,7 @@ draws the previous answer.
 */
 Builder :: struct {
 	tree:     ^scan.Tree,
-	out:      ^scan.Publisher,
+	out:      ^Publisher,
 	scanning: ^b32, // cleared once nothing is filling the tree any more
 	started:  time.Tick,
 	roll:     Rollup,
@@ -58,10 +58,10 @@ builder_pass :: proc(b: ^Builder, complete: bool) {
 	}
 	rollup_advance(&b.roll, b.tree)
 
-	top: [scan.TOP_ROWS]Sized
+	top: [TOP_N]Sized
 	count := rank(b.tree, b.roll.totals[:], top[:])
 
-	s := scan.Snapshot {
+	s := Snapshot {
 		count    = count,
 		nodes    = b.tree.nodes_done,
 		bytes    = b.tree.bytes_done,
@@ -75,5 +75,5 @@ builder_pass :: proc(b: ^Builder, complete: bool) {
 			bytes = top[i].bytes,
 		}
 	}
-	scan.publish(b.out, s)
+	publish(b.out, s)
 }
