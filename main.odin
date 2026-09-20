@@ -85,15 +85,14 @@ run :: proc() -> int {
 	}
 
 	// Resolve once, so the reader is chosen from what the OS says rather than from
-	// the shape of the string.
-	resolved, resolve_err := scan.resolve(target)
+	// the shape of the string, and comes back with it.
+	resolved, choice, resolve_err := scan.resolve(target)
 	if resolve_err != nil {
 		fmt.eprintfln("error: cannot scan %s: %v", target, resolve_err)
 		return 1
 	}
 	defer scan.target_destroy(&resolved)
 
-	choice := scan.choose(resolved, scan.elevated())
 	fmt.printfln(
 		"sonar: %s on %s (%v, %v engine, %v io)",
 		scan.location(resolved, context.temp_allocator),
@@ -102,8 +101,15 @@ run :: proc() -> int {
 		choice.engine,
 		opts.io_mode,
 	)
-	if choice.elevation_would_help {
-		fmt.eprintln("note: this volume reads far faster from an administrator prompt")
+	if choice.permission_would_help {
+		when ODIN_OS == .Windows {
+			fmt.eprintln("note: this volume reads far faster from an administrator prompt")
+		} else {
+			fmt.eprintfln(
+				"note: this volume reads far faster with permission to open %s directly",
+				resolved.volume,
+			)
+		}
 	}
 	if choice.engine == .None {
 		fmt.eprintfln("error: nothing here can be scanned")

@@ -70,27 +70,32 @@ Engine :: enum {
 }
 
 Choice :: struct {
-	engine:               Engine,
-	// The MFT reader is far faster but needs a raw volume handle. When this is set,
-	// Walk is what will run unless the caller elevates and asks again.
-	elevation_would_help: bool,
+	engine:                Engine,
+	// The MFT reader is far faster but needs to open the volume raw. When this is
+	// set, Walk is what will run unless the caller obtains that and asks again.
+	permission_would_help: bool,
 }
 
 /*
 Pick a reader for a target.
 
+`readable` says the volume opened for raw reading, which is the only thing standing
+between an NTFS target and the MFT reader. `resolve` finds it out and calls this; it
+is a separate procedure so the whole decision table can be tested without a disk, not
+because anything else needs to choose. An image needs no special case: it is a file,
+so it opens.
+
 The MFT reader takes the whole volume at once, so a subtree costs no more than the
 root does and is far cheaper than walking it. That makes a subtree target a reason to
 filter the result, never a reason to reject the reader.
 */
-choose :: proc(t: Target, elevated: bool) -> Choice {
+@(private)
+choose :: proc(t: Target, readable: bool) -> Choice {
 	if t.fs == .Ntfs {
-		// An image is an ordinary file, so reading one needs no more than opening it.
-		// It is the raw handle onto a mounted volume that has to be granted.
-		if elevated || t.image {
+		if readable {
 			return {engine = .Mft}
 		}
-		return {engine = .Walk, elevation_would_help = true}
+		return {engine = .Walk, permission_would_help = true}
 	}
 	// Nothing mounted means no directory tree to enumerate. A raw volume and an image
 	// are both bytes until a reader that knows the filesystem inside says otherwise,

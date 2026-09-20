@@ -11,7 +11,6 @@ foreign kernel32 {
 	// Not bound by core:sys/windows, so declared here.
 	GetVolumePathNameW    :: proc(lpszFileName: win.LPCWSTR, lpszVolumePathName: win.LPWSTR, cchBufferLength: win.DWORD) -> win.BOOL ---
 	GetVolumeInformationW :: proc(lpRootPathName: win.LPCWSTR, lpVolumeNameBuffer: win.LPWSTR, nVolumeNameSize: win.DWORD, lpVolumeSerialNumber: ^win.DWORD, lpMaximumComponentLength: ^win.DWORD, lpFileSystemFlags: ^win.DWORD, lpFileSystemNameBuffer: win.LPWSTR, nFileSystemNameSize: win.DWORD) -> win.BOOL ---
-	GetCurrentProcess     :: proc() -> win.HANDLE ---
 }
 
 /*
@@ -20,8 +19,19 @@ Resolve what was given into a target backends can dispatch on.
 A bare drive letter is accepted for convenience, an existing path is asked about, and
 anything else is taken to be an image file holding a volume. Failing here is better
 than failing inside a backend, because this is the layer that knows why.
+
+The reader comes back with the target. Choosing one needs to know whether the volume
+opens, which is found out here, so leaving the caller to ask separately would only
+mean opening it twice.
 */
-resolve :: proc(input: string, allocator := context.allocator) -> (t: Target, err: Error) {
+resolve :: proc(
+	input: string,
+	allocator := context.allocator,
+) -> (
+	t: Target,
+	c: Choice,
+	err: Error,
+) {
 	t.allocator = allocator
 	t.input = strings.clone(input, allocator)
 
@@ -34,7 +44,7 @@ resolve :: proc(input: string, allocator := context.allocator) -> (t: Target, er
 	attrs := win.GetFileAttributesW(wpath)
 	if attrs == win.INVALID_FILE_ATTRIBUTES {
 		target_destroy(&t)
-		return {}, .Target_Not_Found
+		return {}, {}, .Target_Not_Found
 	}
 
 	// A file that is not a directory is taken to be an image of a volume. Nothing
@@ -42,7 +52,7 @@ resolve :: proc(input: string, allocator := context.allocator) -> (t: Target, er
 	if attrs & win.FILE_ATTRIBUTE_DIRECTORY == 0 {
 		t.image = true
 		t.volume = strings.clone(path, allocator)
-		return t, .None
+		return t, choose(t, can_open(t.volume)), .None
 	}
 
 	// The mount point tells us which volume the path sits on, which is the only way
@@ -50,12 +60,12 @@ resolve :: proc(input: string, allocator := context.allocator) -> (t: Target, er
 	mount_buf: [win.MAX_PATH]u16
 	if !GetVolumePathNameW(wpath, &mount_buf[0], len(mount_buf)) {
 		target_destroy(&t)
-		return {}, .Target_Not_Found
+		return {}, {}, .Target_Not_Found
 	}
 	mount, mount_err := win.wstring_to_utf8(win.wstring(&mount_buf[0]), -1, allocator)
 	if mount_err != nil {
 		target_destroy(&t)
-		return {}, .Out_Of_Memory
+		return {}, {}, .Out_Of_Memory
 	}
 	t.mount = mount
 
@@ -89,7 +99,9 @@ resolve :: proc(input: string, allocator := context.allocator) -> (t: Target, er
 	if len(path) > len(t.mount) {
 		t.root = strings.clone(path[len(t.mount) - 1:], allocator)
 	}
-	return t, .None
+	// The mount point answered everything above; nothing has touched the volume
+	// itself. Whether that opens is what decides the reader.
+	return t, choose(t, can_open(t.volume)), .None
 }
 
 @(private)
@@ -127,24 +139,32 @@ is_drive_spec :: proc(s: string) -> bool {
 }
 
 /*
-Whether this process can open a raw volume handle.
+Whether a volume opens for raw reading.
 
-Asked before choosing a reader so the choice can be explained: the MFT reader is much
-faster but needs this, and without it the caller may want to relaunch rather than
-settle for walking directories.
+Elevation is the usual reason a raw handle is refused, but an elevated token still
+says nothing about a volume that is missing, or locked by something else. Opening it
+answers all of those at once and costs one handle.
+
+FILE_SHARE_WRITE is required: the volume is mounted and in use, so asking to exclude
+writers would fail for a reason that has nothing to do with permission.
 */
-elevated :: proc() -> bool {
-	token: win.HANDLE
-	if !win.OpenProcessToken(GetCurrentProcess(), win.TOKEN_QUERY, &token) {
+@(private = "file")
+can_open :: proc(path: string) -> bool {
+	if path == "" {
 		return false
 	}
-	defer win.CloseHandle(token)
-
-	// TOKEN_ELEVATION is a single DWORD: non-zero when the token is elevated.
-	value: win.DWORD
-	size: win.DWORD
-	if !win.GetTokenInformation(token, .TokenElevation, &value, size_of(value), &size) {
+	h := win.CreateFileW(
+		win.utf8_to_wstring(path, context.temp_allocator),
+		win.GENERIC_READ,
+		win.FILE_SHARE_READ | win.FILE_SHARE_WRITE | win.FILE_SHARE_DELETE,
+		nil,
+		win.OPEN_EXISTING,
+		0,
+		nil,
+	)
+	if h == win.INVALID_HANDLE_VALUE {
 		return false
 	}
-	return value != 0
+	win.CloseHandle(h)
+	return true
 }

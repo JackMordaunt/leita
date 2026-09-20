@@ -15,14 +15,25 @@ A directory names a place inside a volume, which the mount table accounts for.
 Reading a signature is not parsing a filesystem: saying which reader applies is this
 layer's job, and doing it here keeps that job free of every backend, exactly as
 asking Windows for a volume's filesystem name does.
+
+The reader comes back with the target. Choosing one needs to know whether the volume
+opens, which is found out here, so leaving the caller to ask separately would only
+mean opening it twice.
 */
-resolve :: proc(input: string, allocator := context.allocator) -> (t: Target, err: Error) {
+resolve :: proc(
+	input: string,
+	allocator := context.allocator,
+) -> (
+	t: Target,
+	c: Choice,
+	err: Error,
+) {
 	info, stat_err := os.stat(input, context.temp_allocator)
 	if stat_err != nil {
 		if stat_err == io.Error.Permission_Denied {
-			return {}, .Access_Denied
+			return {}, {}, .Access_Denied
 		}
-		return {}, .Target_Not_Found
+		return {}, {}, .Target_Not_Found
 	}
 	path := info.fullpath
 
@@ -36,16 +47,17 @@ resolve :: proc(input: string, allocator := context.allocator) -> (t: Target, er
 		fs, sig_err := signature(path)
 		if sig_err != .None {
 			target_destroy(&t)
-			return {}, sig_err
+			return {}, {}, sig_err
 		}
 		t.fs = fs
-		return t, .None
+		// Reading the signature opened it, so there is nothing left to find out.
+		return t, choose(t, true), .None
 
 	case .Directory:
 		device, mount, fs, found := mounted_at(path, allocator)
 		if !found {
 			target_destroy(&t)
-			return {}, .Unsupported_Platform
+			return {}, {}, .Unsupported_Platform
 		}
 		t.volume = device
 		t.mount = mount
@@ -55,22 +67,29 @@ resolve :: proc(input: string, allocator := context.allocator) -> (t: Target, er
 		if len(path) > len(mount) {
 			t.root = strings.clone(path[len(mount):], allocator)
 		}
-		return t, .None
+		// Reached through its mount point, so nothing so far has touched the device.
+		// Whether that opens is what decides between reading the filesystem whole and
+		// walking what is mounted from it.
+		return t, choose(t, can_open(device)), .None
 	}
 
 	target_destroy(&t)
-	return {}, .Target_Not_Found
+	return {}, {}, .Target_Not_Found
 }
 
-/*
-Whether this process can open a raw volume handle.
-
-Always true by the time it is asked. Unix grants raw reads through permissions on the
-device rather than a process token, and `resolve` only names a filesystem for a
-volume whose front it managed to read, so a target that reached here already opened.
-A volume that did not fails resolution with Access_Denied instead.
-*/
-elevated :: proc() -> bool {
+// Whether a volume opens for raw reading. Unix keeps that answer in the device's
+// permissions and the groups held rather than in the process, so opening it is the
+// only test that covers every reason it might be refused.
+@(private = "file")
+can_open :: proc(path: string) -> bool {
+	if path == "" {
+		return false
+	}
+	f, err := os.open(path, {.Read})
+	if err != nil {
+		return false
+	}
+	os.close(f)
 	return true
 }
 
@@ -141,8 +160,10 @@ mounted_at :: proc(
 		if read_err != nil {
 			return "", "", .Unknown, false
 		}
+
 		best_device, best_mount, best_type: string
 		text := string(table)
+
 		for line in strings.split_lines_iterator(&text) {
 			fields := strings.fields(line, context.temp_allocator)
 			if len(fields) < 3 {
@@ -154,13 +175,17 @@ mounted_at :: proc(
 			}
 			best_device, best_mount, best_type = fields[0], point, fields[2]
 		}
+
 		if best_mount == "" {
 			return "", "", .Unknown, false
 		}
-		return strings.clone(best_device, allocator),
-			strings.clone(best_mount, allocator),
-			filesystem_from_name(best_type),
-			true
+
+		device = strings.clone(best_device, allocator)
+		mount = strings.clone(best_mount, allocator)
+		fs = filesystem_from_name(best_type)
+		found = true
+
+		return device, mount, fs, found
 	}
 }
 
