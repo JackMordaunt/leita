@@ -66,7 +66,10 @@ and names are borrowed from the table's arenas rather than copied, so repeating 
 allocates nothing. The table must therefore outlive the tree.
 */
 to_tree :: proc(m: ^Mft, t: ^scan.Tree, p: ^Projection) -> scan.Error {
-	if err := scan.reserve(t, u32(len(m.entries))); err != nil {
+	// Records take slot per slot, extra names the range directly above them. Sizing
+	// for both up front is what lets a replay land on the same slots as the pass
+	// before it, so repeating one never has to empty the tree first.
+	if err := scan.reserve(t, u32(len(m.entries) + len(m.links))); err != nil {
 		return err
 	}
 	if p.settled == nil {
@@ -80,7 +83,6 @@ to_tree :: proc(m: ^Mft, t: ^scan.Tree, p: ^Projection) -> scan.Error {
 	}
 	clear(&p.fresh)
 
-	w := scan.writer(t, 0)
 	used, bytes: u64
 
 	for i in 0 ..< u32(len(m.entries)) {
@@ -120,14 +122,12 @@ to_tree :: proc(m: ^Mft, t: ^scan.Tree, p: ^Projection) -> scan.Error {
 	}
 
 	// Extra names for a file already counted. They belong in the tree so a file can
-	// be found at every path it has, but their bytes must not be counted twice. Only
-	// the ones not done before, or repeating this would add a node per link each
-	// time. Links are merged when the scan ends, so this is empty until then.
-	for l in m.links[p.links_done:] {
-		index, err := scan.claim(&w, 1)
-		if err != nil {
-			return err
-		}
+	// be found at every path it has, but their bytes must not be counted twice. Each
+	// sits at its ordinal above the record range, so a link written twice is written
+	// to the same slot. Links are merged when the scan ends, so this is empty
+	// until then.
+	for l, k in m.links[p.links_done:] {
+		index := u32(len(m.entries) + p.links_done + k)
 		n := scan.node(t, index)
 		n.parent = l.parent
 		n.name = l.name
