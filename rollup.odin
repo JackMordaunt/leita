@@ -65,8 +65,11 @@ charge :: proc(r: ^Rollup, t: ^scan.Tree, i: u32) {
 			append(&r.pending, i)
 			return
 		}
-		if c.parent == cur {
-			break // a root, or an orphan: the chain ends here
+		// A root, an orphan, or a parent that leaves the tree: the chain ends here.
+		// The batch roll-up and path rebuilding both stop on the same conditions, and
+		// this is the one that runs while a reader is still filling slots in.
+		if c.parent == cur || c.parent >= t.count {
+			break
 		}
 		chain[depth] = c.parent
 		depth += 1
