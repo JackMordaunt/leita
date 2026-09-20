@@ -90,7 +90,13 @@ Mft :: struct {
 	ready:             b32, // the table exists and may be read while it fills
 }
 
-mft_init :: proc(m: ^Mft, record_count: int, bytes_per_cluster: u64, sinks := 1, allocator := context.allocator) -> Error {
+mft_init :: proc(
+	m: ^Mft,
+	record_count: int,
+	bytes_per_cluster: u64,
+	sinks := 1,
+	allocator := context.allocator,
+) -> Error {
 	m.allocator = allocator
 	m.bytes_per_cluster = bytes_per_cluster
 	entries, err := make([]Entry, record_count, allocator)

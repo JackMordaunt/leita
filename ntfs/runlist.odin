@@ -19,7 +19,14 @@ sparse. A zero header byte terminates the list.
 
 `first_vcn` is the attribute's lowest_vcn; it is 0 for the first (or only) extent.
 */
-decode_runlist :: proc(b: []byte, first_vcn: u64, allocator := context.allocator) -> (runs: []Run, err: Error) {
+decode_runlist :: proc(
+	b: []byte,
+	first_vcn: u64,
+	allocator := context.allocator,
+) -> (
+	runs: []Run,
+	err: Error,
+) {
 	out := make([dynamic]Run, allocator)
 	vcn := first_vcn
 	lcn: i64 = 0
@@ -42,7 +49,10 @@ decode_runlist :: proc(b: []byte, first_vcn: u64, allocator := context.allocator
 			delete(out)
 			return nil, .Bad_Runlist
 		}
-		run := Run{vcn = vcn, length = length}
+		run := Run {
+			vcn    = vcn,
+			length = length,
+		}
 		if ofs_size == 0 {
 			run.sparse = true
 		} else {

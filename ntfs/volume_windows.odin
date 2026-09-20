@@ -30,7 +30,14 @@ and why every read must be a whole number of sectors at a sector-aligned offset.
 FILE_SHARE_WRITE is required: the volume is mounted and in use, and opening it without
 sharing writes would fail.
 */
-volume_open :: proc(path: string, mode := IO_Mode.Unbuffered, allocator := context.allocator) -> (v: Volume, err: Error) {
+volume_open :: proc(
+	path: string,
+	mode := IO_Mode.Unbuffered,
+	allocator := context.allocator,
+) -> (
+	v: Volume,
+	err: Error,
+) {
 	name := path
 	if is_drive_spec(path) {
 		name = strings.concatenate({`\\.\`, path[:1], ":"}, context.temp_allocator)

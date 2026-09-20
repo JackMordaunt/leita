@@ -44,7 +44,12 @@ run_live :: proc(volume: string, mount: string, opts: ntfs.Read_Options) -> int 
 	out: scan.Publisher
 	started := time.tick_now()
 
-	r := Reader{volume = volume, opts = opts, table = &m, scanning = true}
+	r := Reader {
+		volume   = volume,
+		opts     = opts,
+		table    = &m,
+		scanning = true,
+	}
 	b := Builder {
 		table    = &m,
 		tree     = &t,

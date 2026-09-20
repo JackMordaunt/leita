@@ -2,19 +2,19 @@ package ntfs
 
 import "core:mem"
 
-RECORD_MAGIC :: u32(0x454C4946) // "FILE"
+RECORD_MAGIC     :: u32(0x454C4946) // "FILE"
 RECORD_MAGIC_BAD :: u32(0x44414142) // "BAAD": chkdsk marked the record as damaged
 
 // Fixups protect every 512 bytes regardless of the physical sector size.
 FIXUP_BLOCK :: 512
 
-Record_Flag :: enum u16 {
+Record_Flag  :: enum u16 {
 	In_Use     = 0,
 	Directory  = 1,
 	Extension  = 2, // record lives in $Extend
 	View_Index = 3,
 }
-Record_Flags :: bit_set[Record_Flag; u16]
+Record_Flags :: bit_set[Record_Flag;u16]
 
 Record_Header :: struct #packed {
 	magic:           u32,
@@ -53,12 +53,12 @@ Attr_Type :: enum u32 {
 	End                   = 0xFFFFFFFF,
 }
 
-Attr_Flag :: enum u16 {
+Attr_Flag  :: enum u16 {
 	Compressed = 0,
 	Encrypted  = 14,
 	Sparse     = 15,
 }
-Attr_Flags :: bit_set[Attr_Flag; u16]
+Attr_Flags :: bit_set[Attr_Flag;u16]
 
 Attr_Header :: struct #packed {
 	type:         Attr_Type,
@@ -239,7 +239,8 @@ next_attribute :: proc(it: ^Attr_Iterator) -> (a: Attribute, ok: bool) {
 		a.data_size = n.data_size
 		a.initialized_size = n.initialized_size
 		a.compressed_size = n.allocated_size
-		if (.Compressed in hdr.flags || .Sparse in hdr.flags) && length >= size_of(Nonresident_Header) + 8 {
+		if (.Compressed in hdr.flags || .Sparse in hdr.flags) &&
+		   length >= size_of(Nonresident_Header) + 8 {
 			a.compressed_size = rd64(raw, size_of(Nonresident_Header))
 		}
 		ro := int(n.runlist_offset)
@@ -254,7 +255,7 @@ next_attribute :: proc(it: ^Attr_Iterator) -> (a: Attribute, ok: bool) {
 }
 
 // Windows FILE_ATTRIBUTE_* bits as stored in $STANDARD_INFORMATION and $FILE_NAME.
-File_Attribute :: enum u32 {
+File_Attribute  :: enum u32 {
 	Read_Only             = 0,
 	Hidden                = 1,
 	System                = 2,
@@ -279,7 +280,7 @@ File_Attribute :: enum u32 {
 	Directory_Index       = 28, // NTFS-internal: record has an $I30 index
 	View_Index            = 29,
 }
-File_Attributes :: bit_set[File_Attribute; u32]
+File_Attributes :: bit_set[File_Attribute;u32]
 
 Standard_Information :: struct #packed {
 	created:         u64, // FILETIME
@@ -295,7 +296,9 @@ Standard_Information :: struct #packed {
 #assert(size_of(Standard_Information) == 48)
 
 standard_information :: proc(a: Attribute) -> (si: Standard_Information, ok: bool) {
-	if a.type != .Standard_Information || a.non_resident || len(a.value) < size_of(Standard_Information) {
+	if a.type != .Standard_Information ||
+	   a.non_resident ||
+	   len(a.value) < size_of(Standard_Information) {
 		return
 	}
 	return (^Standard_Information)(raw_data(a.value))^, true
@@ -342,6 +345,9 @@ file_name :: proc(a: Attribute) -> (fn: File_Name, ok: bool) {
 	fn.parent = h.parent
 	fn.file_attributes = h.file_attributes
 	fn.namespace = h.namespace
-	fn.name = mem.slice_data_cast([]u16, a.value[size_of(File_Name_Header):size_of(File_Name_Header) + n])
+	fn.name = mem.slice_data_cast(
+		[]u16,
+		a.value[size_of(File_Name_Header):size_of(File_Name_Header) + n],
+	)
 	return fn, true
 }

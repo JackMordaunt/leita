@@ -66,15 +66,19 @@ test_each_shares_the_work_out :: proc(t: ^testing.T) {
 	// says nothing. That is a property of the work, not of the claiming.
 	tallies := make([]Tally, 4, context.temp_allocator)
 	items := make([]int, 32, context.temp_allocator)
-	each(items, tallies, proc(item: int, tally: ^Tally) -> bool {
-		acc := 0
-		for i in 0 ..< 1_000_000 {
-			acc += i ~ item
-		}
-		tally.handled += 1
-		tally.sum += acc & 1 // consume acc so the loop cannot be optimised away
-		return true
-	})
+	each(
+		items,
+		tallies,
+		proc(item: int, tally: ^Tally) -> bool {
+			acc := 0
+			for i in 0 ..< 1_000_000 {
+				acc += i ~ item
+			}
+			tally.handled += 1
+			tally.sum += acc & 1 // consume acc so the loop cannot be optimised away
+			return true
+		},
+	)
 
 	testing.expect(t, busy(tallies) > 1, "work stayed on a single worker")
 }
@@ -169,7 +173,11 @@ test_each_ignores_a_pathological_width :: proc(t: ^testing.T) {
 	handled, sum := totals(tallies)
 	testing.expect_value(t, handled, ITEMS)
 	testing.expect_value(t, sum, ITEMS * (ITEMS - 1) / 2)
-	testing.expect(t, busy(tallies) <= width(ITEMS, .Mixed), "the pool grew past the default ceiling")
+	testing.expect(
+		t,
+		busy(tallies) <= width(ITEMS, .Mixed),
+		"the pool grew past the default ceiling",
+	)
 }
 
 @(test)

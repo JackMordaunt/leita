@@ -107,7 +107,12 @@ nonresident :: proc(
 }
 
 @(private = "file")
-file_name_value :: proc(parent: File_Ref, name: string, ns: Name_Space, attrs: File_Attributes = {}) -> []byte {
+file_name_value :: proc(
+	parent: File_Ref,
+	name: string,
+	ns: Name_Space,
+	attrs: File_Attributes = {},
+) -> []byte {
 	name16 := utf16_of(name)
 	b := make([]byte, size_of(File_Name_Header) + 2 * len(name16), context.temp_allocator)
 	put64(b, 0, u64(parent))
@@ -176,7 +181,11 @@ build_record :: proc(
 @(private = "file")
 add :: proc(t: ^testing.T, m: ^Mft, rec: []byte) {
 	testing.expect_value(t, apply_fixups(rec), Error.None)
-	testing.expect_value(t, mft_add_record(m, record_header(rec).record_number, rec, &m.sinks[0]), Error.None)
+	testing.expect_value(
+		t,
+		mft_add_record(m, record_header(rec).record_number, rec, &m.sinks[0]),
+		Error.None,
+	)
 	mft_merge_sinks(m)
 }
 
@@ -322,7 +331,15 @@ test_nonresident_streams :: proc(t: ^testing.T) {
 			resident(.File_Name, file_name_value(make_ref(64, 3), "big.bin", .Win32_And_Dos)),
 			nonresident(.Data, 8192, 5000, two_clusters),
 			nonresident(.Data, 4096, 100, one_cluster, name = "Zone.Identifier"),
-			nonresident(.Data, 1 << 20, 1 << 20, compressed, name = "packed", flags = {.Compressed}, compressed_size = 65536),
+			nonresident(
+				.Data,
+				1 << 20,
+				1 << 20,
+				compressed,
+				name = "packed",
+				flags = {.Compressed},
+				compressed_size = 65536,
+			),
 		},
 	)
 	m: Mft
@@ -360,9 +377,18 @@ test_unallocated_runlist_counts_nothing :: proc(t: ^testing.T) {
 	// $BadClus:$Bad spans the whole volume with sparse runs and no sparse flag.
 	rec := build_record(
 		{
-			resident(.File_Name, file_name_value(make_ref(RECORD_ROOT, 5), "$BadClus", .Win32_And_Dos)),
+			resident(
+				.File_Name,
+				file_name_value(make_ref(RECORD_ROOT, 5), "$BadClus", .Win32_And_Dos),
+			),
 			nonresident(.Data, 0, 0, []byte{0x00}),
-			nonresident(.Data, 1 << 40, 1 << 40, []byte{0x04, 0x00, 0x00, 0x00, 0x10, 0x00}, name = "$Bad"),
+			nonresident(
+				.Data,
+				1 << 40,
+				1 << 40,
+				[]byte{0x04, 0x00, 0x00, 0x00, 0x10, 0x00},
+				name = "$Bad",
+			),
 		},
 		record_number = RECORD_BAD_CLUS,
 	)
@@ -446,30 +472,46 @@ test_path :: proc(t: ^testing.T) {
 	defer mft_destroy(&m)
 
 	root := make_ref(RECORD_ROOT, 5)
-	add(t, &m, build_record(
-		{resident(.File_Name, file_name_value(root, ".", .Win32))},
-		record_number = RECORD_ROOT,
-		sequence = 5,
-		flags = {.In_Use, .Directory},
-	))
-	add(t, &m, build_record(
-		{resident(.File_Name, file_name_value(root, "Windows", .Win32))},
-		record_number = 64,
-		sequence = 1,
-		flags = {.In_Use, .Directory},
-	))
-	add(t, &m, build_record(
-		{resident(.File_Name, file_name_value(make_ref(64, 1), "explorer.exe", .Win32))},
-		record_number = 65,
-		sequence = 1,
-	))
+	add(
+		t,
+		&m,
+		build_record(
+			{resident(.File_Name, file_name_value(root, ".", .Win32))},
+			record_number = RECORD_ROOT,
+			sequence = 5,
+			flags = {.In_Use, .Directory},
+		),
+	)
+	add(
+		t,
+		&m,
+		build_record(
+			{resident(.File_Name, file_name_value(root, "Windows", .Win32))},
+			record_number = 64,
+			sequence = 1,
+			flags = {.In_Use, .Directory},
+		),
+	)
+	add(
+		t,
+		&m,
+		build_record(
+			{resident(.File_Name, file_name_value(make_ref(64, 1), "explorer.exe", .Win32))},
+			record_number = 65,
+			sequence = 1,
+		),
+	)
 	// Parent sequence 99 does not match record 64's sequence 1: the directory this
 	// file was in has been deleted and its record reused.
-	add(t, &m, build_record(
-		{resident(.File_Name, file_name_value(make_ref(64, 99), "stale.tmp", .Win32))},
-		record_number = 66,
-		sequence = 1,
-	))
+	add(
+		t,
+		&m,
+		build_record(
+			{resident(.File_Name, file_name_value(make_ref(64, 99), "stale.tmp", .Win32))},
+			record_number = 66,
+			sequence = 1,
+		),
+	)
 
 	testing.expect_value(t, mft_path(&m, 65, context.temp_allocator), `\Windows\explorer.exe`)
 	testing.expect_value(t, mft_path(&m, 64, context.temp_allocator), `\Windows`)

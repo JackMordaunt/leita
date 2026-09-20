@@ -9,9 +9,9 @@ foreign import kernel32 "system:Kernel32.lib"
 @(default_calling_convention = "system")
 foreign kernel32 {
 	// Not bound by core:sys/windows, so declared here.
-	GetVolumePathNameW :: proc(lpszFileName: win.LPCWSTR, lpszVolumePathName: win.LPWSTR, cchBufferLength: win.DWORD) -> win.BOOL ---
+	GetVolumePathNameW    :: proc(lpszFileName: win.LPCWSTR, lpszVolumePathName: win.LPWSTR, cchBufferLength: win.DWORD) -> win.BOOL ---
 	GetVolumeInformationW :: proc(lpRootPathName: win.LPCWSTR, lpVolumeNameBuffer: win.LPWSTR, nVolumeNameSize: win.DWORD, lpVolumeSerialNumber: ^win.DWORD, lpMaximumComponentLength: ^win.DWORD, lpFileSystemFlags: ^win.DWORD, lpFileSystemNameBuffer: win.LPWSTR, nFileSystemNameSize: win.DWORD) -> win.BOOL ---
-	GetCurrentProcess :: proc() -> win.HANDLE ---
+	GetCurrentProcess     :: proc() -> win.HANDLE ---
 }
 
 /*
@@ -60,7 +60,16 @@ resolve :: proc(input: string, allocator := context.allocator) -> (t: Target, er
 	t.mount = mount
 
 	fs_buf: [win.MAX_PATH]u16
-	if GetVolumeInformationW(win.wstring(&mount_buf[0]), nil, 0, nil, nil, nil, &fs_buf[0], len(fs_buf)) {
+	if GetVolumeInformationW(
+		win.wstring(&mount_buf[0]),
+		nil,
+		0,
+		nil,
+		nil,
+		nil,
+		&fs_buf[0],
+		len(fs_buf),
+	) {
 		name, name_err := win.wstring_to_utf8(win.wstring(&fs_buf[0]), -1, context.temp_allocator)
 		if name_err == nil {
 			t.fs = filesystem_from_name(name)

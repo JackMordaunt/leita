@@ -71,7 +71,12 @@ Open `path` (drive letter or image file) and read its whole MFT into `m`.
 The caller owns the table rather than receiving it at the end, so another thread can
 watch it fill. `mft_ready` says when there is anything to watch.
 */
-read_mft :: proc(path: string, m: ^Mft, opts := Read_Options{}, allocator := context.allocator) -> Error {
+read_mft :: proc(
+	path: string,
+	m: ^Mft,
+	opts := Read_Options{},
+	allocator := context.allocator,
+) -> Error {
 	v, open_err := volume_open(path, opts.io_mode)
 	if open_err != nil {
 		return open_err
@@ -93,7 +98,12 @@ The MFT is addressed as a contiguous logical byte range and `read_logical` maps 
 chunk onto physical runs, so a record straddling two runs (possible when a cluster is
 smaller than a record) is handled without special cases.
 */
-read_mft_from_volume :: proc(v: ^Volume, m: ^Mft, opts := Read_Options{}, allocator := context.allocator) -> Error {
+read_mft_from_volume :: proc(
+	v: ^Volume,
+	m: ^Mft,
+	opts := Read_Options{},
+	allocator := context.allocator,
+) -> Error {
 	// 1. Boot sector.
 	boot_buf, boot_alloc_err := mem.alloc_bytes(IO_ALIGN, IO_ALIGN, allocator)
 	if boot_alloc_err != nil {
@@ -198,7 +208,14 @@ read_mft_from_volume :: proc(v: ^Volume, m: ^Mft, opts := Read_Options{}, alloca
 		if opts.min_skip > 0 {
 			min_skip = u64(opts.min_skip)
 		}
-		if planned, plan_err := plan_reads(slot_bitmap, mft_bytes, u64(record_size), cluster, min_skip, allocator); plan_err == nil {
+		if planned, plan_err := plan_reads(
+			slot_bitmap,
+			mft_bytes,
+			u64(record_size),
+			cluster,
+			min_skip,
+			allocator,
+		); plan_err == nil {
 			extents = planned
 		}
 	}
@@ -223,7 +240,11 @@ read_mft_from_volume :: proc(v: ^Volume, m: ^Mft, opts := Read_Options{}, alloca
 
 	// 4. Size the pool. The limit is the measured one, not the machine's, because the
 	// drive saturates long before the cores do.
-	worker_count := flow.width(len(chunks), .Io, limit = opts.workers if opts.workers > 0 else DEFAULT_WORKERS)
+	worker_count := flow.width(
+		len(chunks),
+		.Io,
+		limit = opts.workers if opts.workers > 0 else DEFAULT_WORKERS,
+	)
 
 	record_count := int(mft_bytes / u64(record_size))
 	if init_err := mft_init(m, record_count, cluster, worker_count, allocator); init_err != nil {
@@ -267,7 +288,11 @@ read_mft_from_volume :: proc(v: ^Volume, m: ^Mft, opts := Read_Options{}, alloca
 		w.volume = wv
 		w.owns_volume = true
 		w.buf = wbuf
-		w.reader = Extent_Reader{v = &w.volume, runs = runs, cluster = cluster}
+		w.reader = Extent_Reader {
+			v       = &w.volume,
+			runs    = runs,
+			cluster = cluster,
+		}
 		live += 1
 	}
 	if live == 0 {
@@ -279,7 +304,11 @@ read_mft_from_volume :: proc(v: ^Volume, m: ^Mft, opts := Read_Options{}, alloca
 		}
 		w.volume = v^
 		w.buf = wbuf
-		w.reader = Extent_Reader{v = &w.volume, runs = runs, cluster = cluster}
+		w.reader = Extent_Reader {
+			v       = &w.volume,
+			runs    = runs,
+			cluster = cluster,
+		}
 		live = 1
 	}
 	defer {
@@ -317,7 +346,8 @@ read_mft_from_volume :: proc(v: ^Volume, m: ^Mft, opts := Read_Options{}, alloca
 	// $Bitmap is the file system's own count of used clusters, which checks the sums
 	// built above. Failing to read it costs nothing else, so the table still stands.
 	bitmap_start := time.tick_now()
-	if c, bitmap_err := read_bitmap_clusters(&workers[0].reader, boot, workers[0].buf, allocator); bitmap_err == nil {
+	if c, bitmap_err := read_bitmap_clusters(&workers[0].reader, boot, workers[0].buf, allocator);
+	   bitmap_err == nil {
 		m.stats.allocated_clusters = c
 	}
 	m.stats.bitmap_ns = i64(time.tick_since(bitmap_start))
@@ -344,15 +374,15 @@ and are held in the sink rather than written across the divide.
 */
 @(private)
 Worker :: struct {
-	mft:          ^Mft,
-	sink:         ^Sink,
-	volume:       Volume,
-	owns_volume:  bool,
-	reader:       Extent_Reader,
-	buf:          []byte,
-	record_size:  int,
-	cluster:      u64,
-	err:          Error,
+	mft:         ^Mft,
+	sink:        ^Sink,
+	volume:      Volume,
+	owns_volume: bool,
+	reader:      Extent_Reader,
+	buf:         []byte,
+	record_size: int,
+	cluster:     u64,
+	err:         Error,
 }
 
 @(private)
@@ -410,7 +440,15 @@ hold_extension_record :: proc(w: ^Worker, record: u32, rec: []byte) {
 // Read a whole attribute into memory: a copy of the value when resident, or the
 // clusters its run list names when not. The caller frees the result.
 @(private)
-read_attribute :: proc(v: ^Volume, a: Attribute, cluster: u64, allocator: mem.Allocator) -> (data: []byte, err: Error) {
+read_attribute :: proc(
+	v: ^Volume,
+	a: Attribute,
+	cluster: u64,
+	allocator: mem.Allocator,
+) -> (
+	data: []byte,
+	err: Error,
+) {
 	if !a.non_resident {
 		if len(a.value) == 0 {
 			return nil, .Bad_Record
@@ -436,7 +474,11 @@ read_attribute :: proc(v: ^Volume, a: Attribute, cluster: u64, allocator: mem.Al
 	if alloc_err != nil {
 		return nil, .Out_Of_Memory
 	}
-	r := Extent_Reader{v = v, runs = runs, cluster = cluster}
+	r := Extent_Reader {
+		v       = v,
+		runs    = runs,
+		cluster = cluster,
+	}
 	if read_err := read_logical(&r, 0, out); read_err != nil {
 		mem.free_bytes(out, allocator)
 		return nil, read_err
@@ -476,7 +518,8 @@ read_logical :: proc(r: ^Extent_Reader, offset: u64, buf: []byte) -> Error {
 		in_run := pos - run.vcn * r.cluster
 		avail := run.length * r.cluster - in_run
 		n := int(min(u64(len(buf) - done), avail))
-		if read_err := volume_read_at(r.v, buf[done:done + n], run.lcn * r.cluster + in_run); read_err != nil {
+		if read_err := volume_read_at(r.v, buf[done:done + n], run.lcn * r.cluster + in_run);
+		   read_err != nil {
 			return read_err
 		}
 		done += n

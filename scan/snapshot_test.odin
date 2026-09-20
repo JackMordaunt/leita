@@ -8,8 +8,15 @@ test_snapshot_round_trips :: proc(t: ^testing.T) {
 	_, ok := current(&p)
 	testing.expect(t, ok, "an untouched publisher should still hand out its zero value")
 
-	s := Snapshot{count = 2, nodes = 99, complete = true}
-	s.rows[0] = {node = 7, bytes = 4096}
+	s := Snapshot {
+		count    = 2,
+		nodes    = 99,
+		complete = true,
+	}
+	s.rows[0] = {
+		node  = 7,
+		bytes = 4096,
+	}
 	publish(&p, s)
 
 	got, got_ok := current(&p)

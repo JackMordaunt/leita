@@ -16,7 +16,7 @@ Node :: struct {
 	flags:  Node_Flags,
 }
 
-Node_Flag :: enum u8 {
+Node_Flag  :: enum u8 {
 	Used, // written by a reader; an untouched slot has this clear
 	// The parent link is final. A reader that learns of a child before its holding
 	// directory leaves this clear until the parent turns up, because until then the

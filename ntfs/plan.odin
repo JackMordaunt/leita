@@ -32,7 +32,10 @@ plan_reads :: proc(
 	mft_bytes: u64,
 	record_size, cluster, min_gap: u64,
 	allocator: mem.Allocator,
-) -> (extents: []Read_Extent, err: Error) {
+) -> (
+	extents: []Read_Extent,
+	err: Error,
+) {
 	out := make([dynamic]Read_Extent, allocator)
 	total_clusters := (mft_bytes + cluster - 1) / cluster
 	records := mft_bytes / record_size
@@ -68,7 +71,10 @@ plan_reads :: proc(
 }
 
 @(private)
-cluster_has_live_record :: proc "contextless" (bitmap: []byte, c, records, record_size, cluster: u64) -> bool {
+cluster_has_live_record :: proc "contextless" (
+	bitmap: []byte,
+	c, records, record_size, cluster: u64,
+) -> bool {
 	first := c * cluster / record_size
 	last := ((c + 1) * cluster - 1) / record_size
 	for r := first; r <= last && r < records; r += 1 {

@@ -22,18 +22,21 @@ Layout on disk, in the order this package consumes it:
 */
 package ntfs
 
-#assert(ODIN_ENDIAN == .Little, "NTFS structures are little-endian; this package reads them in place")
+#assert(
+	ODIN_ENDIAN == .Little,
+	"NTFS structures are little-endian; this package reads them in place",
+)
 
 Error :: enum {
 	None,
-	Not_Ntfs,                  // boot sector OEM id is not "NTFS    "
-	Bad_Boot_Sector,           // sizes in the boot sector are inconsistent
-	Bad_Record,                // FILE record magic or fixups do not match
-	Bad_Runlist,               // mapping pairs are malformed or a read fell outside them
-	Mft_Data_Missing,          // record 0 has no unnamed non-resident $DATA
+	Not_Ntfs, // boot sector OEM id is not "NTFS    "
+	Bad_Boot_Sector, // sizes in the boot sector are inconsistent
+	Bad_Record, // FILE record magic or fixups do not match
+	Bad_Runlist, // mapping pairs are malformed or a read fell outside them
+	Mft_Data_Missing, // record 0 has no unnamed non-resident $DATA
 	Mft_Spans_Extension_Records, // $MFT's $DATA continues in extension records (attribute list); unsupported
 	Open_Failed,
-	Access_Denied,             // volume handles need administrator rights
+	Access_Denied, // volume handles need administrator rights
 	Read_Failed,
 	Short_Read,
 	Unsupported_Platform,
@@ -57,18 +60,18 @@ make_ref :: proc "contextless" (record: u64, sequence: u16) -> File_Ref {
 }
 
 // Well-known record numbers. Records below FIRST_USER_RECORD belong to the file system.
-RECORD_MFT       :: 0
+RECORD_MFT        :: 0
 RECORD_MFT_MIRROR :: 1
-RECORD_LOG_FILE  :: 2
-RECORD_VOLUME    :: 3
-RECORD_ATTR_DEF  :: 4
-RECORD_ROOT      :: 5
-RECORD_BITMAP    :: 6
-RECORD_BOOT      :: 7
-RECORD_BAD_CLUS  :: 8
-RECORD_SECURE    :: 9
-RECORD_UPCASE    :: 10
-RECORD_EXTEND    :: 11
+RECORD_LOG_FILE   :: 2
+RECORD_VOLUME     :: 3
+RECORD_ATTR_DEF   :: 4
+RECORD_ROOT       :: 5
+RECORD_BITMAP     :: 6
+RECORD_BOOT       :: 7
+RECORD_BAD_CLUS   :: 8
+RECORD_SECURE     :: 9
+RECORD_UPCASE     :: 10
+RECORD_EXTEND     :: 11
 FIRST_USER_RECORD :: 16
 
 // Little-endian readers over byte slices. Slicing panics on out-of-range offsets, so

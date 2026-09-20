@@ -54,7 +54,9 @@ parse_boot_sector :: proc(b: []byte) -> (bs: Boot_Sector, err: Error) {
 	// A record must be a whole number of sectors so it can be read directly from the
 	// volume, and at least two fixup blocks so the update sequence array has something
 	// to protect.
-	if bs.record_size < 512 || !is_pow2(bs.record_size) || bs.record_size % bs.bytes_per_sector != 0 {
+	if bs.record_size < 512 ||
+	   !is_pow2(bs.record_size) ||
+	   bs.record_size % bs.bytes_per_sector != 0 {
 		return {}, .Bad_Boot_Sector
 	}
 	if bs.mft_lcn == 0 || bs.total_sectors == 0 {

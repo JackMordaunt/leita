@@ -29,19 +29,24 @@ allocator the work needs belongs in `State`.
 
 An item should cost more than the thirty microseconds it takes to start a thread.
 */
-each :: proc(items: []$I, states: []$S, work: proc(item: I, state: ^S) -> bool, load := Load.Mixed) {
+each :: proc(
+	items: []$I,
+	states: []$S,
+	work: proc(item: I, state: ^S) -> bool,
+	load := Load.Mixed,
+) {
 	if len(items) == 0 || len(states) == 0 {
 		return
 	}
-    
+
 	shared := Shared(I, S) {
 		items  = items,
 		states = states,
 		work   = work,
 	}
-	
+
 	pool := min(len(states), width(len(items), load))
-    
+
 	if pool == 1 {
 		claim_loop(&shared, 0)
 		return
@@ -49,7 +54,7 @@ each :: proc(items: []$I, states: []$S, work: proc(item: I, state: ^S) -> bool, 
 
 	threads := make([]^thread.Thread, pool - 1, context.temp_allocator)
 	defer delete(threads, context.temp_allocator)
-    
+
 	started := 0
 	for i in 0 ..< len(threads) {
 		t := thread.create_and_start_with_poly_data(Arg(I, S){&shared, i + 1}, worker_entry)
@@ -72,9 +77,9 @@ each :: proc(items: []$I, states: []$S, work: proc(item: I, state: ^S) -> bool, 
 // How a piece of work divides between waiting and computing, which is the part of
 // the width decision that only the caller knows.
 Load :: enum {
-	Cpu,   // computing throughout: more workers than cores only makes them compete
+	Cpu, // computing throughout: more workers than cores only makes them compete
 	Mixed, // alternates between the two, the common case
-	Io,    // mostly parked in a device call, using no core while it waits
+	Io, // mostly parked in a device call, using no core while it waits
 }
 
 /*

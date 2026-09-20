@@ -23,7 +23,10 @@ read_bitmap_clusters :: proc(
 	boot: Boot_Sector,
 	scratch: []byte,
 	allocator: mem.Allocator,
-) -> (clusters: u64, err: Error) {
+) -> (
+	clusters: u64,
+	err: Error,
+) {
 	record_size := int(boot.record_size)
 	cluster := u64(boot.bytes_per_cluster)
 	if len(scratch) < record_size || u64(len(scratch)) < cluster {
@@ -82,7 +85,11 @@ read_bitmap_clusters :: proc(
 	// the prefix that maps to real clusters.
 	read_limit := min((limit + cluster - 1) / cluster * cluster, covered)
 
-	br := Extent_Reader{v = mft.v, runs = runs, cluster = cluster}
+	br := Extent_Reader {
+		v       = mft.v,
+		runs    = runs,
+		cluster = cluster,
+	}
 	for offset: u64 = 0; offset < read_limit; {
 		n := int(min(u64(len(scratch)), read_limit - offset))
 		if read_err := read_logical(&br, offset, scratch[:n]); read_err != nil {

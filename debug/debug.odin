@@ -94,7 +94,10 @@ PATTERN_GUARD :: 0xFD
 PATTERN_DEAD  :: 0xDD
 PATTERN_FRESH :: 0xCD
 
-#assert(GUARD >= 8 && (GUARD & (GUARD - 1)) == 0, "DEBUG_ALLOC_GUARD must be a power of two of at least 8")
+#assert(
+	GUARD >= 8 && (GUARD & (GUARD - 1)) == 0,
+	"DEBUG_ALLOC_GUARD must be a power of two of at least 8",
+)
 
 Issue_Kind :: enum {
 	Overflow,
@@ -203,7 +206,12 @@ Allocator :: struct {
 	root:         string, // directory of the file that called init; paths print relative to it
 }
 
-init :: proc(da: ^Allocator, backing: mem.Allocator, internals := context.allocator, loc := #caller_location) {
+init :: proc(
+	da: ^Allocator,
+	backing: mem.Allocator,
+	internals := context.allocator,
+	loc := #caller_location,
+) {
 	da.backing = backing
 	da.internals = internals
 	da.live.allocator = internals
@@ -282,7 +290,10 @@ allocator_proc :: proc(
 	old_memory: rawptr,
 	old_size: int,
 	loc := #caller_location,
-) -> (result: []byte, err: mem.Allocator_Error) {
+) -> (
+	result: []byte,
+	err: mem.Allocator_Error,
+) {
 	da := (^Allocator)(data)
 	// Anything this allocator does internally must not come back through itself.
 	context.allocator = da.internals
@@ -300,7 +311,15 @@ allocator_proc :: proc(
 		return do_resize(da, old_memory, old_size, size, alignment, mode == .Resize, loc)
 	case .Query_Features:
 		if set := (^mem.Allocator_Mode_Set)(old_memory); set != nil {
-			set^ = {.Alloc, .Alloc_Non_Zeroed, .Free, .Free_All, .Resize, .Resize_Non_Zeroed, .Query_Features}
+			set^ = {
+				.Alloc,
+				.Alloc_Non_Zeroed,
+				.Free,
+				.Free_All,
+				.Resize,
+				.Resize_Non_Zeroed,
+				.Query_Features,
+			}
 		}
 		return nil, nil
 	case .Query_Info:
@@ -311,7 +330,16 @@ allocator_proc :: proc(
 
 // Obtain a guarded block from the backing allocator. No bookkeeping.
 @(private)
-raw_alloc :: proc(da: ^Allocator, size, alignment: int, zeroed: bool, loc: runtime.Source_Code_Location) -> (l: Live, user: []byte, err: mem.Allocator_Error) {
+raw_alloc :: proc(
+	da: ^Allocator,
+	size, alignment: int,
+	zeroed: bool,
+	loc: runtime.Source_Code_Location,
+) -> (
+	l: Live,
+	user: []byte,
+	err: mem.Allocator_Error,
+) {
 	if size < 0 {
 		return {}, nil, .Invalid_Argument
 	}
@@ -335,12 +363,26 @@ raw_alloc :: proc(da: ^Allocator, size, alignment: int, zeroed: bool, loc: runti
 	}
 	sanitizer.address_poison(raw[:front])
 	sanitizer.address_poison(raw[front + size:])
-	l = Live{raw = raw_data(raw), total = total, front = front, size = size, alignment = align}
+	l = Live {
+		raw       = raw_data(raw),
+		total     = total,
+		front     = front,
+		size      = size,
+		alignment = align,
+	}
 	return l, user, nil
 }
 
 @(private)
-do_alloc :: proc(da: ^Allocator, size, alignment: int, zeroed: bool, loc: runtime.Source_Code_Location) -> ([]byte, mem.Allocator_Error) {
+do_alloc :: proc(
+	da: ^Allocator,
+	size, alignment: int,
+	zeroed: bool,
+	loc: runtime.Source_Code_Location,
+) -> (
+	[]byte,
+	mem.Allocator_Error,
+) {
 	l, user, alloc_err := raw_alloc(da, size, alignment, zeroed, loc)
 	if alloc_err != nil {
 		return nil, alloc_err
@@ -362,7 +404,12 @@ do_alloc :: proc(da: ^Allocator, size, alignment: int, zeroed: bool, loc: runtim
 }
 
 @(private)
-do_free :: proc(da: ^Allocator, ptr: rawptr, given_size: int, loc: runtime.Source_Code_Location) -> mem.Allocator_Error {
+do_free :: proc(
+	da: ^Allocator,
+	ptr: rawptr,
+	given_size: int,
+	loc: runtime.Source_Code_Location,
+) -> mem.Allocator_Error {
 	if ptr == nil {
 		return nil
 	}
@@ -370,22 +417,40 @@ do_free :: proc(da: ^Allocator, ptr: rawptr, given_size: int, loc: runtime.Sourc
 	if !ok {
 		op := make_site(da, loc)
 		if d, dead_ok := da.dead[ptr]; dead_ok {
-			raise(da, Issue{
-				kind = .Double_Free, ptr = ptr, size = d.size,
-				alloc = d.alloc, has_alloc = true,
-				first_free = d.free, has_first_free = true, by_resize = d.by_resize,
-				op = op, stage = "free",
-			})
+			raise(
+				da,
+				Issue {
+					kind = .Double_Free,
+					ptr = ptr,
+					size = d.size,
+					alloc = d.alloc,
+					has_alloc = true,
+					first_free = d.free,
+					has_first_free = true,
+					by_resize = d.by_resize,
+					op = op,
+					stage = "free",
+				},
+			)
 		} else {
 			raise(da, Issue{kind = .Bad_Free, ptr = ptr, op = op, stage = "free"})
 		}
 		return .Invalid_Pointer
 	}
 	if given_size != 0 && given_size != l.size {
-		raise(da, Issue{
-			kind = .Size_Mismatch, ptr = ptr, size = l.size, given_size = given_size,
-			alloc = l.alloc, has_alloc = true, op = make_site(da, loc), stage = "free",
-		})
+		raise(
+			da,
+			Issue {
+				kind = .Size_Mismatch,
+				ptr = ptr,
+				size = l.size,
+				given_size = given_size,
+				alloc = l.alloc,
+				has_alloc = true,
+				op = make_site(da, loc),
+				stage = "free",
+			},
+		)
 	}
 	verify_guards(da, l, "free", loc)
 	retire(da, l, ptr, loc, false)
@@ -409,7 +474,16 @@ do_free_all :: proc(da: ^Allocator, loc: runtime.Source_Code_Location) {
 }
 
 @(private)
-do_resize :: proc(da: ^Allocator, ptr: rawptr, old_size, size, alignment: int, zeroed: bool, loc: runtime.Source_Code_Location) -> ([]byte, mem.Allocator_Error) {
+do_resize :: proc(
+	da: ^Allocator,
+	ptr: rawptr,
+	old_size, size, alignment: int,
+	zeroed: bool,
+	loc: runtime.Source_Code_Location,
+) -> (
+	[]byte,
+	mem.Allocator_Error,
+) {
 	if ptr == nil {
 		return do_alloc(da, size, alignment, zeroed, loc)
 	}
@@ -420,22 +494,40 @@ do_resize :: proc(da: ^Allocator, ptr: rawptr, old_size, size, alignment: int, z
 	if !ok {
 		op := make_site(da, loc)
 		if d, dead_ok := da.dead[ptr]; dead_ok {
-			raise(da, Issue{
-				kind = .Double_Free, ptr = ptr, size = d.size,
-				alloc = d.alloc, has_alloc = true,
-				first_free = d.free, has_first_free = true, by_resize = d.by_resize,
-				op = op, stage = "resize",
-			})
+			raise(
+				da,
+				Issue {
+					kind = .Double_Free,
+					ptr = ptr,
+					size = d.size,
+					alloc = d.alloc,
+					has_alloc = true,
+					first_free = d.free,
+					has_first_free = true,
+					by_resize = d.by_resize,
+					op = op,
+					stage = "resize",
+				},
+			)
 		} else {
 			raise(da, Issue{kind = .Bad_Resize, ptr = ptr, op = op, stage = "resize"})
 		}
 		return nil, .Invalid_Pointer
 	}
 	if old_size != 0 && old_size != l.size {
-		raise(da, Issue{
-			kind = .Size_Mismatch, ptr = ptr, size = l.size, given_size = old_size,
-			alloc = l.alloc, has_alloc = true, op = make_site(da, loc), stage = "resize",
-		})
+		raise(
+			da,
+			Issue {
+				kind = .Size_Mismatch,
+				ptr = ptr,
+				size = l.size,
+				given_size = old_size,
+				alloc = l.alloc,
+				has_alloc = true,
+				op = make_site(da, loc),
+				stage = "resize",
+			},
+		)
 	}
 	verify_guards(da, l, "resize", loc)
 
@@ -474,7 +566,13 @@ do_resize :: proc(da: ^Allocator, ptr: rawptr, old_size, size, alignment: int, z
 
 // Move a live block into quarantine: poison it, record when and where it died.
 @(private)
-retire :: proc(da: ^Allocator, l: Live, ptr: rawptr, loc: runtime.Source_Code_Location, by_resize: bool) {
+retire :: proc(
+	da: ^Allocator,
+	l: Live,
+	ptr: rawptr,
+	loc: runtime.Source_Code_Location,
+	by_resize: bool,
+) {
 	mem.set(ptr, PATTERN_DEAD, l.size)
 	// From the user block to the end of the backing allocation is now off limits.
 	sanitizer.address_poison(ptr, l.total - l.front)
@@ -500,9 +598,14 @@ retire :: proc(da: ^Allocator, l: Live, ptr: rawptr, loc: runtime.Source_Code_Lo
 		st.last_death = da.phase
 	}
 
-	da.dead[ptr] = Dead{
-		raw = l.raw, total = l.total, front = l.front, size = l.size,
-		alloc = l.alloc, free = free_site, by_resize = by_resize,
+	da.dead[ptr] = Dead {
+		raw       = l.raw,
+		total     = l.total,
+		front     = l.front,
+		size      = l.size,
+		alloc     = l.alloc,
+		free      = free_site,
+		by_resize = by_resize,
 	}
 	append(&da.dead_queue, ptr)
 	da.dead_bytes += l.total
@@ -576,31 +679,65 @@ verify_guards :: proc(da: ^Allocator, l: Live, stage: string, loc: runtime.Sourc
 	user_ptr := rawptr(uintptr(l.raw) + uintptr(l.front))
 	if c, bad := scan(block[:l.front], PATTERN_GUARD); bad {
 		c.offset -= l.front
-		raise(da, Issue{
-			kind = .Underflow, ptr = user_ptr, size = l.size,
-			alloc = l.alloc, has_alloc = true, op = make_site(da, loc), stage = stage, corruption = c,
-		})
+		raise(
+			da,
+			Issue {
+				kind = .Underflow,
+				ptr = user_ptr,
+				size = l.size,
+				alloc = l.alloc,
+				has_alloc = true,
+				op = make_site(da, loc),
+				stage = stage,
+				corruption = c,
+			},
+		)
 		refill(l.raw, l.front, PATTERN_GUARD) // report each corruption once
 	}
 	if c, bad := scan(block[l.front + l.size:], PATTERN_GUARD); bad {
 		c.offset += l.size
-		raise(da, Issue{
-			kind = .Overflow, ptr = user_ptr, size = l.size,
-			alloc = l.alloc, has_alloc = true, op = make_site(da, loc), stage = stage, corruption = c,
-		})
+		raise(
+			da,
+			Issue {
+				kind = .Overflow,
+				ptr = user_ptr,
+				size = l.size,
+				alloc = l.alloc,
+				has_alloc = true,
+				op = make_site(da, loc),
+				stage = stage,
+				corruption = c,
+			},
+		)
 		refill(raw_data(block[l.front + l.size:]), GUARD, PATTERN_GUARD)
 	}
 }
 
 @(private)
-verify_poison :: proc(da: ^Allocator, d: Dead, ptr: rawptr, stage: string, loc: runtime.Source_Code_Location) {
+verify_poison :: proc(
+	da: ^Allocator,
+	d: Dead,
+	ptr: rawptr,
+	stage: string,
+	loc: runtime.Source_Code_Location,
+) {
 	if c, bad := scan(mem.byte_slice(ptr, d.size), PATTERN_DEAD); bad {
-		raise(da, Issue{
-			kind = .Write_After_Free, ptr = ptr, size = d.size,
-			alloc = d.alloc, has_alloc = true,
-			first_free = d.free, has_first_free = true, by_resize = d.by_resize,
-			op = make_site(da, loc), stage = stage, corruption = c,
-		})
+		raise(
+			da,
+			Issue {
+				kind = .Write_After_Free,
+				ptr = ptr,
+				size = d.size,
+				alloc = d.alloc,
+				has_alloc = true,
+				first_free = d.free,
+				has_first_free = true,
+				by_resize = d.by_resize,
+				op = make_site(da, loc),
+				stage = stage,
+				corruption = c,
+			},
+		)
 		refill(ptr, d.size, PATTERN_DEAD)
 	}
 }
@@ -633,7 +770,11 @@ scan :: proc(b: []byte, pattern: byte) -> (c: Corruption, bad: bool) {
 
 @(private)
 make_site :: proc(da: ^Allocator, loc: runtime.Source_Code_Location) -> Site {
-	s := Site{loc = loc, phase = da.phase, seq = da.seq}
+	s := Site {
+		loc   = loc,
+		phase = da.phase,
+		seq   = da.seq,
+	}
 	when BACKTRACES {
 		s.bt = trace.capture()
 	}
@@ -642,10 +783,15 @@ make_site :: proc(da: ^Allocator, loc: runtime.Source_Code_Location) -> Site {
 
 @(private)
 site_stats :: proc(da: ^Allocator, loc: runtime.Source_Code_Location) -> ^Site_Stats {
-	key := Site_Key{file = loc.file_path, line = loc.line}
+	key := Site_Key {
+		file = loc.file_path,
+		line = loc.line,
+	}
 	st, ok := &da.sites[key]
 	if !ok {
-		da.sites[key] = Site_Stats{loc = loc}
+		da.sites[key] = Site_Stats {
+			loc = loc,
+		}
 		st = &da.sites[key]
 	}
 	return st
@@ -675,7 +821,11 @@ address is poisoned but not what it was; this adds the block, its allocation sit
 and its free site, which is what the reader needs to fix the bug.
 */
 @(private)
-asan_death :: proc "c" (pc, bp, sp, addr_unused: rawptr, is_write_unused: i32, access_size_unused: uint) {
+asan_death :: proc "c" (
+	pc, bp, sp, addr_unused: rawptr,
+	is_write_unused: i32,
+	access_size_unused: uint,
+) {
 	// The runtime invokes this without arguments; the parameters hold whatever was in
 	// the registers. The report accessors are the reliable source.
 	_, _, _, _, _, _ = pc, bp, sp, addr_unused, is_write_unused, access_size_unused
@@ -696,7 +846,12 @@ asan_death :: proc "c" (pc, bp, sp, addr_unused: rawptr, is_write_unused: i32, a
 	}
 
 	fmt.eprintln()
-	fmt.eprintfln("== debug allocator: about the faulting address %p (%s of %d byte(s)) ==", addr, "write" if is_write else "read", access_size)
+	fmt.eprintfln(
+		"== debug allocator: about the faulting address %p (%s of %d byte(s)) ==",
+		addr,
+		"write" if is_write else "read",
+		access_size,
+	)
 	a := uintptr(addr)
 	for user, l in da.live {
 		lo := uintptr(l.raw)
@@ -707,9 +862,16 @@ asan_death :: proc "c" (pc, bp, sp, addr_unused: rawptr, is_write_unused: i32, a
 		fmt.eprintln("   the block is still live")
 		print_site(da, "allocated ", l.alloc)
 		if l.resizes > 0 {
-			fmt.eprintfln("   resized    %d time(s), last at %s:%d", l.resizes, display_path(da, l.last_resize.file_path), l.last_resize.line)
+			fmt.eprintfln(
+				"   resized    %d time(s), last at %s:%d",
+				l.resizes,
+				display_path(da, l.last_resize.file_path),
+				l.last_resize.line,
+			)
 		}
-		fmt.eprintln("   meaning    an access outside a live block's bounds. Check the index or length used for this access against the allocation size above.")
+		fmt.eprintln(
+			"   meaning    an access outside a live block's bounds. Check the index or length used for this access against the allocation size above.",
+		)
 		return
 	}
 	for user, d in da.dead {
@@ -721,13 +883,19 @@ asan_death :: proc "c" (pc, bp, sp, addr_unused: rawptr, is_write_unused: i32, a
 		print_site(da, "allocated ", d.alloc)
 		print_site(da, "moved by  " if d.by_resize else "freed     ", d.free)
 		if d.by_resize {
-			fmt.eprintln("   meaning    the block was moved by a resize and this access used the old address. A pointer or slice into a dynamic array was kept across an append; re-fetch it after growing.")
+			fmt.eprintln(
+				"   meaning    the block was moved by a resize and this access used the old address. A pointer or slice into a dynamic array was kept across an append; re-fetch it after growing.",
+			)
 		} else {
-			fmt.eprintln("   meaning    use after free. The accessor holds a dangling pointer to a block freed at the site above.")
+			fmt.eprintln(
+				"   meaning    use after free. The accessor holds a dangling pointer to a block freed at the site above.",
+			)
 		}
 		return
 	}
-	fmt.eprintln("   not inside any block this allocator has handed out or is holding in quarantine")
+	fmt.eprintln(
+		"   not inside any block this allocator has handed out or is holding in quarantine",
+	)
 	fmt.eprintfln("   phase=%s  tick=%d  issues so far=%d", da.phase, da.seq, len(da.issues))
 }
 
@@ -737,7 +905,11 @@ describe_offset :: proc(a, user: uintptr, size: int) {
 	case a < user:
 		fmt.eprintfln("   %d byte(s) before the start of a %d-byte block", user - a, size)
 	case a >= user + uintptr(size):
-		fmt.eprintfln("   %d byte(s) past the end of a %d-byte block", a - (user + uintptr(size)), size)
+		fmt.eprintfln(
+			"   %d byte(s) past the end of a %d-byte block",
+			a - (user + uintptr(size)),
+			size,
+		)
 	case:
 		fmt.eprintfln("   %d byte(s) into a %d-byte block", a - user, size)
 	}
@@ -748,20 +920,34 @@ describe_offset :: proc(a, user: uintptr, size: int) {
 @(private)
 kind_name :: proc(k: Issue_Kind) -> string {
 	switch k {
-	case .Overflow:         return "OVERFLOW"
-	case .Underflow:        return "UNDERFLOW"
-	case .Double_Free:      return "DOUBLE_FREE"
-	case .Write_After_Free: return "WRITE_AFTER_FREE"
-	case .Bad_Free:         return "BAD_FREE"
-	case .Bad_Resize:       return "BAD_RESIZE"
-	case .Size_Mismatch:    return "SIZE_MISMATCH"
+	case .Overflow:
+		return "OVERFLOW"
+	case .Underflow:
+		return "UNDERFLOW"
+	case .Double_Free:
+		return "DOUBLE_FREE"
+	case .Write_After_Free:
+		return "WRITE_AFTER_FREE"
+	case .Bad_Free:
+		return "BAD_FREE"
+	case .Bad_Resize:
+		return "BAD_RESIZE"
+	case .Size_Mismatch:
+		return "SIZE_MISMATCH"
 	}
 	return "UNKNOWN"
 }
 
 @(private)
 print_issue :: proc(da: ^Allocator, iss: Issue) {
-	fmt.eprintfln("!! ALLOCATION ISSUE #%d: %s  ptr=%p  size=%d b  detected during %s", iss.id, kind_name(iss.kind), iss.ptr, iss.size, iss.stage)
+	fmt.eprintfln(
+		"!! ALLOCATION ISSUE #%d: %s  ptr=%p  size=%d b  detected during %s",
+		iss.id,
+		kind_name(iss.kind),
+		iss.ptr,
+		iss.size,
+		iss.stage,
+	)
 	if iss.has_alloc {
 		print_site(da, "allocated ", iss.alloc)
 	}
@@ -783,29 +969,67 @@ print_issue :: proc(da: ^Allocator, iss: Issue) {
 	c := iss.corruption
 	switch iss.kind {
 	case .Overflow:
-		fmt.eprintfln("   damage     %d byte(s) written starting %d byte(s) past the end of the block: %s (guard bytes should read %02x)", c.count, c.offset - iss.size, hex(c), PATTERN_GUARD)
-		fmt.eprintln("   meaning    something wrote beyond the allocation's last byte between allocation and this check. Look for an off-by-one in a loop bound or a length computed from the wrong variable.")
+		fmt.eprintfln(
+			"   damage     %d byte(s) written starting %d byte(s) past the end of the block: %s (guard bytes should read %02x)",
+			c.count,
+			c.offset - iss.size,
+			hex(c),
+			PATTERN_GUARD,
+		)
+		fmt.eprintln(
+			"   meaning    something wrote beyond the allocation's last byte between allocation and this check. Look for an off-by-one in a loop bound or a length computed from the wrong variable.",
+		)
 	case .Underflow:
-		fmt.eprintfln("   damage     %d byte(s) written starting %d byte(s) before the block: %s (guard bytes should read %02x)", c.count, -c.offset, hex(c), PATTERN_GUARD)
-		fmt.eprintln("   meaning    something wrote before the allocation's first byte. Look for a negative index or pointer arithmetic that steps back past the start.")
+		fmt.eprintfln(
+			"   damage     %d byte(s) written starting %d byte(s) before the block: %s (guard bytes should read %02x)",
+			c.count,
+			-c.offset,
+			hex(c),
+			PATTERN_GUARD,
+		)
+		fmt.eprintln(
+			"   meaning    something wrote before the allocation's first byte. Look for a negative index or pointer arithmetic that steps back past the start.",
+		)
 	case .Double_Free:
 		if iss.by_resize {
-			fmt.eprintln("   meaning    this address was invalidated when the block was resized (see 'moved by' above); the caller kept the old address across an append or resize. Re-fetch the pointer after growing the container, or reserve capacity up front.")
+			fmt.eprintln(
+				"   meaning    this address was invalidated when the block was resized (see 'moved by' above); the caller kept the old address across an append or resize. Re-fetch the pointer after growing the container, or reserve capacity up front.",
+			)
 		} else {
-			fmt.eprintln("   meaning    the block was already freed. Remove one of the two frees, or set the pointer to nil after the first so a second free is a no-op.")
+			fmt.eprintln(
+				"   meaning    the block was already freed. Remove one of the two frees, or set the pointer to nil after the first so a second free is a no-op.",
+			)
 		}
 	case .Write_After_Free:
-		fmt.eprintfln("   damage     %d byte(s) written at offset %d after the block was freed: %s (freed memory should read %02x)", c.count, c.offset, hex(c), PATTERN_DEAD)
+		fmt.eprintfln(
+			"   damage     %d byte(s) written at offset %d after the block was freed: %s (freed memory should read %02x)",
+			c.count,
+			c.offset,
+			hex(c),
+			PATTERN_DEAD,
+		)
 		if iss.by_resize {
-			fmt.eprintln("   meaning    the block was moved by a resize (see 'moved by' above) and the old address was written afterwards. A pointer or slice into a dynamic array was kept across an append.")
+			fmt.eprintln(
+				"   meaning    the block was moved by a resize (see 'moved by' above) and the old address was written afterwards. A pointer or slice into a dynamic array was kept across an append.",
+			)
 		} else {
-			fmt.eprintln("   meaning    memory was written after it was freed. The writer holds a dangling pointer; find who still references this block after the free above.")
+			fmt.eprintln(
+				"   meaning    memory was written after it was freed. The writer holds a dangling pointer; find who still references this block after the free above.",
+			)
 		}
 	case .Bad_Free, .Bad_Resize:
-		fmt.eprintln("   meaning    this pointer was never returned by this allocator. Common causes: freeing memory from an arena or temp allocator with the context allocator, freeing a pointer into the middle of a block, or freeing an uninitialised pointer.")
+		fmt.eprintln(
+			"   meaning    this pointer was never returned by this allocator. Common causes: freeing memory from an arena or temp allocator with the context allocator, freeing a pointer into the middle of a block, or freeing an uninitialised pointer.",
+		)
 	case .Size_Mismatch:
-		fmt.eprintfln("   damage     freed with size %d b but %d b were allocated", iss.given_size, iss.size)
-		fmt.eprintln("   meaning    delete() was given a slice whose length differs from the allocation, usually a re-sliced or truncated slice. Delete the original slice, or keep the original length.")
+		fmt.eprintfln(
+			"   damage     freed with size %d b but %d b were allocated",
+			iss.given_size,
+			iss.size,
+		)
+		fmt.eprintln(
+			"   meaning    delete() was given a slice whose length differs from the allocation, usually a re-sliced or truncated slice. Delete the original slice, or keep the original length.",
+		)
 	}
 }
 
@@ -826,7 +1050,15 @@ hex :: proc(c: Corruption) -> string {
 
 @(private)
 print_site :: proc(da: ^Allocator, label: string, s: Site) {
-	fmt.eprintfln("   %s %s:%d  proc=%s  phase=%s  tick=%d", label, display_path(da, s.loc.file_path), s.loc.line, s.loc.procedure, s.phase, s.seq)
+	fmt.eprintfln(
+		"   %s %s:%d  proc=%s  phase=%s  tick=%d",
+		label,
+		display_path(da, s.loc.file_path),
+		s.loc.line,
+		s.loc.procedure,
+		s.phase,
+		s.seq,
+	)
 	when BACKTRACES {
 		print_frames(da, s.bt, 8)
 	}
@@ -851,7 +1083,13 @@ Print the exit report to stderr. Safe to call via defer after swapping
 context.allocator to this allocator. Verifies every block first, so corruption that
 happened after the last free or phase change is still caught.
 */
-report :: proc(da: ^Allocator, max_groups := 20, max_sites := 15, max_frames := 8, loc := #caller_location) {
+report :: proc(
+	da: ^Allocator,
+	max_groups := 20,
+	max_sites := 15,
+	max_frames := 8,
+	loc := #caller_location,
+) {
 	context.allocator = da.internals
 	sync.guard(&da.mutex)
 	verify_all(da, "exit", loc)
@@ -861,9 +1099,23 @@ report :: proc(da: ^Allocator, max_groups := 20, max_sites := 15, max_frames := 
 	if len(da.issues) == 0 && leaks == 0 {
 		fmt.eprintln("verdict: clean (no issues, no leaks)")
 	} else {
-		fmt.eprintfln("verdict: %d issue(s), %d leaked block(s) totalling %d b", len(da.issues), leaks, da.live_bytes)
+		fmt.eprintfln(
+			"verdict: %d issue(s), %d leaked block(s) totalling %d b",
+			len(da.issues),
+			leaks,
+			da.live_bytes,
+		)
 	}
-	fmt.eprintfln("allocs=%d frees=%d live=%d live_bytes=%d peak_bytes=%d quarantined=%d issues=%d", da.total_allocs, da.total_frees, leaks, da.live_bytes, da.peak_bytes, len(da.dead), len(da.issues))
+	fmt.eprintfln(
+		"allocs=%d frees=%d live=%d live_bytes=%d peak_bytes=%d quarantined=%d issues=%d",
+		da.total_allocs,
+		da.total_frees,
+		leaks,
+		da.live_bytes,
+		da.peak_bytes,
+		len(da.dead),
+		len(da.issues),
+	)
 	fmt.eprint("phases=")
 	for p, i in da.phases {
 		if i > 0 {
@@ -874,16 +1126,33 @@ report :: proc(da: ^Allocator, max_groups := 20, max_sites := 15, max_frames := 
 	fmt.eprintln()
 
 	if len(da.issues) > 0 {
-		fmt.eprintfln("-- issues (%d, each printed in full where it was detected) --", len(da.issues))
+		fmt.eprintfln(
+			"-- issues (%d, each printed in full where it was detected) --",
+			len(da.issues),
+		)
 		for iss in da.issues {
 			fmt.eprintf("#%d %s  ptr=%p", iss.id, kind_name(iss.kind), iss.ptr)
 			if iss.has_alloc {
-				fmt.eprintf("  alloc %s:%d", display_path(da, iss.alloc.loc.file_path), iss.alloc.loc.line)
+				fmt.eprintf(
+					"  alloc %s:%d",
+					display_path(da, iss.alloc.loc.file_path),
+					iss.alloc.loc.line,
+				)
 			}
 			if iss.has_first_free {
-				fmt.eprintf("  %s %s:%d", "resize" if iss.by_resize else "free", display_path(da, iss.first_free.loc.file_path), iss.first_free.loc.line)
+				fmt.eprintf(
+					"  %s %s:%d",
+					"resize" if iss.by_resize else "free",
+					display_path(da, iss.first_free.loc.file_path),
+					iss.first_free.loc.line,
+				)
 			}
-			fmt.eprintfln("  detected %s:%d (%s)", display_path(da, iss.op.loc.file_path), iss.op.loc.line, iss.stage)
+			fmt.eprintfln(
+				"  detected %s:%d (%s)",
+				display_path(da, iss.op.loc.file_path),
+				iss.op.loc.line,
+				iss.stage,
+			)
 		}
 	}
 
@@ -898,13 +1167,19 @@ print_leaks :: proc(da: ^Allocator, max_groups, max_frames: int) {
 	groups := make(map[Site_Key]Leak_Group, da.internals)
 	defer delete(groups)
 	for _, l in da.live {
-		key := Site_Key{file = l.alloc.loc.file_path, line = l.alloc.loc.line}
+		key := Site_Key {
+			file = l.alloc.loc.file_path,
+			line = l.alloc.loc.line,
+		}
 		g, exists := &groups[key]
 		if !exists {
-			groups[key] = Leak_Group{
-				loc = l.alloc.loc, phase = l.alloc.phase,
-				min_size = l.size, max_size = l.size,
-				first_seq = l.alloc.seq, example = l.alloc.bt,
+			groups[key] = Leak_Group {
+				loc       = l.alloc.loc,
+				phase     = l.alloc.phase,
+				min_size  = l.size,
+				max_size  = l.size,
+				first_seq = l.alloc.seq,
+				example   = l.alloc.bt,
 			}
 			g = &groups[key]
 		}
@@ -935,17 +1210,38 @@ print_leaks :: proc(da: ^Allocator, max_groups, max_frames: int) {
 	fmt.eprintfln("-- leaks (%d group(s), %d block(s)) --", len(list), len(da.live))
 	for g, i in list {
 		if i >= max_groups {
-			fmt.eprintfln("... %d more leak groups omitted (raise max_groups to see them)", len(list) - i)
+			fmt.eprintfln(
+				"... %d more leak groups omitted (raise max_groups to see them)",
+				len(list) - i,
+			)
 			break
 		}
 		if g.min_size == g.max_size {
 			fmt.eprintf("LEAK  %d x %d b = %d b", g.count, g.min_size, g.bytes)
 		} else {
-			fmt.eprintf("LEAK  %d block(s), %d b total (sizes %d..%d b)", g.count, g.bytes, g.min_size, g.max_size)
+			fmt.eprintf(
+				"LEAK  %d block(s), %d b total (sizes %d..%d b)",
+				g.count,
+				g.bytes,
+				g.min_size,
+				g.max_size,
+			)
 		}
-		fmt.eprintf("  phase=%s  site=%s:%d  proc=%s  first_tick=%d", g.phase, display_path(da, g.loc.file_path), g.loc.line, g.loc.procedure, g.first_seq)
+		fmt.eprintf(
+			"  phase=%s  site=%s:%d  proc=%s  first_tick=%d",
+			g.phase,
+			display_path(da, g.loc.file_path),
+			g.loc.line,
+			g.loc.procedure,
+			g.first_seq,
+		)
 		if g.resizes > 0 {
-			fmt.eprintf("  resized=%d (last at %s:%d)", g.resizes, display_path(da, g.last_resize.file_path), g.last_resize.line)
+			fmt.eprintf(
+				"  resized=%d (last at %s:%d)",
+				g.resizes,
+				display_path(da, g.last_resize.file_path),
+				g.last_resize.line,
+			)
 		}
 		fmt.eprintln()
 		when BACKTRACES {
@@ -970,17 +1266,36 @@ print_sites :: proc(da: ^Allocator, max_sites: int) {
 	slice.sort_by(list[:], proc(a, b: Site_Stats) -> bool {
 		return a.bytes > b.bytes
 	})
-	fmt.eprintfln("-- lifetimes by allocation site (top %d of %d by bytes; lifetime in allocation ticks) --", min(max_sites, len(list)), len(list))
+	fmt.eprintfln(
+		"-- lifetimes by allocation site (top %d of %d by bytes; lifetime in allocation ticks) --",
+		min(max_sites, len(list)),
+		len(list),
+	)
 	for st, i in list {
 		if i >= max_sites {
 			break
 		}
-		fmt.eprintf("SITE  %s:%d  proc=%s  allocs=%d frees=%d live=%d bytes=%d peak_live=%d", display_path(da, st.loc.file_path), st.loc.line, st.loc.procedure, st.allocs, st.frees, st.live, st.bytes, st.peak_live_bytes)
+		fmt.eprintf(
+			"SITE  %s:%d  proc=%s  allocs=%d frees=%d live=%d bytes=%d peak_live=%d",
+			display_path(da, st.loc.file_path),
+			st.loc.line,
+			st.loc.procedure,
+			st.allocs,
+			st.frees,
+			st.live,
+			st.bytes,
+			st.peak_live_bytes,
+		)
 		if st.resizes > 0 {
 			fmt.eprintf(" resizes=%d", st.resizes)
 		}
 		if st.frees > 0 {
-			fmt.eprintf("  lifetime=%d..%d avg %d", st.lifetime_min, st.lifetime_max, st.lifetime_sum / u64(st.frees))
+			fmt.eprintf(
+				"  lifetime=%d..%d avg %d",
+				st.lifetime_min,
+				st.lifetime_max,
+				st.lifetime_sum / u64(st.frees),
+			)
 			if st.cross_phase > 0 {
 				fmt.eprintf("  cross_phase=%d (last died in %s)", st.cross_phase, st.last_death)
 			}
@@ -1006,7 +1321,10 @@ print_frames :: proc(da: ^Allocator, bt: trace.Capture_Const, max_frames: int) {
 	}
 	locs, err := trace.resolve(bt, da.internals, context.temp_allocator)
 	if err != nil {
-		fmt.eprintfln("      (call chain unavailable: %s; build with -debug)", trace.resolve_err_string(err))
+		fmt.eprintfln(
+			"      (call chain unavailable: %s; build with -debug)",
+			trace.resolve_err_string(err),
+		)
 		return
 	}
 	defer trace.locations_destroy(locs, da.internals)
@@ -1033,7 +1351,12 @@ print_frames :: proc(da: ^Allocator, bt: trace.Capture_Const, max_frames: int) {
 			fmt.eprintln("      <- ...")
 			break
 		}
-		fmt.eprintfln("      <- %s  %s:%d", short_proc(l.procedure), display_path(da, l.file_path), l.line)
+		fmt.eprintfln(
+			"      <- %s  %s:%d",
+			short_proc(l.procedure),
+			display_path(da, l.file_path),
+			l.line,
+		)
 		shown += 1
 	}
 }
