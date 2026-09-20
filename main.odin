@@ -116,10 +116,6 @@ run :: proc() -> int {
 		return 1
 	}
 
-	if opt.live {
-		return run_live(target, engine, opts, wcfg)
-	}
-
 	t: scan.Tree
 	if err := scan.tree_init(&t, 8); err != nil {
 		fmt.eprintfln("error: %v", err)
@@ -127,56 +123,29 @@ run :: proc() -> int {
 	}
 	defer scan.tree_destroy(&t)
 
-	start := time.tick_now()
-	// The one place a reader is chosen. Each fills the same tree; the MFT reader also
-	// keeps its own table, which carries what only NTFS knows.
-	m: ntfs.Mft
-	have_mft := false
-	// Registered before the read, not after the switch: projecting the table can fail,
-	// and a defer below that point never covers the return it takes.
-	defer if have_mft {
-		ntfs.mft_destroy(&m)
+	// The table outlives the tree, whose names are borrowed from it.
+	f := Fill {
+		target = target,
+		engine = engine.engine,
+		opts   = opts,
+		wcfg   = wcfg,
+		tree   = &t,
 	}
-	switch engine.engine {
-	case .Mft:
-		err := ntfs.read_mft(target.volume, &m, opts)
-		if err != nil {
-			#partial switch err {
-			case .Access_Denied:
-				fmt.eprintln(
-					"error: access denied. Reading a raw volume needs an administrator prompt.",
-				)
-			case .Not_Ntfs:
-				fmt.eprintln("error: not an NTFS volume")
-			case .Open_Failed:
-				fmt.eprintfln("error: could not open %s", target.volume)
-			case:
-				fmt.eprintfln("error: %v", err)
-			}
-			return 1
-		}
-		have_mft = true
-		projection: ntfs.Projection
-		defer ntfs.projection_destroy(&projection)
-		if err := ntfs.to_tree(&m, &t, &projection); err != nil {
-			fmt.eprintfln("error: %v", err)
-			return 1
-		}
-		// The table calls its root ".", so paths would lose the volume it came from.
-		rw := scan.writer(&t, 0)
-		scan.node(&t, t.root).name = scan.intern(&rw, scan.top(target))
-	case .Walk:
-		root := scan.location(target, context.temp_allocator)
-		if err := walk.scan(root, &t, wcfg); err != nil {
-			fmt.eprintfln("error: walking %s: %v", root, err)
-			return 1
-		}
-	case .None:
+	defer fill_destroy(&f)
+
+	if opt.live {
+		return run_live(&f, &t)
+	}
+
+	start := time.tick_now()
+	fill_run(&f)
+	if fill_report(&f) {
+		return 1
 	}
 	elapsed := time.tick_since(start)
 
-	if have_mft {
-		print_native(&m, elapsed)
+	if engine.engine == .Mft {
+		print_native(&f.table, elapsed)
 	}
 	fmt.println()
 	fmt.printfln(
