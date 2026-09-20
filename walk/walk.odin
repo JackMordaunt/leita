@@ -36,14 +36,18 @@ Error :: enum {
 }
 
 /*
-Walk `root` into the tree.
+Read everything under `root` into the tree.
 
-Directories are the unit of work and each yields more of them, which is the shape
-`flow.manage` exists for: a worker takes the next directory the moment one is known
-rather than waiting for a level to finish. Every worker writes only into slots it
-claimed, so nothing here is synchronised except the queue itself.
+Every directory below it is opened, each entry it holds becomes a node, and each
+directory among them is read in turn. A worker takes the next directory the moment
+one is known rather than waiting for a level to finish, so a tree that is wide near
+the root and one that is deep in a single branch both keep them busy.
+
+Returns once the tree holds everything under `root`; Cancelled if the scan was called
+off part way, and Out_Of_Memory if the tree ran out of room, in which case what is
+there is short rather than wrong.
 */
-scan :: proc(root: string, t: ^scan.Tree, cfg := Config{}) -> Error {
+read :: proc(root: string, t: ^scan.Tree, cfg := Config{}) -> Error {
 	allocator := context.allocator
 
 	w := scan.writer(t, 0)

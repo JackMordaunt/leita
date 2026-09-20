@@ -6,7 +6,7 @@ import "core:os"
 import "core:slice"
 import "core:testing"
 
-import shared "../scan"
+import "../scan"
 
 /*
 A hole costs nothing and has to be charged nothing.
@@ -40,13 +40,13 @@ test_a_sparse_file_is_charged_what_it_occupies :: proc(t: ^testing.T) {
 		"could not write",
 	)
 
-	tree: shared.Tree
-	testing.expect_value(t, shared.tree_init(&tree, 1), shared.Error.None)
-	defer shared.tree_destroy(&tree)
-	testing.expect_value(t, scan(root, &tree, Config{}), Error.None)
+	tree: scan.Tree
+	testing.expect_value(t, scan.tree_init(&tree, 1), scan.Error.None)
+	defer scan.tree_destroy(&tree)
+	testing.expect_value(t, read(root, &tree, Config{}), Error.None)
 
 	for i in 0 ..< tree.count {
-		n := shared.node(&tree, i)
+		n := scan.node(&tree, i)
 		switch n.name {
 		case "hole.bin":
 			testing.expect_value(t, n.size, u64(1 << 20))

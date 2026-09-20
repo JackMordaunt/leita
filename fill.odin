@@ -157,5 +157,5 @@ fill_mft_read :: proc(f: ^Fill) {
 fill_walk :: proc(f: ^Fill) {
 	root := scan.location(f.target, context.allocator)
 	defer delete(root)
-	f.walk_err = walk.scan(root, f.tree, f.wcfg)
+	f.walk_err = walk.read(root, f.tree, f.wcfg)
 }
