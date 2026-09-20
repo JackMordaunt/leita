@@ -134,7 +134,7 @@ run :: proc() -> int {
 	defer fill_destroy(&f)
 
 	if opt.live {
-		return run_live(&f, &t)
+		return run_live(&f)
 	}
 
 	start := time.tick_now()

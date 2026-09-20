@@ -24,7 +24,7 @@ answer from the last one.
 */
 FRAME :: 16 * time.Millisecond
 
-run_live :: proc(f: ^Fill, t: ^scan.Tree) -> int {
+run_live :: proc(f: ^Fill) -> int {
 	out: scan.Publisher
 	started := time.tick_now()
 
@@ -32,7 +32,7 @@ run_live :: proc(f: ^Fill, t: ^scan.Tree) -> int {
 	sync.atomic_store(&f.scanning, true)
 
 	b := Builder {
-		tree     = t,
+		tree     = f.tree,
 		out      = &out,
 		scanning = &f.scanning,
 		started  = started,
@@ -77,7 +77,7 @@ run_live :: proc(f: ^Fill, t: ^scan.Tree) -> int {
 				last.nodes,
 				last.pending,
 				human(last.rows[0].bytes),
-				scan.path(t, last.rows[0].node, context.temp_allocator),
+				scan.path(f.tree, last.rows[0].node, context.temp_allocator),
 				time.duration_milliseconds(time.tick_since(frame_start)),
 				last.complete ? "  (final)" : "",
 			)
@@ -110,18 +110,18 @@ run_live :: proc(f: ^Fill, t: ^scan.Tree) -> int {
 		missed,
 	)
 
-	print_largest(t, b.roll.totals[:], .files)
-	print_largest(t, b.roll.totals[:], .directories)
+	print_largest(f.tree, b.roll.totals[:], .files)
+	print_largest(f.tree, b.roll.totals[:], .directories)
 
 	return 0
 }
 
-@(private = "file")
+@(private)
 fill_thread :: proc(f: ^Fill) {
 	fill_run(f)
 }
 
-@(private = "file")
+@(private)
 build_thread :: proc(b: ^Builder) {
 	builder_run(b)
 }
