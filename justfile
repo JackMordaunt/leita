@@ -6,13 +6,17 @@
 #   just check      type-check both modes without producing a binary
 #   just clean      remove build/
 #
+# The debug allocator comes from the jfm collection at ~/Source/Personal/odin
+# (override with JFM=<path>); it is resolved by path until sonar ships.
+#
 # Debug and test builds carry -sanitize:address. The debug allocator poisons its
 # guard bytes and freed blocks, so instrumented reads past the end or after free
 # trap at the faulting instruction. Pass SAN= to build without it:
 # `SAN= just build`. Odin does not create output directories, hence the mkdir.
 
 odin  := env("ODIN", "odin")
-flags := "-vet -strict-style"
+jfm   := env("JFM", home_directory() / "Source" / "Personal" / "odin")
+flags := "-vet -strict-style -collection:jfm=" + jfm
 san   := env("SAN", "-sanitize:address")
 exe   := if os() == "windows" { ".exe" } else { "" }
 bin   := "sonar"
