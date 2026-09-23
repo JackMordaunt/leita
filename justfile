@@ -6,8 +6,8 @@
 #   just check      type-check both modes without producing a binary
 #   just clean      remove build/
 #
-# The debug allocator comes from the jfm collection at ~/Source/Personal/odin
-# (override with JFM=<path>); it is resolved by path until sonar ships.
+# The debug allocator and flow come from the jfm collection at ~/Source/Personal/odin
+# (override with JFM=<path>); they are resolved by path until sonar ships.
 #
 # Debug and test builds carry -sanitize:address. The debug allocator poisons its
 # guard bytes and freed blocks, so instrumented reads past the end or after free
@@ -39,7 +39,6 @@ release:
 test:
     mkdir -p build/test
     {{odin}} test ntfs -debug {{san}} {{flags}} -out:build/test/ntfs{{exe}}
-    {{odin}} test flow -debug {{san}} {{flags}} -out:build/test/flow{{exe}}
     {{odin}} test scan -debug {{san}} {{flags}} -out:build/test/scan{{exe}}
     {{odin}} test walk -debug {{san}} {{flags}} -out:build/test/walk{{exe}}
     {{odin}} test . -debug {{san}} {{flags}} -out:build/test/main{{exe}}

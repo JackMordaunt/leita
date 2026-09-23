@@ -4,7 +4,7 @@ import "core:mem"
 import "core:mem/virtual"
 import "core:time"
 
-import "../flow"
+import "jfm:flow"
 
 // Alignment for I/O buffers. Raw volume reads want sector alignment; 4 KiB covers
 // every sector size in use.
