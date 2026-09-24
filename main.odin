@@ -15,7 +15,7 @@ import "core:fmt"
 import "core:os"
 import "core:time"
 
-@(require) import "jfm:debug"
+@(require) import "jm:debug"
 import "ntfs"
 import "scan"
 import "walk"

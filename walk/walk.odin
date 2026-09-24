@@ -17,7 +17,7 @@ package walk
 import "core:mem"
 import "core:strings"
 
-import "jfm:flow"
+import "jm:flow"
 import "../scan"
 
 Config :: struct {
