@@ -2,7 +2,7 @@
 #
 #   just build      debug build with AddressSanitizer   -> build/debug/sonar
 #   just release    optimised build                     -> build/release/sonar
-#   just test       run the package tests under ASan    -> build/test/
+#   just test       run every imported package's tests under ASan -> build/test/
 #   just check      type-check both modes without producing a binary
 #   just clean      remove build/
 #
@@ -35,13 +35,10 @@ release:
     mkdir -p build/release
     {{odin}} build . -o:speed {{flags}} -out:build/release/{{bin}}{{exe}}
 
-# Run every package's tests under ASan -> build/test/
+# Run the tests of every package the binary imports under ASan -> build/test/
 test:
     mkdir -p build/test
-    {{odin}} test ntfs -debug {{san}} {{flags}} -out:build/test/ntfs{{exe}}
-    {{odin}} test scan -debug {{san}} {{flags}} -out:build/test/scan{{exe}}
-    {{odin}} test walk -debug {{san}} {{flags}} -out:build/test/walk{{exe}}
-    {{odin}} test . -debug {{san}} {{flags}} -out:build/test/main{{exe}}
+    {{odin}} test . -all-packages -debug {{san}} {{flags}} -out:build/test/{{bin}}{{exe}}
 
 # Type-check both modes without producing a binary.
 check:
