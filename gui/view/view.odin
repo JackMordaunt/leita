@@ -21,8 +21,9 @@ import "../../human"
 import "../command"
 import "../query"
 
-// SIDE_WIDTH is the largest files column's width; the listing takes the rest.
-SIDE_WIDTH :: 380
+// SIDE_WIDTH is the side column's width: the open directory's contents and the
+// largest files. The sunburst takes the rest.
+SIDE_WIDTH :: 400
 
 // SIZE_WIDTH is the size column's width in a listing row.
 SIZE_WIDTH :: 84
@@ -45,6 +46,11 @@ Model :: struct {
 	dir:        u32,
 	scroll:     ui.Scroll_Offset,
 	side:       ui.Scroll_Offset,
+	// The pointer over the sunburst, and the size it was last drawn at, so a frame
+	// can say what is under the pointer before it draws the disc.
+	pointer:    ops.Point,
+	inside:     bool,
+	burst:      f32,
 }
 
 model_init :: proc(m: ^Model, path: string) {
@@ -54,6 +60,12 @@ model_init :: proc(m: ^Model, path: string) {
 
 model_destroy :: proc(m: ^Model) {
 	ui.text_destroy(&m.path)
+}
+
+// open makes dir the one shown, in the sunburst and the listing both.
+open :: proc(m: ^Model, dir: u32) {
+	m.dir = dir
+	m.scroll = {}
 }
 
 view :: proc(gtx: ^ui.Ctx, user: rawptr) {
@@ -86,11 +98,14 @@ view :: proc(gtx: ^ui.Ctx, user: rawptr) {
 	ui.flexible(gtx, 1)
 	if ui.row(gtx, gap = 24, align = .Fill) {
 		ui.flexible(gtx, 1)
-		if ui.column(gtx, gap = 8, align = .Fill) {
-			listing(gtx, m)
-		}
+		rings_panel(gtx, m)
 		if ui.sized(gtx, {min = {SIDE_WIDTH, 0}, max = {SIDE_WIDTH, ui.INF}}) {
-			largest(gtx, m)
+			if ui.column(gtx, gap = 24, align = .Fill) {
+				ui.flexible(gtx, 3)
+				listing(gtx, m)
+				ui.flexible(gtx, 2)
+				largest(gtx, m)
+			}
 		}
 	}
 }
@@ -203,6 +218,8 @@ counters :: proc(gtx: ^ui.Ctx, prog: ^query.Progress_Result) -> string {
 
 @(private)
 listing :: proc(gtx: ^ui.Ctx, m: ^Model) {
+	ui.column(gtx, gap = 8, align = .Fill)
+	primer.heading(gtx, "Contents", level = 2, variant = .Small)
 	r, _ := ui.need(
 		gtx,
 		query.Listing{generation = m.generation, dir = m.dir},
@@ -215,17 +232,6 @@ listing :: proc(gtx: ^ui.Ctx, m: ^Model) {
 		return
 	}
 
-	items := make([]primer.Breadcrumb, len(r.crumbs), gtx.allocator)
-	for c, i in r.crumbs {
-		items[i] = {
-			label    = c.name,
-			selected = i == len(r.crumbs) - 1,
-		}
-	}
-	if at := primer.breadcrumbs(gtx, items); at >= 0 && at < len(r.crumbs) - 1 {
-		m.dir = r.crumbs[at].node
-		m.scroll = {}
-	}
 	primer.text(
 		gtx,
 		fmt.aprintf(
@@ -246,8 +252,7 @@ listing :: proc(gtx: ^ui.Ctx, m: ^Model) {
 			}
 			for e in r.entries {
 				if entry(gtx, e, r.bytes) {
-					m.dir = e.node
-					m.scroll = {}
+					open(m, e.node)
 				}
 			}
 			if r.more > 0 {
@@ -297,7 +302,7 @@ entry :: proc(gtx: ^ui.Ctx, e: query.Entry, total: u64) -> (opened: bool) {
 		gtx,
 		share,
 		bg = e.directory ? .Bg_Color_Accent_Emphasis : .Bg_Color_Neutral_Emphasis,
-		label = e.name,
+		label = fmt.aprintf("%s share", e.name, allocator = gtx.allocator),
 	)
 	if ui.sized(gtx, {min = {SIZE_WIDTH, 0}, max = {SIZE_WIDTH, ui.INF}}) {
 		if ui.column(gtx, align = .End) {

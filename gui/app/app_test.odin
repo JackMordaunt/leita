@@ -8,6 +8,7 @@ import "core:time"
 
 import "jm:ui"
 
+import "../query"
 import "../view"
 
 // The whole application, less the window: the view runs in a probe, the probe's
@@ -74,6 +75,17 @@ settle :: proc(r: ^Rig, name: string, present := true) -> bool {
 	return false
 }
 
+// open_row clicks a directory's name in the listing. The probe gives a row's
+// button the bounds of the whole row, whose centre is on the share bar, so this
+// clicks near the row's start, where the name is.
+@(private = "file")
+open_row :: proc(r: ^Rig, name: string) {
+	b := ui.probe_bounds(&r.p, name)
+	ui.probe_click_at(&r.p, {b.x + 24, b.y + b.h / 2})
+	ui.probe_frame(&r.p)
+	hand_on(r)
+}
+
 /*
 A directory to scan, made fresh:
 
@@ -122,10 +134,9 @@ a_scan_streams_into_the_window_and_a_directory_opens :: proc(t: ^testing.T) {
 	testing.expect(t, r.h.desk.scan.state == .Done)
 
 	// Opening the directory is a new need; the desk answers it at once.
-	testing.expect(t, ui.probe_click(&r.p, "photos"))
-	ui.probe_frame(&r.p)
-	hand_on(&r)
-	testing.expect(t, settle(&r, "small.jpg"), "the directory's contents are listed")
+	open_row(&r, "photos")
+	testing.expect(t, settle(&r, "264.0 KiB in 2 items"), "the directory's contents are listed")
+	testing.expect(t, ui.probe_tagged(&r.p, "arc big.raw"), "the sunburst followed")
 }
 
 @(test)
@@ -137,9 +148,7 @@ a_rescan_starts_over_at_the_top :: proc(t: ^testing.T) {
 	defer rig_close(&r)
 
 	testing.expect(t, settle(&r, "photos"))
-	testing.expect(t, ui.probe_click(&r.p, "photos"))
-	ui.probe_frame(&r.p)
-	hand_on(&r)
+	open_row(&r, "photos")
 	testing.expect(t, settle(&r, "264.0 KiB in 2 items"), "photos is open")
 	first := r.m.generation
 
@@ -161,4 +170,36 @@ a_path_that_is_not_there_fails_with_a_reason :: proc(t: ^testing.T) {
 		ui.probe_tagged(&r.p, "cannot scan /nonexistent/sonar/path: Target_Not_Found"),
 		"the reason is shown",
 	)
+}
+
+@(test)
+a_click_on_an_arc_opens_it_and_the_hub_goes_back_up :: proc(t: ^testing.T) {
+	root := fixture(t, "rings")
+	defer os.remove_all(root)
+	r: Rig
+	rig_open(&r, root)
+	defer rig_close(&r)
+
+	// The first ring holds the top's two entries; photos is the larger.
+	testing.expect(t, settle(&r, "Done"), "the scan finished")
+	testing.expect(t, settle(&r, "arc photos"), "photos has an arc")
+	testing.expect(t, ui.probe_tagged(&r.p, "arc notes.txt"), "notes.txt has an arc")
+
+	// Clicking the arc makes photos the hub: its files are the first ring now.
+	// photos, the larger, sweeps from twelve o'clock round past six, so the first
+	// ring straight below the hub is photos.
+	b := ui.probe_bounds(&r.p, "Sunburst")
+	radius := b.w / 2
+	ring := radius * (view.HUB + (1 - view.HUB) / (2 * query.RING_DEPTH))
+	ui.probe_click_at(&r.p, {b.x + b.w / 2, b.y + b.h / 2 + ring})
+	ui.probe_frame(&r.p)
+	hand_on(&r)
+	testing.expect(t, settle(&r, "arc big.raw"), "photos opened")
+	testing.expect(t, ui.probe_tagged(&r.p, "264.0 KiB in 2 items"), "the listing followed")
+
+	// The hub goes back up to the top.
+	testing.expect(t, ui.probe_click(&r.p, "hub"))
+	ui.probe_frame(&r.p)
+	hand_on(&r)
+	testing.expect(t, settle(&r, "arc photos"), "back at the top")
 }

@@ -62,6 +62,7 @@ Query :: union {
 	query.Progress,
 	query.Listing,
 	query.Largest,
+	query.Rings,
 }
 
 // Need_Event is a need appearing or going, as the main thread hands it on.
@@ -200,6 +201,8 @@ on_need :: proc(user: rawptr, need: ui.Need, added: bool) {
 		q, _ = ui.need_as(need, query.Listing)
 	case ui.need_is(need, query.Largest):
 		q, _ = ui.need_as(need, query.Largest)
+	case ui.need_is(need, query.Rings):
+		q, _ = ui.need_as(need, query.Rings)
 	case:
 		return
 	}
@@ -414,6 +417,8 @@ answer :: proc(d: ^Desk, key: ui.Need_Key, q: Query) {
 		put(d, key, listing(d, q))
 	case query.Largest:
 		put(d, key, largest(d, q))
+	case query.Rings:
+		put(d, key, rings(d, q))
 	}
 }
 
@@ -495,6 +500,18 @@ listing :: proc(d: ^Desk, q: query.Listing) -> query.Listing_Result {
 	r.bytes = s.roll.totals[dir]
 	r.crumbs = crumbs(s, dir, top)
 
+	entries := sorted_children(s, dir)
+	shown := min(len(entries), query.LISTING_LIMIT)
+	r.entries = entries[:shown]
+	r.more = len(entries) - shown
+	for e in entries[shown:] {
+		r.more_bytes += e.bytes
+	}
+	return r
+}
+
+// sorted_children is what dir holds so far, largest first, in the temp allocator.
+sorted_children :: proc(s: ^Scan, dir: u32) -> []query.Entry {
 	entries := make([dynamic]query.Entry, context.temp_allocator)
 	it := survey.children(&s.roll, dir)
 	for c in survey.next_child(&it) {
@@ -516,13 +533,80 @@ listing :: proc(d: ^Desk, q: query.Listing) -> query.Listing_Result {
 		}
 		return a.name < b.name
 	})
-	shown := min(len(entries), query.LISTING_LIMIT)
-	r.entries = entries[:shown]
-	r.more = len(entries) - shown
-	for e in entries[shown:] {
-		r.more_bytes += e.bytes
+	return entries[:]
+}
+
+rings :: proc(d: ^Desk, q: query.Rings) -> query.Rings_Result {
+	r := query.Rings_Result {
+		generation = d.generation,
+		dir        = q.dir,
 	}
+	s := d.scan
+	if s == nil || q.generation != d.generation {
+		return r
+	}
+	top, ok := root(s)
+	if !ok {
+		return r
+	}
+	dir := q.dir == query.ROOT ? top : q.dir
+	if dir >= u32(len(s.roll.totals)) {
+		return r
+	}
+	r.dir = dir
+	r.bytes = s.roll.totals[dir]
+	r.crumbs = crumbs(s, dir, top)
+	arcs := make([dynamic]query.Arc, context.temp_allocator)
+	if r.bytes > 0 {
+		lay_ring(s, &arcs, dir, r.bytes, 1, 0, 0, 1)
+	}
+	r.arcs = arcs[:]
 	return r
+}
+
+/*
+lay_ring lays dir's contents into ring depth, between start and start + sweep,
+each in proportion to its share of total, and recurses into each directory big
+enough to see. Contents come largest first, so the first too narrow to draw ends
+the ring: everything after it is narrower still.
+*/
+lay_ring :: proc(
+	s: ^Scan,
+	arcs: ^[dynamic]query.Arc,
+	dir: u32,
+	total: u64,
+	depth: u8,
+	branch: u8,
+	start, sweep: f32,
+) {
+	at := start
+	for e, i in sorted_children(s, dir) {
+		if len(arcs) >= query.MAX_ARCS {
+			return
+		}
+		w := sweep * f32(f64(e.bytes) / f64(total))
+		if w < query.MIN_SWEEP {
+			return
+		}
+		b := depth == 1 ? u8(min(i, 255)) : branch
+		append(
+			arcs,
+			query.Arc {
+				node = e.node,
+				name = e.name,
+				bytes = e.bytes,
+				directory = e.directory,
+				depth = depth,
+				branch = b,
+				start = at,
+				sweep = w,
+			},
+		)
+		if e.directory && depth < query.RING_DEPTH {
+			lay_ring(s, arcs, e.node, e.bytes, depth + 1, b, at, w)
+		}
+		at += w
+	}
 }
 
 // crumbs is the way from the top of the scan down to dir. A chain that never

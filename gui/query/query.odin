@@ -89,3 +89,42 @@ Largest_Result :: struct {
 }
 
 LARGEST_LIMIT :: 20
+
+// Rings is a directory drawn as a sunburst: its contents in the first ring, theirs
+// in the next, out to RING_DEPTH rings.
+Rings :: struct {
+	generation: u32,
+	dir:        u32, // ROOT for the top of the scan
+}
+
+// Arc is one entry in a ring. Its sweep is its share of its parent's, so the
+// sweeps in a ring never add to more than their parent's.
+Arc :: struct {
+	node:      u32,
+	name:      string,
+	bytes:     u64,
+	directory: bool,
+	depth:     u8, // 1 for the first ring
+	branch:    u8, // which entry of the first ring it lies under, for its colour
+	start:     f32, // turns clockwise from twelve o'clock, 0 to 1
+	sweep:     f32, // turns
+}
+
+Rings_Result :: struct {
+	generation: u32,
+	dir:        u32, // the directory at the centre, ROOT resolved
+	crumbs:     []Crumb, // from the top down to dir, inclusive
+	bytes:      u64,
+	arcs:       []Arc, // ring by ring is not promised; each arc carries its depth
+}
+
+// RING_DEPTH is how many rings a sunburst draws.
+RING_DEPTH :: 5
+
+// MIN_SWEEP is the narrowest arc drawn, in turns: half a degree. Anything
+// narrower could not be seen or pointed at, so it is left out with all it holds.
+MIN_SWEEP :: 1.0 / 720
+
+// MAX_ARCS caps a sunburst, so a directory of a million tiny files cannot send
+// a million arcs.
+MAX_ARCS :: 6000
