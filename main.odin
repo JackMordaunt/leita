@@ -15,9 +15,11 @@ import "core:fmt"
 import "core:os"
 import "core:time"
 
+import "human"
 @(require) import "jm:debug"
 import "ntfs"
 import "scan"
+import "survey"
 import "walk"
 
 // Largest N files/folders to print.
@@ -124,21 +126,21 @@ run :: proc() -> int {
 	defer scan.tree_destroy(&t)
 
 	// The table outlives the tree, whose names are borrowed from it.
-	f := Fill {
+	f := survey.Fill {
 		target = target,
 		engine = engine.engine,
 		opts   = opts,
 		wcfg   = wcfg,
 		tree   = &t,
 	}
-	defer fill_destroy(&f)
+	defer survey.fill_destroy(&f)
 
 	if opt.live {
 		return run_live(&f)
 	}
 
 	start := time.tick_now()
-	fill_run(&f)
+	survey.fill_run(&f)
 	if fill_report(&f) {
 		return 1
 	}
@@ -158,13 +160,22 @@ run :: proc() -> int {
 	// The same charging the live scan does, run once over a tree nobody is still
 	// filling. A node left uncharged here has an ancestor that never resolved, and
 	// another pass would not change that.
-	roll: Rollup
-	defer rollup_destroy(&roll)
-	rollup_advance(&roll, &t)
+	roll: survey.Rollup
+	defer survey.rollup_destroy(&roll)
+	survey.rollup_advance(&roll, &t)
 
 	print_largest(&t, roll.totals[:], .files)
 	print_largest(&t, roll.totals[:], .directories)
 	return 0
+}
+
+// Say what went wrong, if anything did.
+fill_report :: proc(f: ^survey.Fill) -> bool {
+	if msg := survey.problem(f); msg != "" {
+		fmt.eprintfln("error: %s", msg)
+		return true
+	}
+	return false
 }
 
 Kind :: enum {
@@ -220,7 +231,11 @@ print_largest :: proc(t: ^scan.Tree, totals: []u64, kind: Kind) {
 	fmt.println()
 	fmt.printfln("largest %v (%d)", kind, count)
 	for s in top[:count] {
-		fmt.printfln("  %10s  %s", human(s.bytes), scan.path(t, s.record, context.temp_allocator))
+		fmt.printfln(
+			"  %10s  %s",
+			human.bytes(s.bytes),
+			scan.path(t, s.record, context.temp_allocator),
+		)
 	}
 }
 
@@ -242,7 +257,7 @@ print_native :: proc(m: ^ntfs.Mft, elapsed: time.Duration) {
 	fmt.println()
 	fmt.printfln(
 		"volume     %s, %d B clusters, %d B records",
-		human(volume_bytes),
+		human.bytes(volume_bytes),
 		m.boot.bytes_per_cluster,
 		m.boot.record_size,
 	)
@@ -259,7 +274,7 @@ print_native :: proc(m: ^ntfs.Mft, elapsed: time.Duration) {
 		m.stats.directories,
 		len(m.links),
 	)
-	fmt.printfln("attributed %s summed from every file run list", human(allocated))
+	fmt.printfln("attributed %s summed from every file run list", human.bytes(allocated))
 
 	/*
 	$Bitmap counts allocated clusters without consulting a single file, so comparing it
@@ -269,18 +284,18 @@ print_native :: proc(m: ^ntfs.Mft, elapsed: time.Duration) {
 	*/
 	on_disk := m.stats.allocated_clusters * u64(m.boot.bytes_per_cluster)
 	if on_disk > 0 {
-		fmt.printfln("on disk    %s marked allocated in $Bitmap", human(on_disk))
+		fmt.printfln("on disk    %s marked allocated in $Bitmap", human.bytes(on_disk))
 		if on_disk >= allocated {
 			gap := on_disk - allocated
 			fmt.printfln(
 				"unclaimed  %s (%.2f%%) allocated but charged to no file",
-				human(gap),
+				human.bytes(gap),
 				100 * f64(gap) / f64(on_disk),
 			)
 		} else {
 			fmt.printfln(
 				"overcount  %s more attributed than $Bitmap reports allocated",
-				human(allocated - on_disk),
+				human.bytes(allocated - on_disk),
 			)
 		}
 	}
@@ -288,7 +303,7 @@ print_native :: proc(m: ^ntfs.Mft, elapsed: time.Duration) {
 		fmt.printfln(
 			"resident   %d files hold %s inside their MFT records, charged to $MFT",
 			m.stats.resident_files,
-			human(m.stats.resident_bytes),
+			human.bytes(m.stats.resident_bytes),
 		)
 	}
 }
@@ -314,18 +329,4 @@ top_n :: proc(top: []Sized, count: ^int, cand: Sized) {
 	if count^ < len(top) {
 		count^ += 1
 	}
-}
-
-human :: proc(n: u64) -> string {
-	units := [?]string{"B", "KiB", "MiB", "GiB", "TiB"}
-	v := f64(n)
-	i := 0
-	for v >= 1024 && i < len(units) - 1 {
-		v /= 1024
-		i += 1
-	}
-	if i == 0 {
-		return fmt.tprintf("%d B", n)
-	}
-	return fmt.tprintf("%.1f %s", v, units[i])
 }

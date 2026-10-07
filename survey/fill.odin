@@ -1,12 +1,16 @@
-package main
+/*
+Package survey drives a reader into a tree and keeps the totals folded from it: the
+part of a scan that is the same whoever is looking, a command line or a window.
+*/
+package survey
 
 import "core:fmt"
 import "core:sync"
 import "core:thread"
 
-import "ntfs"
-import "scan"
-import "walk"
+import "../ntfs"
+import "../scan"
+import "../walk"
 
 /*
 Runs a reader into the tree.
@@ -57,37 +61,36 @@ fill_run :: proc(f: ^Fill) {
 	}
 }
 
-// Say what went wrong, if anything did. The MFT's failures get their own words
-// because they are the ones a reader of them can act on.
-fill_report :: proc(f: ^Fill) -> bool {
+// What went wrong, in words, or "" if nothing did. The MFT's failures get their
+// own words because they are the ones a reader of them can act on.
+problem :: proc(f: ^Fill, allocator := context.temp_allocator) -> string {
 	if f.mft_err != nil {
 		#partial switch f.mft_err {
 		case .Access_Denied:
-			fmt.eprintln(
-				"error: access denied. Reading a raw volume needs an administrator prompt.",
+			return fmt.aprint(
+				"access denied. Reading a raw volume needs an administrator prompt.",
+				allocator = allocator,
 			)
 		case .Not_Ntfs:
-			fmt.eprintln("error: not an NTFS volume")
+			return fmt.aprint("not an NTFS volume", allocator = allocator)
 		case .Open_Failed:
-			fmt.eprintfln("error: could not open %s", f.target.volume)
+			return fmt.aprintf("could not open %s", f.target.volume, allocator = allocator)
 		case:
-			fmt.eprintfln("error: %v", f.mft_err)
+			return fmt.aprintf("%v", f.mft_err, allocator = allocator)
 		}
-		return true
 	}
 	if f.walk_err != nil {
-		fmt.eprintfln(
-			"error: walking %s: %v",
+		return fmt.aprintf(
+			"walking %s: %v",
 			scan.location(f.target, context.temp_allocator),
 			f.walk_err,
+			allocator = allocator,
 		)
-		return true
 	}
 	if f.tree_err != nil {
-		fmt.eprintfln("error: %v", f.tree_err)
-		return true
+		return fmt.aprintf("%v", f.tree_err, allocator = allocator)
 	}
-	return false
+	return ""
 }
 
 /*

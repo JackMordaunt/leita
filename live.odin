@@ -5,7 +5,9 @@ import "core:sync"
 import "core:thread"
 import "core:time"
 
+import "human"
 import "scan"
+import "survey"
 
 /*
 Stand in for a UI.
@@ -24,7 +26,7 @@ answer from the last one.
 */
 FRAME :: 16 * time.Millisecond
 
-run_live :: proc(f: ^Fill) -> int {
+run_live :: proc(f: ^survey.Fill) -> int {
 	out: Publisher
 	started := time.tick_now()
 
@@ -51,7 +53,7 @@ run_live :: proc(f: ^Fill) -> int {
 		return 1
 	}
 	defer thread.destroy(builder)
-	defer rollup_destroy(&b.roll)
+	defer survey.rollup_destroy(&b.roll)
 
 	frames, drawn, missed := 0, 0, 0
 	last: Snapshot
@@ -76,7 +78,7 @@ run_live :: proc(f: ^Fill) -> int {
 				last.elapsed,
 				last.nodes,
 				last.pending,
-				human(last.rows[0].bytes),
+				human.bytes(last.rows[0].bytes),
 				scan.path(f.tree, last.rows[0].node, context.temp_allocator),
 				time.duration_milliseconds(time.tick_since(frame_start)),
 				last.complete ? "  (final)" : "",
@@ -117,8 +119,8 @@ run_live :: proc(f: ^Fill) -> int {
 }
 
 @(private)
-fill_thread :: proc(f: ^Fill) {
-	fill_run(f)
+fill_thread :: proc(f: ^survey.Fill) {
+	survey.fill_run(f)
 }
 
 @(private)

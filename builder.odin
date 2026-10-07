@@ -4,6 +4,7 @@ import "core:sync"
 import "core:time"
 
 import "scan"
+import "survey"
 
 /*
 Owns everything derived from the tree.
@@ -26,7 +27,7 @@ Builder :: struct {
 	out:      ^Publisher,
 	scanning: ^b32, // cleared once nothing is filling the tree any more
 	started:  time.Tick,
-	roll:     Rollup,
+	roll:     survey.Rollup,
 	done:     b32,
 }
 
@@ -54,9 +55,9 @@ builder_pass :: proc(b: ^Builder, complete: bool) {
 	// before, so those start again rather than being added to. It restates only once
 	// the rewrite is finished, so one pass over the tree is enough to replace them.
 	if scan.taken_restated(b.tree) {
-		rollup_restate(&b.roll)
+		survey.rollup_restate(&b.roll)
 	}
-	rollup_advance(&b.roll, b.tree)
+	survey.rollup_advance(&b.roll, b.tree)
 
 	top: [TOP_N]Sized
 	count := rank(b.tree, b.roll.totals[:], top[:])

@@ -1,6 +1,6 @@
-package main
+package survey
 
-import "scan"
+import "../scan"
 
 /*
 Directory totals maintained across passes.
@@ -18,12 +18,45 @@ Rollup :: struct {
 	totals:  [dynamic]u64,
 	charged: [dynamic]u64, // one bit per node
 	pending: int, // settled nodes still waiting on an ancestor, as of the last pass
+	// Set before the first pass to also index each directory's children, for a
+	// caller that browses the tree rather than ranking all of it. A node joins its
+	// parent's list when it is charged, so a list holds exactly what the totals do.
+	linked:  bool,
+	first:   [dynamic]u32, // a directory's most recently charged child, or NONE
+	next:    [dynamic]u32, // the sibling charged before this node, or NONE
 }
+
+// NONE ends a child list.
+NONE :: max(u32)
 
 rollup_destroy :: proc(r: ^Rollup) {
 	delete(r.totals)
 	delete(r.charged)
+	delete(r.first)
+	delete(r.next)
 	r^ = {}
+}
+
+// The children of `dir` charged so far, in no order.
+Children :: struct {
+	r:   ^Rollup,
+	cur: u32,
+}
+
+children :: proc(r: ^Rollup, dir: u32) -> Children {
+	if !r.linked || int(dir) >= len(r.first) {
+		return {r, NONE}
+	}
+	return {r, r.first[dir]}
+}
+
+next_child :: proc(it: ^Children) -> (node: u32, ok: bool) {
+	if it.cur == NONE {
+		return NONE, false
+	}
+	node = it.cur
+	it.cur = it.r.next[node]
+	return node, true
 }
 
 // Forget every total, for a reader that has restated what it already said.
@@ -33,6 +66,10 @@ rollup_restate :: proc(r: ^Rollup) {
 	}
 	for i in 0 ..< len(r.charged) {
 		r.charged[i] = 0
+	}
+	for i in 0 ..< len(r.first) {
+		r.first[i] = NONE
+		r.next[i] = NONE
 	}
 	r.pending = 0
 }
@@ -45,6 +82,15 @@ rollup_advance :: proc(r: ^Rollup, t: ^scan.Tree) {
 	}
 	if words := (count + 63) / 64; words > len(r.charged) {
 		resize(&r.charged, words)
+	}
+	if r.linked && count > len(r.first) {
+		from := len(r.first)
+		resize(&r.first, count)
+		resize(&r.next, count)
+		for i in from ..< count {
+			r.first[i] = NONE
+			r.next[i] = NONE
+		}
 	}
 	r.pending = 0
 	for i in 0 ..< u32(count) {
@@ -104,6 +150,10 @@ charge :: proc(r: ^Rollup, t: ^scan.Tree, i: u32) -> bool {
 	}
 	for j in 0 ..< depth {
 		r.totals[chain[j]] += n.disk
+	}
+	if r.linked && depth > 0 {
+		r.next[i] = r.first[n.parent]
+		r.first[n.parent] = i
 	}
 	return true
 }
