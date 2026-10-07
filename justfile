@@ -5,9 +5,13 @@
 #   just test       run every imported package's tests under ASan -> build/test/
 #   just check      type-check both modes without producing a binary
 #   just clean      remove build/
+#   just deps       fetch the jm submodule and the native libraries the window links
+#   just gui [dir]  open the window on a directory, the home directory by default
+#   just gui-test   run the window's tests, the host's on a real directory
 #
-# The debug allocator and flow come from the jm collection at ~/Source/Personal/jm
-# (override with JM=<path>); they are resolved by path until sonar ships.
+# The debug allocator, flow, stream and ui come from the jm collection, pinned as
+# the jm submodule (https://mordaunt.dev/code/jm); JM=<path> builds against another
+# checkout instead.
 #
 # Debug and test builds carry -sanitize:address. The debug allocator poisons its
 # guard bytes and freed blocks, so instrumented reads past the end or after free
@@ -15,11 +19,13 @@
 # `SAN= just build`. Odin does not create output directories, hence the mkdir.
 
 odin  := env("ODIN", "odin")
-jm    := env("JM", home_directory() / "Source" / "Personal" / "jm")
+root  := justfile_directory()
+jm    := env("JM", root / "jm")
 flags := "-vet -strict-style -collection:jm=" + jm
 san   := env("SAN", "-sanitize:address")
 exe   := if os() == "windows" { ".exe" } else { "" }
 bin   := "sonar"
+gui   := "sonar-gui"
 
 # `just` alone lists the recipes.
 default:
@@ -44,6 +50,39 @@ test:
 check:
     {{odin}} check . {{flags}}
     {{odin}} check . -debug {{flags}}
+
+# The jm submodule, when JM does not name another checkout, and the libraries
+# jm:ui links: Blend2D to draw, kb_text_shape to shape text, AccessKit for screen
+# readers. Each is built or fetched by jm's own recipe, once.
+deps:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ "{{jm}}" = "{{root}}/jm" ] && [ ! -e jm/.git ]; then git submodule update --init jm; fi
+    cd "{{jm}}"
+    ls ui/blend2d/lib/*blend2d* >/dev/null 2>&1 || just blend2d
+    ls ui/kb/lib/kb_text_shape.* >/dev/null 2>&1 || just kb
+    ls ui/accesskit/lib/*accesskit* >/dev/null 2>&1 || just accesskit
+    just sdl3
+
+# Build the window and open it on a directory, the home directory by default
+gui *args: gui-build
+    build/debug/{{gui}}{{exe}} {{args}}
+
+# Debug build of the window -> build/debug/sonar-gui
+gui-build: deps
+    mkdir -p build/debug
+    {{odin}} build gui -debug {{flags}} -out:build/debug/{{gui}}{{exe}}
+
+# Optimised build of the window -> build/release/sonar-gui
+gui-release: deps
+    mkdir -p build/release
+    {{odin}} build gui -o:speed {{flags}} -out:build/release/{{gui}}{{exe}}
+
+# Run the window's suite: the view in a probe over the host on a real directory.
+# Not -all-packages, which would run every jm:ui suite the window imports too.
+gui-test: deps
+    mkdir -p build/test
+    {{odin}} test gui/app -debug {{flags}} -out:build/test/{{gui}}{{exe}}
 
 # Remove build/.
 clean:
