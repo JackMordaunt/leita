@@ -71,6 +71,7 @@ Model :: struct {
 	rename:           ui.Text_State,
 	rename_focus:     bool, // the rename field takes focus when next drawn
 	notice_seen:      u32, // the notice last dismissed
+	panels_hidden:    bool, // the side column is put away, leaving the sunburst the window
 	// The sunburst's arcs as drawn last frame, by node, and the centre they were
 	// drawn around (sunburst.odin ease); poses_next is the frame being drawn.
 	poses:            map[u32]Pose,
@@ -131,16 +132,26 @@ view :: proc(gtx: ^ui.Ctx, user: rawptr) {
 	ui.flexible(gtx, 1)
 	if ui.row(gtx, gap = 24, align = .Fill) {
 		ui.flexible(gtx, 1)
-		rings_panel(gtx, m)
-		if ui.sized(gtx, {min = {SIDE_WIDTH, 0}, max = {SIDE_WIDTH, ui.INF}}) {
-			if ui.column(gtx, gap = 24, align = .Fill) {
-				ui.flexible(gtx, 3)
-				listing(gtx, m)
-				ui.flexible(gtx, 2)
-				largest(gtx, m)
+		if m.panels_hidden {
+			// With no column beside it, the sunburst takes the window's right margin.
+			if ui.inset(gtx, {right = PAD}) {
+				rings_panel(gtx, m)
+			}
+		} else {
+			rings_panel(gtx, m)
+		}
+		if !m.panels_hidden {
+			if ui.sized(gtx, {min = {SIDE_WIDTH, 0}, max = {SIDE_WIDTH, ui.INF}}) {
+				if ui.column(gtx, gap = 24, align = .Fill) {
+					ui.flexible(gtx, 3)
+					listing(gtx, m)
+					ui.flexible(gtx, 2)
+					largest(gtx, m)
+				}
 			}
 		}
-	}; dialogs(gtx, m)
+	}
+	dialogs(gtx, m)
 }
 
 // --- the bar along the top -----------------------------------------------------
@@ -176,6 +187,14 @@ toolbar :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result) {
 		if path != "" {
 			ui.command(gtx, command.Command(command.Scan{path = command.text_make(path)}))
 		}
+	}
+	if primer.icon_button(
+		gtx,
+		m.panels_hidden ? .Sidebar_Expand : .Sidebar_Collapse,
+		m.panels_hidden ? "Show panels" : "Hide panels",
+		.Invisible,
+	) {
+		m.panels_hidden = !m.panels_hidden
 	}
 	if primer.icon_button(
 		gtx,

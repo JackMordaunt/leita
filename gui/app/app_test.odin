@@ -445,3 +445,38 @@ a_long_name_stops_short_of_its_share_bar :: proc(t: ^testing.T) {
 	over := inked(data, bar, bar.x, bar.x + bar.w)
 	testing.expectf(t, over == 0, "%d pixels over the bar are not background", over)
 }
+
+@(test)
+the_panels_hide_to_leave_the_sunburst_the_window :: proc(t: ^testing.T) {
+	root := fixture(t, "panels")
+	defer os.remove_all(root)
+	r: Rig
+	rig_open(&r, root)
+	defer rig_close(&r)
+	testing.expect(t, settle(&r, "Done"))
+	testing.expect(t, settle(&r, "Contents"))
+	ui.probe_advance(&r.p, 60, 1.0 / 60)
+	beside := ui.probe_bounds(&r.p, "Sunburst")
+
+	testing.expect(t, ui.probe_click(&r.p, "Hide panels"))
+	press_and_hand_on(&r)
+	ui.probe_advance(&r.p, 60, 1.0 / 60)
+	testing.expect(t, !ui.probe_tagged(&r.p, "Contents"), "the contents are put away")
+	testing.expect(t, !ui.probe_tagged(&r.p, "Largest files"), "and the largest files")
+	// The disc is as big as the smaller of its width and height. Here, as in any
+	// landscape window, height is the limit, so it keeps its size and moves to the
+	// middle.
+	alone := ui.probe_bounds(&r.p, "Sunburst")
+	testing.expectf(t, alone.w >= beside.w, "the sunburst shrank from %v to %v", beside.w, alone.w)
+	middle := alone.x + alone.w / 2
+	testing.expectf(
+		t,
+		abs(middle - 550) < 2,
+		"the sunburst's centre is at %v, not the window's",
+		middle,
+	)
+
+	testing.expect(t, ui.probe_click(&r.p, "Show panels"))
+	press_and_hand_on(&r)
+	testing.expect(t, settle(&r, "Contents"), "the panels come back")
+}
