@@ -83,7 +83,7 @@ gui-build: deps
 # from (ui/shell.run_host). The scan keeps running across reloads; a change to
 # the scan or the pipeline (gui/app, survey, scan, walk, ntfs) needs the recipe
 # run again. A shell loop rather than jm's tools/hot-watch, which passes its own
-# checkout as the jm collection. GNU stat and date.
+# checkout as the jm collection. stat is GNU's -c or BSD's -f, whichever runs.
 #
 # Open the window, reloading the view on every edit: just hot [dir]
 hot *args: deps
@@ -94,11 +94,14 @@ hot *args: deps
     rm -f build/hot/view.watch
     (
       last=""
+      n=0
       while true; do
-        mt=$(stat -c %Y gui/child/*.odin gui/view/*.odin gui/query/*.odin gui/command/*.odin human/*.odin | sort -n | tail -1)
+        srcs=(gui/child/*.odin gui/view/*.odin gui/query/*.odin gui/command/*.odin human/*.odin)
+        mt=$({ stat -c %Y "${srcs[@]}" 2>/dev/null || stat -f %m "${srcs[@]}"; } | sort -n | tail -1)
         if [ "$mt" != "$last" ]; then
           last=$mt
-          out=build/hot/view-$(date +%s%N){{exe}}
+          n=$((n + 1))
+          out=build/hot/view-$(date +%s)-${n}{{exe}}
           if {{odin}} build gui/child -debug {{san}} {{flags}} -out:"$out"; then
             printf '%s' "$out" > build/hot/view.watch
             echo "hot: view ready $out"
