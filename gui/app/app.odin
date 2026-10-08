@@ -44,6 +44,7 @@ import "core:time"
 import "jm:stream"
 import "jm:ui"
 
+import "../../history"
 import "../../ntfs"
 import "../../reclaim"
 import "../../scan"
@@ -51,7 +52,6 @@ import "../../survey"
 import "../../walk"
 import "../command"
 import "../files"
-import "../history"
 import "../query"
 
 // TICK is how often a running scan is folded and its answers sent: often enough

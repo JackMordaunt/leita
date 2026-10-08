@@ -131,7 +131,7 @@ gui-test: deps
     {{odin}} test gui/files -debug {{san}} {{flags}} -out:build/test/{{gui}}-files{{exe}}
     {{odin}} test gui/view -debug {{san}} {{flags}} -out:build/test/{{gui}}-view{{exe}}
     {{odin}} test reclaim -debug {{san}} {{flags}} -out:build/test/{{gui}}-reclaim{{exe}}
-    {{odin}} test gui/history -debug {{san}} {{flags}} -out:build/test/{{gui}}-history{{exe}}
+    {{odin}} test history -debug {{san}} {{flags}} -out:build/test/{{gui}}-history{{exe}}
 
 # Remove build/.
 clean:

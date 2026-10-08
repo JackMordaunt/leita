@@ -2,7 +2,8 @@
 Package history is what sonar remembers of the scans it has finished: for each,
 when it was taken, its totals, and the size of every entry under its top that held
 at least KEPT_MIN, so a later scan of the same place can say what grew and what
-shrank since. It lives in one SQLite file in the user's data folder (default_path).
+shrank since. It lives in one SQLite file in the user's data folder (default_path),
+which the window and the command line share.
 
 An entry is named by its path under the top, its names joined by "/" whatever the
 platform, "" for the top itself; the top is named whole. Entries smaller than
@@ -20,11 +21,10 @@ import "core:path/filepath"
 
 import "jm:sqlite3"
 
-import "../query"
-
-// KEPT_MIN is the least an entry holds to be kept in a snapshot, as the window
-// is told it is.
-KEPT_MIN :: query.KEPT_MIN
+// KEPT_MIN is the least an entry holds to be kept in a snapshot. The window's
+// query.KEPT_MIN tells the view the same, since the view cannot import this
+// package; a test in gui/app holds the two equal.
+KEPT_MIN :: 1 << 20
 
 // KEPT is how many snapshots of one place are kept, newest first.
 KEPT :: 30
@@ -91,8 +91,8 @@ close :: proc(st: ^Store) {
 
 /*
 save remembers a scan of top taken at taken: its totals and entries, which the
-caller has already cut to those holding at least KEPT_MIN. It forgets the oldest
-snapshots of top past KEPT, and returns the new one's id.
+caller has already cut to those holding at least KEPT_MIN, as collect does. It
+forgets the oldest snapshots of top past KEPT, and returns the new one's id.
 */
 save :: proc(
 	st: ^Store,

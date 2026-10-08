@@ -21,8 +21,8 @@ import "core:os"
 @(require) import "jm:debug"
 import "jm:ui/shell"
 
+import "../history"
 import "app"
-import "history"
 @(require) import "leaks"
 import "view"
 

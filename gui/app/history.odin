@@ -1,13 +1,12 @@
 package sonar_app
 
 import "core:fmt"
-import "core:strings"
 import "core:sync"
 import "core:time"
 
+import "../../history"
 import "../../scan"
 import "../../survey"
-import "../history"
 import "../query"
 
 /*
@@ -51,9 +50,6 @@ keep :: proc(d: ^Desk) {
 	if d.history == nil || !ok {
 		return
 	}
-	entries := make([dynamic]history.Entry, context.temp_allocator)
-	append(&entries, history.Entry{"", s.roll.totals[top]})
-	collect_kept(s, &entries, top, "")
 	place := scan.path(&s.tree, top, context.temp_allocator)
 	id, err := history.save(
 		d.history,
@@ -61,7 +57,7 @@ keep :: proc(d: ^Desk) {
 		time.time_to_unix(time.now()),
 		s.roll.totals[top],
 		sync.atomic_load(&s.tree.nodes_done),
-		entries[:],
+		history.collect(&s.tree, &s.roll, top),
 	)
 	if err != nil {
 		fmt.eprintln("sonar: could not keep the scan:", err)
@@ -75,33 +71,6 @@ keep :: proc(d: ^Desk) {
 			break
 		}
 	}
-}
-
-// collect_kept adds what dir holds of at least history.KEPT_MIN, all the way down,
-// each named by its path under the top: dir's own is at.
-collect_kept :: proc(s: ^Scan, into: ^[dynamic]history.Entry, dir: u32, at: string) {
-	it := survey.children(&s.roll, dir)
-	for c in survey.next_child(&it) {
-		n := scan.node(&s.tree, c)
-		directory := .Directory in scan.node_flags(n)
-		bytes := s.roll.totals[c] if directory else n.disk
-		if bytes < history.KEPT_MIN {
-			continue
-		}
-		path := path_under(at, n.name)
-		append(into, history.Entry{path, bytes})
-		if directory {
-			collect_kept(s, into, c, path)
-		}
-	}
-}
-
-// path_under is the path of name in the directory at path at, under the top.
-path_under :: proc(at, name: string) -> string {
-	if at == "" {
-		return strings.clone(name, context.temp_allocator)
-	}
-	return strings.concatenate({at, "/", name}, context.temp_allocator)
 }
 
 // compare compares the scan with snapshot id of its place, or with none for 0 or
@@ -144,7 +113,7 @@ note_was :: proc(s: ^Scan, d: ^Desk, then: map[string]u64, dir: u32, at: string)
 	it := survey.children(&s.roll, dir)
 	for c in survey.next_child(&it) {
 		n := scan.node(&s.tree, c)
-		path := path_under(at, n.name)
+		path := history.path_under(at, n.name)
 		bytes, found := then[path]
 		if !found {
 			continue
