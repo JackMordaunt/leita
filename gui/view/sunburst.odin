@@ -155,8 +155,13 @@ ease :: proc(gtx: ^ui.Ctx, m: ^Model, r: ^query.Rings_Result) -> []query.Arc {
 rings_panel :: proc(gtx: ^ui.Ctx, m: ^Model) {
 	ui.column(gtx, gap = 8, align = .Fill)
 	// In a row, so the switch is as wide as its segments rather than the panel.
-	if ui.row(gtx) {
+	if ui.row(gtx, gap = 12, align = .Center) {
 		mode_switch(gtx, m)
+		colour_switch(gtx, m)
+	}
+	// Its own line, below the switches, so it wraps rather than squeezing them.
+	if m.colour == .Type {
+		legend(gtx)
 	}
 	answer, _ := ui.need(
 		gtx,
@@ -167,9 +172,14 @@ rings_panel :: proc(gtx: ^ui.Ctx, m: ^Model) {
 		primer.skeleton_box(gtx, width = 320, height = 320, delay = .Short)
 		return
 	}
-	if m.mode == .Treemap {
-		treemap_panel(gtx, m, answer)
+	switch m.mode {
+	case .Treemap:
+		blocks_panel(gtx, m, answer, TREEMAP)
 		return
+	case .Icicle:
+		blocks_panel(gtx, m, answer, ICICLE)
+		return
+	case .Sunburst:
 	}
 	// The answer is the delivered shape, kept across frames, so the arcs as drawn
 	// go in a copy of it rather than over it.
@@ -188,7 +198,7 @@ rings_panel :: proc(gtx: ^ui.Ctx, m: ^Model) {
 	if i := arc_of(r, m.row_hover); u == .Nothing && i >= 0 {
 		u, at = .Arc, i
 	}
-	info(gtx, r, answer, u, at)
+	info(gtx, m, r, answer, u, at)
 
 	// The disc is as big as the smaller side of the room it is given, and sits in
 	// the middle of the other.
@@ -223,7 +233,7 @@ drawn is the rings as eased this frame, which the pointer is hit against; laid i
 the host's layout, whose rings nest exactly, for the path.
 */
 @(private)
-info :: proc(gtx: ^ui.Ctx, drawn, laid: ^query.Rings_Result, u: Hit, at: int) {
+info :: proc(gtx: ^ui.Ctx, m: ^Model, drawn, laid: ^query.Rings_Result, u: Hit, at: int) {
 	small := primer.text_style(.Small)
 	height := info_height()
 	ui.sized(gtx, {min = {0, height}, max = {ui.INF, height}})
@@ -238,11 +248,14 @@ info :: proc(gtx: ^ui.Ctx, drawn, laid: ^query.Rings_Result, u: Hit, at: int) {
 		a := drawn.arcs[at]
 		share := drawn.bytes > 0 ? 100 * f64(a.bytes) / f64(drawn.bytes) : 0
 		name = a.name
+		kind :=
+			fmt.aprintf(" · %s", KIND_NAMES[kind_in(laid, at)], allocator = gtx.allocator) if m.colour == .Type else ""
 		detail = fmt.aprintf(
-			"%s · %.1f%% of %s%s",
+			"%s · %.1f%% of %s%s%s",
 			human.bytes(a.bytes),
 			share,
 			base_name(here),
+			kind,
 			a.directory ? " · click to open" : "",
 			allocator = gtx.allocator,
 		)
@@ -395,11 +408,7 @@ sunburst :: proc(
 
 	bg := primer.color(.Bg_Color_Default)
 	for a, i in r.arcs {
-		fill := primer.color(BRANCHES[int(a.branch) % len(BRANCHES)])
-		if i != hovered {
-			fade := FADE * f32(a.depth - 1) + (a.directory ? 0 : FILE_FADE)
-			fill = mix(fill, bg, fade)
-		}
+		fill := fill_of(m, r, i, i == hovered, false)
 		r0 := b.hub + b.ring * f32(a.depth - 1)
 		shape := band(gtx, b.center, r0, r0 + b.ring, a.start, a.start + a.sweep)
 		ops.fill(gtx.scene, shape, fill)

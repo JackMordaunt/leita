@@ -31,6 +31,7 @@ the boxes ease from one layout to the next as the sunburst's arcs do.
 Mode :: enum u8 {
 	Sunburst,
 	Treemap,
+	Icicle,
 }
 
 // mode_switch is the segmented control that picks the mode. A new mode starts its
@@ -41,6 +42,7 @@ mode_switch :: proc(gtx: ^ui.Ctx, m: ^Model) {
 	modes := [?]primer.Segment {
 		{label = "Sunburst", icon = .Circle},
 		{label = "Treemap", icon = .Apps},
+		{label = "Icicle", icon = .Rows},
 	}
 	#assert(len(modes) == len(Mode))
 	at := int(m.mode)
@@ -52,14 +54,30 @@ mode_switch :: proc(gtx: ^ui.Ctx, m: ^Model) {
 	}
 }
 
+// colour_switch is the segmented control that picks what the colours say.
+@(private)
+colour_switch :: proc(gtx: ^ui.Ctx, m: ^Model) {
+	// In Colouring's order, as the modes are.
+	colourings := [?]primer.Segment {
+		{label = "Folder", icon = .File_Directory},
+		{label = "Type", icon = .File},
+	}
+	#assert(len(colourings) == len(Colouring))
+	at := int(m.colour)
+	if primer.segmented_control(gtx, colourings[:], &at, name = "Colour by", size = .Small) {
+		m.colour = Colouring(at)
+	}
+}
+
 // TREE_HEADER is a directory's name strip, TREE_PAD the inset its contents keep
 // from its edge, and TREE_LABEL_MIN the narrowest box that is labelled.
 TREE_HEADER    :: f32(18)
 TREE_PAD       :: f32(2)
 TREE_LABEL_MIN :: f32(44)
 
-// Box is one entry laid out: the arc it draws, its box, and for a directory the
-// box its contents go in and whether it has room for its name.
+// Box is one entry laid out: the arc it draws, or -1 for the directory at the
+// centre itself (the icicle's top bar), its box, and for a directory the box its
+// contents go in and whether it has room for its name.
 Box :: struct {
 	arc:    int,
 	rect:   ops.Rect,
@@ -236,7 +254,7 @@ ease_boxes :: proc(gtx: ^ui.Ctx, m: ^Model, r: ^query.Rings_Result, boxes: []Box
 		}
 	}
 	for &b in boxes {
-		node := r.arcs[b.arc].node
+		node := r.arcs[b.arc].node if b.arc >= 0 else r.dir
 		was, seen := m.boxes[node]
 		if !seen {
 			was = {b.rect.x + b.rect.w / 2, b.rect.y + b.rect.h / 2, 0, 0}
@@ -271,34 +289,51 @@ box_at :: proc(boxes: []Box, p: ops.Point) -> int {
 	return -1
 }
 
-// treemap_panel is the treemap with the info block over it.
+// Blocks is a layout drawn as boxes: the treemap's nesting or the icicle's rows.
 @(private)
-treemap_panel :: proc(gtx: ^ui.Ctx, m: ^Model, answer: ^query.Rings_Result) {
-	// Laid out for the room the treemap had last frame: the block comes before
-	// the treemap that would measure it this frame.
-	boxes := lay_boxes(gtx, answer, {0, 0, m.tree_room.x, m.tree_room.y})
+Blocks :: struct {
+	lay:    proc(gtx: ^ui.Ctx, r: ^query.Rings_Result, room: ops.Rect) -> []Box,
+	framed: bool, // a directory is the frame its contents sit in
+	from:   Menu_From,
+	name:   string, // the chart's tag
+	tag:    string, // the prefix of a first-level box's tag
+}
+
+TREEMAP :: Blocks{lay_boxes, true, .Treemap, "Treemap chart", "box"}
+ICICLE  :: Blocks{lay_icicle, false, .Icicle, "Icicle chart", "bar"}
+
+// blocks_panel is a layout drawn as boxes, with the info block over it.
+@(private)
+blocks_panel :: proc(gtx: ^ui.Ctx, m: ^Model, answer: ^query.Rings_Result, k: Blocks) {
+	// Laid out for the room the chart had last frame: the block comes before the
+	// chart that would measure it this frame.
+	boxes := k.lay(gtx, answer, {0, 0, m.tree_room.x, m.tree_room.y})
 	ease_boxes(gtx, m, answer, boxes)
 	u, at := Hit.Nothing, -1
 	if i := box_at(boxes, m.pointer); m.inside && i >= 0 {
-		u, at = .Arc, boxes[i].arc
+		at = boxes[i].arc
+		u = .Arc if at >= 0 else .Hub
 	} else if row := arc_of(answer, m.row_hover); row >= 0 {
-		// With the pointer off the boxes, a hovered contents row stands for its box.
+		// With the pointer off the chart, a hovered contents row stands for its box.
 		u, at = .Arc, row
 	}
-	info(gtx, answer, answer, u, at)
+	info(gtx, m, answer, answer, u, at)
 	ui.flexible(gtx, 1)
-	treemap(gtx, m, answer, boxes, at)
+	blocks(gtx, m, answer, boxes, u, at, k)
 }
 
-// treemap draws the boxes across the room it is offered and acts on what is
-// clicked.
+// blocks draws the boxes across the room it is offered and acts on what is
+// clicked: a directory's box opens it, a file's the directory holding it, and the
+// directory at the centre goes up.
 @(private)
-treemap :: proc(
+blocks :: proc(
 	gtx: ^ui.Ctx,
 	m: ^Model,
 	r: ^query.Rings_Result,
 	boxes: []Box,
-	hovered: int,
+	lit: Hit,
+	at: int,
+	k: Blocks,
 	loc := #caller_location,
 ) {
 	p := ui.widget_open(gtx, loc = loc)
@@ -328,24 +363,27 @@ treemap :: proc(
 	bg := primer.color(.Bg_Color_Default)
 	small := primer.text_style(.Small)
 	font := primer.font_for(gtx, small.weight)
+	here := r.crumbs[len(r.crumbs) - 1].name
 	for b in boxes {
-		a := r.arcs[b.arc]
 		if b.rect.w < 1 || b.rect.h < 1 {
 			continue
 		}
-		fill := primer.color(BRANCHES[int(a.branch) % len(BRANCHES)])
-		if b.arc != hovered {
-			// A directory is the frame its contents sit in, so it is lighter than
-			// what fills it.
-			fade := FADE * f32(a.depth - 1) + (a.directory ? 0.45 : FILE_FADE)
-			fill = mix(fill, bg, min(fade, 0.85))
+		name: string
+		fill: ops.Color
+		labelled := b.header
+		if b.arc < 0 {
+			name = base_name(here)
+			fill = mix(primer.color(.Fg_Color_Muted), bg, 0.55 if lit == .Hub else 0.8)
+		} else {
+			a := r.arcs[b.arc]
+			name = a.name
+			fill = fill_of(m, r, b.arc, lit == .Arc && b.arc == at, k.framed)
+			labelled ||= !a.directory && b.rect.w >= TREE_LABEL_MIN && b.rect.h >= TREE_HEADER
 		}
 		ops.fill(gtx.scene, b.rect, fill)
 		ops.stroke(gtx.scene, b.rect, bg, {width = 1})
-		labelled :=
-			b.header || (!a.directory && b.rect.w >= TREE_LABEL_MIN && b.rect.h >= TREE_HEADER)
 		if labelled {
-			para := design.layout_style(gtx, a.name, small, font)
+			para := design.layout_style(gtx, name, small, font)
 			ops.clip_push(gtx.scene, ops.Rect{b.rect.x, b.rect.y, b.rect.w - TREE_PAD, b.rect.h})
 			design.draw_paragraph(
 				gtx,
@@ -355,11 +393,13 @@ treemap :: proc(
 			)
 			ops.clip_pop(gtx.scene)
 		}
-		if a.depth == 1 {
+		if b.arc < 0 {
+			ops.tag(gtx.scene, ui.id_mix(p.id, 0x700), "top bar", b.rect)
+		} else if r.arcs[b.arc].depth == 1 {
 			ops.tag(
 				gtx.scene,
 				ui.id_mix(p.id, u64(b.arc + 1)),
-				fmt.aprintf("box %s", a.name, allocator = gtx.allocator),
+				fmt.aprintf("%s %s", k.tag, name, allocator = gtx.allocator),
 				b.rect,
 			)
 		}
@@ -367,16 +407,20 @@ treemap :: proc(
 
 	room := ops.Rect{0, 0, size.x, size.y}
 	ops.input_area(gtx.scene, p.id, room, {.Press, .Move, .Enter, .Leave})
-	ops.tag(gtx.scene, p.id, "Treemap chart")
+	ops.tag(gtx.scene, p.id, k.name)
 
 	if menu {
 		if i := box_at(boxes, m.pointer); i >= 0 {
-			a := r.arcs[boxes[i].arc]
-			aim(m, {node = a.node, name = a.name, directory = a.directory})
-			m.menu_open, m.menu_at, m.menu_from = true, m.pointer, .Treemap
+			if b := boxes[i]; b.arc >= 0 {
+				a := r.arcs[b.arc]
+				aim(m, {node = a.node, name = a.name, directory = a.directory})
+			} else {
+				aim(m, {node = r.dir, name = here, directory = true, hub = true})
+			}
+			m.menu_open, m.menu_at, m.menu_from = true, m.pointer, k.from
 		}
 	}
-	if m.menu_from == .Treemap {
+	if m.menu_from == k.from {
 		entry_menu(gtx, m, {p.id, {0, 0}}, m.menu_at)
 	}
 	ui.widget_close(gtx, &p, {size = size})
@@ -385,6 +429,12 @@ treemap :: proc(
 	// directory holding it, which is the one the pointer was in.
 	if pressed {
 		if i := box_at(boxes, m.pointer); i >= 0 {
+			if boxes[i].arc < 0 {
+				if len(r.crumbs) > 1 {
+					open(m, r.crumbs[len(r.crumbs) - 2].node)
+				}
+				return
+			}
 			a := r.arcs[boxes[i].arc]
 			switch {
 			case a.directory:
@@ -394,4 +444,37 @@ treemap :: proc(
 			}
 		}
 	}
+}
+
+// ICICLE_ROWS is the icicle's rows: the directory at the centre, and a row for
+// each ring the sunburst draws.
+ICICLE_ROWS :: query.RING_DEPTH + 1
+
+/*
+lay_icicle lays r out as an icicle: the directory at the centre a bar across the
+top, and each ring below it a row of bars, each as wide as its share of the bar
+over it, as the sunburst's arcs are of the ring inside. It is the sunburst unrolled,
+which keeps long names and deep paths readable.
+*/
+@(private)
+lay_icicle :: proc(gtx: ^ui.Ctx, r: ^query.Rings_Result, room: ops.Rect) -> []Box {
+	row := room.h / ICICLE_ROWS
+	boxes := make([dynamic]Box, 0, len(r.arcs) + 1, gtx.allocator)
+	append(
+		&boxes,
+		Box{arc = -1, rect = {room.x, room.y, room.w, row}, header = room.w >= TREE_LABEL_MIN},
+	)
+	for a, i in r.arcs {
+		rect := ops.Rect {
+			room.x + a.start * room.w,
+			room.y + f32(a.depth) * row,
+			a.sweep * room.w,
+			row,
+		}
+		append(
+			&boxes,
+			Box{arc = i, rect = rect, header = rect.w >= TREE_LABEL_MIN && row >= TREE_HEADER},
+		)
+	}
+	return boxes[:]
 }

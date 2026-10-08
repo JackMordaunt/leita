@@ -119,6 +119,7 @@ Model :: struct {
 	// How the directory shown is drawn, and the treemap's boxes as drawn last
 	// frame by node, around which centre, in what room (treemap.odin).
 	mode:             Mode,
+	colour:           Colouring,
 	boxes:            map[u32]ops.Rect,
 	boxes_next:       map[u32]ops.Rect,
 	boxes_dir:        u32,

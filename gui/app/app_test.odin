@@ -786,3 +786,54 @@ hovering_a_contents_row_lights_its_arc_and_its_box :: proc(t: ^testing.T) {
 	ui.probe_advance(&r.p, 3, 1.0 / 60)
 	testing.expect(t, ui.probe_tagged(&r.p, said), "hovering the row lights notes.txt's box")
 }
+
+@(test)
+the_icicle_opens_a_bar_and_its_top_goes_up :: proc(t: ^testing.T) {
+	root := fixture(t, "icicle")
+	defer os.remove_all(root)
+	r: Rig
+	rig_open(&r, root)
+	defer rig_close(&r)
+	testing.expect(t, settle(&r, "Done"))
+	testing.expect(t, settle(&r, "268.0 KiB in 2 items"))
+
+	testing.expect(t, ui.probe_click(&r.p, "Icicle"))
+	press_and_hand_on(&r)
+	ui.probe_advance(&r.p, 60, 1.0 / 60)
+	testing.expect(t, ui.probe_tagged(&r.p, "top bar"), "the directory shown is the top bar")
+	testing.expect(t, ui.probe_tagged(&r.p, "bar photos"), "photos is a bar")
+	room := ui.probe_bounds(&r.p, "Icicle chart")
+	photos := ui.probe_bounds(&r.p, "bar photos")
+	testing.expectf(t, photos.w / room.w > 0.95, "photos is %v of the width", photos.w / room.w)
+
+	ui.probe_click_at(&r.p, {photos.x + photos.w / 2, photos.y + photos.h / 2})
+	press_and_hand_on(&r)
+	testing.expect(t, settle(&r, "264.0 KiB in 2 items"), "photos opened")
+	testing.expect(t, settle(&r, "bar big.raw"), "its files are the first row")
+
+	top := ui.probe_bounds(&r.p, "top bar")
+	ui.probe_click_at(&r.p, {top.x + top.w / 2, top.y + top.h / 2})
+	press_and_hand_on(&r)
+	testing.expect(t, settle(&r, "268.0 KiB in 2 items"), "the top bar went up")
+}
+
+@(test)
+colouring_by_type_names_the_kind :: proc(t: ^testing.T) {
+	root := fixture(t, "kinds")
+	defer os.remove_all(root)
+	r: Rig
+	rig_open(&r, root)
+	defer rig_close(&r)
+	testing.expect(t, settle(&r, "Done"))
+	testing.expect(t, settle(&r, "268.0 KiB in 2 items"))
+	testing.expect(t, !ui.probe_tagged(&r.p, "Disk image"), "no legend by folder")
+
+	testing.expect(t, ui.probe_click(&r.p, "Type"))
+	press_and_hand_on(&r)
+	testing.expect(t, ui.probe_tagged(&r.p, "Disk image"), "the legend names the kinds")
+	row := ui.probe_bounds(&r.p, "notes.txt")
+	ui.probe_move(&r.p, row.x + 24, row.y + row.h / 2)
+	ui.probe_advance(&r.p, 3, 1.0 / 60)
+	said := "4.0 KiB · 1.5% of sonar_gui_kinds · Code and text"
+	testing.expect(t, ui.probe_tagged(&r.p, said), "the info block names the kind")
+}

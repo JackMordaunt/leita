@@ -27,6 +27,7 @@ HISTORY :: 256
 Menu_From :: enum u8 {
 	Sunburst,
 	Treemap,
+	Icicle,
 	Contents,
 	Largest,
 }
