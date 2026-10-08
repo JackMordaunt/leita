@@ -160,3 +160,14 @@ errno_error :: proc(errno: i32) -> Error {
 	}
 	return .Other
 }
+
+// space is the size of the filesystem holding path and what of it is free to
+// this user: statfs's available blocks, as df shows, not those kept for root.
+space :: proc(path: string) -> (total, free: u64, ok: bool) {
+	st: linux.Stat_FS
+	if linux.statfs(strings.clone_to_cstring(path, context.temp_allocator), &st) != .NONE {
+		return 0, 0, false
+	}
+	unit := u64(st.frsize if st.frsize > 0 else st.bsize)
+	return u64(st.blocks) * unit, u64(st.bavail) * unit, true
+}

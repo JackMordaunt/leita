@@ -221,13 +221,17 @@ status :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result) {
 @(private)
 counters :: proc(gtx: ^ui.Ctx, prog: ^query.Progress_Result) -> string {
 	sb := strings.builder_make(gtx.allocator)
-	fmt.sbprintf(
-		&sb,
-		"%s items · %s · %.1f s",
-		human.count(prog.nodes),
-		human.bytes(prog.bytes),
-		prog.seconds,
-	)
+	fmt.sbprintf(&sb, "%s items · %s", human.count(prog.nodes), human.bytes(prog.bytes))
+	// The disk beside what the scan found, so the two can be read together.
+	if prog.disk_total > 0 {
+		fmt.sbprintf(
+			&sb,
+			" · %s free of %s",
+			human.bytes(prog.disk_free),
+			human.bytes(prog.disk_total),
+		)
+	}
+	fmt.sbprintf(&sb, " · %.1f s", prog.seconds)
 	if prog.engine != "" {
 		fmt.sbprintf(&sb, " · %s", prog.engine)
 	}

@@ -134,6 +134,8 @@ a_scan_streams_into_the_window_and_a_directory_opens :: proc(t: ^testing.T) {
 	testing.expect(t, ui.probe_tagged(&r.p, "notes.txt"), "the file is listed")
 	testing.expect(t, ui.probe_tagged(&r.p, "big.raw"), "the largest file is ranked")
 	testing.expect(t, r.h.desk.scan.state == .Done)
+	testing.expect(t, r.h.desk.scan.disk_total > 0, "the disk it is on was measured")
+	testing.expect(t, r.h.desk.scan.disk_free <= r.h.desk.scan.disk_total)
 
 	// Opening the directory is a new need; the desk answers it at once.
 	open_row(&r, "photos")

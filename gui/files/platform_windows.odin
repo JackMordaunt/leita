@@ -56,3 +56,18 @@ win32_error :: proc(code: win32.DWORD) -> Error {
 	}
 	return .Other
 }
+
+// space is the size of the volume holding path and what of it is free to this
+// user, which quotas can make less than what is free on the disk.
+space :: proc(path: string) -> (total, free: u64, ok: bool) {
+	avail, size: win32.ULARGE_INTEGER
+	if !win32.GetDiskFreeSpaceExW(
+		win32.utf8_to_wstring(path, context.temp_allocator),
+		&avail,
+		&size,
+		nil,
+	) {
+		return 0, 0, false
+	}
+	return u64(size), u64(avail), true
+}

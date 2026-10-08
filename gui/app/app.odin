@@ -49,6 +49,7 @@ import "../../scan"
 import "../../survey"
 import "../../walk"
 import "../command"
+import "../files"
 import "../query"
 
 // TICK is how often a running scan is folded and its answers sent: often enough
@@ -86,21 +87,23 @@ Desk_In :: union {
 // Scan is one run of a reader and everything derived from it. It is heap
 // allocated because the reader thread holds pointers into it.
 Scan :: struct {
-	path:     string,
-	engine:   scan.Engine,
-	slow:     bool,
-	state:    query.State,
-	problem:  string,
-	started:  time.Tick,
-	seconds:  f64, // frozen once the scan is over
-	stopped:  bool, // the window called it off
-	resolved: bool, // fill.target holds a target to destroy
-	tree:     scan.Tree,
-	grown:    bool, // tree was initialised
-	fill:     survey.Fill,
-	roll:     survey.Rollup,
-	reader:   ^thread.Thread,
-	names:    [dynamic]string, // new names given by a rename, which the tree borrows
+	path:                  string,
+	engine:                scan.Engine,
+	slow:                  bool,
+	state:                 query.State,
+	problem:               string,
+	started:               time.Tick,
+	seconds:               f64, // frozen once the scan is over
+	stopped:               bool, // the window called it off
+	resolved:              bool, // fill.target holds a target to destroy
+	tree:                  scan.Tree,
+	grown:                 bool, // tree was initialised
+	fill:                  survey.Fill,
+	roll:                  survey.Rollup,
+	reader:                ^thread.Thread,
+	names:                 [dynamic]string, // new names given by a rename, which the tree borrows
+	// The filesystem the target is on, as of the last measure.
+	disk_total, disk_free: u64,
 }
 
 // Desk is the stage pinned to the desk thread: the current scan and every live
@@ -305,6 +308,9 @@ desk_step :: proc(d: ^Desk, v: Desk_In) {
 			}
 		case command.Locate, command.Trash, command.Rename:
 			act(d, &e)
+			if d.scan != nil {
+				measure(d.scan)
+			}
 			answer_all(d)
 		}
 	case Tick:
@@ -359,6 +365,20 @@ scan_begin :: proc(d: ^Desk, path: string) {
 		return
 	}
 	s.state = .Scanning
+	measure(s)
+}
+
+// measure asks the platform how big the target's filesystem is and how much of it
+// is free. Only a mounted target has one to ask about: a raw device or an image
+// would answer for whatever filesystem holds the device node or the file.
+measure :: proc(s: ^Scan) {
+	if !s.resolved || s.fill.target.mount == "" {
+		return
+	}
+	where_ := scan.location(s.fill.target, context.temp_allocator)
+	if total, free, ok := files.space(where_); ok {
+		s.disk_total, s.disk_free = total, free
+	}
 }
 
 // scan_end calls off the current scan, waits for its reader and frees it.
@@ -422,6 +442,7 @@ advance :: proc(d: ^Desk) -> bool {
 			s.problem = survey.problem(&s.fill, context.allocator)
 			s.state = s.problem == "" ? .Done : .Failed
 		}
+		measure(s)
 	}
 	return true
 }
@@ -474,6 +495,8 @@ progress :: proc(d: ^Desk) -> query.Progress_Result {
 		return r
 	}
 	r.notice = d.notice
+	r.disk_total = s.disk_total
+	r.disk_free = s.disk_free
 	r.state = s.state
 	r.target = s.path
 	r.slow = s.slow

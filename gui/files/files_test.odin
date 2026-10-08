@@ -1,5 +1,6 @@
 package sonar_files
 
+import "core:os"
 import "core:sync"
 import "core:testing"
 import "core:thread"
@@ -46,4 +47,17 @@ a_background_job_frees_its_path_with_the_callers_allocator :: proc(t: ^testing.T
 	// that made them, each once.
 	testing.expect(t, debug.expect_released(&da, before), "the job freed what it was given")
 	testing.expect_value(t, debug.issue_count(&da), 0)
+}
+
+@(test)
+the_space_of_a_mounted_directory_is_its_filesystems :: proc(t: ^testing.T) {
+	dir, err := os.temp_directory(context.temp_allocator)
+	testing.expect(t, err == nil)
+	total, free, ok := space(dir)
+	testing.expect(t, ok, "the platform answered")
+	testing.expect(t, total > 0, "a filesystem has a size")
+	testing.expect(t, free <= total, "no more is free than there is")
+
+	_, _, missing := space("/nonexistent/sonar")
+	testing.expect(t, !missing, "a path that is not there has no filesystem")
 }

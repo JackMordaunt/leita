@@ -38,6 +38,10 @@ Progress_Result :: struct {
 	pending:    int, // read, but waiting on a parent before they can be counted
 	seconds:    f64, // since the scan began, or how long it took
 	problem:    string, // why it failed
+	// The filesystem the target is on: its size, and what is free to this user.
+	// Both 0 when nothing could say, as for a device or image nothing mounts.
+	disk_total: u64,
+	disk_free:  u64,
 	notice:     Notice, // what came of the window's last request
 }
 
