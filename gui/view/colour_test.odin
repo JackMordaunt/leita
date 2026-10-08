@@ -81,3 +81,54 @@ the_kinds_colours_stay_apart :: proc(t: ^testing.T) {
 		}
 	}
 }
+
+// A lit entry always looks different from itself unlit: in either colouring, in a
+// layout that frames directories or not, at the first ring and deeper.
+@(test)
+a_lit_entry_differs_from_itself_unlit :: proc(t: ^testing.T) {
+	arcs := []query.Arc {
+		{name = "photos", directory = true, depth = 1, up = -1},
+		{name = "big.raw", depth = 2, up = 0},
+		{name = "notes.txt", depth = 1, up = -1},
+	}
+	r := query.Rings_Result {
+		arcs = arcs,
+	}
+	m: Model
+	for colour in Colouring {
+		m.colour = colour
+		for framed in ([]bool{false, true}) {
+			for _, at in arcs {
+				lit, unlit := fill_of(&m, &r, at, true, framed), fill_of(&m, &r, at, false, framed)
+				testing.expectf(
+					t,
+					lit != unlit,
+					"%v, framed %v: %s lit is %v, the same as unlit",
+					colour,
+					framed,
+					arcs[at].name,
+					lit,
+				)
+			}
+		}
+	}
+}
+
+// A hovered row's entry lights its own arc, or, where the chart does not draw
+// it, the nearest directory it lies in that the chart does.
+@(test)
+a_row_lights_its_entry_or_the_nearest_drawn_directory :: proc(t: ^testing.T) {
+	arcs := []query.Arc {
+		{node = 10, name = "photos", directory = true, depth = 1, up = -1},
+		{node = 11, name = "big.raw", depth = 2, up = 0},
+	}
+	r := query.Rings_Result {
+		arcs = arcs,
+	}
+	testing.expect_value(t, lit_by_row(&r, hover_of(11, {10, 1})), 1)
+	// A file too deep to draw lights the directory holding it that is drawn.
+	testing.expect_value(t, lit_by_row(&r, hover_of(42, {41, 10, 1})), 0)
+	// One outside what is drawn lights nothing.
+	testing.expect_value(t, lit_by_row(&r, hover_of(99, {98, 1})), -1)
+	testing.expect_value(t, lit_by_row(&r, {}), -1)
+}

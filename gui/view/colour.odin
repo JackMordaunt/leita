@@ -275,36 +275,39 @@ kind_in :: proc(r: ^query.Rings_Result, at: int) -> Kind {
 }
 
 /*
-fill_of is the colour of the arc at, by the colouring chosen: full when lit, lighter
-otherwise, by its depth when coloured by folder. framed is for a layout in which a
-directory is the frame its contents sit in, the treemap, which lightens it further
-so its contents stand out.
+fill_of is the colour of the arc at, by the colouring chosen. framed is for a
+layout in which a directory is the frame its contents sit in, the treemap, which
+lightens it so its contents stand out.
+
+A lit entry is its own colour taken toward the ink, darker on a light ground and
+lighter on a dark one, whatever its colour was: an arc of the first ring is drawn
+at its hue's full strength, so a lit colour that was only that would not show.
 */
 @(private)
 fill_of :: proc(m: ^Model, r: ^query.Rings_Result, at: int, lit, framed: bool) -> ops.Color {
 	a := r.arcs[at]
 	bg := primer.color(.Bg_Color_Default)
+	fill: ops.Color
 	switch m.colour {
 	case .Folder:
-		fill := primer.color(BRANCHES[int(a.branch) % len(BRANCHES)])
-		if lit {
-			return fill
-		}
+		fill = primer.color(BRANCHES[int(a.branch) % len(BRANCHES)])
 		fade := FADE * f32(a.depth - 1) + (a.directory ? (framed ? 0.45 : 0) : FILE_FADE)
-		return mix(fill, bg, min(fade, 0.85))
+		fill = mix(fill, bg, min(fade, 0.85))
 	case .Type:
-		fill := kind_colour(kind_in(r, at))
-		if lit {
-			// Darker, not lighter: the seven are used as they are, so a lit one
-			// stands apart by going toward the ink.
-			return mix(fill, primer.color(.Fg_Color_Default), 0.3)
+		// The seven are used as they are; a framed directory alone is lightened.
+		fill = kind_colour(kind_in(r, at))
+		if framed && a.directory {
+			fill = mix(fill, bg, 0.45)
 		}
-		// A framed directory is lightened so its contents stand out; its contents,
-		// the files, keep their colour exactly.
-		return mix(fill, bg, 0.45) if framed && a.directory else fill
 	}
-	return bg
+	if lit {
+		fill = mix(fill, primer.color(.Fg_Color_Default), LIT)
+	}
+	return fill
 }
+
+// LIT is how far a lit entry's colour goes toward the ink.
+LIT :: f32(0.3)
 
 // LEGEND_DOT is a legend swatch's diameter.
 LEGEND_DOT :: f32(8)

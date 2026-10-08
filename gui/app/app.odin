@@ -661,6 +661,22 @@ lay_ring :: proc(
 	}
 }
 
+// ancestors are the directories node lies in, nearest first, up to the top of the
+// scan; at most 64, the depth scan.path follows a chain to.
+ancestors :: proc(s: ^Scan, node: u32, allocator := context.temp_allocator) -> []u32 {
+	out := make([dynamic]u32, allocator)
+	cur := node
+	for len(out) < 64 {
+		n := scan.node(&s.tree, cur)
+		if n.parent == cur || n.parent >= u32(len(s.roll.totals)) {
+			break
+		}
+		cur = n.parent
+		append(&out, cur)
+	}
+	return out[:]
+}
+
 // crumbs is the way from the top of the scan down to dir. A chain that never
 // reaches top, an orphan's, starts where it ends.
 crumbs :: proc(s: ^Scan, dir, top: u32) -> []query.Crumb {
@@ -725,6 +741,7 @@ largest :: proc(
 	for i in 0 ..< count {
 		files[i] = top[i]
 		files[i].path = scan.path(&s.tree, top[i].node, allocator)
+		files[i].within = ancestors(s, top[i].node, allocator)
 	}
 	return {files = files}
 }

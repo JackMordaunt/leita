@@ -194,8 +194,8 @@ rings_panel :: proc(gtx: ^ui.Ctx, m: ^Model) {
 	if !m.inside {
 		u = .Nothing
 	}
-	// With the pointer off the disc, a hovered contents row stands for its arc.
-	if i := arc_of(r, m.row_hover); u == .Nothing && i >= 0 {
+	// With the pointer off the disc, a hovered row stands for its arc.
+	if i := lit_by_row(r, m.row_hover); u == .Nothing && i >= 0 {
 		u, at = .Arc, i
 	}
 	info(gtx, m, r, answer, u, at)

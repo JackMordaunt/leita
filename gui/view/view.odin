@@ -125,16 +125,15 @@ Model :: struct {
 	boxes_dir:        u32,
 	boxes_generation: u32,
 	tree_room:        ops.Size,
-	// The contents row hovered, by node: the frame's rows say so as they are drawn,
-	// after the chart, so the chart reads the last frame's. NO_NODE for none.
-	row_hover:        u32,
-	row_hover_next:   u32,
+	// The row hovered, in the contents or the largest files: the frame's rows say so
+	// as they are drawn, after the chart, so the chart reads the last frame's.
+	row_hover:        Hover,
+	row_hover_next:   Hover,
 }
 
 model_init :: proc(m: ^Model, path: string) {
 	ui.text_set(&m.path, path)
 	m.dir = query.ROOT
-	m.row_hover, m.row_hover_next = NO_NODE, NO_NODE
 }
 
 model_destroy :: proc(m: ^Model) {
@@ -178,7 +177,7 @@ view :: proc(gtx: ^ui.Ctx, user: rawptr) {
 	if m.row_hover != m.row_hover_next {
 		ui.request_frame(gtx)
 	}
-	m.row_hover, m.row_hover_next = m.row_hover_next, NO_NODE
+	m.row_hover, m.row_hover_next = m.row_hover_next, {}
 
 	ui.inset(gtx, {left = PAD, top = PAD, bottom = PAD})
 	ui.column(gtx, gap = 12, align = .Fill)
@@ -462,7 +461,7 @@ entry :: proc(gtx: ^ui.Ctx, m: ^Model, e: query.Entry, total: u64) -> (opened: b
 	opened = clicked && e.directory
 	row_menu(gtx, m, .Contents, name, {node = e.node, name = e.name, directory = e.directory})
 	if ui.widget_state(gtx, name.id).hovered {
-		m.row_hover_next = e.node
+		m.row_hover_next = hover_of(e.node)
 	}
 	share := total > 0 ? 100 * f32(f64(e.bytes) / f64(total)) : 0
 	ui.flexible(gtx, 2)
@@ -512,6 +511,9 @@ largest :: proc(gtx: ^ui.Ctx, m: ^Model) {
 						open(m, f.parent)
 					}
 					row_menu(gtx, m, .Largest, name, {node = f.node, name = base_name(f.path)})
+					if ui.widget_state(gtx, name.id).hovered {
+						m.row_hover_next = hover_of(f.node, f.within)
+					}
 					if ui.row(gtx, gap = 8, align = .Center) {
 						ui.flexible(gtx, 1)
 						primer.truncate(
@@ -554,6 +556,39 @@ title :: proc(gtx: ^ui.Ctx, s: string, loc := #caller_location) {
 
 // NO_NODE names no node.
 NO_NODE :: max(u32)
+
+// Hover is a hovered row's entry, then the directories it lies in, nearest first,
+// so the chart can light the nearest of them it draws when it does not draw the
+// entry itself: a largest file is often deeper or smaller than any arc.
+Hover :: struct {
+	nodes: [65]u32,
+	n:     int,
+}
+
+hover_of :: proc(node: u32, within: []u32 = nil) -> (h: Hover) {
+	h.nodes[0], h.n = node, 1
+	for up in within {
+		if h.n == len(h.nodes) {
+			break
+		}
+		h.nodes[h.n] = up
+		h.n += 1
+	}
+	return
+}
+
+// lit_by_row is the arc the hovered row stands for in r: its entry's, else the
+// nearest directory's it lies in that r draws, or -1. The directory at the
+// centre has no arc, so a file outside what is drawn lights nothing.
+lit_by_row :: proc(r: ^query.Rings_Result, h: Hover) -> int {
+	h := h
+	for node in h.nodes[:h.n] {
+		if i := arc_of(r, node); i >= 0 {
+			return i
+		}
+	}
+	return -1
+}
 
 // arc_of is the index of the arc for node in r, or -1.
 @(private)

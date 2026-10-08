@@ -313,8 +313,8 @@ blocks_panel :: proc(gtx: ^ui.Ctx, m: ^Model, answer: ^query.Rings_Result, k: Bl
 	if i := box_at(boxes, m.pointer); m.inside && i >= 0 {
 		at = boxes[i].arc
 		u = .Arc if at >= 0 else .Hub
-	} else if row := arc_of(answer, m.row_hover); row >= 0 {
-		// With the pointer off the chart, a hovered contents row stands for its box.
+	} else if row := lit_by_row(answer, m.row_hover); row >= 0 {
+		// With the pointer off the chart, a hovered row stands for its box.
 		u, at = .Arc, row
 	}
 	info(gtx, m, answer, answer, u, at)

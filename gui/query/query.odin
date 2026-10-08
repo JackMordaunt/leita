@@ -95,6 +95,7 @@ Largest :: struct {
 File :: struct {
 	node:   u32,
 	parent: u32, // the directory holding it
+	within: []u32, // the directories it lies in, nearest first, up to the top of the scan
 	path:   string,
 	bytes:  u64,
 }

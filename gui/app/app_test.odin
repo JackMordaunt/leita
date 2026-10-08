@@ -149,8 +149,8 @@ a_scan_streams_into_the_window_and_a_directory_opens :: proc(t: ^testing.T) {
 	// the directory first because it holds more.
 	testing.expect(t, settle(&r, "Done"), "the scan finished")
 	testing.expect(t, settle(&r, "photos"), "the directory is listed")
-	testing.expect(t, ui.probe_tagged(&r.p, "notes.txt"), "the file is listed")
-	testing.expect(t, ui.probe_tagged(&r.p, "big.raw"), "the largest file is ranked")
+	testing.expect(t, settle(&r, "notes.txt"), "the file is listed")
+	testing.expect(t, settle(&r, "big.raw"), "the largest file is ranked")
 	testing.expect(t, r.h.desk.scan.state == .Done)
 	testing.expect(t, r.h.desk.scan.disk_total > 0, "the disk it is on was measured")
 	testing.expect(t, r.h.desk.scan.disk_free <= r.h.desk.scan.disk_total)
@@ -158,7 +158,7 @@ a_scan_streams_into_the_window_and_a_directory_opens :: proc(t: ^testing.T) {
 	// Opening the directory is a new need; the desk answers it at once.
 	open_row(&r, "photos")
 	testing.expect(t, settle(&r, "264.0 KiB in 2 items"), "the directory's contents are listed")
-	testing.expect(t, ui.probe_tagged(&r.p, "arc big.raw"), "the sunburst followed")
+	testing.expect(t, settle(&r, "arc big.raw"), "the sunburst followed")
 }
 
 @(test)
@@ -205,7 +205,7 @@ a_click_on_an_arc_opens_it_and_the_hub_goes_back_up :: proc(t: ^testing.T) {
 	// The first ring holds the top's two entries; photos is the larger.
 	testing.expect(t, settle(&r, "Done"), "the scan finished")
 	testing.expect(t, settle(&r, "arc photos"), "photos has an arc")
-	testing.expect(t, ui.probe_tagged(&r.p, "arc notes.txt"), "notes.txt has an arc")
+	testing.expect(t, settle(&r, "arc notes.txt"), "notes.txt has an arc")
 
 	// Clicking the arc makes photos the hub: its files are the first ring now.
 	// photos, the larger, sweeps from twelve o'clock round past six, so the first
@@ -413,12 +413,18 @@ a_long_name_stops_short_of_its_share_bar :: proc(t: ^testing.T) {
 	rig_open(&r, root)
 	defer rig_close(&r)
 	testing.expect(t, settle(&r, "Done"))
-	testing.expect(t, settle(&r, long))
+	// The name is in the largest files as soon as they land, which can be before
+	// the listing: wait for its row's bar itself.
+	share := fmt.tprintf("%s share", long)
+	testing.expect(t, settle(&r, share))
 
 	// The name's label is as wide as it is, but clipped to its cell: just above the
 	// bar, where a name running on would draw its letters, there is only the
 	// background.
-	bar := ui.probe_bounds(&r.p, fmt.tprintf("%s share", long))
+	bar := ui.probe_bounds(&r.p, share)
+	if !testing.expectf(t, bar.w > 0 && bar.y >= 8, "the bar is at %v", bar) {
+		return
+	}
 	img: bl.ImageCore
 	bl.image_init(&img)
 	defer bl.image_destroy(&img)
@@ -428,10 +434,11 @@ a_long_name_stops_short_of_its_share_bar :: proc(t: ^testing.T) {
 	testing.expect(t, bl.image_get_data(&img, &data) == 0)
 	// inked counts the pixels other than the background in a strip of the rows just
 	// above the bar, from x0 to x1.
+	// It reads only inside the image.
 	inked :: proc(data: bl.ImageData, bar: ops.Rect, x0, x1: f32) -> (n: int) {
-		for y in int(bar.y) - 7 ..< int(bar.y) {
+		for y in max(int(bar.y) - 7, 0) ..< min(int(bar.y), int(data.size.h)) {
 			line := ([^]u32)(rawptr(uintptr(data.pixel_data) + uintptr(y * int(data.stride))))
-			for x in int(x0) ..< int(x1) {
+			for x in max(int(x0), 0) ..< min(int(x1), int(data.size.w)) {
 				if line[x] != 0xFFFFFFFF {
 					n += 1
 				}
@@ -582,8 +589,8 @@ the_location_bar_walks_the_path_and_scans_above_it :: proc(t: ^testing.T) {
 	defer rig_close(&r)
 	testing.expect(t, settle(&r, "Done"))
 	testing.expect(t, settle(&r, "arc photos"))
-	testing.expect(t, ui.probe_tagged(&r.p, "sonar_gui_bar"), "the scan's top is a step")
-	testing.expect(t, ui.probe_tagged(&r.p, "tmp"), "and so is the directory above it")
+	testing.expect(t, settle(&r, "sonar_gui_bar"), "the scan's top is a step")
+	testing.expect(t, settle(&r, "tmp"), "and so is the directory above it")
 
 	// Into photos and back by its step.
 	ui.probe_click_at(&r.p, ring_point(&r, 0.5))
@@ -632,7 +639,7 @@ the_location_bar_edits_into_a_field_and_back :: proc(t: ^testing.T) {
 	ui.probe_key(&r.p, .Escape)
 	press_and_hand_on(&r)
 	testing.expect(t, !r.m.editing, "Escape closes the field")
-	testing.expect(t, ui.probe_tagged(&r.p, "sonar_gui_edit"))
+	testing.expect(t, settle(&r, "sonar_gui_edit"))
 
 	// Enter scans what the field holds.
 	ui.probe_click_at(&r.p, {bar.x + bar.w - 20, bar.y + bar.h / 2})
@@ -796,6 +803,8 @@ the_icicle_opens_a_bar_and_its_top_goes_up :: proc(t: ^testing.T) {
 	defer rig_close(&r)
 	testing.expect(t, settle(&r, "Done"))
 	testing.expect(t, settle(&r, "268.0 KiB in 2 items"))
+	// The bars come from the rings' answer, which lands apart from the listing.
+	testing.expect(t, settle(&r, "arc photos"))
 
 	testing.expect(t, ui.probe_click(&r.p, "Icicle"))
 	press_and_hand_on(&r)
@@ -828,12 +837,41 @@ colouring_by_type_names_the_kind :: proc(t: ^testing.T) {
 	testing.expect(t, settle(&r, "268.0 KiB in 2 items"))
 	testing.expect(t, !ui.probe_tagged(&r.p, "Archive and disk image"), "no legend by folder")
 
+	// The kind is read off the rings' answer, which lands apart from the listing.
+	testing.expect(t, settle(&r, "arc notes.txt"))
 	testing.expect(t, ui.probe_click(&r.p, "Type"))
 	press_and_hand_on(&r)
-	testing.expect(t, ui.probe_tagged(&r.p, "Archive and disk image"), "the legend names the kinds")
+	testing.expect(
+		t,
+		ui.probe_tagged(&r.p, "Archive and disk image"),
+		"the legend names the kinds",
+	)
 	row := ui.probe_bounds(&r.p, "notes.txt")
 	ui.probe_move(&r.p, row.x + 24, row.y + row.h / 2)
 	ui.probe_advance(&r.p, 3, 1.0 / 60)
 	said := "4.0 KiB · 1.5% of sonar_gui_kinds · Code and text"
 	testing.expect(t, ui.probe_tagged(&r.p, said), "the info block names the kind")
+}
+
+@(test)
+hovering_a_largest_file_lights_its_arc :: proc(t: ^testing.T) {
+	root := fixture(t, "lfh")
+	defer os.remove_all(root)
+	r: Rig
+	rig_open(&r, root)
+	defer rig_close(&r)
+	testing.expect(t, settle(&r, "Done"))
+	testing.expect(t, settle(&r, "arc photos"))
+	testing.expect(t, settle(&r, "268.0 KiB in 2 items"))
+
+	// The largest files are an answer of their own, too.
+	testing.expect(t, settle(&r, "/tmp/sonar_gui_lfh/photos/big.raw"))
+
+	// big.raw is in the largest files, and in the second ring, under photos.
+	said := "256.0 KiB · 95.5% of sonar_gui_lfh"
+	testing.expect(t, !ui.probe_tagged(&r.p, said))
+	row := ui.probe_bounds(&r.p, "big.raw")
+	ui.probe_move(&r.p, row.x + 24, row.y + row.h / 2)
+	ui.probe_advance(&r.p, 3, 1.0 / 60)
+	testing.expect(t, ui.probe_tagged(&r.p, said), "hovering the largest file lights its arc")
 }
