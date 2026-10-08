@@ -187,8 +187,10 @@ rings_panel :: proc(gtx: ^ui.Ctx, m: ^Model) {
 	}
 	primer.text(gtx, caption(gtx, r, u, at), .Small, color = primer.color(.Fg_Color_Muted))
 
+	// The disc is as big as the smaller side of the room it is given, and sits in
+	// the middle of the other.
 	ui.flexible(gtx, 1)
-	if ui.column(gtx, align = .Center) {
+	if ui.column(gtx, align = .Center, justify = .Center) {
 		sunburst(gtx, m, r, u == .Arc ? at : -1)
 	}
 }

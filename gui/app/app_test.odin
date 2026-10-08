@@ -498,3 +498,45 @@ the_grips_share_the_window_and_fold_the_side_column_away :: proc(t: ^testing.T) 
 	press_and_hand_on(&r)
 	testing.expect(t, settle(&r, "Contents"), "and another unfolds it")
 }
+
+@(test)
+the_sunburst_sits_in_the_middle_of_its_room :: proc(t: ^testing.T) {
+	root := fixture(t, "centre")
+	defer os.remove_all(root)
+	r: Rig
+	rig_open(&r, root)
+	defer rig_close(&r)
+	testing.expect(t, settle(&r, "Done"))
+	testing.expect(t, settle(&r, "arc photos"))
+	caption := fmt.tprintf("%s · 268.0 KiB", root)
+
+	// The disc's room runs from under the caption, past the column's 8 point gap,
+	// to the window's margin, and across from the window's margin to the grip.
+	// Wide, the disc is held by its height and has as much room left as right;
+	// tall, by its width, with as much above as below.
+	for size in ([]ops.Size{{1100, 700}, {760, 1100}}) {
+		r.p.size = size
+		ui.probe_advance(&r.p, 60, 1.0 / 60)
+		disc := ui.probe_bounds(&r.p, "Sunburst")
+		grip := ui.probe_bounds(&r.p, "Resize panels")
+		said := ui.probe_bounds(&r.p, caption)
+		left, right := disc.x - view.PAD, grip.x - (disc.x + disc.w)
+		above, below := disc.y - (said.y + said.h + 8), size.y - view.PAD - (disc.y + disc.h)
+		testing.expectf(
+			t,
+			abs(left - right) < 2,
+			"at %v, %v left of the disc and %v right",
+			size,
+			left,
+			right,
+		)
+		testing.expectf(
+			t,
+			abs(above - below) < 2,
+			"at %v, %v above the disc and %v below",
+			size,
+			above,
+			below,
+		)
+	}
+}
