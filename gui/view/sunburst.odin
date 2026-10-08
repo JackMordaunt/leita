@@ -262,8 +262,13 @@ info :: proc(gtx: ^ui.Ctx, m: ^Model, drawn, laid: ^query.Rings_Result, u: Hit, 
 		a := drawn.arcs[at]
 		share := drawn.bytes > 0 ? 100 * f64(a.bytes) / f64(drawn.bytes) : 0
 		name = a.name
-		kind :=
-			fmt.aprintf(" · %s", KIND_NAMES[kind_in(laid, at)], allocator = gtx.allocator) if m.colour == .Type else ""
+		kind: string
+		#partial switch m.colour {
+		case .Type:
+			kind = fmt.aprintf(" · %s", KIND_NAMES[kind_in(laid, at)], allocator = gtx.allocator)
+		case .Change:
+			kind = change_note(gtx, a.bytes, a.was, drawn.compared)
+		}
 		detail = fmt.aprintf(
 			"%s · %.1f%% of %s%s%s",
 			human.bytes(a.bytes),
@@ -278,8 +283,9 @@ info :: proc(gtx: ^ui.Ctx, m: ^Model, drawn, laid: ^query.Rings_Result, u: Hit, 
 		name = base_name(here)
 		up := u == .Hub && len(drawn.crumbs) > 1
 		detail = fmt.aprintf(
-			"%s%s",
+			"%s%s%s",
 			human.bytes(drawn.bytes),
+			change_note(gtx, drawn.bytes, drawn.was, drawn.compared) if m.colour == .Change else "",
 			up ? " · click to go up" : "",
 			allocator = gtx.allocator,
 		)

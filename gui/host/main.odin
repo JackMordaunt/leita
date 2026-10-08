@@ -18,6 +18,7 @@ import "core:os"
 import "jm:ui/shell"
 
 import "../app"
+import "../history"
 @(require) import "../leaks"
 
 main :: proc() {
@@ -39,7 +40,10 @@ main :: proc() {
 
 	h := new(app.Host)
 	defer free(h)
-	app.init(h, path, shell.wake)
+	// Each finished scan is kept, to compare the next with.
+	kept := history.default_path()
+	defer delete(kept)
+	app.init(h, path, shell.wake, kept)
 	shell.run_host(
 		{
 			title = "sonar",

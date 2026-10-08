@@ -35,6 +35,7 @@ Command :: union {
 	Rename,
 	Clean,
 	Empty_Trash,
+	Baseline,
 }
 
 // Scan reads what is at path, calling off any scan still running.
@@ -82,4 +83,11 @@ Clean :: struct {
 // Empty_Trash deletes what the Trash holds, for good.
 Empty_Trash :: struct {
 	entry: Entry,
+}
+
+// Baseline is the earlier snapshot of the scan's place to compare it with, 0 for
+// none (query.History).
+Baseline :: struct {
+	generation: u32,
+	snapshot:   i64,
 }

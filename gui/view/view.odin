@@ -144,6 +144,8 @@ Model :: struct {
 	empty_open:       bool,
 	trash_node:       u32,
 	trash_bytes:      u64,
+	// Colouring by change (change.odin): whether the menu of snapshots is open.
+	since_open:       bool,
 }
 
 model_init :: proc(m: ^Model, path: string) {
@@ -439,9 +441,10 @@ listing :: proc(gtx: ^ui.Ctx, m: ^Model) {
 		primer.text(
 			gtx,
 			fmt.aprintf(
-				"%s in %s items",
+				"%s in %s items%s",
 				human.bytes(r.bytes),
 				human.count(u64(len(r.entries) + r.more)),
+				change_note(gtx, r.bytes, r.was, r.compared) if m.colour == .Change else "",
 				allocator = gtx.allocator,
 			),
 			.Small,
@@ -457,7 +460,7 @@ listing :: proc(gtx: ^ui.Ctx, m: ^Model) {
 				primer.text(gtx, "Nothing found here yet.", color = primer.color(.Fg_Color_Muted))
 			}
 			for e in r.entries {
-				if entry(gtx, m, e, r.bytes) {
+				if entry(gtx, m, e, r.bytes, r.compared) {
 					open(m, e.node)
 				}
 			}
@@ -482,7 +485,15 @@ listing :: proc(gtx: ^ui.Ctx, m: ^Model) {
 // and its size. A directory's name opens it, and reports so; a right click on
 // any name opens the entry's menu.
 @(private)
-entry :: proc(gtx: ^ui.Ctx, m: ^Model, e: query.Entry, total: u64) -> (opened: bool) {
+entry :: proc(
+	gtx: ^ui.Ctx,
+	m: ^Model,
+	e: query.Entry,
+	total: u64,
+	compared: bool,
+) -> (
+	opened: bool,
+) {
 	s := ui.scope_open(gtx, e.node)
 	defer ui.scope_close(&s)
 	ui.row(gtx, gap = 12, align = .Center)
@@ -504,6 +515,11 @@ entry :: proc(gtx: ^ui.Ctx, m: ^Model, e: query.Entry, total: u64) -> (opened: b
 	if ui.sized(gtx, {min = {SIZE_WIDTH, 0}, max = {SIZE_WIDTH, ui.INF}}) {
 		if ui.column(gtx, align = .End) {
 			primer.text(gtx, human.bytes(e.bytes), .Small)
+			if m.colour == .Change {
+				if d := delta_text(e.bytes, e.was, compared, gtx.allocator); d != "" {
+					primer.text(gtx, d, .Small, color = primer.color(.Fg_Color_Muted))
+				}
+			}
 		}
 	}
 	return
@@ -555,6 +571,12 @@ largest :: proc(gtx: ^ui.Ctx, m: ^Model) {
 							color = primer.color(.Fg_Color_Muted),
 						)
 						primer.text(gtx, human.bytes(f.bytes), .Small)
+						if m.colour == .Change {
+							if d := delta_text(f.bytes, f.was, r.compared, gtx.allocator);
+							   d != "" {
+								primer.text(gtx, d, .Small, color = primer.color(.Fg_Color_Muted))
+							}
+						}
 					}
 				}
 			}

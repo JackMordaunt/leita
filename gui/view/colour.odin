@@ -7,6 +7,7 @@ import "jm:ui"
 import "jm:ui/design"
 import "jm:ui/ops"
 import "jm:ui/primer"
+import tok "jm:ui/primer/tokens"
 
 import "../query"
 
@@ -19,12 +20,15 @@ By folder, every entry of the first ring keeps a hue and everything under it is
 that hue, lighter each level: where the space went. By type, a file is coloured by
 what it is, from its name, and everything under a build or cache directory by
 that: what kind of thing the space went on, and how much of it is safe to clear.
-Directories are left neutral by type, so the files they hold stand out.
+Directories are left neutral by type, so the files they hold stand out. By change,
+an entry is coloured by how it has grown or shrunk since the snapshot compared
+with (query.History): where the space went lately.
 */
 
 Colouring :: enum u8 {
 	Folder,
 	Type,
+	Change,
 }
 
 // Kind is what an entry is, for colouring by type.
@@ -295,6 +299,11 @@ fill_of :: proc(m: ^Model, r: ^query.Rings_Result, at: int, lit, framed: bool) -
 		fill = primer.color(BRANCHES[int(a.branch) % len(BRANCHES)])
 		fade := FADE * f32(a.depth - 1) + (a.directory ? (framed ? 0.45 : 0) : FILE_FADE)
 		fill = mix(fill, bg, min(fade, 0.85))
+	case .Change:
+		fill = change_colour(change_of(a.bytes, a.was, r.compared))
+		if framed && a.directory {
+			fill = mix(fill, bg, 0.45)
+		}
 	case .Type:
 		// The seven are used as they are; a framed directory alone is lightened.
 		// While chips are on, only their kinds keep their colour; a hovered chip
@@ -332,8 +341,9 @@ legend_shown :: proc(kind: Kind) -> bool {
 	return kind != .Folder && kind != .Other
 }
 
-// legend_line_count is how many lines the chips take across width, wrapped as the
-// legend wraps them.
+// legend_line_count is how many lines the legend takes across width, wrapped as
+// it wraps them: the more of the kinds' chips and the change scale, so the row is
+// as tall in every colouring.
 @(private)
 legend_line_count :: proc(gtx: ^ui.Ctx, width: f32) -> int {
 	if !ui.is_finite(width) {
@@ -341,16 +351,35 @@ legend_line_count :: proc(gtx: ^ui.Ctx, width: f32) -> int {
 	}
 	st := primer.text_style(.Small)
 	font := primer.font_for(gtx, st.weight)
-	lines, x := 1, f32(0)
+	text :: proc(gtx: ^ui.Ctx, s: string, st: tok.Type_Style, font: ops.Font_Id) -> f32 {
+		return design.layout_style(gtx, s, st, font).width
+	}
+	kinds := make([dynamic]f32, gtx.allocator)
 	for kind in Kind {
-		if !legend_shown(kind) {
-			continue
+		if legend_shown(kind) {
+			append(
+				&kinds,
+				2 * CHIP_PAD + LEGEND_DOT + LEGEND_INSET + text(gtx, KIND_NAMES[kind], st, font),
+			)
 		}
-		w :=
-			2 * CHIP_PAD +
-			LEGEND_DOT +
-			LEGEND_INSET +
-			design.layout_style(gtx, KIND_NAMES[kind], st, font).width
+	}
+	// The longest the pill can say, then the scale.
+	changes := make([dynamic]f32, gtx.allocator)
+	append(
+		&changes,
+		2 * CHIP_PAD + text(gtx, "Since 30 Sep 23:59", st, font) + LEGEND_INSET + st.line_height,
+	)
+	for c in Change {
+		append(&changes, LEGEND_DOT + LEGEND_INSET + text(gtx, CHANGE_NAMES[c], st, font))
+	}
+	return max(lines_of(kinds[:], width), lines_of(changes[:], width))
+}
+
+// lines_of is how many lines items of widths take wrapped across width.
+@(private)
+lines_of :: proc(widths: []f32, width: f32) -> int {
+	lines, x := 1, f32(0)
+	for w in widths {
 		switch {
 		case x == 0:
 			x = w
@@ -388,6 +417,8 @@ legend_row :: proc(gtx: ^ui.Ctx, m: ^Model) {
 			.Small,
 			color = primer.color(.Fg_Color_Muted),
 		)
+	case .Change:
+		change_legend(gtx, m)
 	}
 }
 

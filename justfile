@@ -10,7 +10,7 @@
 #   just hot [dir]  the same, the view reloaded in place on every edit
 #   just gui-test   run the window's tests, the host's on a real directory
 #
-# The debug allocator, flow, stream and ui come from the jm collection, pinned as
+# The debug allocator, flow, sqlite3, stream and ui come from the jm collection, pinned as
 # the jm submodule (https://mordaunt.dev/code/jm); JM=<path> builds against another
 # checkout instead.
 #
@@ -54,7 +54,8 @@ check:
 
 # The jm submodule, when JM does not name another checkout, and the libraries
 # jm:ui links: Blend2D to draw, kb_text_shape to shape text, AccessKit for screen
-# readers. Each is built or fetched by jm's own recipe, once.
+# readers; and SQLite, which keeps the window's scans. Each is built or fetched by
+# jm's own recipe, once.
 deps:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -63,6 +64,7 @@ deps:
     ls ui/blend2d/lib/*blend2d* >/dev/null 2>&1 || just blend2d
     ls ui/kb/lib/kb_text_shape.* >/dev/null 2>&1 || just kb
     ls ui/accesskit/lib/*accesskit* >/dev/null 2>&1 || just accesskit
+    ls sqlite3/lib/sqlite3.* >/dev/null 2>&1 || just sqlite
     just sdl3
 
 # Build the window and open it on a directory, the home directory by default
@@ -129,6 +131,7 @@ gui-test: deps
     {{odin}} test gui/files -debug {{san}} {{flags}} -out:build/test/{{gui}}-files{{exe}}
     {{odin}} test gui/view -debug {{san}} {{flags}} -out:build/test/{{gui}}-view{{exe}}
     {{odin}} test reclaim -debug {{san}} {{flags}} -out:build/test/{{gui}}-reclaim{{exe}}
+    {{odin}} test gui/history -debug {{san}} {{flags}} -out:build/test/{{gui}}-history{{exe}}
 
 # Remove build/.
 clean:

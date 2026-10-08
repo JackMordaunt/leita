@@ -65,6 +65,7 @@ Entry :: struct {
 	name:      string,
 	bytes:     u64, // on disk; a directory's counts everything under it found so far
 	directory: bool,
+	was:       i64, // what it held in the snapshot compared with, or -1 (History)
 }
 
 // Crumb is one directory on the way down from the top to a listing.
@@ -78,6 +79,8 @@ Listing_Result :: struct {
 	dir:        u32, // the directory listed, ROOT resolved
 	crumbs:     []Crumb, // from the top down to dir, inclusive
 	bytes:      u64, // the directory's own total
+	was:        i64, // and in the snapshot compared with, or -1
+	compared:   bool, // whether a snapshot is compared with, so was says anything
 	entries:    []Entry, // the largest, at most LISTING_LIMIT
 	more:       int, // entries past the limit
 	more_bytes: u64, // and what they hold between them
@@ -98,10 +101,12 @@ File :: struct {
 	within: []u32, // the directories it lies in, nearest first, up to the top of the scan
 	path:   string,
 	bytes:  u64,
+	was:    i64, // what it held in the snapshot compared with, or -1
 }
 
 Largest_Result :: struct {
-	files: []File, // largest first, at most LARGEST_LIMIT
+	files:    []File, // largest first, at most LARGEST_LIMIT
+	compared: bool, // whether a snapshot is compared with, so was says anything
 }
 
 LARGEST_LIMIT :: 20
@@ -127,6 +132,7 @@ Arc :: struct {
 	start:     f32, // turns clockwise from twelve o'clock, 0 to 1
 	sweep:     f32, // turns
 	up:        i32, // the index of the arc it lies in, -1 for the first ring
+	was:       i64, // what it held in the snapshot compared with, or -1
 }
 
 Rings_Result :: struct {
@@ -134,6 +140,8 @@ Rings_Result :: struct {
 	dir:        u32, // the directory at the centre, ROOT resolved
 	crumbs:     []Crumb, // from the top down to dir, inclusive
 	bytes:      u64,
+	was:        i64, // what dir held in the snapshot compared with, or -1
+	compared:   bool, // whether a snapshot is compared with, so was says anything
 	arcs:       []Arc, // ring by ring is not promised; each arc carries its depth
 }
 
@@ -147,6 +155,42 @@ MIN_SWEEP :: 1.0 / 720
 // MAX_ARCS caps a sunburst, so a directory of a million tiny files cannot send
 // a million arcs.
 MAX_ARCS :: 6000
+
+/*
+History is the earlier scans of the place scanned that it can be compared with,
+and which it is compared with. Each finished scan is kept, and compared with the
+last before it until another is chosen (command.Baseline).
+
+While a snapshot is compared with, every entry, arc and file answered carries
+was: what it held then. -1 says it was not kept: under KEPT_MIN
+then, or not there at all, which an entry that holds less than that now cannot
+tell apart. Entries since deleted are not answered; their parent's was carries
+them.
+*/
+History :: struct {
+	generation: u32,
+}
+
+// KEPT_MIN is the least an entry holds to be kept in a snapshot: one that holds
+// less now may not have been, so was -1 says nothing about it.
+KEPT_MIN :: 1 << 20
+
+// Snapshot is one earlier scan: when it was taken, in Unix seconds, and its
+// totals.
+Snapshot :: struct {
+	id:    i64,
+	taken: i64,
+	bytes: u64,
+	items: u64,
+}
+
+History_Result :: struct {
+	generation: u32,
+	kept:       bool, // whether scans are kept at all
+	ready:      bool, // the scan is finished, and kept
+	snapshots:  []Snapshot, // the earlier ones, newest first
+	compared:   Snapshot, // the one compared with; id 0 for none
+}
 
 // Reclaim is what can be deleted under a directory to free space without losing
 // anything: what builds and tools made and will make again.

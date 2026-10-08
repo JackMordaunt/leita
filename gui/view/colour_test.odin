@@ -37,11 +37,9 @@ a_file_under_a_cache_is_cache :: proc(t: ^testing.T) {
 	testing.expect_value(t, kind_in(&r, 0), Kind.Folder)
 }
 
-// Every pair of the kinds' colours stays at least 15 apart in OKLab (×100) to the
-// eye, the dataviz skill's normal-vision floor. The colour-blind views are not
-// checked here: KIND_COLOURS says how to run the skill's validator for them.
-@(test)
-the_kinds_colours_stay_apart :: proc(t: ^testing.T) {
+// distance is how far apart two colours are to the eye, in OKLab ×100.
+@(private = "file")
+distance :: proc(a, b: ops.Color) -> f64 {
 	oklab :: proc(c: ops.Color) -> [3]f64 {
 		lin :: proc(v: u8) -> f64 {
 			s := f64(v) / 255
@@ -57,6 +55,22 @@ the_kinds_colours_stay_apart :: proc(t: ^testing.T) {
 			0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s,
 		}
 	}
+	x, y := oklab(a), oklab(b)
+	return(
+		100 *
+		math.sqrt(
+			(x[0] - y[0]) * (x[0] - y[0]) +
+			(x[1] - y[1]) * (x[1] - y[1]) +
+			(x[2] - y[2]) * (x[2] - y[2]),
+		) \
+	)
+}
+
+// Every pair of the kinds' colours stays at least 15 apart in OKLab (×100) to the
+// eye, the dataviz skill's normal-vision floor. The colour-blind views are not
+// checked here: KIND_COLOURS says how to run the skill's validator for them.
+@(test)
+the_kinds_colours_stay_apart :: proc(t: ^testing.T) {
 	coloured := 0
 	for c in KIND_COLOURS {
 		if c != {} {
@@ -69,14 +83,7 @@ the_kinds_colours_stay_apart :: proc(t: ^testing.T) {
 			if a >= b || KIND_COLOURS[a] == {} || KIND_COLOURS[b] == {} {
 				continue
 			}
-			x, y := oklab(KIND_COLOURS[a]), oklab(KIND_COLOURS[b])
-			d :=
-				100 *
-				math.sqrt(
-					(x[0] - y[0]) * (x[0] - y[0]) +
-					(x[1] - y[1]) * (x[1] - y[1]) +
-					(x[2] - y[2]) * (x[2] - y[2]),
-				)
+			d := distance(KIND_COLOURS[a], KIND_COLOURS[b])
 			testing.expectf(t, d >= 15, "%v and %v are only %.1f apart", a, b, d)
 		}
 	}
@@ -161,4 +168,36 @@ chips_pick_which_kinds_are_coloured_and_light_one :: proc(t: ^testing.T) {
 
 	m.kinds_on, m.kind_hover = {}, nil
 	testing.expect_value(t, fill_of(&m, &r, 1, false, false), kind_colour(.Text))
+}
+
+// By change, an entry takes its change's colour, every step of the scale stays at
+// least 15 apart from every other on either ground, and while nothing is compared
+// everything is unchanged.
+@(test)
+change_colours_an_entry_by_how_it_changed :: proc(t: ^testing.T) {
+	for scale in ([][Change]ops.Color{CHANGE_LIGHT, CHANGE_DARK}) {
+		for a in Change {
+			for b in Change {
+				if a < b {
+					d := distance(scale[a], scale[b])
+					testing.expectf(t, d >= 15, "%v and %v are only %.1f apart", a, b, d)
+				}
+			}
+		}
+	}
+	arcs := []query.Arc {
+		{name = "grew", bytes = 300 << 20, was = 100 << 20, depth = 1, up = -1},
+		{name = "shrank", bytes = 90 << 20, was = 100 << 20, depth = 1, up = -1},
+	}
+	r := query.Rings_Result {
+		arcs     = arcs,
+		compared = true,
+	}
+	m := Model {
+		colour = .Change,
+	}
+	testing.expect_value(t, fill_of(&m, &r, 0, false, false), change_colour(.Grew_Much))
+	testing.expect_value(t, fill_of(&m, &r, 1, false, false), change_colour(.Shrank))
+	r.compared = false
+	testing.expect_value(t, fill_of(&m, &r, 0, false, false), change_colour(.Same))
 }

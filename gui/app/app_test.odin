@@ -39,8 +39,8 @@ Rig :: struct {
 }
 
 @(private = "file")
-rig_open :: proc(r: ^Rig, path: string) {
-	init(&r.h, path)
+rig_open :: proc(r: ^Rig, path: string, kept := "") {
+	init(&r.h, path, kept = kept)
 	r.data = data_host(&r.h)
 	view.model_init(&r.m, path)
 	ui.subscriptions_init(&r.needs)
@@ -1235,4 +1235,98 @@ reclaim_empties_the_trash_it_found :: proc(t: ^testing.T) {
 	testing.expect(t, !os.exists(fmt.tprintf("%s/.local/share/Trash/info", root)))
 	testing.expect(t, os.exists(fmt.tprintf("%s/.local/share/Trash", root)), "the Trash stays")
 	testing.expect(t, os.exists(fmt.tprintf("%s/web/node_modules", root)), "cleaning is separate")
+}
+
+// tagged_from is the first name tagged that starts with prefix, cloned since the
+// frame's names go with it, once a frame has one, as settle waits; or "".
+@(private = "file")
+tagged_from :: proc(r: ^Rig, prefix: string) -> string {
+	find :: proc(r: ^Rig, prefix: string) -> string {
+		for t in ui.probe_current(&r.p).tags {
+			if strings.has_prefix(t.name, prefix) {
+				return strings.clone(t.name, context.temp_allocator)
+			}
+		}
+		return ""
+	}
+	deadline := time.tick_now()._nsec + i64(30 * time.Second)
+	for time.tick_now()._nsec < deadline {
+		if name := find(r, prefix); name != "" {
+			return name
+		}
+		if ui.inbox_pending(&r.h.inbox) {
+			ui.inbox_drain(&r.h.inbox, &r.p.layout)
+			ui.probe_frame(&r.p)
+			hand_on(r)
+		}
+		time.sleep(time.Millisecond)
+	}
+	return ""
+}
+
+@(test)
+a_rescan_is_compared_with_the_scan_before :: proc(t: ^testing.T) {
+	dir, _ := os.temp_directory(context.temp_allocator)
+	root := fmt.tprintf("%s/sonar_gui_compare", dir)
+	kept := fmt.tprintf("%s/sonar_gui_compare_kept/history.db", dir)
+	os.remove_all(root)
+	os.remove_all(fmt.tprintf("%s/sonar_gui_compare_kept", dir))
+	defer os.remove_all(root)
+	defer os.remove_all(fmt.tprintf("%s/sonar_gui_compare_kept", dir))
+	write :: proc(t: ^testing.T, path: string, size: int) {
+		body := make([]byte, size, context.temp_allocator)
+		slice.fill(body, 'x')
+		testing.expectf(t, os.write_entire_file(path, body) == nil, "could not write %s", path)
+	}
+	for d in ([]string{"", "a", "b", "c"}) {
+		testing.expect(t, os.make_directory(fmt.tprintf("%s/%s", root, d)) == nil)
+	}
+	write(t, fmt.tprintf("%s/a/one.bin", root), 2 << 20)
+	write(t, fmt.tprintf("%s/b/two.bin", root), 3 << 20)
+
+	r: Rig
+	rig_open(&r, root, kept)
+	defer rig_close(&r)
+	testing.expect(t, settle(&r, "5.0 MiB in 3 items"))
+	testing.expect(t, ui.probe_click(&r.p, "Change"))
+	press_and_hand_on(&r)
+	testing.expect(
+		t,
+		settle(
+			&r,
+			"No earlier scan of this folder yet: the next scan will be compared with this one",
+		),
+		"the first scan has nothing to compare with",
+	)
+
+	// a doubles, b empties, and c is new.
+	write(t, fmt.tprintf("%s/a/more.bin", root), 2 << 20)
+	testing.expect(t, os.remove(fmt.tprintf("%s/b/two.bin", root)) == nil)
+	write(t, fmt.tprintf("%s/c/new.bin", root), 3 << 19)
+	// The legend's new line lays out over a few frames; the click waits for it.
+	ui.probe_advance(&r.p, 10, 1.0 / 60)
+	first := r.m.generation
+	testing.expect(t, ui.probe_click(&r.p, "Rescan"))
+	hand_on(&r)
+	testing.expect(
+		t,
+		settle(&r, "5.5 MiB in 3 items · +512.0 KiB since then"),
+		"the total says what it grew by",
+	)
+	testing.expect(t, r.m.generation > first, "from a new scan")
+	testing.expect(t, settle(&r, "+2.0 MiB"), "a grew")
+	testing.expect(t, settle(&r, "−3.0 MiB"), "b shrank")
+	testing.expect(t, settle(&r, "new"), "c is new")
+	since := tagged_from(&r, "Since ")
+	testing.expect(t, since != "", "the legend names the scan compared with")
+
+	// Comparing with nothing takes the changes away.
+	testing.expect(t, ui.probe_click(&r.p, since))
+	press_and_hand_on(&r)
+	press_and_hand_on(&r)
+	testing.expect(t, ui.probe_click(&r.p, "None"), "the menu offers none")
+	press_and_hand_on(&r)
+	testing.expect(t, settle(&r, "5.5 MiB in 3 items"))
+	testing.expect(t, settle(&r, "+2.0 MiB", present = false))
+	testing.expect(t, settle(&r, "Compare with…"))
 }

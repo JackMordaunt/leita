@@ -70,6 +70,7 @@ colour_switch :: proc(gtx: ^ui.Ctx, m: ^Model, compact := false) {
 	colourings := [?]primer.Segment {
 		{label = "Folder", icon = .File_Directory},
 		{label = "Type", icon = .File},
+		{label = "Change", icon = .Diff},
 	}
 	#assert(len(colourings) == len(Colouring))
 	at := int(m.colour)

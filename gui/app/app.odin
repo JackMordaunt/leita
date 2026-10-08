@@ -51,6 +51,7 @@ import "../../survey"
 import "../../walk"
 import "../command"
 import "../files"
+import "../history"
 import "../query"
 
 // TICK is how often a running scan is folded and its answers sent: often enough
@@ -68,6 +69,7 @@ Query :: union {
 	query.Largest,
 	query.Rings,
 	query.Reclaim,
+	query.History,
 }
 
 // Need_Event is a need appearing or going, as the main thread hands it on.
@@ -119,6 +121,12 @@ Desk :: struct {
 	notice:      query.Notice, // its text owned
 	// What Reclaim last offered, by node: Clean deletes only these.
 	reclaimable: map[u32]reclaim.Category,
+	// The scans kept (history.odin), nil when none are; the snapshot this scan
+	// was kept as, the one it is compared with, and what each node held in that.
+	history:     ^history.Store,
+	snapshot:    i64,
+	compared:    query.Snapshot,
+	was:         map[u32]u64,
 }
 
 Host :: struct {
@@ -140,7 +148,7 @@ Build the pipeline and start the threads, then scan path if it is not empty.
 wake is called, from the desk thread, whenever an answer has been put in the inbox:
 a frame loop runs a frame on it.
 */
-init :: proc(h: ^Host, path: string, wake: proc() = nil) {
+init :: proc(h: ^Host, path: string, wake: proc() = nil, kept := "") {
 	allocator := context.allocator
 	ui.inbox_init(&h.inbox, allocator)
 	h.desk = {
@@ -148,6 +156,7 @@ init :: proc(h: ^Host, path: string, wake: proc() = nil) {
 		wake  = wake,
 		live  = make(map[ui.Need_Key]Query, allocator),
 	}
+	history_open(&h.desk, kept)
 
 	p := stream.make_pipeline(allocator, cap = 64)
 	h.p = p
@@ -199,6 +208,7 @@ stop :: proc(h: ^Host) {
 	delete(h.desk.live)
 	delete(h.desk.reclaimable)
 	delete(h.desk.notice.text)
+	history_close(&h.desk)
 	ui.inbox_destroy(&h.inbox)
 }
 
@@ -218,6 +228,8 @@ on_need :: proc(user: rawptr, need: ui.Need, added: bool) {
 		q, _ = ui.need_as(need, query.Reclaim)
 	case ui.need_is(need, query.Rings):
 		q, _ = ui.need_as(need, query.Rings)
+	case ui.need_is(need, query.History):
+		q, _ = ui.need_as(need, query.History)
 	case:
 		return
 	}
@@ -313,6 +325,11 @@ desk_step :: proc(d: ^Desk, v: Desk_In) {
 				s.stopped = true
 				scan.cancel(&s.tree)
 			}
+		case command.Baseline:
+			if c.generation == d.generation {
+				compare(d, c.snapshot)
+				answer_all(d)
+			}
 		case command.Locate, command.Trash, command.Rename, command.Clean, command.Empty_Trash:
 			act(d, &e)
 			if d.scan != nil {
@@ -333,6 +350,8 @@ desk_step :: proc(d: ^Desk, v: Desk_In) {
 // a scan, a failed one, so the window can say why.
 scan_begin :: proc(d: ^Desk, path: string) {
 	d.generation += 1
+	d.snapshot, d.compared = 0, {}
+	clear(&d.was)
 	s := new(Scan)
 	d.scan = s
 	s.path = strings.clone(path)
@@ -450,6 +469,9 @@ advance :: proc(d: ^Desk) -> bool {
 			s.state = s.problem == "" ? .Done : .Failed
 		}
 		measure(s)
+		if s.state == .Done {
+			keep(d)
+		}
 	}
 	return true
 }
@@ -475,6 +497,8 @@ answer :: proc(d: ^Desk, key: ui.Need_Key, q: Query) {
 		put(d, key, reclaim_answer(d, q))
 	case query.Rings:
 		put(d, key, rings(d, q))
+	case query.History:
+		put(d, key, history_answer(d, q))
 	}
 }
 
@@ -557,9 +581,11 @@ listing :: proc(d: ^Desk, q: query.Listing) -> query.Listing_Result {
 	}
 	r.dir = dir
 	r.bytes = s.roll.totals[dir]
+	r.was = was_of(d, dir)
+	r.compared = d.compared.id != 0
 	r.crumbs = crumbs(s, dir, top)
 
-	entries := sorted_children(s, dir)
+	entries := sorted_children(d, dir)
 	shown := min(len(entries), query.LISTING_LIMIT)
 	r.entries = entries[:shown]
 	r.more = len(entries) - shown
@@ -570,7 +596,8 @@ listing :: proc(d: ^Desk, q: query.Listing) -> query.Listing_Result {
 }
 
 // sorted_children is what dir holds so far, largest first, in the temp allocator.
-sorted_children :: proc(s: ^Scan, dir: u32) -> []query.Entry {
+sorted_children :: proc(d: ^Desk, dir: u32) -> []query.Entry {
+	s := d.scan
 	entries := make([dynamic]query.Entry, context.temp_allocator)
 	it := survey.children(&s.roll, dir)
 	for c in survey.next_child(&it) {
@@ -583,6 +610,7 @@ sorted_children :: proc(s: ^Scan, dir: u32) -> []query.Entry {
 				name = n.name,
 				bytes = directory ? s.roll.totals[c] : n.disk,
 				directory = directory,
+				was = was_of(d, c),
 			},
 		)
 	}
@@ -614,10 +642,12 @@ rings :: proc(d: ^Desk, q: query.Rings) -> query.Rings_Result {
 	}
 	r.dir = dir
 	r.bytes = s.roll.totals[dir]
+	r.was = was_of(d, dir)
+	r.compared = d.compared.id != 0
 	r.crumbs = crumbs(s, dir, top)
 	arcs := make([dynamic]query.Arc, context.temp_allocator)
 	if r.bytes > 0 {
-		lay_ring(s, &arcs, dir, r.bytes, 1, 0, 0, 1)
+		lay_ring(d, &arcs, dir, r.bytes, 1, 0, 0, 1)
 	}
 	r.arcs = arcs[:]
 	return r
@@ -630,7 +660,7 @@ enough to see. Contents come largest first, so the first too narrow to draw ends
 the ring: everything after it is narrower still.
 */
 lay_ring :: proc(
-	s: ^Scan,
+	d: ^Desk,
 	arcs: ^[dynamic]query.Arc,
 	dir: u32,
 	total: u64,
@@ -640,7 +670,7 @@ lay_ring :: proc(
 	up: i32 = -1,
 ) {
 	at := start
-	for e, i in sorted_children(s, dir) {
+	for e, i in sorted_children(d, dir) {
 		if len(arcs) >= query.MAX_ARCS {
 			return
 		}
@@ -661,10 +691,11 @@ lay_ring :: proc(
 				start = at,
 				sweep = w,
 				up = up,
+				was = e.was,
 			},
 		)
 		if e.directory && depth < query.RING_DEPTH {
-			lay_ring(s, arcs, e.node, e.bytes, depth + 1, b, at, w, i32(len(arcs) - 1))
+			lay_ring(d, arcs, e.node, e.bytes, depth + 1, b, at, w, i32(len(arcs) - 1))
 		}
 		at += w
 	}
@@ -751,6 +782,7 @@ largest :: proc(
 		files[i] = top[i]
 		files[i].path = scan.path(&s.tree, top[i].node, allocator)
 		files[i].within = ancestors(s, top[i].node, allocator)
+		files[i].was = was_of(d, top[i].node)
 	}
-	return {files = files}
+	return {files = files, compared = d.compared.id != 0}
 }
