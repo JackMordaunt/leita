@@ -42,33 +42,39 @@ FONTS :: primer.Fonts {
 }
 
 Model :: struct {
-	path:         ui.Text_State,
-	dark:         bool,
-	scheme:       primer.Scheme,
+	path:             ui.Text_State,
+	dark:             bool,
+	scheme:           primer.Scheme,
 	// The directory shown, as an index into the tree of that generation. Each scan
 	// fills a tree of its own, so on a new one the view returns to its top.
-	generation:   u32,
-	dir:          u32,
-	scroll:       ui.Scroll_Offset,
-	side:         ui.Scroll_Offset,
+	generation:       u32,
+	dir:              u32,
+	scroll:           ui.Scroll_Offset,
+	side:             ui.Scroll_Offset,
 	// The pointer over the sunburst, and the size it was last drawn at, so a frame
 	// can say what is under the pointer before it draws the disc.
-	pointer:      ops.Point,
-	inside:       bool,
-	burst:        f32,
+	pointer:          ops.Point,
+	inside:           bool,
+	burst:            f32,
 	// The way back and forth through the directories opened (actions.odin).
-	back:         [dynamic]u32,
-	forward:      [dynamic]u32,
+	back:             [dynamic]u32,
+	forward:          [dynamic]u32,
 	// The right-click menu, what it is about, and the questions it can ask.
-	target:       Target,
-	menu_open:    bool,
-	menu_at:      ops.Point, // in the sunburst's space
-	menu_from:    Menu_From,
-	trash_open:   bool,
-	rename_open:  bool,
-	rename:       ui.Text_State,
-	rename_focus: bool, // the rename field takes focus when next drawn
-	notice_seen:  u32, // the notice last dismissed
+	target:           Target,
+	menu_open:        bool,
+	menu_at:          ops.Point, // in the sunburst's space
+	menu_from:        Menu_From,
+	trash_open:       bool,
+	rename_open:      bool,
+	rename:           ui.Text_State,
+	rename_focus:     bool, // the rename field takes focus when next drawn
+	notice_seen:      u32, // the notice last dismissed
+	// The sunburst's arcs as drawn last frame, by node, and the centre they were
+	// drawn around (sunburst.odin ease); poses_next is the frame being drawn.
+	poses:            map[u32]Pose,
+	poses_next:       map[u32]Pose,
+	poses_dir:        u32,
+	poses_generation: u32,
 }
 
 model_init :: proc(m: ^Model, path: string) {
@@ -82,6 +88,8 @@ model_destroy :: proc(m: ^Model) {
 	delete(m.back)
 	delete(m.forward)
 	delete(m.target.name)
+	delete(m.poses)
+	delete(m.poses_next)
 }
 
 view :: proc(gtx: ^ui.Ctx, user: rawptr) {

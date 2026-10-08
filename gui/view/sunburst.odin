@@ -94,16 +94,78 @@ hit_at :: proc(r: ^query.Rings_Result, b: Burst, p: ops.Point) -> (u: Hit, arc: 
 	return .Nothing, -1
 }
 
+// EASE_RATE is how fast a drawn arc closes on where the host last laid it, per
+// second: about 95% of the way in a quarter of a second, so an answer every tick
+// reads as one motion rather than a jump each time one lands.
+EASE_RATE :: f32(12)
+
+// SETTLED is how near, in turns, a drawn arc is to its target before it is
+// simply put there and stops asking for frames.
+SETTLED :: f32(1e-4)
+
+// Pose is where an arc was drawn: its start and sweep in turns.
+Pose :: struct {
+	start, sweep: f32,
+}
+
+/*
+ease is r's arcs where they are drawn this frame: each moved from where it was
+drawn last toward where the host now lays it, and a new one grown from nothing at
+its middle. A new centre, or a new scan, starts every arc from nothing again, so
+opening a directory grows its rings in. While any arc is still moving it asks for
+another frame; once all have arrived it asks for none.
+*/
+@(private)
+ease :: proc(gtx: ^ui.Ctx, m: ^Model, r: ^query.Rings_Result) -> []query.Arc {
+	if m.poses_dir != r.dir || m.poses_generation != r.generation {
+		clear(&m.poses)
+		m.poses_dir, m.poses_generation = r.dir, r.generation
+	}
+	k := gtx.reduce_motion ? 1 : 1 - math.exp(-EASE_RATE * gtx.dt)
+	out := make([]query.Arc, len(r.arcs), gtx.allocator)
+	clear(&m.poses_next)
+	moving := false
+	for a, i in r.arcs {
+		was, seen := m.poses[a.node]
+		if !seen {
+			was = {a.start + a.sweep / 2, 0}
+		}
+		now := Pose{was.start + (a.start - was.start) * k, was.sweep + (a.sweep - was.sweep) * k}
+		if abs(now.start - a.start) < SETTLED && abs(now.sweep - a.sweep) < SETTLED {
+			now = {a.start, a.sweep}
+		} else {
+			moving = true
+		}
+		m.poses_next[a.node] = now
+		out[i] = a
+		out[i].start, out[i].sweep = now.start, now.sweep
+	}
+	m.poses, m.poses_next = m.poses_next, m.poses
+	if moving {
+		ui.request_frame(gtx)
+	}
+	return out
+}
+
 // rings_panel is the sunburst with the way to it above and what the pointer is
 // over below it.
 @(private)
 rings_panel :: proc(gtx: ^ui.Ctx, m: ^Model) {
 	ui.column(gtx, gap = 8, align = .Fill)
-	r, _ := ui.need(gtx, query.Rings{generation = m.generation, dir = m.dir}, query.Rings_Result)
-	if r == nil || r.generation != m.generation || len(r.crumbs) == 0 {
+	answer, _ := ui.need(
+		gtx,
+		query.Rings{generation = m.generation, dir = m.dir},
+		query.Rings_Result,
+	)
+	if answer == nil || answer.generation != m.generation || len(answer.crumbs) == 0 {
 		primer.skeleton_box(gtx, width = 320, height = 320, delay = .Short)
 		return
 	}
+	// The answer is the delivered shape, kept across frames, so the arcs as drawn
+	// go in a copy of it rather than over it.
+	drawn := answer^
+	drawn.arcs = ease(gtx, m, answer)
+	r := &drawn
 
 	items := make([]primer.Breadcrumb, len(r.crumbs), gtx.allocator)
 	for c, i in r.crumbs {

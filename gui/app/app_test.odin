@@ -206,7 +206,8 @@ a_click_on_an_arc_opens_it_and_the_hub_goes_back_up :: proc(t: ^testing.T) {
 
 	// Clicking the arc makes photos the hub: its files are the first ring now.
 	// photos, the larger, sweeps from twelve o'clock round past six, so the first
-	// ring straight below the hub is photos.
+	// ring straight below the hub is photos, once the arcs have grown into place.
+	ui.probe_advance(&r.p, 60, 1.0 / 60)
 	b := ui.probe_bounds(&r.p, "Sunburst")
 	radius := b.w / 2
 	ring := radius * (view.HUB + (1 - view.HUB) / (2 * query.RING_DEPTH))
@@ -224,9 +225,11 @@ a_click_on_an_arc_opens_it_and_the_hub_goes_back_up :: proc(t: ^testing.T) {
 }
 
 // ring_point is the point in the sunburst's first ring at turn t, clockwise from
-// twelve o'clock, in device space.
+// twelve o'clock, in device space, once the rings have grown into place.
 @(private = "file")
 ring_point :: proc(r: ^Rig, t: f32) -> ops.Point {
+	// The arcs grow into place; a second of frames lets them arrive.
+	ui.probe_advance(&r.p, 60, 1.0 / 60)
 	b := ui.probe_bounds(&r.p, "Sunburst")
 	radius := b.w / 2
 	dist := radius * (view.HUB + (1 - view.HUB) / (2 * query.RING_DEPTH))

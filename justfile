@@ -79,12 +79,13 @@ gui-release: deps
     {{odin}} build gui -o:speed {{flags}} -out:build/release/{{gui}}{{exe}}
 
 # Run the window's suites under ASan: the view in a probe over the host on a real
-# directory, and the platform package. Not -all-packages, which would run every
+# directory, the view's own, and the platform package. Not -all-packages, which would run every
 # jm:ui suite the window imports too.
 gui-test: deps
     mkdir -p build/test
     {{odin}} test gui/app -debug {{san}} {{flags}} -out:build/test/{{gui}}{{exe}}
     {{odin}} test gui/files -debug {{san}} {{flags}} -out:build/test/{{gui}}-files{{exe}}
+    {{odin}} test gui/view -debug {{san}} {{flags}} -out:build/test/{{gui}}-view{{exe}}
 
 # Remove build/.
 clean:
