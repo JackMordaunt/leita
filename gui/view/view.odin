@@ -132,15 +132,10 @@ view :: proc(gtx: ^ui.Ctx, user: rawptr) {
 	ui.flexible(gtx, 1)
 	if ui.row(gtx, gap = 24, align = .Fill) {
 		ui.flexible(gtx, 1)
+		rings_panel(gtx, m)
 		if m.panels_hidden {
-			// With no column beside it, the sunburst takes the window's right margin.
-			if ui.inset(gtx, {right = PAD}) {
-				rings_panel(gtx, m)
-			}
+			rail(gtx, m)
 		} else {
-			rings_panel(gtx, m)
-		}
-		if !m.panels_hidden {
 			if ui.sized(gtx, {min = {SIDE_WIDTH, 0}, max = {SIDE_WIDTH, ui.INF}}) {
 				if ui.column(gtx, gap = 24, align = .Fill) {
 					ui.flexible(gtx, 3)
@@ -152,6 +147,24 @@ view :: proc(gtx: ^ui.Ctx, user: rawptr) {
 		}
 	}
 	dialogs(gtx, m)
+}
+
+// RAIL_WIDTH is the side column folded away: a strip at the window's edge.
+RAIL_WIDTH :: f32(40)
+
+// rail is the side column put away: a strip at the window's right edge, ruled off
+// from the sunburst, with the button that brings the column back at its top
+// where the column's own heading was.
+@(private)
+rail :: proc(gtx: ^ui.Ctx, m: ^Model) {
+	ui.sized(gtx, {min = {RAIL_WIDTH, 0}, max = {RAIL_WIDTH, ui.INF}})
+	if height := gtx.constraints.max.y; ui.is_finite(height) {
+		ops.fill(gtx.scene, ops.Rect{0, 0, 1, height}, primer.color(.Border_Color_Default))
+	}
+	ui.column(gtx, align = .Center)
+	if primer.icon_button(gtx, .Sidebar_Expand, "Show panels", .Invisible, .Small) {
+		m.panels_hidden = false
+	}
 }
 
 // --- the bar along the top -----------------------------------------------------
@@ -187,14 +200,6 @@ toolbar :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result) {
 		if path != "" {
 			ui.command(gtx, command.Command(command.Scan{path = command.text_make(path)}))
 		}
-	}
-	if primer.icon_button(
-		gtx,
-		m.panels_hidden ? .Sidebar_Expand : .Sidebar_Collapse,
-		m.panels_hidden ? "Show panels" : "Hide panels",
-		.Invisible,
-	) {
-		m.panels_hidden = !m.panels_hidden
 	}
 	if primer.icon_button(
 		gtx,
@@ -276,8 +281,16 @@ counters :: proc(gtx: ^ui.Ctx, prog: ^query.Progress_Result) -> string {
 @(private)
 listing :: proc(gtx: ^ui.Ctx, m: ^Model) {
 	ui.column(gtx, gap = 8, align = .Fill)
+	// The column's own heading carries the control that puts it away, so what
+	// hides and the button that hides it sit together.
 	if ui.inset(gtx, {right = PAD}) {
-		primer.heading(gtx, "Contents", level = 2, variant = .Small)
+		if ui.row(gtx, gap = 8, align = .Center) {
+			ui.flexible(gtx, 1)
+			primer.heading(gtx, "Contents", level = 2, variant = .Small)
+			if primer.icon_button(gtx, .Sidebar_Collapse, "Hide panels", .Invisible, .Small) {
+				m.panels_hidden = true
+			}
+		}
 	}
 	r, _ := ui.need(
 		gtx,

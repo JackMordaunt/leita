@@ -463,17 +463,18 @@ the_panels_hide_to_leave_the_sunburst_the_window :: proc(t: ^testing.T) {
 	ui.probe_advance(&r.p, 60, 1.0 / 60)
 	testing.expect(t, !ui.probe_tagged(&r.p, "Contents"), "the contents are put away")
 	testing.expect(t, !ui.probe_tagged(&r.p, "Largest files"), "and the largest files")
-	// The disc is as big as the smaller of its width and height. Here, as in any
-	// landscape window, height is the limit, so it keeps its size and moves to the
-	// middle.
+	// The disc is as big as the smaller of its width and height. Here, in a
+	// landscape window, height is the limit, so it keeps its size and moves over
+	// into the room the column left, beside the rail that brings the column back.
 	alone := ui.probe_bounds(&r.p, "Sunburst")
 	testing.expectf(t, alone.w >= beside.w, "the sunburst shrank from %v to %v", beside.w, alone.w)
-	middle := alone.x + alone.w / 2
+	testing.expectf(t, alone.x > beside.x, "the sunburst stayed at %v", alone.x)
+	rail := ui.probe_bounds(&r.p, "Show panels")
 	testing.expectf(
 		t,
-		abs(middle - 550) < 2,
-		"the sunburst's centre is at %v, not the window's",
-		middle,
+		rail.x > alone.x + alone.w,
+		"the rail's button sits beside the disc, at %v",
+		rail.x,
 	)
 
 	testing.expect(t, ui.probe_click(&r.p, "Show panels"))
