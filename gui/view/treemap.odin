@@ -32,6 +32,7 @@ Mode :: enum u8 {
 	Sunburst,
 	Treemap,
 	Icicle,
+	Reclaim,
 }
 
 // mode_switch is the segmented control that picks the mode. A new mode starts its
@@ -43,6 +44,7 @@ mode_switch :: proc(gtx: ^ui.Ctx, m: ^Model, compact := false) {
 		{label = "Sunburst", icon = .Circle},
 		{label = "Treemap", icon = .Apps},
 		{label = "Icicle", icon = .Rows},
+		{label = "Reclaim", icon = .Trash},
 	}
 	#assert(len(modes) == len(Mode))
 	at := int(m.mode)

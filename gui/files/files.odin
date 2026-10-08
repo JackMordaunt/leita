@@ -22,6 +22,7 @@ Error :: enum u8 {
 	Denied,
 	Cross_Device, // the Trash is on another filesystem
 	Bad_Name,
+	Not_Directory, // asked to delete a tree at something that is not a directory
 	Unsupported,
 	Other,
 }
@@ -40,6 +41,8 @@ describe :: proc(e: Error) -> string {
 		return "it is on another filesystem than the Trash"
 	case .Bad_Name:
 		return "that is not a name a file can have"
+	case .Not_Directory:
+		return "it is not a directory"
 	case .Unsupported:
 		return "this system cannot do that"
 	case .Other:
@@ -65,6 +68,54 @@ name_problem :: proc(name: string) -> string {
 		}
 	}
 	return ""
+}
+
+/*
+delete_tree deletes the directory at path and everything in it, for good, and says
+how many entries it could not delete. It is for what Reclaim proved can be made
+again, and it is careful in the ways deletion has to be:
+
+  - path must be a directory itself, not a link to one: a link is refused, so
+    deleting never reaches through it to what it points at;
+  - inside, a link is deleted as a link, never followed;
+  - a directory is made writable by its owner before it is emptied, since some
+    caches (Go's module cache) are made read-only;
+  - an entry that cannot be deleted is counted and passed over, and the rest
+    still go.
+*/
+delete_tree :: proc(path: string) -> (failed: int, err: Error) {
+	info, serr := os.stat_do_not_follow_links(path, context.temp_allocator)
+	switch {
+	case serr != nil:
+		return 0, .Missing
+	case info.type != .Directory:
+		return 0, .Not_Directory
+	}
+	return empty_tree(path) + (0 if os.remove(path) == nil else 1), .None
+}
+
+// empty_tree deletes everything in the directory at path, counting what it could
+// not.
+@(private)
+empty_tree :: proc(path: string) -> (failed: int) {
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	if info, err := os.stat_do_not_follow_links(path, context.temp_allocator); err == nil {
+		_ = os.change_mode(path, info.mode + {.Read_User, .Write_User, .Execute_User})
+	}
+	entries, err := os.read_all_directory_by_path(path, context.temp_allocator)
+	if err != nil {
+		return 1
+	}
+	for e in entries {
+		// The listing does not follow links, so a link is a link here.
+		if e.type == .Directory {
+			failed += empty_tree(e.fullpath)
+		}
+		if os.remove(e.fullpath) != nil {
+			failed += 1
+		}
+	}
+	return
 }
 
 // rename gives the entry at path the new name in the same folder, refusing with

@@ -150,7 +150,7 @@ ease :: proc(gtx: ^ui.Ctx, m: ^Model, r: ^query.Rings_Result) -> []query.Arc {
 }
 
 // SWITCHES_WIDTH is about what the two switches take with their labels.
-SWITCHES_WIDTH :: f32(440)
+SWITCHES_WIDTH :: f32(540)
 
 // rings_panel is the mode switch over the directory shown, drawn in the mode
 // chosen: for the sunburst, what the pointer is over, then the disc.
@@ -163,7 +163,15 @@ rings_panel :: proc(gtx: ^ui.Ctx, m: ^Model) {
 	compact := gtx.constraints.max.x < SWITCHES_WIDTH
 	if ui.wrap(gtx, gap = 12, align = .Center) {
 		mode_switch(gtx, m, compact)
-		colour_switch(gtx, m, compact)
+		// Reclaim is a list, not a chart, and draws from an answer of its own: it
+		// has nothing to colour.
+		if m.mode != .Reclaim {
+			colour_switch(gtx, m, compact)
+		}
+	}
+	if m.mode == .Reclaim {
+		reclaim_panel(gtx, m)
+		return
 	}
 	// Its own line, below the switches, so it wraps rather than squeezing them, and
 	// as tall in either colouring, so switching moves nothing.
@@ -185,7 +193,7 @@ rings_panel :: proc(gtx: ^ui.Ctx, m: ^Model) {
 	case .Icicle:
 		blocks_panel(gtx, m, answer, ICICLE)
 		return
-	case .Sunburst:
+	case .Sunburst, .Reclaim:
 	}
 	// The answer is the delivered shape, kept across frames, so the arcs as drawn
 	// go in a copy of it rather than over it.

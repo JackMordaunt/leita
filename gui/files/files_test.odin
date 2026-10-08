@@ -1,6 +1,7 @@
 package sonar_files
 
 import "core:os"
+import "core:strings"
 import "core:sync"
 import "core:testing"
 import "core:thread"
@@ -60,4 +61,89 @@ the_space_of_a_mounted_directory_is_its_filesystems :: proc(t: ^testing.T) {
 
 	_, _, missing := space("/nonexistent/sonar")
 	testing.expect(t, !missing, "a path that is not there has no filesystem")
+}
+
+// delete_tree takes a read-only tree, deletes a link inside as a link, leaving
+// what it points at, and refuses a link given as the tree.
+@(test)
+delete_tree_is_careful_with_links_and_read_only_trees :: proc(t: ^testing.T) {
+	base, _ := os.temp_directory(context.temp_allocator)
+	root := strings.concatenate({base, "/sonar_files_delete"}, context.temp_allocator)
+	outside := strings.concatenate({root, "-outside"}, context.temp_allocator)
+	os.remove_all(root)
+	os.remove_all(outside)
+	defer os.remove_all(outside)
+
+	testing.expect(
+		t,
+		os.make_directory_all(
+			strings.concatenate({root, "/tree/locked/deep"}, context.temp_allocator),
+		) ==
+		nil,
+	)
+	testing.expect(
+		t,
+		os.write_entire_file(
+			strings.concatenate({root, "/tree/locked/deep/f"}, context.temp_allocator),
+			"x",
+		) ==
+		nil,
+	)
+	testing.expect(t, os.make_directory_all(outside) == nil)
+	testing.expect(
+		t,
+		os.write_entire_file(
+			strings.concatenate({outside, "/keep"}, context.temp_allocator),
+			"x",
+		) ==
+		nil,
+	)
+	testing.expect(
+		t,
+		os.symlink(outside, strings.concatenate({root, "/tree/link"}, context.temp_allocator)) ==
+		nil,
+	)
+	testing.expect(
+		t,
+		os.symlink(
+			strings.concatenate({root, "/tree"}, context.temp_allocator),
+			strings.concatenate({root, "/alias"}, context.temp_allocator),
+		) ==
+		nil,
+	)
+	// As Go leaves its module cache: no write permission anywhere.
+	for dir in ([]string{"/tree/locked/deep", "/tree/locked"}) {
+		testing.expect(
+			t,
+			os.change_mode(
+				strings.concatenate({root, dir}, context.temp_allocator),
+				{.Read_User, .Execute_User},
+			) ==
+			nil,
+		)
+	}
+
+	// A link to the tree is refused, and the tree is untouched.
+	_, refused := delete_tree(strings.concatenate({root, "/alias"}, context.temp_allocator))
+	testing.expect_value(t, refused, Error.Not_Directory)
+	testing.expect(
+		t,
+		os.exists(strings.concatenate({root, "/tree/locked/deep/f"}, context.temp_allocator)),
+	)
+
+	failed, err := delete_tree(strings.concatenate({root, "/tree"}, context.temp_allocator))
+	testing.expect_value(t, err, Error.None)
+	testing.expect_value(t, failed, 0)
+	testing.expect(
+		t,
+		!os.exists(strings.concatenate({root, "/tree"}, context.temp_allocator)),
+		"the tree is gone",
+	)
+	testing.expect(
+		t,
+		os.exists(strings.concatenate({outside, "/keep"}, context.temp_allocator)),
+		"what the link pointed at is not",
+	)
+	os.remove(strings.concatenate({root, "/alias"}, context.temp_allocator))
+	os.remove(root)
 }

@@ -136,6 +136,14 @@ Model :: struct {
 	// as they are drawn, after the chart, so the chart reads the last frame's.
 	row_hover:        Hover,
 	row_hover_next:   Hover,
+	// Reclaim mode (reclaim.odin): what the person chose and unchose, its list's
+	// scroll, and its two questions, the second about the Trash it names.
+	reclaim_pick:     map[u32]bool,
+	reclaim_scroll:   ui.List_State,
+	clean_open:       bool,
+	empty_open:       bool,
+	trash_node:       u32,
+	trash_bytes:      u64,
 }
 
 model_init :: proc(m: ^Model, path: string) {
@@ -153,6 +161,7 @@ model_destroy :: proc(m: ^Model) {
 	delete(m.poses_next)
 	delete(m.boxes)
 	delete(m.boxes_next)
+	delete(m.reclaim_pick)
 	forget_trail(m)
 	delete(m.trail)
 }
@@ -176,6 +185,7 @@ view :: proc(gtx: ^ui.Ctx, user: rawptr) {
 		m.scroll = {}
 		m.side = {}
 		m.menu_open, m.trash_open, m.rename_open = false, false, false
+		clear(&m.reclaim_pick)
 		forget_history(m)
 	}
 	walk_history(gtx, m)
@@ -209,6 +219,7 @@ view :: proc(gtx: ^ui.Ctx, user: rawptr) {
 		}
 	}
 	dialogs(gtx, m)
+	reclaim_dialogs(gtx, m)
 }
 
 // --- the side column ----------------------------------------------------------

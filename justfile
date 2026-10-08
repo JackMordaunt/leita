@@ -128,6 +128,7 @@ gui-test: deps
     {{odin}} test gui/app -debug {{san}} {{flags}} -out:build/test/{{gui}}{{exe}}
     {{odin}} test gui/files -debug {{san}} {{flags}} -out:build/test/{{gui}}-files{{exe}}
     {{odin}} test gui/view -debug {{san}} {{flags}} -out:build/test/{{gui}}-view{{exe}}
+    {{odin}} test reclaim -debug {{san}} {{flags}} -out:build/test/{{gui}}-reclaim{{exe}}
 
 # Remove build/.
 clean:

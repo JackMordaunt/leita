@@ -147,3 +147,38 @@ MIN_SWEEP :: 1.0 / 720
 // MAX_ARCS caps a sunburst, so a directory of a million tiny files cannot send
 // a million arcs.
 MAX_ARCS :: 6000
+
+// Reclaim is what can be deleted under a directory to free space without losing
+// anything: what builds and tools made and will make again.
+Reclaim :: struct {
+	generation: u32,
+	dir:        u32, // ROOT for the top of the scan
+}
+
+// Candidate is one thing Reclaim offers: a directory, deleted whole.
+Candidate :: struct {
+	node:     u32,
+	path:     string,
+	bytes:    u64,
+	modified: i64, // the newest modification of it or what it directly holds, Unix seconds; 0 unknown
+	recent:   bool, // modified within RECLAIM_RECENT_DAYS: likely in use, so not chosen at first
+}
+
+// Reclaim_Group is the candidates of one kind and why they are safe.
+Reclaim_Group :: struct {
+	name:   string,
+	reason: string,
+	trash:  bool, // the Trash: emptied, not deleted
+	items:  []Candidate,
+	bytes:  u64,
+}
+
+Reclaim_Result :: struct {
+	generation: u32,
+	ready:      bool, // false while the scan runs: Reclaim looks once it is done
+	groups:     []Reclaim_Group,
+	bytes:      u64,
+}
+
+// RECLAIM_RECENT_DAYS is how recently touched a candidate is left unchosen.
+RECLAIM_RECENT_DAYS :: 7

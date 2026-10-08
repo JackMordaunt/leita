@@ -45,6 +45,7 @@ import "jm:stream"
 import "jm:ui"
 
 import "../../ntfs"
+import "../../reclaim"
 import "../../scan"
 import "../../survey"
 import "../../walk"
@@ -66,6 +67,7 @@ Query :: union {
 	query.Listing,
 	query.Largest,
 	query.Rings,
+	query.Reclaim,
 }
 
 // Need_Event is a need appearing or going, as the main thread hands it on.
@@ -109,12 +111,14 @@ Scan :: struct {
 // Desk is the stage pinned to the desk thread: the current scan and every live
 // need, so each tick can answer them all again.
 Desk :: struct {
-	inbox:      ^ui.Inbox,
-	wake:       proc(),
-	generation: u32,
-	scan:       ^Scan,
-	live:       map[ui.Need_Key]Query,
-	notice:     query.Notice, // its text owned
+	inbox:       ^ui.Inbox,
+	wake:        proc(),
+	generation:  u32,
+	scan:        ^Scan,
+	live:        map[ui.Need_Key]Query,
+	notice:      query.Notice, // its text owned
+	// What Reclaim last offered, by node: Clean deletes only these.
+	reclaimable: map[u32]reclaim.Category,
 }
 
 Host :: struct {
@@ -193,6 +197,7 @@ stop :: proc(h: ^Host) {
 	scan_end(&h.desk)
 	stream.destroy(h.p)
 	delete(h.desk.live)
+	delete(h.desk.reclaimable)
 	delete(h.desk.notice.text)
 	ui.inbox_destroy(&h.inbox)
 }
@@ -209,6 +214,8 @@ on_need :: proc(user: rawptr, need: ui.Need, added: bool) {
 		q, _ = ui.need_as(need, query.Listing)
 	case ui.need_is(need, query.Largest):
 		q, _ = ui.need_as(need, query.Largest)
+	case ui.need_is(need, query.Reclaim):
+		q, _ = ui.need_as(need, query.Reclaim)
 	case ui.need_is(need, query.Rings):
 		q, _ = ui.need_as(need, query.Rings)
 	case:
@@ -306,7 +313,7 @@ desk_step :: proc(d: ^Desk, v: Desk_In) {
 				s.stopped = true
 				scan.cancel(&s.tree)
 			}
-		case command.Locate, command.Trash, command.Rename:
+		case command.Locate, command.Trash, command.Rename, command.Clean, command.Empty_Trash:
 			act(d, &e)
 			if d.scan != nil {
 				measure(d.scan)
@@ -464,6 +471,8 @@ answer :: proc(d: ^Desk, key: ui.Need_Key, q: Query) {
 		put(d, key, listing(d, q))
 	case query.Largest:
 		put(d, key, largest(d, q))
+	case query.Reclaim:
+		put(d, key, reclaim_answer(d, q))
 	case query.Rings:
 		put(d, key, rings(d, q))
 	}

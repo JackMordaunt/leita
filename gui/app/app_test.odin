@@ -9,6 +9,8 @@ import "core:sync"
 import "core:testing"
 import "core:time"
 
+import "jm:stream"
+
 import "jm:ui"
 import bl "jm:ui/blend2d"
 import "jm:ui/ops"
@@ -915,7 +917,7 @@ every_window_size_lays_out_without_a_clash :: proc(t: ^testing.T) {
 					}
 				}
 				grip := ui.probe_bounds(&r.p, "Resize panels")
-				for name in ([]string{"Sunburst chart", "Icicle", "Type"}) {
+				for name in ([]string{"Sunburst chart", "Reclaim", "Type"}) {
 					b := ui.probe_bounds(&r.p, name)
 					testing.expectf(
 						t,
@@ -942,6 +944,32 @@ every_window_size_lays_out_without_a_clash :: proc(t: ^testing.T) {
 					dark.x + dark.w <= width + 0.5,
 					"%s: the toolbar runs past the window",
 					at,
+				)
+			}
+		}
+	}
+
+	// Reclaim mode's list stays on its side of the grip and inside the window.
+	r.m.mode = .Reclaim
+	ui.probe_frame(&r.p)
+	hand_on(&r)
+	for height in ([]f32{420, 900}) {
+		for width := f32(640); width <= 1600; width += 160 {
+			r.p.size = {width, height}
+			ui.probe_advance(&r.p, 30, 1.0 / 60)
+			testing.expect(t, settle(&r, "Nothing here is safe to reclaim."))
+			grip := ui.probe_bounds(&r.p, "Resize panels")
+			for name in ([]string{"Reclaim", "Nothing here is safe to reclaim."}) {
+				b := ui.probe_bounds(&r.p, name)
+				testing.expectf(
+					t,
+					b.w > 0 && b.x + b.w <= grip.x + 0.5 && b.y + b.h <= height + 0.5,
+					"Reclaim at %vx%v: %s is at %v, past the grip at %v or the window",
+					width,
+					height,
+					name,
+					b,
+					grip.x,
 				)
 			}
 		}
@@ -1045,4 +1073,166 @@ opening_a_directory_never_blanks_the_panels :: proc(t: ^testing.T) {
 	// Then the answers land, and they show photos.
 	testing.expect(t, settle(&r, "264.0 KiB in 2 items"), "photos is listed")
 	testing.expect(t, settle(&r, "arc big.raw"), "and drawn")
+}
+
+// age makes path, and what it directly holds, look last touched days ago.
+@(private = "file")
+age :: proc(t: ^testing.T, path: string, days: int) {
+	then := time.time_add(time.now(), -time.Duration(days) * 24 * time.Hour)
+	testing.expectf(t, os.change_times(path, then, then) == nil, "could not age %s", path)
+	entries, err := os.read_all_directory_by_path(path, context.temp_allocator)
+	testing.expect(t, err == nil)
+	for e in entries {
+		testing.expect(t, os.change_times(e.fullpath, then, then) == nil)
+	}
+}
+
+/*
+A directory of projects, made fresh:
+
+	<root>/web/package.json                 a Node project
+	<root>/web/node_modules/lib/index.js    64 KiB, touched a month ago
+	<root>/rust/Cargo.toml                  a Rust project
+	<root>/rust/target/app                  128 KiB, touched today
+	<root>/plain/build/out.o                32 KiB, a build folder of no known project
+*/
+@(private = "file")
+projects :: proc(t: ^testing.T, name: string) -> string {
+	dir, dir_err := os.temp_directory(context.temp_allocator)
+	testing.expect(t, dir_err == nil, "no temp directory")
+	root := fmt.tprintf("%s/sonar_gui_%s", dir, name)
+	os.remove_all(root)
+	for d in ([]string{"", "web", "web/node_modules", "web/node_modules/lib", "rust", "rust/target", "plain", "plain/build"}) {
+		testing.expectf(
+			t,
+			os.make_directory(fmt.tprintf("%s/%s", root, d)) == nil,
+			"could not make %s",
+			d,
+		)
+	}
+	write :: proc(t: ^testing.T, path: string, size: int) {
+		body := make([]byte, size, context.temp_allocator)
+		slice.fill(body, 'x')
+		testing.expectf(t, os.write_entire_file(path, body) == nil, "could not write %s", path)
+	}
+	write(t, fmt.tprintf("%s/web/package.json", root), 2)
+	write(t, fmt.tprintf("%s/web/node_modules/lib/index.js", root), 64 * 1024)
+	write(t, fmt.tprintf("%s/rust/Cargo.toml", root), 2)
+	write(t, fmt.tprintf("%s/rust/target/app", root), 128 * 1024)
+	write(t, fmt.tprintf("%s/plain/build/out.o", root), 32 * 1024)
+	age(t, fmt.tprintf("%s/web/node_modules", root), 30)
+	return root
+}
+
+// confirm clicks a button in the window, then the one in the dialog it opens.
+@(private = "file")
+confirm :: proc(t: ^testing.T, r: ^Rig, button, answer: string) {
+	// The list lays itself out over a few frames as its answer lands.
+	ui.probe_advance(&r.p, 10, 1.0 / 60)
+	testing.expectf(t, ui.probe_click(&r.p, button), "no %s button", button)
+	press_and_hand_on(r)
+	press_and_hand_on(r)
+	testing.expectf(t, ui.probe_click(&r.p, answer), "the dialog has no %s", answer)
+	press_and_hand_on(r)
+}
+
+@(test)
+reclaim_offers_only_what_rebuilds_and_deletes_what_is_chosen :: proc(t: ^testing.T) {
+	root := projects(t, "reclaim")
+	defer os.remove_all(root)
+	r: Rig
+	rig_open(&r, root)
+	defer rig_close(&r)
+	testing.expect(t, settle(&r, "Done"))
+	testing.expect(t, settle(&r, "arc web"))
+
+	testing.expect(t, ui.probe_click(&r.p, "Reclaim"))
+	press_and_hand_on(&r)
+	testing.expect(t, settle(&r, "web/node_modules"), "node_modules beside package.json")
+	testing.expect(t, settle(&r, "rust/target"), "target beside Cargo.toml")
+	testing.expect(t, !ui.probe_tagged(&r.p, "plain/build"), "a build folder of no project")
+	testing.expect(t, !ui.probe_tagged(&r.p, "Sunburst chart"), "the chart is put away")
+	// target was touched today, so only node_modules starts chosen.
+	testing.expect(t, settle(&r, "64.0 KiB in 1 folder chosen"), "the recent one starts unchosen")
+
+	confirm(t, &r, "Clean up", "Delete")
+	testing.expect(t, settle(&r, "Deleted 1 folder and freed 64.0 KiB"), "the notice says so")
+	testing.expect(t, settle(&r, "web/node_modules", present = false), "it leaves the list")
+	testing.expect(t, !os.exists(fmt.tprintf("%s/web/node_modules", root)), "and the disk")
+	testing.expect(t, os.exists(fmt.tprintf("%s/web/package.json", root)), "its project stays")
+	testing.expect(t, os.exists(fmt.tprintf("%s/rust/target/app", root)), "the unchosen stays")
+	testing.expect(t, os.exists(fmt.tprintf("%s/plain/build/out.o", root)), "the unoffered stays")
+
+	// Choosing target by hand deletes it too.
+	testing.expect(t, settle(&r, "0 B in 0 folders chosen"))
+	testing.expect(t, ui.probe_click(&r.p, "rust/target"))
+	press_and_hand_on(&r)
+	testing.expect(t, settle(&r, "128.0 KiB in 1 folder chosen"))
+	confirm(t, &r, "Clean up", "Delete")
+	testing.expect(t, settle(&r, "Deleted 1 folder and freed 128.0 KiB"))
+	testing.expect(t, !os.exists(fmt.tprintf("%s/rust/target", root)))
+	testing.expect(t, settle(&r, "Nothing here is safe to reclaim."))
+
+	// The host deletes only what it offered, whatever it is sent: here the top.
+	forged := command.Clean {
+		generation = r.m.generation,
+		count      = 1,
+	}
+	stream.port_send(r.h.cmd_port, command.Command(forged))
+	testing.expect(t, settle(&r, "Deleted 0 folders and freed 0 B; 1 could not be deleted"))
+	testing.expect(t, os.exists(fmt.tprintf("%s/plain/build/out.o", root)), "nothing went")
+}
+
+@(test)
+reclaim_empties_the_trash_it_found :: proc(t: ^testing.T) {
+	// The home, and so its Trash, is the test's own.
+	root := projects(t, "reclaim_trash")
+	defer os.remove_all(root)
+	for d in ([]string{".local", ".local/share", ".local/share/Trash", ".local/share/Trash/files", ".local/share/Trash/info"}) {
+		testing.expect(t, os.make_directory(fmt.tprintf("%s/%s", root, d)) == nil)
+	}
+	old := make([]byte, 16 * 1024, context.temp_allocator)
+	testing.expect(
+		t,
+		os.write_entire_file(fmt.tprintf("%s/.local/share/Trash/files/old.bin", root), old) == nil,
+	)
+	testing.expect(
+		t,
+		os.write_entire_file(
+			fmt.tprintf("%s/.local/share/Trash/info/old.bin.trashinfo", root),
+			old[:2],
+		) ==
+		nil,
+	)
+	sync.guard(&trash_env)
+	home := strings.clone(os.get_env("HOME", context.temp_allocator), context.temp_allocator)
+	testing.expect(t, os.set_env("HOME", root) == nil)
+	defer os.set_env("HOME", home)
+
+	r: Rig
+	rig_open(&r, root)
+	defer rig_close(&r)
+	testing.expect(t, settle(&r, "Done"))
+	testing.expect(t, settle(&r, "arc web"))
+	testing.expect(t, ui.probe_click(&r.p, "Reclaim"))
+	press_and_hand_on(&r)
+	testing.expect(t, settle(&r, "Empty Trash"), "the Trash is offered")
+	// Always in view: above the list, never at its end to be scrolled to.
+	button, first :=
+		ui.probe_bounds(&r.p, "Empty Trash"), ui.probe_bounds(&r.p, "All Installed dependencies")
+	testing.expectf(
+		t,
+		first.h > 0 && button.y + button.h <= first.y,
+		"the button is at %v, the list at %v",
+		button,
+		first,
+	)
+	testing.expect(t, !ui.probe_tagged(&r.p, ".local/share/Trash"), "as a button, not a row")
+
+	confirm(t, &r, "Empty Trash", "Empty")
+	testing.expect(t, settle(&r, "Emptied the Trash and freed 20.0 KiB"), "the notice says so")
+	testing.expect(t, !os.exists(fmt.tprintf("%s/.local/share/Trash/files/old.bin", root)))
+	testing.expect(t, !os.exists(fmt.tprintf("%s/.local/share/Trash/info", root)))
+	testing.expect(t, os.exists(fmt.tprintf("%s/.local/share/Trash", root)), "the Trash stays")
+	testing.expect(t, os.exists(fmt.tprintf("%s/web/node_modules", root)), "cleaning is separate")
 }

@@ -33,6 +33,8 @@ Command :: union {
 	Locate,
 	Trash,
 	Rename,
+	Clean,
+	Empty_Trash,
 }
 
 // Scan reads what is at path, calling off any scan still running.
@@ -63,4 +65,21 @@ Trash :: struct {
 Rename :: struct {
 	entry: Entry,
 	name:  Text,
+}
+
+// MAX_CLEAN is the most entries one Clean carries; a bigger selection is sent as
+// several.
+MAX_CLEAN :: 256
+
+// Clean deletes entries for good, each a candidate Reclaim found: what a build or
+// a tool made and will make again. The host deletes only those it found itself.
+Clean :: struct {
+	generation: u32,
+	nodes:      [MAX_CLEAN]u32,
+	count:      int,
+}
+
+// Empty_Trash deletes what the Trash holds, for good.
+Empty_Trash :: struct {
+	entry: Entry,
 }
