@@ -58,6 +58,7 @@ keep :: proc(d: ^Desk) {
 		s.roll.totals[top],
 		sync.atomic_load(&s.tree.nodes_done),
 		history.collect(&s.tree, &s.roll, top),
+		{s.disk_total, s.disk_free},
 	)
 	if err != nil {
 		fmt.eprintln("sonar: could not keep the scan:", err)
