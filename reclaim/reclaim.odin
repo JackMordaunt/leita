@@ -105,6 +105,14 @@ RULES := [?]Rule {
 	{"venv", PY_MARK[:], .Python},
 }
 
+// TRASH is the user's Trash, relative to the home directory: the Finder's on
+// macOS, the freedesktop.org one elsewhere.
+when ODIN_OS == .Darwin {
+	TRASH :: ".Trash"
+} else {
+	TRASH :: ".local/share/Trash"
+}
+
 // HOME_PLACES are candidates by where they are, relative to the home directory.
 // A place ending in /* makes each directory it holds a candidate of its own.
 HOME_PLACES := [?]struct {
@@ -118,7 +126,7 @@ HOME_PLACES := [?]struct {
 	{"go/pkg/mod", .Package_Cache},
 	{".gradle/caches", .Package_Cache},
 	{".m2/repository", .Package_Cache},
-	{".local/share/Trash", .Trash},
+	{TRASH, .Trash},
 }
 
 // SYSTEM are directories nothing under is ever a candidate.

@@ -271,10 +271,20 @@ empty_trash :: proc(d: ^Desk, e: command.Entry) {
 		append(&held, c)
 	}
 	for c in held {
+		path := scan.path(&s.tree, c, context.temp_allocator)
 		if .Directory not_in scan.node_flags(scan.node(&s.tree, c)) {
+			// The freedesktop.org Trash keeps everything in its files and info
+			// directories; the Finder's holds what was trashed itself.
+			when ODIN_OS == .Darwin {
+				if os.remove(path) == nil {
+					survey.forget(&s.roll, &s.tree, c)
+				} else {
+					failed += 1
+				}
+			}
 			continue
 		}
-		left, err := files.delete_tree(scan.path(&s.tree, c, context.temp_allocator))
+		left, err := files.delete_tree(path)
 		failed += left + (1 if err != .None else 0)
 		if err == .None {
 			survey.forget(&s.roll, &s.tree, c)

@@ -1239,21 +1239,28 @@ reclaim_empties_the_trash_it_found :: proc(t: ^testing.T) {
 	// The home, and so its Trash, is the test's own.
 	root := projects(t, "reclaim_trash")
 	defer os.remove_all(root)
-	for d in ([]string{".local", ".local/share", ".local/share/Trash", ".local/share/Trash/files", ".local/share/Trash/info"}) {
+	// A trashed file and what records it: the freedesktop.org Trash keeps the file
+	// in files and a record in info; the Finder's keeps the file itself, and here
+	// a trashed folder stands in for the record.
+	when ODIN_OS == .Darwin {
+		TRASH  :: ".Trash"
+		FILE   :: TRASH + "/old.bin"
+		RECORD :: TRASH + "/folder"
+		DIRS   :: []string{TRASH, RECORD}
+	} else {
+		TRASH  :: ".local/share/Trash"
+		FILE   :: TRASH + "/files/old.bin"
+		RECORD :: TRASH + "/info"
+		DIRS   :: []string{".local", ".local/share", TRASH, TRASH + "/files", RECORD}
+	}
+	for d in DIRS {
 		testing.expect(t, os.make_directory(fmt.tprintf("%s/%s", root, d)) == nil)
 	}
 	old := make([]byte, 16 * 1024, context.temp_allocator)
+	testing.expect(t, os.write_entire_file(fmt.tprintf("%s/%s", root, FILE), old) == nil)
 	testing.expect(
 		t,
-		os.write_entire_file(fmt.tprintf("%s/.local/share/Trash/files/old.bin", root), old) == nil,
-	)
-	testing.expect(
-		t,
-		os.write_entire_file(
-			fmt.tprintf("%s/.local/share/Trash/info/old.bin.trashinfo", root),
-			old[:2],
-		) ==
-		nil,
+		os.write_entire_file(fmt.tprintf("%s/%s/old.bin.trashinfo", root, RECORD), old[:2]) == nil,
 	)
 	sync.guard(&trash_env)
 	home := strings.clone(os.get_env("HOME", context.temp_allocator), context.temp_allocator)
@@ -1278,13 +1285,13 @@ reclaim_empties_the_trash_it_found :: proc(t: ^testing.T) {
 		button,
 		first,
 	)
-	testing.expect(t, !ui.probe_tagged(&r.p, ".local/share/Trash"), "as a button, not a row")
+	testing.expect(t, !ui.probe_tagged(&r.p, "All Trash"), "as a button, not a row")
 
 	confirm(t, &r, "Empty Trash", "Empty")
 	testing.expect(t, settle(&r, "Emptied the Trash and freed 20.0 KiB"), "the notice says so")
-	testing.expect(t, !os.exists(fmt.tprintf("%s/.local/share/Trash/files/old.bin", root)))
-	testing.expect(t, !os.exists(fmt.tprintf("%s/.local/share/Trash/info", root)))
-	testing.expect(t, os.exists(fmt.tprintf("%s/.local/share/Trash", root)), "the Trash stays")
+	testing.expect(t, !os.exists(fmt.tprintf("%s/%s", root, FILE)))
+	testing.expect(t, !os.exists(fmt.tprintf("%s/%s", root, RECORD)))
+	testing.expect(t, os.exists(fmt.tprintf("%s/%s", root, TRASH)), "the Trash stays")
 	testing.expect(t, os.exists(fmt.tprintf("%s/web/node_modules", root)), "cleaning is separate")
 }
 

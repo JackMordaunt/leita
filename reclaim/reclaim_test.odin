@@ -121,7 +121,7 @@ home_tree :: proc(t: ^Fake) -> (root: u32) {
 	fake_path(t, home, ".cache/pip")
 	fake_add(t, fake_path(t, home, ".cache"), "a-file-in-cache", false, 5)
 	fake_path(t, home, "go/pkg/mod/github.com")
-	fake_path(t, home, ".local/share/Trash/files")
+	fake_path(t, home, TRASH + "/files")
 	return
 }
 
@@ -136,12 +136,13 @@ only_what_proves_itself_regenerable_is_found :: proc(t: ^testing.T) {
 	want := []string {
 		"/home/ann/.cache/chromium",
 		"/home/ann/.cache/pip",
-		"/home/ann/.local/share/Trash",
+		"/home/ann/" + TRASH,
 		"/home/ann/go/pkg/mod",
 		"/home/ann/src/py/pkg/__pycache__",
 		"/home/ann/src/tool/target",
 		"/home/ann/src/web/node_modules",
 	}
+	slice.sort(want)
 	got := found_paths(found)
 	testing.expectf(t, slice.equal(got, want), "found\n%v\nwant\n%v", got, want)
 }
