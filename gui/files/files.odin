@@ -9,6 +9,8 @@ FileManager1 interface, with xdg-open on the folder as the fallback.
 */
 package sonar_files
 
+import "base:runtime"
+
 import "core:os"
 import "core:strings"
 import "core:thread"
@@ -86,17 +88,54 @@ thread of its own and returns at once: a file manager that is slow to start must
 not hold up the caller, and none of them says whether it found the entry.
 */
 locate :: proc(path: string) {
-	owned := strings.clone(path)
-	t := thread.create_and_start_with_poly_data(owned, locate_main, self_cleanup = true)
+	run_in_background(path, reveal)
+}
+
+// Job is work on a path that runs on a thread of its own, holding its own copy of
+// the path.
+@(private)
+Job :: struct {
+	path: string,
+	work: proc(path: string),
+}
+
+/*
+run_in_background runs work on a copy of path on a new thread. The thread is given the
+caller's context, so the copy is freed by the allocator that made it: a thread
+started without one frees through the system heap, which aborts on memory a
+debug or tracking allocator handed out. A detached thread cleans up after itself;
+otherwise the caller joins and destroys the thread returned.
+*/
+@(private)
+run_in_background :: proc(
+	path: string,
+	work: proc(path: string),
+	detach := true,
+) -> ^thread.Thread {
+	job := new(Job)
+	job^ = {strings.clone(path), work}
+	t := thread.create_and_start_with_poly_data(
+		job,
+		job_main,
+		init_context = context,
+		self_cleanup = detach,
+	)
 	if t == nil {
-		delete(owned)
+		delete(job.path)
+		free(job)
 	}
+	return nil if detach else t
 }
 
 @(private)
-locate_main :: proc(path: string) {
-	defer delete(path)
-	reveal(path)
+job_main :: proc(job: ^Job) {
+	// Given a context, the thread owns its temp allocator and frees it here.
+	defer if context.temp_allocator.procedure == runtime.default_temp_allocator_proc {
+		runtime.default_temp_allocator_destroy(auto_cast context.temp_allocator.data)
+	}
+	defer free(job)
+	defer delete(job.path)
+	job.work(job.path)
 }
 
 // run starts command and waits for it, reporting whether it ran and exited 0.

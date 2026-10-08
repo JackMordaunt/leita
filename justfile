@@ -71,18 +71,20 @@ gui *args: gui-build
 # Debug build of the window -> build/debug/sonar-gui
 gui-build: deps
     mkdir -p build/debug
-    {{odin}} build gui -debug {{flags}} -out:build/debug/{{gui}}{{exe}}
+    {{odin}} build gui -debug {{san}} {{flags}} -out:build/debug/{{gui}}{{exe}}
 
 # Optimised build of the window -> build/release/sonar-gui
 gui-release: deps
     mkdir -p build/release
     {{odin}} build gui -o:speed {{flags}} -out:build/release/{{gui}}{{exe}}
 
-# Run the window's suite: the view in a probe over the host on a real directory.
-# Not -all-packages, which would run every jm:ui suite the window imports too.
+# Run the window's suites under ASan: the view in a probe over the host on a real
+# directory, and the platform package. Not -all-packages, which would run every
+# jm:ui suite the window imports too.
 gui-test: deps
     mkdir -p build/test
-    {{odin}} test gui/app -debug {{flags}} -out:build/test/{{gui}}{{exe}}
+    {{odin}} test gui/app -debug {{san}} {{flags}} -out:build/test/{{gui}}{{exe}}
+    {{odin}} test gui/files -debug {{san}} {{flags}} -out:build/test/{{gui}}-files{{exe}}
 
 # Remove build/.
 clean:

@@ -88,3 +88,14 @@ fonts :: proc() -> []ops.Font_Ref {
 	}
 	return out
 }
+
+/*
+What LeakSanitizer is not to report in a build under -sanitize:address: the one
+allocation the system's EGL makes, through pthread_once, when SDL loads it for the
+window's renderer, and keeps for the life of the process. It is the driver's, not
+sonar's; reported, it would bury a real leak under one nobody can fix here.
+*/
+@(export, link_name = "__lsan_default_suppressions")
+lsan_default_suppressions :: proc "c" () -> cstring {
+	return "leak:SDL_EGL_LoadLibrary\n"
+}

@@ -31,6 +31,8 @@ is over the clock still ticks, but nothing moves, so nothing is sent.
 */
 package sonar_app
 
+import "base:runtime"
+
 import "core:encoding/cbor"
 import "core:fmt"
 import "core:slice"
@@ -225,6 +227,7 @@ on_command :: proc(user: rawptr, c: ui.Command) {
 
 @(private)
 pool_main :: proc(h: ^Host) {
+	defer release_temp()
 	stream.run(h.p, 1)
 }
 
@@ -235,6 +238,7 @@ desk_wake :: proc(data: rawptr) {
 
 @(private)
 desk_main :: proc(h: ^Host) {
+	defer release_temp()
 	for {
 		sync.sema_wait(&h.desk_wake)
 		if sync.atomic_load(&h.stopping) {
@@ -247,7 +251,19 @@ desk_main :: proc(h: ^Host) {
 
 @(private)
 reader_main :: proc(f: ^survey.Fill) {
+	defer release_temp()
 	survey.fill_run(f)
+}
+
+// release_temp frees the temp allocator a thread started with init_context was
+// given: core:thread leaves that to the thread (_maybe_destroy_default_temp_allocator
+// in core/thread/thread.odin returns early when a context was passed), and
+// LeakSanitizer reported it outliving the desk and reader threads.
+@(private)
+release_temp :: proc() {
+	if context.temp_allocator.procedure == runtime.default_temp_allocator_proc {
+		runtime.default_temp_allocator_destroy(auto_cast context.temp_allocator.data)
+	}
 }
 
 // --- the pipeline's stages -----------------------------------------------------
