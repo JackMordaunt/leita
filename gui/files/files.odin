@@ -3,9 +3,10 @@ Package files is what sonar's window does to what it found, through the platform
 show an entry in the system's file manager, move it to the Trash, rename it. Each
 acts on a path and reports an Error; deciding whether to ask is the caller's.
 
-Targets are Linux and Windows. On Linux the Trash is the freedesktop.org one in the
-user's home; the file manager is asked over D-Bus through the freedesktop.org
-FileManager1 interface, with xdg-open on the folder as the fallback.
+Targets are Linux, macOS and Windows. On Linux the Trash is the freedesktop.org one
+in the user's home; the file manager is asked over D-Bus through the freedesktop.org
+FileManager1 interface, with xdg-open on the folder as the fallback. On macOS both go
+through the Finder: NSFileManager's Trash, and open -R to show an entry.
 */
 package sonar_files
 
