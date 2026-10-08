@@ -875,3 +875,79 @@ hovering_a_largest_file_lights_its_arc :: proc(t: ^testing.T) {
 	ui.probe_advance(&r.p, 3, 1.0 / 60)
 	testing.expect(t, ui.probe_tagged(&r.p, said), "hovering the largest file lights its arc")
 }
+
+@(test)
+every_window_size_lays_out_without_a_clash :: proc(t: ^testing.T) {
+	root := fixture(t, "layout")
+	defer os.remove_all(root)
+	r: Rig
+	rig_open(&r, root)
+	defer rig_close(&r)
+	testing.expect(t, settle(&r, "Done"))
+	testing.expect(t, settle(&r, "arc photos"))
+	testing.expect(t, settle(&r, "268.0 KiB in 2 items"))
+
+	overlaps :: proc(a, b: ops.Rect) -> bool {
+		return(
+			a.w > 0 &&
+			b.w > 0 &&
+			a.x < b.x + b.w - 0.5 &&
+			b.x < a.x + a.w - 0.5 &&
+			a.y < b.y + b.h - 0.5 &&
+			b.y < a.y + a.h - 0.5 \
+		)
+	}
+	for colour in view.Colouring {
+		r.m.colour = colour
+		for height in ([]f32{420, 900}) {
+			for width := f32(640); width <= 1600; width += 160 {
+				r.p.size = {width, height}
+				ui.probe_advance(&r.p, 30, 1.0 / 60)
+				at := fmt.tprintf("%v at %vx%v", colour, width, height)
+				tool := []string{"sonar", "Location", "Rescan", "Dark theme"}
+				for i in 0 ..< len(tool) {
+					for j in i + 1 ..< len(tool) {
+						a, b := ui.probe_bounds(&r.p, tool[i]), ui.probe_bounds(&r.p, tool[j])
+						testing.expectf(
+							t,
+							!overlaps(a, b),
+							"%s: %s overlaps %s",
+							at,
+							tool[i],
+							tool[j],
+						)
+					}
+				}
+				grip := ui.probe_bounds(&r.p, "Resize panels")
+				for name in ([]string{"Sunburst chart", "Icicle", "Type"}) {
+					b := ui.probe_bounds(&r.p, name)
+					testing.expectf(
+						t,
+						b.x + b.w <= grip.x + 0.5,
+						"%s: %s runs to %v, past the grip at %v",
+						at,
+						name,
+						b.x + b.w,
+						grip.x,
+					)
+				}
+				disc := ui.probe_bounds(&r.p, "Sunburst chart")
+				testing.expectf(
+					t,
+					disc.y + disc.h <= height + 0.5,
+					"%s: the disc ends at %v, below the window",
+					at,
+					disc.y + disc.h,
+				)
+				testing.expectf(t, disc.w >= 120, "%s: the disc is only %v wide", at, disc.w)
+				dark := ui.probe_bounds(&r.p, "Dark theme")
+				testing.expectf(
+					t,
+					dark.x + dark.w <= width + 0.5,
+					"%s: the toolbar runs past the window",
+					at,
+				)
+			}
+		}
+	}
+}

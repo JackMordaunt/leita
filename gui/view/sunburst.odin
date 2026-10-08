@@ -47,7 +47,7 @@ HUB :: f32(0.18)
 FADE      :: f32(0.13)
 FILE_FADE :: f32(0.2)
 
-// BURST_MIN is the smallest the sunburst is drawn, whatever it is offered.
+// BURST_MIN is the sunburst's size in a room with no bound to fill.
 BURST_MIN :: f32(160)
 
 // Burst is the sunburst's geometry at one size.
@@ -149,15 +149,21 @@ ease :: proc(gtx: ^ui.Ctx, m: ^Model, r: ^query.Rings_Result) -> []query.Arc {
 	return out
 }
 
+// SWITCHES_WIDTH is about what the two switches take with their labels.
+SWITCHES_WIDTH :: f32(440)
+
 // rings_panel is the mode switch over the directory shown, drawn in the mode
 // chosen: for the sunburst, what the pointer is over, then the disc.
 @(private)
 rings_panel :: proc(gtx: ^ui.Ctx, m: ^Model) {
 	ui.column(gtx, gap = 8, align = .Fill)
 	// In a row, so the switch is as wide as its segments rather than the panel.
-	if ui.row(gtx, gap = 12, align = .Center) {
-		mode_switch(gtx, m)
-		colour_switch(gtx, m)
+	// Labelled where the column is wide enough, icons alone where it is not, and on
+	// two lines where even those do not fit.
+	compact := gtx.constraints.max.x < SWITCHES_WIDTH
+	if ui.wrap(gtx, gap = 12, align = .Center) {
+		mode_switch(gtx, m, compact)
+		colour_switch(gtx, m, compact)
 	}
 	// Its own line, below the switches, so it wraps rather than squeezing them.
 	if m.colour == .Type {
@@ -379,11 +385,14 @@ sunburst :: proc(
 	loc := #caller_location,
 ) {
 	offer := gtx.constraints.max
+	// As big as the room, never bigger: a disc that would not fit is drawn smaller,
+	// not pushed out of the window. BURST_MIN is for a room with no bound.
 	side := min(offer.x, offer.y)
 	if !ui.is_finite(side) {
 		side = min(offer.x, 520) if ui.is_finite(offer.x) else 520
+		side = max(side, BURST_MIN)
 	}
-	side = max(side, BURST_MIN)
+	side = max(side, 1)
 	m.burst = side
 	b := burst_of(side)
 

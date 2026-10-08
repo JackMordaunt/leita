@@ -316,7 +316,7 @@ LEGEND_DOT :: f32(8)
 // wrapping onto more lines where the panel is narrow.
 @(private)
 legend :: proc(gtx: ^ui.Ctx) {
-	if ui.wrap(gtx, gap = 10, align = .Center) {
+	if ui.wrap(gtx, gap = 10, line_gap = 2, align = .Center) {
 		for kind in Kind {
 			if kind == .Folder || kind == .Other {
 				continue

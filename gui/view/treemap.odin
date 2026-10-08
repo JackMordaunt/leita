@@ -37,7 +37,7 @@ Mode :: enum u8 {
 // mode_switch is the segmented control that picks the mode. A new mode starts its
 // shapes from nothing, so it grows in.
 @(private)
-mode_switch :: proc(gtx: ^ui.Ctx, m: ^Model) {
+mode_switch :: proc(gtx: ^ui.Ctx, m: ^Model, compact := false) {
 	// In Mode's order: the selected segment's index is the mode.
 	modes := [?]primer.Segment {
 		{label = "Sunburst", icon = .Circle},
@@ -46,7 +46,14 @@ mode_switch :: proc(gtx: ^ui.Ctx, m: ^Model) {
 	}
 	#assert(len(modes) == len(Mode))
 	at := int(m.mode)
-	if primer.segmented_control(gtx, modes[:], &at, name = "View", size = .Small) {
+	if primer.segmented_control(
+		gtx,
+		modes[:],
+		&at,
+		name = "View",
+		size = .Small,
+		hide_labels = compact,
+	) {
 		m.mode = Mode(at)
 		m.menu_open = false
 		clear(&m.poses)
@@ -56,7 +63,7 @@ mode_switch :: proc(gtx: ^ui.Ctx, m: ^Model) {
 
 // colour_switch is the segmented control that picks what the colours say.
 @(private)
-colour_switch :: proc(gtx: ^ui.Ctx, m: ^Model) {
+colour_switch :: proc(gtx: ^ui.Ctx, m: ^Model, compact := false) {
 	// In Colouring's order, as the modes are.
 	colourings := [?]primer.Segment {
 		{label = "Folder", icon = .File_Directory},
@@ -64,7 +71,14 @@ colour_switch :: proc(gtx: ^ui.Ctx, m: ^Model) {
 	}
 	#assert(len(colourings) == len(Colouring))
 	at := int(m.colour)
-	if primer.segmented_control(gtx, colourings[:], &at, name = "Colour by", size = .Small) {
+	if primer.segmented_control(
+		gtx,
+		colourings[:],
+		&at,
+		name = "Colour by",
+		size = .Small,
+		hide_labels = compact,
+	) {
 		m.colour = Colouring(at)
 	}
 }

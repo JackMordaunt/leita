@@ -195,8 +195,7 @@ view :: proc(gtx: ^ui.Ctx, user: rawptr) {
 		ui.flexible(gtx, 1)
 		rings_panel(gtx, m)
 		side_grip(gtx, m)
-		if !m.side_closed {
-			width := side_width(m)
+		if width, shown := side_shown(gtx, m); shown {
 			if ui.sized(gtx, {min = {width, 0}, max = {width, ui.INF}}) {
 				side(gtx, m)
 			}
@@ -218,10 +217,22 @@ SUNBURST_MIN :: f32(320)
 SPLIT        :: f32(0.6)
 LIST_MIN     :: f32(120)
 
-// side_width is the width the side column is drawn at, within what the window
-// leaves the sunburst.
+// side_width is the width the side column is dragged to, or its default.
 side_width :: proc(m: ^Model) -> f32 {
 	return m.side_width if m.side_width > 0 else SIDE_WIDTH
+}
+
+/*
+side_shown is the width the side column is drawn at in this window, and whether it
+is drawn at all. It never takes so much the chart is left less than SUNBURST_MIN;
+where that leaves it less than SIDE_MIN, it folds away until the window is wide
+enough again, as a drag below SIDE_FOLD folds it, without forgetting its width.
+*/
+@(private)
+side_shown :: proc(gtx: ^ui.Ctx, m: ^Model) -> (width: f32, shown: bool) {
+	room := gtx.viewport.x - PAD - GRIP - SUNBURST_MIN
+	width = min(side_width(m), room)
+	return width, !m.side_closed && width >= SIDE_MIN
 }
 
 /*
