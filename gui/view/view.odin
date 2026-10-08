@@ -25,6 +25,11 @@ import "../query"
 // largest files. The sunburst takes the rest.
 SIDE_WIDTH :: 400
 
+// PAD is the window's margin. On the right it stops short of the side column's
+// scroll boxes, so their bars sit flush with the window's edge, and the rows
+// inside carry it instead, clear of the bar.
+PAD :: f32(16)
+
 // SIZE_WIDTH is the size column's width in a listing row.
 SIZE_WIDTH :: 84
 
@@ -88,10 +93,14 @@ view :: proc(gtx: ^ui.Ctx, user: rawptr) {
 		m.side = {}
 	}
 
-	ui.inset(gtx, ui.pad_all(16))
+	ui.inset(gtx, {left = PAD, top = PAD, bottom = PAD})
 	ui.column(gtx, gap = 12, align = .Fill)
-	toolbar(gtx, m, prog)
-	status(gtx, prog)
+	if ui.inset(gtx, {right = PAD}) {
+		if ui.column(gtx, gap = 12, align = .Fill) {
+			toolbar(gtx, m, prog)
+			status(gtx, prog)
+		}
+	}
 	if prog == nil || prog.generation == 0 {
 		return
 	}
@@ -219,7 +228,9 @@ counters :: proc(gtx: ^ui.Ctx, prog: ^query.Progress_Result) -> string {
 @(private)
 listing :: proc(gtx: ^ui.Ctx, m: ^Model) {
 	ui.column(gtx, gap = 8, align = .Fill)
-	primer.heading(gtx, "Contents", level = 2, variant = .Small)
+	if ui.inset(gtx, {right = PAD}) {
+		primer.heading(gtx, "Contents", level = 2, variant = .Small)
+	}
 	r, _ := ui.need(
 		gtx,
 		query.Listing{generation = m.generation, dir = m.dir},
@@ -232,20 +243,23 @@ listing :: proc(gtx: ^ui.Ctx, m: ^Model) {
 		return
 	}
 
-	primer.text(
-		gtx,
-		fmt.aprintf(
-			"%s in %s items",
-			human.bytes(r.bytes),
-			human.count(u64(len(r.entries) + r.more)),
-			allocator = gtx.allocator,
-		),
-		.Small,
-		color = primer.color(.Fg_Color_Muted),
-	)
+	if ui.inset(gtx, {right = PAD}) {
+		primer.text(
+			gtx,
+			fmt.aprintf(
+				"%s in %s items",
+				human.bytes(r.bytes),
+				human.count(u64(len(r.entries) + r.more)),
+				allocator = gtx.allocator,
+			),
+			.Small,
+			color = primer.color(.Fg_Color_Muted),
+		)
+	}
 
 	ui.flexible(gtx, 1)
 	if ui.scroll_box(gtx, offset = &m.scroll) {
+		ui.inset(gtx, {right = PAD})
 		if ui.column(gtx, gap = 2, align = .Fill) {
 			if len(r.entries) == 0 {
 				primer.text(gtx, "Nothing found here yet.", color = primer.color(.Fg_Color_Muted))
@@ -317,17 +331,22 @@ entry :: proc(gtx: ^ui.Ctx, e: query.Entry, total: u64) -> (opened: bool) {
 @(private)
 largest :: proc(gtx: ^ui.Ctx, m: ^Model) {
 	ui.column(gtx, gap = 8, align = .Fill)
-	primer.heading(gtx, "Largest files", level = 2, variant = .Small)
+	if ui.inset(gtx, {right = PAD}) {
+		primer.heading(gtx, "Largest files", level = 2, variant = .Small)
+	}
 	r, _ := ui.need(gtx, query.Largest{generation = m.generation}, query.Largest_Result)
 	if r == nil {
 		return
 	}
 	if len(r.files) == 0 {
-		primer.text(gtx, "None found yet.", .Small, color = primer.color(.Fg_Color_Muted))
+		if ui.inset(gtx, {right = PAD}) {
+			primer.text(gtx, "None found yet.", .Small, color = primer.color(.Fg_Color_Muted))
+		}
 		return
 	}
 	ui.flexible(gtx, 1)
 	if ui.scroll_box(gtx, offset = &m.side) {
+		ui.inset(gtx, {right = PAD})
 		if ui.column(gtx, gap = 10, align = .Fill) {
 			for f in r.files {
 				s := ui.scope_open(gtx, f.node)
