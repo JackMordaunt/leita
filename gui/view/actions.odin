@@ -23,6 +23,13 @@ it went in a notice.
 // HISTORY is how many directories back the window remembers.
 HISTORY :: 256
 
+// Menu_From is where the right-click menu was opened, which is where it is drawn.
+Menu_From :: enum u8 {
+	Sunburst,
+	Contents,
+	Largest,
+}
+
 // Target is the entry a menu or dialog is about, kept past the frame it was
 // chosen in because the rings it came from are replaced every tick.
 Target :: struct {
@@ -105,16 +112,17 @@ entry_of :: proc(m: ^Model) -> command.Entry {
 	return {generation = m.generation, node = m.target.node}
 }
 
-// entry_menu is the right-click menu, at the point that was clicked. The caller
-// has the sunburst's transform pushed and passes its area as the anchor.
+// entry_menu is the right-click menu, under anchor moved by at: the point
+// clicked in the sunburst, or a list row's name with at zero. The caller draws it
+// in the anchor's own space.
 @(private)
-entry_menu :: proc(gtx: ^ui.Ctx, m: ^Model, anchor: ops.Area_Id) {
-	ops.transform_push(gtx.scene, ops.translate(m.menu_at.x, m.menu_at.y))
+entry_menu :: proc(gtx: ^ui.Ctx, m: ^Model, anchor: ui.Last_Widget, at := ops.Point{}) {
+	ops.transform_push(gtx.scene, ops.translate(at.x, at.y))
 	defer ops.transform_pop(gtx.scene)
 	menu := primer.action_menu_open(
 		gtx,
 		&m.menu_open,
-		{anchor, {0, 0}},
+		anchor,
 		name = fmt.aprintf("Actions for %s", m.target.name, allocator = gtx.allocator),
 	)
 	defer primer.action_menu_close(&menu)
@@ -127,25 +135,38 @@ entry_menu :: proc(gtx: ^ui.Ctx, m: ^Model, anchor: ops.Area_Id) {
 	   primer.action_menu_item(&menu, "Open", leading = .File_Directory_Open_Fill) {
 		open(m, t.node)
 	}
-	if primer.action_menu_item(
-		&menu,
-		"Locate",
-		description = "Show in the file manager",
-		leading = .Link_External,
-	) {
+	if primer.action_menu_item(&menu, "Locate", leading = .Link_External) {
 		ui.command(gtx, command.Command(command.Locate{entry = entry_of(m)}))
 	}
 	if t.hub {
 		return
 	}
-	if primer.action_menu_item(&menu, "Rename…", leading = .Pencil) {
+	if primer.action_menu_item(&menu, "Rename", leading = .Pencil) {
 		ui.text_set(&m.rename, t.name)
 		ui.text_select(&m.rename, 0, len(t.name))
 		m.rename_open, m.rename_focus = true, true
 	}
 	primer.action_menu_divider(&menu)
-	if primer.action_menu_item(&menu, "Move to Trash", leading = .Trash, variant = .Danger) {
+	if primer.action_menu_item(&menu, "Trash", leading = .Trash, variant = .Danger) {
 		m.trash_open = true
+	}
+}
+
+// row_menu gives a list row's name button, the widget closed last, the
+// right-click menu: a right press on it aims the menu at t and opens it there,
+// and while it is open for t from this list it is drawn under the button. A
+// button acts on left clicks only, so a right press reaches its area unclaimed.
+@(private)
+row_menu :: proc(gtx: ^ui.Ctx, m: ^Model, from: Menu_From, t: Target) {
+	name := ui.last_widget(gtx)
+	for e in ui.events(gtx, name.id) {
+		if e.kind == .Press && e.button == .Right {
+			aim(m, t)
+			m.menu_from, m.menu_open = from, true
+		}
+	}
+	if m.menu_open && m.menu_from == from && m.target.node == t.node && !m.target.hub {
+		entry_menu(gtx, m, name)
 	}
 }
 
@@ -155,13 +176,13 @@ dialogs :: proc(gtx: ^ui.Ctx, m: ^Model) {
 	answer := primer.confirmation_dialog(
 		gtx,
 		&m.trash_open,
-		"Move to Trash?",
+		fmt.aprintf("Trash %s?", m.target.name, allocator = gtx.allocator),
 		fmt.aprintf(
 			"%s and everything in it will be moved to the Trash, where it can be restored.",
 			m.target.name,
 			allocator = gtx.allocator,
 		),
-		confirm_content = "Move to Trash",
+		confirm_content = "Trash",
 		confirm_type = .Danger,
 	)
 	if answer == .Confirm {

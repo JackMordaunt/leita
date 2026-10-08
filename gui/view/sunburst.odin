@@ -226,15 +226,17 @@ sunburst :: proc(
 		case .Arc:
 			a := r.arcs[at]
 			aim(m, {node = a.node, name = a.name, directory = a.directory})
-			m.menu_open, m.menu_at = true, m.pointer
+			m.menu_open, m.menu_at, m.menu_from = true, m.pointer, .Sunburst
 		case .Hub:
 			here := r.crumbs[len(r.crumbs) - 1]
 			aim(m, {node = here.node, name = here.name, directory = true, hub = true})
-			m.menu_open, m.menu_at = true, m.pointer
+			m.menu_open, m.menu_at, m.menu_from = true, m.pointer, .Sunburst
 		case .Nothing:
 		}
 	}
-	entry_menu(gtx, m, p.id)
+	if m.menu_from == .Sunburst {
+		entry_menu(gtx, m, {p.id, {0, 0}}, m.menu_at)
+	}
 	ui.widget_close(gtx, &p, {size = {side, side}})
 
 	if !pressed {

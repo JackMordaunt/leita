@@ -63,6 +63,7 @@ Model :: struct {
 	target:       Target,
 	menu_open:    bool,
 	menu_at:      ops.Point, // in the sunburst's space
+	menu_from:    Menu_From,
 	trash_open:   bool,
 	rename_open:  bool,
 	rename:       ui.Text_State,
@@ -283,7 +284,7 @@ listing :: proc(gtx: ^ui.Ctx, m: ^Model) {
 				primer.text(gtx, "Nothing found here yet.", color = primer.color(.Fg_Color_Muted))
 			}
 			for e in r.entries {
-				if entry(gtx, e, r.bytes) {
+				if entry(gtx, m, e, r.bytes) {
 					open(m, e.node)
 				}
 			}
@@ -305,29 +306,25 @@ listing :: proc(gtx: ^ui.Ctx, m: ^Model) {
 }
 
 // entry is one row of a listing: its name, its share of the directory as a bar,
-// and its size. A directory's name opens it, and reports so.
+// and its size. A directory's name opens it, and reports so; a right click on
+// any name opens the entry's menu.
 @(private)
-entry :: proc(gtx: ^ui.Ctx, e: query.Entry, total: u64) -> (opened: bool) {
+entry :: proc(gtx: ^ui.Ctx, m: ^Model, e: query.Entry, total: u64) -> (opened: bool) {
 	s := ui.scope_open(gtx, e.node)
 	defer ui.scope_close(&s)
 	ui.row(gtx, gap = 12, align = .Center)
 	ui.flexible(gtx, 3)
-	if e.directory {
-		opened = primer.button(
-			gtx,
-			e.name,
-			.Invisible,
-			.Small,
-			leading = .File_Directory_Fill,
-			align = .Start,
-			block = true,
-		)
-	} else if ui.row(gtx, gap = 8, align = .Center) {
-		ui.spacer(gtx, 8)
-		glyph(gtx, .File, primer.color(.Fg_Color_Muted))
-		ui.flexible(gtx, 1)
-		primer.truncate(gtx, e.name, max_width = ui.INF, size = .Small)
-	}
+	clicked := primer.button(
+		gtx,
+		e.name,
+		.Invisible,
+		.Small,
+		leading = e.directory ? .File_Directory_Fill : .File,
+		align = .Start,
+		block = true,
+	)
+	opened = clicked && e.directory
+	row_menu(gtx, m, .Contents, {node = e.node, name = e.name, directory = e.directory})
 	share := total > 0 ? 100 * f32(f64(e.bytes) / f64(total)) : 0
 	ui.flexible(gtx, 2)
 	primer.progress_bar(
@@ -370,13 +367,19 @@ largest :: proc(gtx: ^ui.Ctx, m: ^Model) {
 				s := ui.scope_open(gtx, f.node)
 				defer ui.scope_close(&s)
 				if ui.column(gtx, gap = 2, align = .Fill) {
-					primer.truncate(
+					// The name opens the directory holding the file.
+					if primer.button(
 						gtx,
 						base_name(f.path),
-						max_width = ui.INF,
-						weight = .Semibold,
-						size = .Small,
-					)
+						.Invisible,
+						.Small,
+						leading = .File,
+						align = .Start,
+						block = true,
+					) {
+						open(m, f.parent)
+					}
+					row_menu(gtx, m, .Largest, {node = f.node, name = base_name(f.path)})
 					if ui.row(gtx, gap = 8, align = .Center) {
 						ui.flexible(gtx, 1)
 						primer.truncate(
@@ -396,14 +399,6 @@ largest :: proc(gtx: ^ui.Ctx, m: ^Model) {
 }
 
 // --- small parts ---------------------------------------------------------------
-
-// glyph is a 16px octicon as a widget of its own.
-@(private)
-glyph :: proc(gtx: ^ui.Ctx, ic: primer.Icon, c: ops.Color, loc := #caller_location) {
-	p := ui.widget_open(gtx, loc = loc)
-	primer.icon(gtx, ic, {0, 0}, 16, c)
-	ui.widget_close(gtx, &p, {size = {16, 16}})
-}
 
 @(private)
 base_name :: proc(path: string) -> string {

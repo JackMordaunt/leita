@@ -93,9 +93,10 @@ Largest :: struct {
 
 // File is one of the largest files, named by its whole path.
 File :: struct {
-	node:  u32,
-	path:  string,
-	bytes: u64,
+	node:   u32,
+	parent: u32, // the directory holding it
+	path:   string,
+	bytes:  u64,
 }
 
 Largest_Result :: struct {

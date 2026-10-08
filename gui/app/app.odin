@@ -713,8 +713,9 @@ largest :: proc(
 			at -= 1
 		}
 		top[at] = {
-			node  = i,
-			bytes = n.disk,
+			node   = i,
+			parent = n.parent,
+			bytes  = n.disk,
 		}
 		count = min(count + 1, len(top))
 	}

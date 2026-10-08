@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:math"
 import "core:os"
 import "core:slice"
+import "core:sync"
 import "core:testing"
 import "core:time"
 
@@ -81,12 +82,17 @@ settle :: proc(r: ^Rig, name: string, present := true) -> bool {
 // button the bounds of the whole row, whose centre is on the share bar, so this
 // clicks near the row's start, where the name is.
 @(private = "file")
-open_row :: proc(r: ^Rig, name: string) {
+open_row :: proc(r: ^Rig, name: string, button := ui.Button.Left) {
 	b := ui.probe_bounds(&r.p, name)
-	ui.probe_click_at(&r.p, {b.x + 24, b.y + b.h / 2})
+	ui.probe_click_at(&r.p, {b.x + 24, b.y + b.h / 2}, button)
 	ui.probe_frame(&r.p)
 	hand_on(r)
 }
+
+// trash_env is held by a test that points XDG_DATA_HOME at a Trash of its own:
+// the environment is the process's, and the runner runs tests side by side.
+@(private = "file")
+trash_env: sync.Mutex
 
 /*
 A directory to scan, made fresh:
@@ -264,7 +270,7 @@ a_right_click_renames_an_entry_on_disk_and_in_the_rings :: proc(t: ^testing.T) {
 	ui.probe_click_at(&r.p, ring_point(&r, 0.5), .Right)
 	press_and_hand_on(&r)
 	press_and_hand_on(&r)
-	testing.expect(t, ui.probe_click(&r.p, "Rename…"), "the menu offers Rename")
+	testing.expect(t, ui.probe_click(&r.p, "Rename"), "the menu offers Rename")
 	press_and_hand_on(&r)
 	press_and_hand_on(&r)
 
@@ -287,6 +293,7 @@ a_right_click_moves_an_entry_to_the_trash_and_out_of_the_totals :: proc(t: ^test
 	data := fmt.tprintf("%s-data", root)
 	os.remove_all(data)
 	defer os.remove_all(data)
+	sync.guard(&trash_env)
 	testing.expect(t, os.set_env("XDG_DATA_HOME", data) == nil)
 	defer os.unset_env("XDG_DATA_HOME")
 
@@ -300,10 +307,10 @@ a_right_click_moves_an_entry_to_the_trash_and_out_of_the_totals :: proc(t: ^test
 	ui.probe_click_at(&r.p, ring_point(&r, 0.9925), .Right)
 	press_and_hand_on(&r)
 	press_and_hand_on(&r)
-	testing.expect(t, ui.probe_click(&r.p, "Move to Trash"), "the menu offers the Trash")
+	testing.expect(t, ui.probe_click(&r.p, "Trash"), "the menu offers the Trash")
 	press_and_hand_on(&r)
 	press_and_hand_on(&r)
-	testing.expect(t, ui.probe_click(&r.p, "Move to Trash"), "the dialog asks first")
+	testing.expect(t, ui.probe_click(&r.p, "Trash"), "the dialog asks first")
 	press_and_hand_on(&r)
 
 	testing.expect(t, settle(&r, "Moved notes.txt to the Trash"), "the notice says so")
@@ -312,4 +319,69 @@ a_right_click_moves_an_entry_to_the_trash_and_out_of_the_totals :: proc(t: ^test
 	testing.expect(t, !os.exists(fmt.tprintf("%s/notes.txt", root)), "gone from the folder")
 	testing.expect(t, os.exists(fmt.tprintf("%s/Trash/files/notes.txt", data)), "in the Trash")
 	testing.expect(t, os.exists(fmt.tprintf("%s/Trash/info/notes.txt.trashinfo", data)))
+}
+
+@(test)
+a_right_click_on_a_contents_row_trashes_it :: proc(t: ^testing.T) {
+	root := fixture(t, "rowtrash")
+	defer os.remove_all(root)
+	data := fmt.tprintf("%s-data", root)
+	os.remove_all(data)
+	defer os.remove_all(data)
+	sync.guard(&trash_env)
+	testing.expect(t, os.set_env("XDG_DATA_HOME", data) == nil)
+	defer os.unset_env("XDG_DATA_HOME")
+
+	r: Rig
+	rig_open(&r, root)
+	defer rig_close(&r)
+	testing.expect(t, settle(&r, "Done"))
+	testing.expect(t, settle(&r, "268.0 KiB in 2 items"))
+
+	open_row(&r, "notes.txt", .Right)
+	press_and_hand_on(&r)
+	testing.expect(t, ui.probe_click(&r.p, "Trash"), "the row's menu offers Trash")
+	press_and_hand_on(&r)
+	press_and_hand_on(&r)
+	testing.expect(t, ui.probe_click(&r.p, "Trash"), "the dialog asks first")
+	press_and_hand_on(&r)
+	testing.expect(t, settle(&r, "264.0 KiB in 1 items"), "the row is gone from the totals")
+	testing.expect(t, os.exists(fmt.tprintf("%s/Trash/files/notes.txt", data)), "in the Trash")
+}
+
+@(test)
+a_right_click_on_a_largest_file_renames_it :: proc(t: ^testing.T) {
+	root := fixture(t, "rowrename")
+	defer os.remove_all(root)
+	r: Rig
+	rig_open(&r, root)
+	defer rig_close(&r)
+	testing.expect(t, settle(&r, "Done"))
+	testing.expect(t, settle(&r, "big.raw"))
+
+	// At the top, big.raw is in no list but the largest files.
+	open_row(&r, "big.raw", .Right)
+	press_and_hand_on(&r)
+	testing.expect(t, ui.probe_click(&r.p, "Rename"), "the row's menu offers Rename")
+	press_and_hand_on(&r)
+	press_and_hand_on(&r)
+	ui.probe_type(&r.p, "huge.raw")
+	ui.probe_key(&r.p, .Enter)
+	press_and_hand_on(&r)
+	testing.expect(t, settle(&r, "Renamed big.raw to huge.raw"), "the notice says so")
+	testing.expect(t, settle(&r, "huge.raw"), "the list took the new name")
+	testing.expect(t, os.exists(fmt.tprintf("%s/photos/huge.raw", root)), "renamed on disk")
+}
+
+@(test)
+a_largest_files_name_opens_its_folder :: proc(t: ^testing.T) {
+	root := fixture(t, "rowopen")
+	defer os.remove_all(root)
+	r: Rig
+	rig_open(&r, root)
+	defer rig_close(&r)
+	testing.expect(t, settle(&r, "Done"))
+	testing.expect(t, settle(&r, "big.raw"))
+	open_row(&r, "big.raw")
+	testing.expect(t, settle(&r, "264.0 KiB in 2 items"), "photos opened")
 }
