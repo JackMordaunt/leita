@@ -23,8 +23,8 @@ import "../../human"
 import "../command"
 import "../query"
 
-// SIDE_WIDTH is the side column's width: the open directory's contents and the
-// largest files. The sunburst takes the rest.
+// SIDE_WIDTH is the side column's width until it is dragged: the open directory's
+// contents and the largest files. The sunburst takes the rest.
 SIDE_WIDTH :: 400
 
 // PAD is the window's margin. On the right it stops short of the side column's
@@ -71,7 +71,14 @@ Model :: struct {
 	rename:           ui.Text_State,
 	rename_focus:     bool, // the rename field takes focus when next drawn
 	notice_seen:      u32, // the notice last dismissed
-	panels_hidden:    bool, // the side column is put away, leaving the sunburst the window
+	// The side column: its width as dragged (0 for SIDE_WIDTH), whether a drag has
+	// folded it away, and the share of its height the contents list takes (0 for
+	// SPLIT). The *_from fields are where a drag began.
+	side_width:       f32,
+	side_closed:      bool,
+	side_from:        f32,
+	split:            f32,
+	split_from:       f32,
 	// The sunburst's arcs as drawn last frame, by node, and the centre they were
 	// drawn around (sunburst.odin ease); poses_next is the frame being drawn.
 	poses:            map[u32]Pose,
@@ -130,41 +137,104 @@ view :: proc(gtx: ^ui.Ctx, user: rawptr) {
 		return
 	}
 	ui.flexible(gtx, 1)
-	if ui.row(gtx, gap = 24, align = .Fill) {
+	if ui.row(gtx, align = .Fill) {
 		ui.flexible(gtx, 1)
 		rings_panel(gtx, m)
-		if m.panels_hidden {
-			rail(gtx, m)
-		} else {
-			if ui.sized(gtx, {min = {SIDE_WIDTH, 0}, max = {SIDE_WIDTH, ui.INF}}) {
-				if ui.column(gtx, gap = 24, align = .Fill) {
-					ui.flexible(gtx, 3)
-					listing(gtx, m)
-					ui.flexible(gtx, 2)
-					largest(gtx, m)
-				}
+		side_grip(gtx, m)
+		if !m.side_closed {
+			width := side_width(m)
+			if ui.sized(gtx, {min = {width, 0}, max = {width, ui.INF}}) {
+				side(gtx, m)
 			}
 		}
 	}
 	dialogs(gtx, m)
 }
 
-// RAIL_WIDTH is the side column folded away: a strip at the window's edge.
-RAIL_WIDTH :: f32(40)
+// --- the side column ----------------------------------------------------------
 
-// rail is the side column put away: a strip at the window's right edge, ruled off
-// from the sunburst, with the button that brings the column back at its top
-// where the column's own heading was.
+// SIDE_MIN is the narrowest the side column is dragged to, and SIDE_FOLD the width
+// below which a drag folds it away. SUNBURST_MIN is what the side column always
+// leaves the sunburst. SPLIT is the share of the column's height the contents list
+// takes until the grip between the lists is dragged, and LIST_MIN the least
+// either list is given.
+SIDE_MIN     :: f32(240)
+SIDE_FOLD    :: f32(160)
+SUNBURST_MIN :: f32(320)
+SPLIT        :: f32(0.6)
+LIST_MIN     :: f32(120)
+
+// side_width is the width the side column is drawn at, within what the window
+// leaves the sunburst.
+side_width :: proc(m: ^Model) -> f32 {
+	return m.side_width if m.side_width > 0 else SIDE_WIDTH
+}
+
+/*
+side_grip is the grip between the sunburst and the side column. Dragged left
+it widens the column, up to what leaves the sunburst SUNBURST_MIN; dragged right
+it narrows it to SIDE_MIN, and past SIDE_FOLD the column folds away, live, so the
+drag shows where it will end. Folded, the grip stays at the window's edge, and a
+drag out of it brings the column back. A double click folds or unfolds it.
+*/
 @(private)
-rail :: proc(gtx: ^ui.Ctx, m: ^Model) {
-	ui.sized(gtx, {min = {RAIL_WIDTH, 0}, max = {RAIL_WIDTH, ui.INF}})
-	if height := gtx.constraints.max.y; ui.is_finite(height) {
-		ops.fill(gtx.scene, ops.Rect{0, 0, 1, height}, primer.color(.Border_Color_Default))
+side_grip :: proc(gtx: ^ui.Ctx, m: ^Model) {
+	value :=
+		"folded away" if m.side_closed else fmt.aprintf("%d points wide", int(side_width(m)), allocator = gtx.allocator)
+	g := grip(gtx, .Horizontal, "Resize panels", value)
+	most := max(gtx.viewport.x - SUNBURST_MIN - GRIP - PAD, SIDE_MIN)
+	switch {
+	case g.double:
+		m.side_closed = !m.side_closed
+	case g.started:
+		m.side_from = 0 if m.side_closed else side_width(m)
+	case g.dragging:
+		wanted := m.side_from - g.pull
+		m.side_closed = wanted < SIDE_FOLD
+		if !m.side_closed {
+			m.side_width = clamp(wanted, SIDE_MIN, most)
+		}
+	case g.step != 0 && !m.side_closed:
+		m.side_width = clamp(side_width(m) - g.step, SIDE_MIN, most)
 	}
-	ui.column(gtx, align = .Center)
-	if primer.icon_button(gtx, .Sidebar_Expand, "Show panels", .Invisible, .Small) {
-		m.panels_hidden = false
+}
+
+// side is the side column: the contents list above the largest files, the
+// grip between them sharing its height.
+@(private)
+side :: proc(gtx: ^ui.Ctx, m: ^Model) {
+	ui.inset(gtx, {left = 8})
+	ui.column(gtx, align = .Fill)
+	height := gtx.constraints.max.y
+	if !ui.is_finite(height) {
+		listing(gtx, m)
+		largest(gtx, m)
+		return
 	}
+	room := max(height - GRIP, 2 * LIST_MIN)
+	share := m.split if m.split > 0 else SPLIT
+	top := clamp(share * room, LIST_MIN, room - LIST_MIN)
+	if ui.sized(gtx, {min = {0, top}, max = {ui.INF, top}}) {
+		listing(gtx, m)
+	}
+	g := grip(
+		gtx,
+		.Vertical,
+		"Resize lists",
+		fmt.aprintf("%d%% contents", int(100 * top / room), allocator = gtx.allocator),
+	)
+	switch {
+	case g.double:
+		m.split = 0
+	case g.started:
+		m.split_from = top
+	case g.dragging:
+		m.split = clamp(m.split_from + g.pull, LIST_MIN, room - LIST_MIN) / room
+	case g.step != 0:
+		m.split = clamp(top + g.step, LIST_MIN, room - LIST_MIN) / room
+	}
+	ui.flexible(gtx, 1)
+	largest(gtx, m)
 }
 
 // --- the bar along the top -----------------------------------------------------
@@ -281,16 +351,8 @@ counters :: proc(gtx: ^ui.Ctx, prog: ^query.Progress_Result) -> string {
 @(private)
 listing :: proc(gtx: ^ui.Ctx, m: ^Model) {
 	ui.column(gtx, gap = 8, align = .Fill)
-	// The column's own heading carries the control that puts it away, so what
-	// hides and the button that hides it sit together.
 	if ui.inset(gtx, {right = PAD}) {
-		if ui.row(gtx, gap = 8, align = .Center) {
-			ui.flexible(gtx, 1)
-			primer.heading(gtx, "Contents", level = 2, variant = .Small)
-			if primer.icon_button(gtx, .Sidebar_Collapse, "Hide panels", .Invisible, .Small) {
-				m.panels_hidden = true
-			}
-		}
+		primer.heading(gtx, "Contents", level = 2, variant = .Small)
 	}
 	r, _ := ui.need(
 		gtx,

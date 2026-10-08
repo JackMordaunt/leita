@@ -447,37 +447,54 @@ a_long_name_stops_short_of_its_share_bar :: proc(t: ^testing.T) {
 }
 
 @(test)
-the_panels_hide_to_leave_the_sunburst_the_window :: proc(t: ^testing.T) {
-	root := fixture(t, "panels")
+the_grips_share_the_window_and_fold_the_side_column_away :: proc(t: ^testing.T) {
+	root := fixture(t, "grips")
 	defer os.remove_all(root)
 	r: Rig
 	rig_open(&r, root)
 	defer rig_close(&r)
 	testing.expect(t, settle(&r, "Done"))
 	testing.expect(t, settle(&r, "Contents"))
-	ui.probe_advance(&r.p, 60, 1.0 / 60)
-	beside := ui.probe_bounds(&r.p, "Sunburst")
+	ui.probe_advance(&r.p, 30, 1.0 / 60)
+	contents := ui.probe_bounds(&r.p, "Contents")
 
-	testing.expect(t, ui.probe_click(&r.p, "Hide panels"))
+	// Dragged right past SIDE_FOLD, the column folds away and the grip stays.
+	testing.expect(t, ui.probe_drag(&r.p, "Resize panels", 300, 0))
+	ui.probe_advance(&r.p, 30, 1.0 / 60)
+	testing.expect(t, !ui.probe_tagged(&r.p, "Contents"), "the column folded away")
+	testing.expect(t, ui.probe_tagged(&r.p, "Resize panels"), "the grip stays to bring it back")
+
+	// Dragged back out, it returns at the width the drag ends at.
+	testing.expect(t, ui.probe_drag(&r.p, "Resize panels", -500, 0))
 	press_and_hand_on(&r)
-	ui.probe_advance(&r.p, 60, 1.0 / 60)
-	testing.expect(t, !ui.probe_tagged(&r.p, "Contents"), "the contents are put away")
-	testing.expect(t, !ui.probe_tagged(&r.p, "Largest files"), "and the largest files")
-	// The disc is as big as the smaller of its width and height. Here, in a
-	// landscape window, height is the limit, so it keeps its size and moves over
-	// into the room the column left, beside the rail that brings the column back.
-	alone := ui.probe_bounds(&r.p, "Sunburst")
-	testing.expectf(t, alone.w >= beside.w, "the sunburst shrank from %v to %v", beside.w, alone.w)
-	testing.expectf(t, alone.x > beside.x, "the sunburst stayed at %v", alone.x)
-	rail := ui.probe_bounds(&r.p, "Show panels")
+	testing.expect(t, settle(&r, "Contents"), "the column came back")
+	wider := ui.probe_bounds(&r.p, "Contents")
 	testing.expectf(
 		t,
-		rail.x > alone.x + alone.w,
-		"the rail's button sits beside the disc, at %v",
-		rail.x,
+		wider.x < contents.x - 50,
+		"the column is wider: Contents at %v, was %v",
+		wider.x,
+		contents.x,
 	)
 
-	testing.expect(t, ui.probe_click(&r.p, "Show panels"))
+	// The grip between the lists gives the contents more of the column.
+	largest := ui.probe_bounds(&r.p, "Largest files")
+	testing.expect(t, ui.probe_drag(&r.p, "Resize lists", 0, 80))
+	ui.probe_advance(&r.p, 10, 1.0 / 60)
+	lower := ui.probe_bounds(&r.p, "Largest files")
+	testing.expectf(
+		t,
+		lower.y > largest.y + 40,
+		"the largest files moved down from %v to %v",
+		largest.y,
+		lower.y,
+	)
+
+	// A double click folds the column, and another brings it back.
+	testing.expect(t, ui.probe_click(&r.p, "Resize panels", clicks = 2))
+	ui.probe_advance(&r.p, 10, 1.0 / 60)
+	testing.expect(t, !ui.probe_tagged(&r.p, "Contents"), "a double click folds it")
+	testing.expect(t, ui.probe_click(&r.p, "Resize panels", clicks = 2))
 	press_and_hand_on(&r)
-	testing.expect(t, settle(&r, "Contents"), "the panels come back")
+	testing.expect(t, settle(&r, "Contents"), "and another unfolds it")
 }
