@@ -218,7 +218,8 @@ a_click_on_an_arc_opens_it_and_the_hub_goes_back_up :: proc(t: ^testing.T) {
 	ui.probe_frame(&r.p)
 	hand_on(&r)
 	testing.expect(t, settle(&r, "arc big.raw"), "photos opened")
-	testing.expect(t, ui.probe_tagged(&r.p, "264.0 KiB in 2 items"), "the listing followed")
+	// The listing is its own need, answered apart from the rings: wait for it too.
+	testing.expect(t, settle(&r, "264.0 KiB in 2 items"), "the listing followed")
 
 	// The hub goes back up to the top.
 	testing.expect(t, ui.probe_click(&r.p, "hub"))
@@ -742,6 +743,8 @@ hovering_a_contents_row_lights_its_arc_and_its_box :: proc(t: ^testing.T) {
 	defer rig_close(&r)
 	testing.expect(t, settle(&r, "Done"))
 	testing.expect(t, settle(&r, "arc notes.txt"))
+	// The listing is answered apart from the rings; its rows must be there to hover.
+	testing.expect(t, settle(&r, "268.0 KiB in 2 items"))
 
 	// The info block says what the chart has lit, the same as pointing at it.
 	said := "4.0 KiB · 1.5% of sonar_gui_link"
