@@ -4,6 +4,7 @@ import "core:path/filepath"
 import "core:strings"
 
 import "jm:ui"
+import "jm:ui/design"
 import "jm:ui/ops"
 import "jm:ui/primer"
 
@@ -29,26 +30,26 @@ Colouring :: enum u8 {
 // Kind is what an entry is, for colouring by type.
 Kind :: enum u8 {
 	Folder, // a directory, neither build nor cache
-	Media, // video and audio
+	Multimedia, // video and audio
 	Image,
 	Archive, // archives, packages and disk images
 	Document,
-	Code,
+	Text, // source code and text
 	Binary,
-	Build_Cache, // a build or cache directory, and all it holds
+	Cache, // a build or cache directory, and all it holds
 	Other,
 }
 
 KIND_NAMES := [Kind]string {
-	.Folder      = "Folder",
-	.Media       = "Video and audio",
-	.Image       = "Image",
-	.Archive     = "Archive and disk image",
-	.Document    = "Document",
-	.Code        = "Code and text",
-	.Binary      = "Binary",
-	.Build_Cache = "Build and cache",
-	.Other       = "Other",
+	.Folder     = "Folder",
+	.Multimedia = "Multimedia",
+	.Image      = "Image",
+	.Archive    = "Archive",
+	.Document   = "Document",
+	.Text       = "Text",
+	.Binary     = "Binary",
+	.Cache      = "Cache",
+	.Other      = "Other",
 }
 
 /*
@@ -73,15 +74,15 @@ seven and what is not a kind is grey.
 */
 @(rodata)
 KIND_COLOURS := [Kind]ops.Color {
-	.Folder      = {},
-	.Media       = {0xbb, 0x76, 0xb5, 255}, // orchid
-	.Image       = {0x24, 0x9c, 0x74, 255}, // green
-	.Archive     = {0x98, 0x42, 0x60, 255}, // berry
-	.Document    = {0x46, 0x93, 0xf1, 255}, // light blue
-	.Code        = {0x2e, 0x64, 0xa6, 255}, // blue
-	.Binary      = {0x5b, 0x6c, 0x00, 255}, // olive
-	.Build_Cache = {0xb0, 0x7a, 0x20, 255}, // ochre
-	.Other       = {},
+	.Folder     = {},
+	.Multimedia = {0xbb, 0x76, 0xb5, 255}, // orchid
+	.Image      = {0x24, 0x9c, 0x74, 255}, // green
+	.Archive    = {0x98, 0x42, 0x60, 255}, // berry
+	.Document   = {0x46, 0x93, 0xf1, 255}, // light blue
+	.Text       = {0x2e, 0x64, 0xa6, 255}, // blue
+	.Binary     = {0x5b, 0x6c, 0x00, 255}, // olive
+	.Cache      = {0xb0, 0x7a, 0x20, 255}, // ochre
+	.Other      = {},
 }
 
 // kind_colour is a kind's colour; what is not a kind of content is a grey set
@@ -126,20 +127,20 @@ EXTENSIONS := [?]struct {
 	ext:  string,
 	kind: Kind,
 } {
-	{"mp4", .Media},
-	{"mkv", .Media},
-	{"mov", .Media},
-	{"avi", .Media},
-	{"webm", .Media},
-	{"m4v", .Media},
-	{"wmv", .Media},
-	{"mp3", .Media},
-	{"flac", .Media},
-	{"wav", .Media},
-	{"ogg", .Media},
-	{"opus", .Media},
-	{"m4a", .Media},
-	{"aac", .Media},
+	{"mp4", .Multimedia},
+	{"mkv", .Multimedia},
+	{"mov", .Multimedia},
+	{"avi", .Multimedia},
+	{"webm", .Multimedia},
+	{"m4v", .Multimedia},
+	{"wmv", .Multimedia},
+	{"mp3", .Multimedia},
+	{"flac", .Multimedia},
+	{"wav", .Multimedia},
+	{"ogg", .Multimedia},
+	{"opus", .Multimedia},
+	{"m4a", .Multimedia},
+	{"aac", .Multimedia},
 	{"png", .Image},
 	{"jpg", .Image},
 	{"jpeg", .Image},
@@ -186,39 +187,39 @@ EXTENSIONS := [?]struct {
 	{"pptx", .Document},
 	{"odp", .Document},
 	{"epub", .Document},
-	{"txt", .Code},
-	{"md", .Code},
-	{"json", .Code},
-	{"yaml", .Code},
-	{"yml", .Code},
-	{"toml", .Code},
-	{"xml", .Code},
-	{"csv", .Code},
-	{"sql", .Code},
-	{"log", .Code},
-	{"odin", .Code},
-	{"c", .Code},
-	{"h", .Code},
-	{"cc", .Code},
-	{"cpp", .Code},
-	{"hpp", .Code},
-	{"go", .Code},
-	{"rs", .Code},
-	{"py", .Code},
-	{"js", .Code},
-	{"ts", .Code},
-	{"tsx", .Code},
-	{"jsx", .Code},
-	{"java", .Code},
-	{"kt", .Code},
-	{"swift", .Code},
-	{"rb", .Code},
-	{"php", .Code},
-	{"sh", .Code},
-	{"lua", .Code},
-	{"zig", .Code},
-	{"css", .Code},
-	{"html", .Code},
+	{"txt", .Text},
+	{"md", .Text},
+	{"json", .Text},
+	{"yaml", .Text},
+	{"yml", .Text},
+	{"toml", .Text},
+	{"xml", .Text},
+	{"csv", .Text},
+	{"sql", .Text},
+	{"log", .Text},
+	{"odin", .Text},
+	{"c", .Text},
+	{"h", .Text},
+	{"cc", .Text},
+	{"cpp", .Text},
+	{"hpp", .Text},
+	{"go", .Text},
+	{"rs", .Text},
+	{"py", .Text},
+	{"js", .Text},
+	{"ts", .Text},
+	{"tsx", .Text},
+	{"jsx", .Text},
+	{"java", .Text},
+	{"kt", .Text},
+	{"swift", .Text},
+	{"rb", .Text},
+	{"php", .Text},
+	{"sh", .Text},
+	{"lua", .Text},
+	{"zig", .Text},
+	{"css", .Text},
+	{"html", .Text},
 	{"exe", .Binary},
 	{"dll", .Binary},
 	{"so", .Binary},
@@ -239,7 +240,7 @@ kind_of :: proc(name: string, directory: bool) -> Kind {
 	if directory {
 		for n in BUILD_CACHE {
 			if name == n {
-				return .Build_Cache
+				return .Cache
 			}
 		}
 		return .Folder
@@ -261,13 +262,13 @@ kind_of :: proc(name: string, directory: bool) -> Kind {
 	return .Other
 }
 
-// kind_in is what the arc at stands for is, by type: Build_Cache if it or a
+// kind_in is what the arc at stands for is, by type: Cache if it or a
 // directory it lies in is a build or cache directory, else its own kind.
 kind_in :: proc(r: ^query.Rings_Result, at: int) -> Kind {
 	for up := at; up >= 0; up = int(r.arcs[up].up) {
 		a := r.arcs[up]
-		if a.directory && kind_of(a.name, true) == .Build_Cache {
-			return .Build_Cache
+		if a.directory && kind_of(a.name, true) == .Cache {
+			return .Cache
 		}
 	}
 	a := r.arcs[at]
@@ -309,20 +310,85 @@ fill_of :: proc(m: ^Model, r: ^query.Rings_Result, at: int, lit, framed: bool) -
 // LIT is how far a lit entry's colour goes toward the ink.
 LIT :: f32(0.3)
 
-// LEGEND_DOT is a legend swatch's diameter.
-LEGEND_DOT :: f32(8)
+// LEGEND_DOT is a legend swatch's diameter, LEGEND_GAP the space between two
+// chips, LEGEND_INSET the space between a chip's swatch and its name, and
+// LEGEND_LINE_GAP the space between two lines of chips.
+LEGEND_DOT      :: f32(8)
+LEGEND_GAP      :: f32(10)
+LEGEND_INSET    :: f32(4)
+LEGEND_LINE_GAP :: f32(2)
+
+// legend_shown is whether a kind has a chip: the kinds of content, not a plain
+// folder or what is none of them.
+@(private)
+legend_shown :: proc(kind: Kind) -> bool {
+	return kind != .Folder && kind != .Other
+}
+
+// legend_line_count is how many lines the chips take across width, wrapped as the
+// legend wraps them.
+@(private)
+legend_line_count :: proc(gtx: ^ui.Ctx, width: f32) -> int {
+	if !ui.is_finite(width) {
+		return 1
+	}
+	st := primer.text_style(.Small)
+	font := primer.font_for(gtx, st.weight)
+	lines, x := 1, f32(0)
+	for kind in Kind {
+		if !legend_shown(kind) {
+			continue
+		}
+		w := LEGEND_DOT + LEGEND_INSET + design.layout_style(gtx, KIND_NAMES[kind], st, font).width
+		switch {
+		case x == 0:
+			x = w
+		case x + LEGEND_GAP + w > width - 1:
+			lines += 1
+			x = w
+		case:
+			x += LEGEND_GAP + w
+		}
+	}
+	return lines
+}
+
+/*
+legend_row is the line under the switches that says what the colours mean: by
+type, a chip for each kind; by folder, that the colours follow the folders. Its
+height is what the chips take at this width, in either colouring, so switching
+colouring never moves the chart below it.
+*/
+@(private)
+legend_row :: proc(gtx: ^ui.Ctx, m: ^Model) {
+	lines := legend_line_count(gtx, gtx.constraints.max.x)
+	line := primer.text_style(.Small).line_height
+	height := f32(lines) * line + f32(lines - 1) * LEGEND_LINE_GAP
+	ui.sized(gtx, {min = {0, height}, max = {ui.INF, height}})
+	switch m.colour {
+	case .Type:
+		legend(gtx)
+	case .Folder:
+		primer.text(
+			gtx,
+			"Coloured by top-level folder",
+			.Small,
+			color = primer.color(.Fg_Color_Muted),
+		)
+	}
+}
 
 // legend names the colours of colouring by type, the kinds of content in turn,
 // wrapping onto more lines where the panel is narrow.
 @(private)
 legend :: proc(gtx: ^ui.Ctx) {
-	if ui.wrap(gtx, gap = 10, line_gap = 2, align = .Center) {
+	if ui.wrap(gtx, gap = LEGEND_GAP, line_gap = LEGEND_LINE_GAP, align = .Center) {
 		for kind in Kind {
-			if kind == .Folder || kind == .Other {
+			if !legend_shown(kind) {
 				continue
 			}
 			sc := ui.scope_open(gtx, kind)
-			if ui.row(gtx, gap = 4, align = .Center) {
+			if ui.row(gtx, gap = LEGEND_INSET, align = .Center) {
 				swatch(gtx, kind_colour(kind))
 				primer.text(gtx, KIND_NAMES[kind], .Small, color = primer.color(.Fg_Color_Muted))
 			}

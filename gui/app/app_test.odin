@@ -835,21 +835,17 @@ colouring_by_type_names_the_kind :: proc(t: ^testing.T) {
 	defer rig_close(&r)
 	testing.expect(t, settle(&r, "Done"))
 	testing.expect(t, settle(&r, "268.0 KiB in 2 items"))
-	testing.expect(t, !ui.probe_tagged(&r.p, "Archive and disk image"), "no legend by folder")
+	testing.expect(t, !ui.probe_tagged(&r.p, "Archive"), "no legend by folder")
 
 	// The kind is read off the rings' answer, which lands apart from the listing.
 	testing.expect(t, settle(&r, "arc notes.txt"))
 	testing.expect(t, ui.probe_click(&r.p, "Type"))
 	press_and_hand_on(&r)
-	testing.expect(
-		t,
-		ui.probe_tagged(&r.p, "Archive and disk image"),
-		"the legend names the kinds",
-	)
+	testing.expect(t, ui.probe_tagged(&r.p, "Archive"), "the legend names the kinds")
 	row := ui.probe_bounds(&r.p, "notes.txt")
 	ui.probe_move(&r.p, row.x + 24, row.y + row.h / 2)
 	ui.probe_advance(&r.p, 3, 1.0 / 60)
-	said := "4.0 KiB · 1.5% of sonar_gui_kinds · Code and text"
+	said := "4.0 KiB · 1.5% of sonar_gui_kinds · Text"
 	testing.expect(t, ui.probe_tagged(&r.p, said), "the info block names the kind")
 }
 
@@ -949,5 +945,38 @@ every_window_size_lays_out_without_a_clash :: proc(t: ^testing.T) {
 				)
 			}
 		}
+	}
+}
+
+@(test)
+switching_colouring_moves_nothing :: proc(t: ^testing.T) {
+	root := fixture(t, "steady")
+	defer os.remove_all(root)
+	r: Rig
+	rig_open(&r, root)
+	defer rig_close(&r)
+	testing.expect(t, settle(&r, "Done"))
+	testing.expect(t, settle(&r, "arc photos"))
+
+	// The legend's row is as tall either way, so the chart under it stays put,
+	// at a width where the chips take one line and where they wrap.
+	for width in ([]f32{1100, 700}) {
+		r.p.size = {width, 700}
+		r.m.colour = .Folder
+		ui.probe_advance(&r.p, 30, 1.0 / 60)
+		testing.expect(t, ui.probe_tagged(&r.p, "Coloured by top-level folder"))
+		before := ui.probe_bounds(&r.p, "Sunburst chart")
+		r.m.colour = .Type
+		ui.probe_advance(&r.p, 30, 1.0 / 60)
+		testing.expect(t, ui.probe_tagged(&r.p, "Multimedia"), "the chips name the kinds")
+		after := ui.probe_bounds(&r.p, "Sunburst chart")
+		testing.expectf(
+			t,
+			before == after,
+			"at %v wide the chart moved from %v to %v",
+			width,
+			before,
+			after,
+		)
 	}
 }

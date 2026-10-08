@@ -165,10 +165,9 @@ rings_panel :: proc(gtx: ^ui.Ctx, m: ^Model) {
 		mode_switch(gtx, m, compact)
 		colour_switch(gtx, m, compact)
 	}
-	// Its own line, below the switches, so it wraps rather than squeezing them.
-	if m.colour == .Type {
-		legend(gtx)
-	}
+	// Its own line, below the switches, so it wraps rather than squeezing them, and
+	// as tall in either colouring, so switching moves nothing.
+	legend_row(gtx, m)
 	answer, _ := ui.need(
 		gtx,
 		query.Rings{generation = m.generation, dir = m.dir},
