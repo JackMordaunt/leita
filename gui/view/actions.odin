@@ -86,6 +86,7 @@ walk_history :: proc(gtx: ^ui.Ctx, m: ^Model) {
 	ui.key_interest(gtx, nav, .Browser_Forward)
 	ui.key_interest(gtx, nav, .Left, {.Alt})
 	ui.key_interest(gtx, nav, .Right, {.Alt})
+	ui.key_interest(gtx, nav, .L, {.Ctrl})
 	for e in ui.events(gtx, nav) {
 		if e.kind != .Key {
 			continue
@@ -95,6 +96,10 @@ walk_history :: proc(gtx: ^ui.Ctx, m: ^Model) {
 			go_back(m)
 		case .Browser_Forward, .Right:
 			go_forward(m)
+		case .L:
+			if len(m.trail) > 0 {
+				edit_location(m, crumb_path(gtx, m.trail[:]))
+			}
 		}
 	}
 }

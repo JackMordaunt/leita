@@ -169,17 +169,6 @@ rings_panel :: proc(gtx: ^ui.Ctx, m: ^Model) {
 	drawn.arcs = ease(gtx, m, answer)
 	r := &drawn
 
-	items := make([]primer.Breadcrumb, len(r.crumbs), gtx.allocator)
-	for c, i in r.crumbs {
-		items[i] = {
-			label    = c.name,
-			selected = i == len(r.crumbs) - 1,
-		}
-	}
-	if at := primer.breadcrumbs(gtx, items); at >= 0 && at < len(r.crumbs) - 1 {
-		open(m, r.crumbs[at].node)
-	}
-
 	// What the pointer is over, as of the last frame's size: the block comes
 	// before the disc that would measure it this frame.
 	b := burst_of(m.burst)
@@ -255,7 +244,9 @@ info :: proc(gtx: ^ui.Ctx, drawn, laid: ^query.Rings_Result, u: Hit, at: int) {
 			up ? " · click to go up" : "",
 			allocator = gtx.allocator,
 		)
-		path = crumb_path(gtx, drawn.crumbs)
+		// The bar says where the centre is; the line stays, empty, so the block
+		// keeps its height.
+		path = ""
 	}
 	primer.truncate(gtx, name, max_width = ui.INF, weight = .Semibold)
 	primer.truncate(gtx, detail, max_width = ui.INF, size = .Small, color = muted)

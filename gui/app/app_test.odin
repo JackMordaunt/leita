@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:math"
 import "core:os"
 import "core:slice"
+import "core:strings"
 import "core:sync"
 import "core:testing"
 import "core:time"
@@ -11,8 +12,10 @@ import "core:time"
 import "jm:ui"
 import bl "jm:ui/blend2d"
 import "jm:ui/ops"
+import "jm:ui/primer"
 import "jm:ui/render"
 
+import "../command"
 import "../query"
 import "../view"
 
@@ -172,7 +175,7 @@ a_rescan_starts_over_at_the_top :: proc(t: ^testing.T) {
 	first := r.m.generation
 
 	// Scanning again renumbers the tree, so the view goes back to the top.
-	testing.expect(t, ui.probe_click(&r.p, "Scan"))
+	testing.expect(t, ui.probe_click(&r.p, "Rescan"))
 	hand_on(&r)
 	testing.expect(t, settle(&r, "268.0 KiB in 2 items"), "the top is listed again")
 	testing.expect(t, r.m.generation > first, "a new generation")
@@ -508,10 +511,8 @@ the_sunburst_sits_in_the_middle_of_its_room :: proc(t: ^testing.T) {
 	defer rig_close(&r)
 	testing.expect(t, settle(&r, "Done"))
 	testing.expect(t, settle(&r, "arc photos"))
-	name := fmt.tprintf("sonar_gui_%s", "centre")
-
-	// The disc's room runs from under the info block, three lines whose first is
-	// the open directory's name, past the column's 8 point gap,
+	// The disc's room runs from under the info block, three lines whose second is
+	// the open directory's size, past the column's 8 point gap,
 	// to the window's margin, and across from the window's margin to the grip.
 	// Wide, the disc is held by its height and has as much room left as right;
 	// tall, by its width, with as much above as below.
@@ -520,7 +521,8 @@ the_sunburst_sits_in_the_middle_of_its_room :: proc(t: ^testing.T) {
 		ui.probe_advance(&r.p, 60, 1.0 / 60)
 		disc := ui.probe_bounds(&r.p, "Sunburst")
 		grip := ui.probe_bounds(&r.p, "Resize panels")
-		block := ui.probe_bounds(&r.p, name).y + view.info_height()
+		title := primer.text_style(.Medium, .Semibold).line_height + view.INFO_GAP
+		block := ui.probe_bounds(&r.p, "268.0 KiB").y - title + view.info_height()
 		left, right := disc.x - view.PAD, grip.x - (disc.x + disc.w)
 		above, below := disc.y - (block + 8), size.y - view.PAD - (disc.y + disc.h)
 		testing.expectf(
@@ -568,4 +570,129 @@ hovering_a_long_path_leaves_the_sunburst_where_it_is :: proc(t: ^testing.T) {
 	testing.expect(t, ui.probe_tagged(&r.p, long), "the block names what is hovered")
 	after := ui.probe_bounds(&r.p, "Sunburst")
 	testing.expectf(t, before == after, "the disc moved from %v to %v", before, after)
+}
+
+@(test)
+the_location_bar_walks_the_path_and_scans_above_it :: proc(t: ^testing.T) {
+	root := fixture(t, "bar")
+	defer os.remove_all(root)
+	r: Rig
+	rig_open(&r, root)
+	defer rig_close(&r)
+	testing.expect(t, settle(&r, "Done"))
+	testing.expect(t, settle(&r, "arc photos"))
+	testing.expect(t, ui.probe_tagged(&r.p, "sonar_gui_bar"), "the scan's top is a step")
+	testing.expect(t, ui.probe_tagged(&r.p, "tmp"), "and so is the directory above it")
+
+	// Into photos and back by its step.
+	ui.probe_click_at(&r.p, ring_point(&r, 0.5))
+	press_and_hand_on(&r)
+	testing.expect(t, settle(&r, "photos"), "photos is a step now")
+	testing.expect(t, settle(&r, "264.0 KiB in 2 items"))
+	testing.expect(t, ui.probe_click(&r.p, "sonar_gui_bar"))
+	press_and_hand_on(&r)
+	testing.expect(t, settle(&r, "268.0 KiB in 2 items"), "the top's step opened the top")
+
+	// A step above the scan asks for a scan from there.
+	testing.expect(t, ui.probe_click(&r.p, "tmp"))
+	scanned := ""
+	for c in ui.probe_commands(&r.p) {
+		if cmd, ok := ui.command_as(c, command.Command); ok {
+			if scan, is := cmd.(command.Scan); is {
+				scan := scan
+				scanned = strings.clone(command.text_of(&scan.path), context.temp_allocator)
+			}
+		}
+	}
+	testing.expect_value(t, scanned, "/tmp/")
+	ui.router_commands_clear(&r.p.router)
+}
+
+@(test)
+the_location_bar_edits_into_a_field_and_back :: proc(t: ^testing.T) {
+	root := fixture(t, "edit")
+	defer os.remove_all(root)
+	r: Rig
+	rig_open(&r, root)
+	defer rig_close(&r)
+	testing.expect(t, settle(&r, "Done"))
+	testing.expect(t, settle(&r, "sonar_gui_edit"))
+
+	// The bar's empty end opens the field, focused, holding the path.
+	bar := ui.probe_bounds(&r.p, "Location")
+	ui.probe_click_at(&r.p, {bar.x + bar.w - 20, bar.y + bar.h / 2})
+	press_and_hand_on(&r)
+	press_and_hand_on(&r)
+	testing.expect(t, r.m.editing, "the bar is a field")
+	testing.expect_value(t, ui.text_string(&r.m.path), root)
+	testing.expect_value(t, ui.probe_focus_name(&r.p), "Location")
+
+	// Escape puts the steps back.
+	ui.probe_key(&r.p, .Escape)
+	press_and_hand_on(&r)
+	testing.expect(t, !r.m.editing, "Escape closes the field")
+	testing.expect(t, ui.probe_tagged(&r.p, "sonar_gui_edit"))
+
+	// Enter scans what the field holds.
+	ui.probe_click_at(&r.p, {bar.x + bar.w - 20, bar.y + bar.h / 2})
+	press_and_hand_on(&r)
+	press_and_hand_on(&r)
+	first := r.m.generation
+	ui.probe_type(&r.p, fmt.tprintf("%s/photos", root))
+	ui.probe_key(&r.p, .Enter)
+	press_and_hand_on(&r)
+	testing.expect(t, settle(&r, "264.0 KiB in 2 items"), "photos was scanned")
+	testing.expect(t, r.m.generation > first, "as a new scan")
+}
+
+@(test)
+a_deep_path_shows_its_deepest_steps :: proc(t: ^testing.T) {
+	root := fixture(t, "deep")
+	defer os.remove_all(root)
+	deep := root
+	for name in ([]string{"first_level_directory", "second_level_directory", "third_level_directory", "fourth_level_directory"}) {
+		deep = fmt.tprintf("%s/%s", deep, name)
+		testing.expect(t, os.make_directory(deep) == nil)
+	}
+	testing.expect(t, os.write_entire_file(fmt.tprintf("%s/leaf.bin", deep), "x") == nil)
+
+	r: Rig
+	rig_open(&r, root)
+	defer rig_close(&r)
+	r.p.size = {760, 700}
+	testing.expect(t, settle(&r, "Done"))
+	// Walk down to the deepest directory by the contents list.
+	for name in ([]string{"first_level_directory", "second_level_directory", "third_level_directory", "fourth_level_directory"}) {
+		testing.expect(t, settle(&r, name))
+		open_row(&r, name)
+		testing.expect(t, settle(&r, "leaf.bin" if name == "fourth_level_directory" else name))
+	}
+	testing.expect(t, settle(&r, "fourth_level_directory"), "the deepest is a step")
+	ui.probe_advance(&r.p, 10, 1.0 / 60)
+
+	bar := ui.probe_bounds(&r.p, "Location")
+	rescan := ui.probe_bounds(&r.p, "Rescan")
+	testing.expectf(
+		t,
+		bar.x + bar.w <= rescan.x,
+		"the bar ends at %v, before the Rescan button at %v",
+		bar.x + bar.w,
+		rescan.x,
+	)
+	deepest := ui.probe_bounds(&r.p, "fourth_level_directory")
+	top := ui.probe_bounds(&r.p, "tmp")
+	testing.expectf(
+		t,
+		deepest.x + deepest.w <= bar.x + bar.w,
+		"the deepest step ends at %v, inside the bar to %v",
+		deepest.x + deepest.w,
+		bar.x + bar.w,
+	)
+	testing.expectf(
+		t,
+		top.x < bar.x,
+		"the top has scrolled off the left: tmp at %v, bar from %v",
+		top.x,
+		bar.x,
+	)
 }

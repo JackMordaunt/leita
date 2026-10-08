@@ -45,6 +45,15 @@ FONTS :: primer.Fonts {
 
 Model :: struct {
 	path:             ui.Text_State,
+	// The location bar (location.odin): whether it is the field, whether the field
+	// is still to take focus, how far its steps are scrolled, whether they follow
+	// the deepest, and the trail it shows.
+	editing:          bool,
+	edit_focus:       bool,
+	location_offset:  f32,
+	location_follow:  bool,
+	trail:            [dynamic]query.Crumb, // the way to the directory shown, names owned
+	trail_generation: u32,
 	dark:             bool,
 	scheme:           primer.Scheme,
 	// The directory shown, as an index into the tree of that generation. Each scan
@@ -100,6 +109,8 @@ model_destroy :: proc(m: ^Model) {
 	delete(m.target.name)
 	delete(m.poses)
 	delete(m.poses_next)
+	forget_trail(m)
+	delete(m.trail)
 }
 
 view :: proc(gtx: ^ui.Ctx, user: rawptr) {
@@ -245,30 +256,16 @@ toolbar :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result) {
 	title(gtx, "sonar")
 	ui.spacer(gtx, 8)
 	ui.flexible(gtx, 1)
-	field := primer.text_input(
-		gtx,
-		&m.path,
-		placeholder = "A directory, drive or image",
-		leading = .File_Directory,
-		block = true,
-		name = "What to scan",
-	)
-	scanning := prog != nil && prog.state == .Scanning
-	if scanning {
+	location(gtx, m, prog)
+	switch {
+	case prog != nil && prog.state == .Scanning:
 		if primer.button(gtx, "Stop", .Danger, leading = .Square_Fill) {
 			ui.command(gtx, command.Command(command.Stop{}))
 		}
-	}
-	if primer.button(
-		   gtx,
-		   scanning ? "Rescan" : "Scan",
-		   scanning ? .Default : .Primary,
-		   leading = .Search,
-	   ) ||
-	   field.submitted {
-		path := strings.trim_space(ui.text_string(&m.path))
-		if path != "" {
-			ui.command(gtx, command.Command(command.Scan{path = command.text_make(path)}))
+	case prog != nil && prog.target != "":
+		// Scanning the same place again picks up what changed on disk since.
+		if primer.icon_button(gtx, .Sync, "Rescan", .Invisible) {
+			ui.command(gtx, command.Command(command.Scan{path = command.text_make(prog.target)}))
 		}
 	}
 	if primer.icon_button(
@@ -305,7 +302,6 @@ status :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result) {
 			primer.label(gtx, "Failed", .Danger)
 		case .Idle:
 		}
-		primer.text(gtx, prog.target, weight = .Semibold)
 		primer.text(gtx, counters(gtx, prog), color = primer.color(.Fg_Color_Muted))
 	}
 	notice(gtx, m, prog.notice)
