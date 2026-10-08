@@ -71,3 +71,40 @@ a_child_is_listed_once_its_chain_is_charged :: proc(t: ^testing.T) {
 	testing.expect_value(t, len(list_children(&r, 0)), 1)
 	testing.expect_value(t, len(list_children(&r, 1)), 1)
 }
+
+@(test)
+a_forgotten_directory_leaves_the_totals_and_its_list :: proc(t: ^testing.T) {
+	tree: scan.Tree
+	testing.expect(t, scan.tree_init(&tree) == nil)
+	defer scan.tree_destroy(&tree)
+	testing.expect(t, scan.reserve(&tree, 4) == nil)
+
+	r := Rollup {
+		linked = true,
+	}
+	defer rollup_destroy(&r)
+
+	// root/ holding dir/ (with file, 100 bytes) and keep (30 bytes).
+	place(&tree, 0, 0, 0, {.Used, .Settled, .Directory})
+	place(&tree, 1, 0, 0, {.Used, .Settled, .Directory})
+	place(&tree, 2, 1, 100, {.Used, .Settled})
+	place(&tree, 3, 0, 30, {.Used, .Settled})
+	rollup_advance(&r, &tree)
+	testing.expect_value(t, r.totals[0], 130)
+
+	forget(&r, &tree, 1)
+	testing.expect_value(t, r.totals[0], 30)
+	under_root := list_children(&r, 0)
+	testing.expect_value(t, len(under_root), 1)
+	if len(under_root) == 1 {
+		testing.expect_value(t, under_root[0], 3)
+	}
+	testing.expect(t, removed(&r, &tree, 2), "what was under it is gone too")
+	testing.expect(t, !removed(&r, &tree, 3))
+
+	// A restatement charges everything again but what was forgotten.
+	rollup_restate(&r)
+	rollup_advance(&r, &tree)
+	testing.expect_value(t, r.totals[0], 30)
+	testing.expect_value(t, len(list_children(&r, 0)), 1)
+}
