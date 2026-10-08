@@ -9,7 +9,9 @@ import "core:testing"
 import "core:time"
 
 import "jm:ui"
+import bl "jm:ui/blend2d"
 import "jm:ui/ops"
+import "jm:ui/render"
 
 import "../query"
 import "../view"
@@ -22,11 +24,13 @@ import "../view"
 
 @(private = "file")
 Rig :: struct {
-	h:     Host,
-	m:     view.Model,
-	p:     ui.Probe,
-	data:  ui.Data_Host,
-	needs: ui.Subscriptions,
+	h:        Host,
+	m:        view.Model,
+	// The probe, as p, with a renderer and the window's fonts beside it, so a
+	// test can look at pixels as well as tags.
+	using hl: render.Headless,
+	data:     ui.Data_Host,
+	needs:    ui.Subscriptions,
 }
 
 @(private = "file")
@@ -35,14 +39,19 @@ rig_open :: proc(r: ^Rig, path: string) {
 	r.data = data_host(&r.h)
 	view.model_init(&r.m, path)
 	ui.subscriptions_init(&r.needs)
-	ui.probe_init(&r.p, view.view, &r.m, {1100, 700})
-	ui.probe_frame(&r.p)
+	fonts := []ops.Font_Ref {
+		{0, ui.default_font(), 400},
+		{1, ui.default_font(), 500},
+		{2, ui.default_font(), 600},
+		{3, ui.default_font(), 400},
+	}
+	render.headless_init(&r.hl, view.view, &r.m, {1100, 700}, fonts)
 	hand_on(r)
 }
 
 @(private = "file")
 rig_close :: proc(r: ^Rig) {
-	ui.probe_destroy(&r.p)
+	render.headless_destroy(&r.hl)
 	ui.subscriptions_destroy(&r.needs)
 	view.model_destroy(&r.m)
 	stop(&r.h)
@@ -384,4 +393,52 @@ a_largest_files_name_opens_its_folder :: proc(t: ^testing.T) {
 	testing.expect(t, settle(&r, "big.raw"))
 	open_row(&r, "big.raw")
 	testing.expect(t, settle(&r, "264.0 KiB in 2 items"), "photos opened")
+}
+
+@(test)
+a_long_name_stops_short_of_its_share_bar :: proc(t: ^testing.T) {
+	root := fixture(t, "longname")
+	defer os.remove_all(root)
+	long := "a_name_far_too_long_to_fit_beside_its_share_bar_in_the_contents_list.bin"
+	testing.expect(t, os.write_entire_file(fmt.tprintf("%s/%s", root, long), "x") == nil)
+
+	r: Rig
+	rig_open(&r, root)
+	defer rig_close(&r)
+	testing.expect(t, settle(&r, "Done"))
+	testing.expect(t, settle(&r, long))
+
+	// The name's label is as wide as it is, but clipped to its cell: just above the
+	// bar, where a name running on would draw its letters, there is only the
+	// background.
+	bar := ui.probe_bounds(&r.p, fmt.tprintf("%s share", long))
+	img: bl.ImageCore
+	bl.image_init(&img)
+	defer bl.image_destroy(&img)
+	testing.expect(t, bl.image_create(&img, 1100, 700, .PRGB32) == 0)
+	render.render(&r.r, ui.probe_current(&r.p), &img, r.clear)
+	data: bl.ImageData
+	testing.expect(t, bl.image_get_data(&img, &data) == 0)
+	// inked counts the pixels other than the background in a strip of the rows just
+	// above the bar, from x0 to x1.
+	inked :: proc(data: bl.ImageData, bar: ops.Rect, x0, x1: f32) -> (n: int) {
+		for y in int(bar.y) - 7 ..< int(bar.y) {
+			line := ([^]u32)(rawptr(uintptr(data.pixel_data) + uintptr(y * int(data.stride))))
+			for x in int(x0) ..< int(x1) {
+				if line[x] != 0xFFFFFFFF {
+					n += 1
+				}
+			}
+		}
+		return
+	}
+	// The name is drawn where it fits, so a strip with nothing in it means clipped,
+	// not a frame that drew nothing.
+	testing.expect(
+		t,
+		inked(data, bar, bar.x - 200, bar.x - 60) > 0,
+		"the name is drawn before the bar",
+	)
+	over := inked(data, bar, bar.x, bar.x + bar.w)
+	testing.expectf(t, over == 0, "%d pixels over the bar are not background", over)
 }

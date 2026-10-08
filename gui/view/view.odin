@@ -314,17 +314,9 @@ entry :: proc(gtx: ^ui.Ctx, m: ^Model, e: query.Entry, total: u64) -> (opened: b
 	defer ui.scope_close(&s)
 	ui.row(gtx, gap = 12, align = .Center)
 	ui.flexible(gtx, 3)
-	clicked := primer.button(
-		gtx,
-		e.name,
-		.Invisible,
-		.Small,
-		leading = e.directory ? .File_Directory_Fill : .File,
-		align = .Start,
-		block = true,
-	)
+	clicked, name := name_button(gtx, e.name, e.directory ? .File_Directory_Fill : .File)
 	opened = clicked && e.directory
-	row_menu(gtx, m, .Contents, {node = e.node, name = e.name, directory = e.directory})
+	row_menu(gtx, m, .Contents, name, {node = e.node, name = e.name, directory = e.directory})
 	share := total > 0 ? 100 * f32(f64(e.bytes) / f64(total)) : 0
 	ui.flexible(gtx, 2)
 	primer.progress_bar(
@@ -368,18 +360,11 @@ largest :: proc(gtx: ^ui.Ctx, m: ^Model) {
 				defer ui.scope_close(&s)
 				if ui.column(gtx, gap = 2, align = .Fill) {
 					// The name opens the directory holding the file.
-					if primer.button(
-						gtx,
-						base_name(f.path),
-						.Invisible,
-						.Small,
-						leading = .File,
-						align = .Start,
-						block = true,
-					) {
+					clicked, name := name_button(gtx, base_name(f.path), .File)
+					if clicked {
 						open(m, f.parent)
 					}
-					row_menu(gtx, m, .Largest, {node = f.node, name = base_name(f.path)})
+					row_menu(gtx, m, .Largest, name, {node = f.node, name = base_name(f.path)})
 					if ui.row(gtx, gap = 8, align = .Center) {
 						ui.flexible(gtx, 1)
 						primer.truncate(
@@ -399,6 +384,50 @@ largest :: proc(gtx: ^ui.Ctx, m: ^Model) {
 }
 
 // --- small parts ---------------------------------------------------------------
+
+// NAME_FADE is how far a name too long for its cell fades out before its end.
+NAME_FADE :: f32(32)
+
+/*
+name_button is a list row's name: an invisible button as wide as it is offered,
+clipped there, with its last NAME_FADE points fading into the background so a long
+name trails off rather than running under what sits beside it. It returns the
+button, for a menu anchored to it.
+*/
+@(private)
+name_button :: proc(
+	gtx: ^ui.Ctx,
+	label: string,
+	ic: primer.Icon,
+	loc := #caller_location,
+) -> (
+	clicked: bool,
+	button: ui.Last_Widget,
+) {
+	clip := ui.clip_box_open(gtx, loc = loc)
+	width := gtx.constraints.max.x
+	clicked = primer.button(
+		gtx,
+		label,
+		.Invisible,
+		.Small,
+		leading = ic,
+		align = .Start,
+		block = true,
+	)
+	button = ui.last_widget(gtx)
+	if ui.is_finite(width) && width > NAME_FADE {
+		bg := primer.color(.Bg_Color_Default)
+		clear := bg
+		clear[3] = 0
+		stops := make([]ops.Gradient_Stop, 2, gtx.allocator)
+		stops[0], stops[1] = {0, clear}, {1, bg}
+		edge := ops.Rect{width - NAME_FADE, 0, NAME_FADE, button.size.y}
+		ops.fill(gtx.scene, edge, ops.Linear_Gradient{{edge.x, 0}, {width, 0}, stops})
+	}
+	ui.clip_box_close(&clip)
+	return
+}
 
 @(private)
 base_name :: proc(path: string) -> string {

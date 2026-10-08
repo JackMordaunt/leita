@@ -152,13 +152,11 @@ entry_menu :: proc(gtx: ^ui.Ctx, m: ^Model, anchor: ui.Last_Widget, at := ops.Po
 	}
 }
 
-// row_menu gives a list row's name button, the widget closed last, the
-// right-click menu: a right press on it aims the menu at t and opens it there,
+// row_menu gives a list row's name button the right-click menu: a right press on it aims the menu at t and opens it there,
 // and while it is open for t from this list it is drawn under the button. A
 // button acts on left clicks only, so a right press reaches its area unclaimed.
 @(private)
-row_menu :: proc(gtx: ^ui.Ctx, m: ^Model, from: Menu_From, t: Target) {
-	name := ui.last_widget(gtx)
+row_menu :: proc(gtx: ^ui.Ctx, m: ^Model, from: Menu_From, name: ui.Last_Widget, t: Target) {
 	for e in ui.events(gtx, name.id) {
 		if e.kind == .Press && e.button == .Right {
 			aim(m, t)
