@@ -123,6 +123,10 @@ Model :: struct {
 	// The type chips: those turned on, and the one under the pointer this frame.
 	kinds_on:         bit_set[Kind],
 	kind_hover:       Maybe(Kind),
+	// The last rings and listing asked for that were answered, shown until the
+	// directory just opened is (need_held).
+	rings_held:       query.Rings,
+	listing_held:     query.Listing,
 	boxes:            map[u32]ops.Rect,
 	boxes_next:       map[u32]ops.Rect,
 	boxes_dir:        u32,
@@ -407,12 +411,13 @@ listing :: proc(gtx: ^ui.Ctx, m: ^Model) {
 	if ui.inset(gtx, {right = PAD}) {
 		primer.heading(gtx, "Contents", level = 2, variant = .Small)
 	}
-	r, _ := ui.need(
+	r := need_held(
 		gtx,
 		query.Listing{generation = m.generation, dir = m.dir},
+		&m.listing_held,
 		query.Listing_Result,
 	)
-	if r == nil || r.generation != m.generation || len(r.crumbs) == 0 {
+	if r == nil {
 		for i in 0 ..< 6 {
 			primer.skeleton_box(gtx, height = 28, delay = .Short, key = u64(i + 1))
 		}
@@ -566,6 +571,31 @@ title :: proc(gtx: ^ui.Ctx, s: string, loc := #caller_location) {
 	ops.tag(gtx.scene, p.id, s)
 	ui.semantics(gtx, &p, {role = .Heading, level = 1, label = s})
 	ui.widget_close(gtx, &p, {size = {para.width, para.height}})
+}
+
+/*
+need_held asks for q, a directory's rings or listing, and returns its answer; until
+that lands, it asks again for held, the last such query that had one in this scan,
+and returns that answer instead, so opening a directory shows what was there until
+what is there now arrives rather than nothing for the frames between. A query is
+held once it is answered. nil only before anything in this scan has been.
+*/
+@(private)
+need_held :: proc(gtx: ^ui.Ctx, q: $Q, held: ^Q, $R: typeid) -> ^R {
+	answered :: proc(r: ^R, generation: u32) -> bool {
+		return r != nil && r.generation == generation && len(r.crumbs) > 0
+	}
+	if r, _ := ui.need(gtx, q, R); answered(r, q.generation) {
+		held^ = q
+		return r
+	}
+	if held.generation != q.generation || held^ == q {
+		return nil
+	}
+	if r, _ := ui.need(gtx, held^, R); answered(r, q.generation) {
+		return r
+	}
+	return nil
 }
 
 // NO_NODE names no node.

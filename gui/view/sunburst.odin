@@ -168,12 +168,13 @@ rings_panel :: proc(gtx: ^ui.Ctx, m: ^Model) {
 	// Its own line, below the switches, so it wraps rather than squeezing them, and
 	// as tall in either colouring, so switching moves nothing.
 	legend_row(gtx, m)
-	answer, _ := ui.need(
+	answer := need_held(
 		gtx,
 		query.Rings{generation = m.generation, dir = m.dir},
+		&m.rings_held,
 		query.Rings_Result,
 	)
-	if answer == nil || answer.generation != m.generation || len(answer.crumbs) == 0 {
+	if answer == nil {
 		primer.skeleton_box(gtx, width = 320, height = 320, delay = .Short)
 		return
 	}

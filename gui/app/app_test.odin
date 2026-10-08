@@ -1011,3 +1011,38 @@ type_chips_turn_on_and_off_and_light_their_kind :: proc(t: ^testing.T) {
 	testing.expect(t, hovering && kind == .Archive, "the chip under the pointer lights its kind")
 	testing.expect_value(t, ui.probe_bounds(&r.p, "Sunburst chart"), before)
 }
+
+@(test)
+opening_a_directory_never_blanks_the_panels :: proc(t: ^testing.T) {
+	root := fixture(t, "steady_open")
+	defer os.remove_all(root)
+	r: Rig
+	rig_open(&r, root)
+	defer rig_close(&r)
+	testing.expect(t, settle(&r, "Done"))
+	testing.expect(t, settle(&r, "arc photos"))
+	testing.expect(t, settle(&r, "268.0 KiB in 2 items"))
+
+	// Open photos, then draw frames with no answer delivered: until the new ones
+	// land, the panels show what they had, never nothing.
+	ui.probe_click_at(&r.p, ring_point(&r, 0.5))
+	hand_on(&r)
+	for _ in 0 ..< 3 {
+		ui.probe_frame(&r.p)
+		testing.expect(t, ui.probe_tagged(&r.p, "Sunburst chart"), "the chart is drawn")
+		// The pointer rests where it clicked, on photos, which the block describes.
+		testing.expect(
+			t,
+			ui.probe_tagged(&r.p, "264.0 KiB · 98.5% of sonar_gui_steady_open · click to open"),
+			"the info block keeps its text",
+		)
+		testing.expect(
+			t,
+			ui.probe_tagged(&r.p, "268.0 KiB in 2 items"),
+			"the contents keep their rows",
+		)
+	}
+	// Then the answers land, and they show photos.
+	testing.expect(t, settle(&r, "264.0 KiB in 2 items"), "photos is listed")
+	testing.expect(t, settle(&r, "arc big.raw"), "and drawn")
+}
