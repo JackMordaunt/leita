@@ -313,11 +313,12 @@ Blocks :: struct {
 	framed: bool, // a directory is the frame its contents sit in
 	from:   Menu_From,
 	name:   string, // the chart's tag
+	title:  string, // what a screen reader calls it
 	tag:    string, // the prefix of a first-level box's tag
 }
 
-TREEMAP :: Blocks{lay_boxes, true, .Treemap, "Treemap chart", "box"}
-ICICLE  :: Blocks{lay_icicle, false, .Icicle, "Icicle chart", "bar"}
+TREEMAP :: Blocks{lay_boxes, true, .Treemap, "Treemap chart", "Treemap", "box"}
+ICICLE  :: Blocks{lay_icicle, false, .Icicle, "Icicle chart", "Icicle", "bar"}
 
 // blocks_panel is a layout drawn as boxes, with the info block over it.
 @(private)
@@ -425,6 +426,7 @@ blocks :: proc(
 	room := ops.Rect{0, 0, size.x, size.y}
 	ops.input_area(gtx.scene, p.id, room, {.Press, .Move, .Enter, .Leave})
 	ops.tag(gtx.scene, p.id, k.name)
+	describe_chart(gtx, &p, m, r, boxes, at if lit == .Arc else -1, k.title)
 
 	if menu {
 		if i := box_at(boxes, m.pointer); i >= 0 {

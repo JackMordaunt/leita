@@ -10,6 +10,14 @@ import "core:strings"
 
 // bytes is n bytes in binary units, to one decimal place past a KiB.
 bytes :: proc(n: u64, allocator := context.temp_allocator) -> string {
+	sb := strings.builder_make(allocator)
+	write_bytes(&sb, n)
+	return strings.to_string(sb)
+}
+
+// write_bytes writes n bytes to sb as bytes says them, for a caller saying a
+// great many sizes at once rather than making a string of each.
+write_bytes :: proc(sb: ^strings.Builder, n: u64) {
 	units := [?]string{"B", "KiB", "MiB", "GiB", "TiB", "PiB"}
 	v := f64(n)
 	i := 0
@@ -18,9 +26,10 @@ bytes :: proc(n: u64, allocator := context.temp_allocator) -> string {
 		i += 1
 	}
 	if i == 0 {
-		return fmt.aprintf("%d B", n, allocator = allocator)
+		fmt.sbprintf(sb, "%d B", n)
+		return
 	}
-	return fmt.aprintf("%.1f %s", v, units[i], allocator = allocator)
+	fmt.sbprintf(sb, "%.1f %s", v, units[i])
 }
 
 // count is n with its thousands separated by commas.

@@ -263,11 +263,8 @@ info :: proc(gtx: ^ui.Ctx, m: ^Model, drawn, laid: ^query.Rings_Result, u: Hit, 
 		share := drawn.bytes > 0 ? 100 * f64(a.bytes) / f64(drawn.bytes) : 0
 		name = a.name
 		kind: string
-		#partial switch m.colour {
-		case .Type:
-			kind = fmt.aprintf(" · %s", KIND_NAMES[kind_in(laid, at)], allocator = gtx.allocator)
-		case .Change:
-			kind = change_note(gtx, a.bytes, a.was, drawn.compared)
+		if note := colour_note(gtx, m, laid, at); note != "" {
+			kind = fmt.aprintf(" · %s", note, allocator = gtx.allocator)
 		}
 		detail = fmt.aprintf(
 			"%s · %.1f%% of %s%s%s",
@@ -303,6 +300,20 @@ info :: proc(gtx: ^ui.Ctx, m: ^Model, drawn, laid: ^query.Rings_Result, u: Hit, 
 		size = .Small,
 		color = muted,
 	)
+}
+
+// colour_note is what the colouring chosen says of the entry at: its kind by
+// type, how it changed by change, and nothing by folder.
+@(private)
+colour_note :: proc(gtx: ^ui.Ctx, m: ^Model, r: ^query.Rings_Result, at: int) -> string {
+	a := r.arcs[at]
+	#partial switch m.colour {
+	case .Type:
+		return KIND_NAMES[kind_in(r, at)]
+	case .Change:
+		return strings.trim_prefix(change_note(gtx, a.bytes, a.was, r.compared), " · ")
+	}
+	return ""
 }
 
 // separator is the one the scan's paths use, read off the top's own name: a
@@ -430,10 +441,16 @@ sunburst :: proc(
 	}
 
 	bg := primer.color(.Bg_Color_Default)
+	// Each arc's box, for its item in the chart's semantics.
+	boxes := make([]Box, len(r.arcs), gtx.allocator)
 	for a, i in r.arcs {
 		fill := fill_of(m, r, i, i == hovered, false)
 		r0 := b.hub + b.ring * f32(a.depth - 1)
 		shape := band(gtx, b.center, r0, r0 + b.ring, a.start, a.start + a.sweep)
+		boxes[i] = {
+			arc  = i,
+			rect = band_bounds(b.center, r0, r0 + b.ring, a.start, a.start + a.sweep),
+		}
 		ops.fill(gtx.scene, shape, fill)
 		ops.stroke(gtx.scene, shape, bg, {width = 1})
 		if a.depth == 1 {
@@ -447,6 +464,7 @@ sunburst :: proc(
 
 	ops.input_area(gtx.scene, p.id, ops.Rect{0, 0, side, side}, {.Press, .Move, .Enter, .Leave})
 	ops.tag(gtx.scene, p.id, "Sunburst chart")
+	describe_chart(gtx, &p, m, r, boxes, hovered, "Sunburst")
 
 	if menu {
 		switch u, at := hit_at(r, b, m.pointer); u {
@@ -490,6 +508,25 @@ sunburst :: proc(
 on_circle :: proc(c: ops.Point, r, t: f32) -> ops.Point {
 	a := t * math.TAU - math.PI / 2
 	return {c.x + r * math.cos(a), c.y + r * math.sin(a)}
+}
+
+// band_bounds is the box around band(c, r0, r1, t0, t1): around its corners, and
+// the outer circle at each quarter turn between them, where it bulges furthest.
+@(private)
+band_bounds :: proc(c: ops.Point, r0, r1, t0, t1: f32) -> ops.Rect {
+	lo := on_circle(c, r0, t0)
+	hi := lo
+	grow :: proc(lo, hi: ^ops.Point, p: ops.Point) {
+		lo^ = {min(lo.x, p.x), min(lo.y, p.y)}
+		hi^ = {max(hi.x, p.x), max(hi.y, p.y)}
+	}
+	grow(&lo, &hi, on_circle(c, r0, t1))
+	grow(&lo, &hi, on_circle(c, r1, t0))
+	grow(&lo, &hi, on_circle(c, r1, t1))
+	for q := math.ceil(t0 * 4); q < t1 * 4; q += 1 {
+		grow(&lo, &hi, on_circle(c, r1, q / 4))
+	}
+	return {lo.x, lo.y, hi.x - lo.x, hi.y - lo.y}
 }
 
 // band is the ring between radii r0 and r1 from turn t0 to t1: one arc. Each

@@ -132,6 +132,11 @@ Model :: struct {
 	boxes_dir:        u32,
 	boxes_generation: u32,
 	tree_room:        ops.Size,
+	// The folders opened in the chart's tree for a screen reader, by node, and the
+	// centre and scan they were opened in (chart_tree.odin).
+	said_open:        map[u32]bool,
+	said_dir:         u32,
+	said_generation:  u32,
 	// The row hovered, in the contents or the largest files: the frame's rows say so
 	// as they are drawn, after the chart, so the chart reads the last frame's.
 	row_hover:        Hover,
@@ -163,6 +168,7 @@ model_destroy :: proc(m: ^Model) {
 	delete(m.poses_next)
 	delete(m.boxes)
 	delete(m.boxes_next)
+	delete(m.said_open)
 	delete(m.reclaim_pick)
 	forget_trail(m)
 	delete(m.trail)

@@ -1,6 +1,7 @@
 package sonar_app
 
 import "core:fmt"
+import "core:log"
 import "core:math"
 import "core:os"
 import "core:slice"
@@ -1329,4 +1330,155 @@ a_rescan_is_compared_with_the_scan_before :: proc(t: ^testing.T) {
 	testing.expect(t, settle(&r, "5.5 MiB in 3 items"))
 	testing.expect(t, settle(&r, "+2.0 MiB", present = false))
 	testing.expect(t, settle(&r, "Compare with…"))
+}
+
+/*
+A directory to scan with a chart near the most a sunburst draws: ten folders of
+ten of seven, each of those holding one folder of one 4 KiB file. Every ring's
+arcs are equal and wide enough to draw, so it lays out 10 + 100 + 700 + 700 + 700
+arcs.
+*/
+@(private = "file")
+big_fixture :: proc(t: ^testing.T, name: string) -> string {
+	dir, dir_err := os.temp_directory(context.temp_allocator)
+	testing.expect(t, dir_err == nil, "no temp directory")
+	root := fmt.tprintf("%s/sonar_gui_%s", dir, name)
+	os.remove_all(root)
+	body := make([]byte, 4096, context.temp_allocator)
+	slice.fill(body, 'x')
+	ok := os.make_directory(root) == nil
+	for a in 0 ..< 10 {
+		pa := fmt.tprintf("%s/a%d", root, a)
+		ok &&= os.make_directory(pa) == nil
+		for b in 0 ..< 10 {
+			pb := fmt.tprintf("%s/b%d", pa, b)
+			ok &&= os.make_directory(pb) == nil
+			for c in 0 ..< 7 {
+				pc := fmt.tprintf("%s/c%d", pb, c)
+				pd := fmt.tprintf("%s/d", pc)
+				ok &&= os.make_directory(pc) == nil
+				ok &&= os.make_directory(pd) == nil
+				ok &&= os.write_entire_file(fmt.tprintf("%s/e", pd), body) == nil
+			}
+		}
+	}
+	testing.expect(t, ok, "could not make the big fixture")
+	return root
+}
+
+// A big chart says only its top layer to a screen reader, its folders closed,
+// and logs what a frame of all it draws costs.
+@(test)
+a_big_chart_says_only_its_top_layer :: proc(t: ^testing.T) {
+	root := big_fixture(t, "big_chart")
+	defer os.remove_all(root)
+	r: Rig
+	rig_open(&r, root)
+	defer rig_close(&r)
+	testing.expect(t, settle(&r, "Done"))
+	testing.expect(t, settle(&r, "arc a0"))
+	ui.probe_advance(&r.p, 60, 1.0 / 60)
+	// The sunburst keeps where it drew each arc, by node.
+	arcs := len(r.m.poses)
+	testing.expectf(t, arcs == 2210, "the chart draws %d arcs", arcs)
+
+	said := ui.probe_semantics(&r.p, context.temp_allocator)
+	items := strings.count(said, `tree item "`)
+	testing.expectf(t, items == 10, "%d items are said:\n%s", items, said)
+	testing.expectf(
+		t,
+		said_after(
+			said,
+			`tree "Sunburst of sonar_gui_big_chart, 2.7 MiB, 10 items" at`,
+			`  tree item "a`,
+		),
+		"the chart counts its top layer:\n%s",
+		said,
+	)
+	testing.expect(t, !strings.contains(said, "expanded"), "every folder is closed")
+
+	start := time.tick_now()
+	ui.probe_advance(&r.p, 30, 1.0 / 60)
+	took := time.tick_since(start)
+	log.infof("%d arcs: %v a frame over 30 frames", arcs, took / 30)
+}
+
+// said_after is whether, in a semantics report, a line starting with each of
+// lines comes straight after one starting with the one before: the first an
+// entry, the rest what nests under it as indented.
+@(private = "file")
+said_after :: proc(report: string, lines: ..string) -> bool {
+	all := strings.split_lines(report, context.temp_allocator)
+	for at in 0 ..= len(all) - len(lines) {
+		found := true
+		for want, i in lines {
+			if !strings.has_prefix(all[at + i], want) {
+				found = false
+				break
+			}
+		}
+		if found {
+			return true
+		}
+	}
+	return false
+}
+
+@(test)
+each_chart_is_a_tree_a_screen_reader_walks :: proc(t: ^testing.T) {
+	root := fixture(t, "said")
+	defer os.remove_all(root)
+	r: Rig
+	rig_open(&r, root)
+	defer rig_close(&r)
+	testing.expect(t, settle(&r, "Done"))
+	testing.expect(t, settle(&r, "arc photos"))
+	ui.probe_advance(&r.p, 60, 1.0 / 60)
+
+	// Each chart is a tree named for what it shows, its top layer the directory's
+	// own entries: photos, closed, so big.raw within it is not said, then notes.txt.
+	photos := `  tree item "photos, 264.0 KiB, 98.5% of sonar_gui_said" level 1 expandable at`
+	notes := `  tree item "notes.txt, 4.0 KiB, 1.5% of sonar_gui_said" level 1 at`
+	for chart in ([?]string{"Sunburst", "Treemap", "Icicle"}) {
+		if chart != "Sunburst" {
+			testing.expect(t, ui.probe_click(&r.p, chart))
+			press_and_hand_on(&r)
+			ui.probe_advance(&r.p, 60, 1.0 / 60)
+		}
+		said := ui.probe_semantics(&r.p, context.temp_allocator)
+		tree := fmt.tprintf(`tree "%s of sonar_gui_said, 268.0 KiB, 2 items" at`, chart)
+		testing.expectf(
+			t,
+			said_after(said, tree, photos, notes),
+			"the %s says its top layer:\n%s",
+			chart,
+			said,
+		)
+	}
+
+	// Coloured by type, each entry says its kind too.
+	testing.expect(t, ui.probe_click(&r.p, "Type"))
+	press_and_hand_on(&r)
+	ui.probe_advance(&r.p, 3, 1.0 / 60)
+	kind := `  tree item "notes.txt, 4.0 KiB, 1.5% of sonar_gui_said, Text" level 1 at`
+	said := ui.probe_semantics(&r.p, context.temp_allocator)
+	testing.expectf(t, said_after(said, kind), "notes.txt says its kind:\n%s", said)
+
+	// The entry a hovered row lights is selected, as it is lit.
+	row := ui.probe_bounds(&r.p, "notes.txt")
+	ui.probe_move(&r.p, row.x + 24, row.y + row.h / 2)
+	ui.probe_advance(&r.p, 3, 1.0 / 60)
+	lit := `  tree item "notes.txt, 4.0 KiB, 1.5% of sonar_gui_said, Text" level 1 selected at`
+	said = ui.probe_semantics(&r.p, context.temp_allocator)
+	testing.expectf(t, said_after(said, lit), "the lit entry is selected:\n%s", said)
+
+	// big.raw lies in photos, which is closed: photos is selected for it. The
+	// largest files are an answer of their own, so it is awaited.
+	testing.expect(t, settle(&r, fmt.tprintf("%s/photos/big.raw", root)))
+	row = ui.probe_bounds(&r.p, "big.raw")
+	ui.probe_move(&r.p, row.x + 24, row.y + row.h / 2)
+	ui.probe_advance(&r.p, 3, 1.0 / 60)
+	hidden := `  tree item "photos, 264.0 KiB, 98.5% of sonar_gui_said, Folder" level 1 selected expandable at`
+	said = ui.probe_semantics(&r.p, context.temp_allocator)
+	testing.expectf(t, said_after(said, hidden), "the folder it is in is selected:\n%s", said)
 }
