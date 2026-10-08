@@ -3,9 +3,11 @@ sonar: find out what is using the disk.
 
 Usage:
 	sonar [drive-or-image] [flags]     -h lists the flags
+	sonar <target> --keep [--alert-free <percent>] [--alert-full-days <n>] [--webhook <url>]
 
 Reads the volume's MFT directly and prints the largest files and directories. Reading
-a live volume needs an elevated prompt.
+a live volume needs an elevated prompt. --keep keeps the scan in the history the
+window keeps its scans in, and checks the alerts asked for (keep.odin).
 */
 package main
 
@@ -35,21 +37,29 @@ prints this. A count left at zero means the reader chooses its own, rather than
 having a second set of defaults to keep in step here.
 */
 Options :: struct {
-	target:       string `args:"pos=0" usage:"Drive, device, image or directory to scan. Defaults to your home directory."`,
-	live:         bool `usage:"Draw the answer as it is found rather than once at the end."`,
-	buffered:     bool `usage:"Read the volume through the system cache rather than around it."`,
-	no_skip:      bool `usage:"Read runs of dead MFT records rather than jumping over them."`,
-	min_skip:     int `usage:"Shortest run of dead records worth jumping over, in bytes."`,
-	workers:      int `usage:"MFT readers to run at once."`,
-	walk_workers: int `usage:"Directory readers to run at once."`,
-	chunk:        int `usage:"Bytes per volume read."`,
+	target:          string `args:"pos=0" usage:"Drive, device, image or directory to scan. Defaults to your home directory."`,
+	live:            bool `usage:"Draw the answer as it is found rather than once at the end."`,
+	buffered:        bool `usage:"Read the volume through the system cache rather than around it."`,
+	no_skip:         bool `usage:"Read runs of dead MFT records rather than jumping over them."`,
+	min_skip:        int `usage:"Shortest run of dead records worth jumping over, in bytes."`,
+	workers:         int `usage:"MFT readers to run at once."`,
+	walk_workers:    int `usage:"Directory readers to run at once."`,
+	chunk:           int `usage:"Bytes per volume read."`,
+	// What --keep does, as keep.odin reads it.
+	keep:            bool `usage:"Keep the scan in the history, as the window does, and check the alerts."`,
+	history:         string `usage:"The history to keep the scan in, if not the one the window keeps."`,
+	alert_free:      f64 `usage:"With --keep: alert when less than this percent of the disk is free."`,
+	alert_full_days: int `usage:"With --keep: alert when the disk is forecast full within this many days."`,
+	webhook:         string `usage:"With --keep: post an alert as JSON to this URL rather than failing with exit code 3."`,
 }
 
 main :: proc() {
-	os.exit(run())
+	os.exit(run(os.args[1:]))
 }
 
-run :: proc() -> int {
+// run runs the command line args, the program's name left off, and returns the
+// code to exit with.
+run :: proc(args: []string) -> int {
 	when ODIN_DEBUG {
 		da: debug.Allocator
 		debug.init(&da, context.allocator)
@@ -63,12 +73,16 @@ run :: proc() -> int {
 	context.assertion_failure_proc = trace.assertion_failure_proc
 
 	opt: Options
-	if err := flags.parse(&opt, os.args[1:], .Unix); err != nil {
+	if err := flags.parse(&opt, args, .Unix); err != nil {
 		// print_errors writes usage for a help request and the reason for anything
 		// else, so the only decision left here is what to exit with.
 		flags.print_errors(Options, err, PROGRAM, .Unix)
 		_, asked_for_help := err.(flags.Help_Request)
 		return 0 if asked_for_help else 1
+	}
+	if msg := keep_problem(opt); msg != "" {
+		fmt.eprintfln("error: %s", msg)
+		return 1
 	}
 
 	target_str := opt.target
@@ -118,6 +132,16 @@ run :: proc() -> int {
 		return 1
 	}
 
+	// A kept scan opens the history and locks its place before it reads a thing,
+	// so a second run of the same place stands aside rather than reading too.
+	k: Keeper
+	defer keeper_close(&k)
+	if opt.keep {
+		if code, ok := keeper_open(&k, opt, target); !ok {
+			return code
+		}
+	}
+
 	t: scan.Tree
 	if err := scan.tree_init(&t, 8); err != nil {
 		fmt.eprintfln("error: %v", err)
@@ -160,12 +184,18 @@ run :: proc() -> int {
 	// The same charging the live scan does, run once over a tree nobody is still
 	// filling. A node left uncharged here has an ancestor that never resolved, and
 	// another pass would not change that.
-	roll: survey.Rollup
+	// Keeping lists each directory's children, to walk down from the top.
+	roll := survey.Rollup {
+		linked = opt.keep,
+	}
 	defer survey.rollup_destroy(&roll)
 	survey.rollup_advance(&roll, &t)
 
 	print_largest(&t, roll.totals[:], .files)
 	print_largest(&t, roll.totals[:], .directories)
+	if opt.keep {
+		return keep(&k, opt, target, &t, &roll)
+	}
 	return 0
 }
 
