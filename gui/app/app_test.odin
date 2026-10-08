@@ -980,3 +980,34 @@ switching_colouring_moves_nothing :: proc(t: ^testing.T) {
 		)
 	}
 }
+
+@(test)
+type_chips_turn_on_and_off_and_light_their_kind :: proc(t: ^testing.T) {
+	root := fixture(t, "chips")
+	defer os.remove_all(root)
+	r: Rig
+	rig_open(&r, root)
+	defer rig_close(&r)
+	testing.expect(t, settle(&r, "Done"))
+	testing.expect(t, settle(&r, "arc photos"))
+	testing.expect(t, ui.probe_click(&r.p, "Type"))
+	press_and_hand_on(&r)
+	before := ui.probe_bounds(&r.p, "Sunburst chart")
+
+	testing.expect(t, ui.probe_click(&r.p, "Text"))
+	ui.probe_frame(&r.p)
+	testing.expect_value(t, r.m.kinds_on, bit_set[view.Kind]{.Text})
+	testing.expect(t, ui.probe_click(&r.p, "Image"))
+	ui.probe_frame(&r.p)
+	testing.expect_value(t, r.m.kinds_on, bit_set[view.Kind]{.Text, .Image})
+	testing.expect(t, ui.probe_click(&r.p, "Text"))
+	ui.probe_frame(&r.p)
+	testing.expect_value(t, r.m.kinds_on, bit_set[view.Kind]{.Image})
+
+	chip := ui.probe_bounds(&r.p, "Archive")
+	ui.probe_move(&r.p, chip.x + chip.w / 2, chip.y + chip.h / 2)
+	ui.probe_advance(&r.p, 2, 1.0 / 60)
+	kind, hovering := r.m.kind_hover.?
+	testing.expect(t, hovering && kind == .Archive, "the chip under the pointer lights its kind")
+	testing.expect_value(t, ui.probe_bounds(&r.p, "Sunburst chart"), before)
+}

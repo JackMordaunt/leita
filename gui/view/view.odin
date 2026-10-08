@@ -120,6 +120,9 @@ Model :: struct {
 	// frame by node, around which centre, in what room (treemap.odin).
 	mode:             Mode,
 	colour:           Colouring,
+	// The type chips: those turned on, and the one under the pointer this frame.
+	kinds_on:         bit_set[Kind],
+	kind_hover:       Maybe(Kind),
 	boxes:            map[u32]ops.Rect,
 	boxes_next:       map[u32]ops.Rect,
 	boxes_dir:        u32,

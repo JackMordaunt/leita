@@ -132,3 +132,33 @@ a_row_lights_its_entry_or_the_nearest_drawn_directory :: proc(t: ^testing.T) {
 	testing.expect_value(t, lit_by_row(&r, hover_of(99, {98, 1})), -1)
 	testing.expect_value(t, lit_by_row(&r, {}), -1)
 }
+
+// With chips on, only their kinds keep their colour; a hovered chip lights its
+// kind wherever it is, coloured or not.
+@(test)
+chips_pick_which_kinds_are_coloured_and_light_one :: proc(t: ^testing.T) {
+	arcs := []query.Arc {
+		{name = "photo.png", depth = 1, up = -1},
+		{name = "notes.txt", depth = 1, up = -1},
+	}
+	r := query.Rings_Result {
+		arcs = arcs,
+	}
+	m := Model {
+		colour   = .Type,
+		kinds_on = {.Image},
+	}
+	testing.expect_value(t, fill_of(&m, &r, 0, false, false), kind_colour(.Image))
+	testing.expect_value(t, fill_of(&m, &r, 1, false, false), kind_colour(.Other))
+
+	m.kind_hover = .Text
+	testing.expect(
+		t,
+		fill_of(&m, &r, 1, false, false) != kind_colour(.Other),
+		"the hovered chip lights text",
+	)
+	testing.expect_value(t, fill_of(&m, &r, 0, false, false), kind_colour(.Image))
+
+	m.kinds_on, m.kind_hover = {}, nil
+	testing.expect_value(t, fill_of(&m, &r, 1, false, false), kind_colour(.Text))
+}

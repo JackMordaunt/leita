@@ -286,6 +286,7 @@ at its hue's full strength, so a lit colour that was only that would not show.
 */
 @(private)
 fill_of :: proc(m: ^Model, r: ^query.Rings_Result, at: int, lit, framed: bool) -> ops.Color {
+	lit := lit
 	a := r.arcs[at]
 	bg := primer.color(.Bg_Color_Default)
 	fill: ops.Color
@@ -296,9 +297,15 @@ fill_of :: proc(m: ^Model, r: ^query.Rings_Result, at: int, lit, framed: bool) -
 		fill = mix(fill, bg, min(fade, 0.85))
 	case .Type:
 		// The seven are used as they are; a framed directory alone is lightened.
-		fill = kind_colour(kind_in(r, at))
+		// While chips are on, only their kinds keep their colour; a hovered chip
+		// lights its kind.
+		kind := kind_in(r, at)
+		fill = kind_colour(.Other if m.kinds_on != {} && kind not_in m.kinds_on else kind)
 		if framed && a.directory {
 			fill = mix(fill, bg, 0.45)
+		}
+		if k, ok := m.kind_hover.?; ok && k == kind {
+			lit = true
 		}
 	}
 	if lit {
@@ -339,7 +346,11 @@ legend_line_count :: proc(gtx: ^ui.Ctx, width: f32) -> int {
 		if !legend_shown(kind) {
 			continue
 		}
-		w := LEGEND_DOT + LEGEND_INSET + design.layout_style(gtx, KIND_NAMES[kind], st, font).width
+		w :=
+			2 * CHIP_PAD +
+			LEGEND_DOT +
+			LEGEND_INSET +
+			design.layout_style(gtx, KIND_NAMES[kind], st, font).width
 		switch {
 		case x == 0:
 			x = w
@@ -361,13 +372,15 @@ colouring never moves the chart below it.
 */
 @(private)
 legend_row :: proc(gtx: ^ui.Ctx, m: ^Model) {
+	// The chips say again each frame which is under the pointer.
+	m.kind_hover = nil
 	lines := legend_line_count(gtx, gtx.constraints.max.x)
 	line := primer.text_style(.Small).line_height
 	height := f32(lines) * line + f32(lines - 1) * LEGEND_LINE_GAP
 	ui.sized(gtx, {min = {0, height}, max = {ui.INF, height}})
 	switch m.colour {
 	case .Type:
-		legend(gtx)
+		legend(gtx, m)
 	case .Folder:
 		primer.text(
 			gtx,
@@ -378,23 +391,82 @@ legend_row :: proc(gtx: ^ui.Ctx, m: ^Model) {
 	}
 }
 
-// legend names the colours of colouring by type, the kinds of content in turn,
-// wrapping onto more lines where the panel is narrow.
+// CHIP_PAD is the space either side of a chip's swatch and name, inside its pill.
+CHIP_PAD :: f32(6)
+
+/*
+legend names the colours of colouring by type, a chip for each kind in turn,
+wrapping onto more lines where the panel is narrow. A chip under the pointer lights
+every entry of its kind; a click turns it on or off, and while any is on, only the
+kinds that are keep their colour.
+*/
 @(private)
-legend :: proc(gtx: ^ui.Ctx) {
+legend :: proc(gtx: ^ui.Ctx, m: ^Model) {
 	if ui.wrap(gtx, gap = LEGEND_GAP, line_gap = LEGEND_LINE_GAP, align = .Center) {
 		for kind in Kind {
 			if !legend_shown(kind) {
 				continue
 			}
 			sc := ui.scope_open(gtx, kind)
-			if ui.row(gtx, gap = LEGEND_INSET, align = .Center) {
-				swatch(gtx, kind_colour(kind))
-				primer.text(gtx, KIND_NAMES[kind], .Small, color = primer.color(.Fg_Color_Muted))
+			on := kind in m.kinds_on
+			hovered, clicked := chip(gtx, kind, on, m.kinds_on != {})
+			if hovered {
+				m.kind_hover = kind
+			}
+			if clicked {
+				m.kinds_on ~= {kind}
 			}
 			ui.scope_close(&sc)
 		}
 	}
+}
+
+/*
+chip is one kind's toggle: its swatch and name in a pill that tints under the
+pointer and fills while it is on. While others are on and it is not, its swatch is
+grey, as its entries are.
+*/
+@(private)
+chip :: proc(
+	gtx: ^ui.Ctx,
+	kind: Kind,
+	on, any_on: bool,
+	loc := #caller_location,
+) -> (
+	hovered, clicked: bool,
+) {
+	st := primer.text_style(.Small)
+	para := design.layout_style(gtx, KIND_NAMES[kind], st, primer.font_for(gtx, st.weight))
+	size := ops.Size{2 * CHIP_PAD + LEGEND_DOT + LEGEND_INSET + para.width, st.line_height}
+	p := ui.widget_open(gtx, loc = loc)
+	box := ops.Rect{0, 0, size.x, size.y}
+	c := design.control(gtx, p.id, box, .Live)
+	pill := ops.Round_Rect{box, size.y / 2}
+	switch {
+	case on:
+		ops.fill(gtx.scene, pill, primer.color(.Control_Bg_Color_Selected))
+		ops.stroke(gtx.scene, pill, primer.color(.Border_Color_Default), {width = 1})
+	case c.hovered:
+		ops.fill(gtx.scene, pill, primer.color(.Control_Transparent_Bg_Color_Hover))
+	}
+	dot := kind_colour(.Other if any_on && !on else kind)
+	ops.fill(gtx.scene, ui.circle({CHIP_PAD + LEGEND_DOT / 2, size.y / 2}, LEGEND_DOT / 2), dot)
+	ink := primer.color(.Fg_Color_Default if on else .Fg_Color_Muted)
+	design.draw_paragraph(
+		gtx,
+		para,
+		{CHIP_PAD + LEGEND_DOT + LEGEND_INSET, (size.y - para.height) / 2},
+		ink,
+	)
+	design.listen(gtx, c.st, p.id, box, design.CLICK_KINDS, .Pointer)
+	ops.tag(gtx.scene, p.id, KIND_NAMES[kind])
+	ui.semantics(
+		gtx,
+		&p,
+		{role = .Checkbox, label = KIND_NAMES[kind], states = {.Checked} if on else {}},
+	)
+	ui.widget_close(gtx, &p, {size = size})
+	return c.hovered, c.clicked
 }
 
 // swatch is a legend's dot of colour c.
