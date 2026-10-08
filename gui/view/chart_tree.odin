@@ -17,10 +17,10 @@ own entries, and under a folder opened in the tree, the folder's. A sighted
 person takes the whole chart in at a glance; a reader takes it an item at a time,
 so a layer holds only its largest entries and one item summing the rest.
 
-Folders are opened and closed in the tree by toggle_said_open. Nothing calls it
-yet: jm:ui passes a reader's focus and click requests on to the window but not
-its expand and collapse (bridge_take_actions, jm/ui/shell/a11y.odin), and the
-chart takes no keys of its own. Either, once there, opens a folder through it.
+A reader opens and closes a folder with its expand and collapse actions, which
+jm:ui offers on an expandable item and hands back as Expand and Collapse events
+to the item's id (bridge_take_actions, jm/ui/shell/a11y.odin). The chart takes no
+keys of its own yet; once it does, they open a folder through toggle_said_open.
 */
 
 // SAID_MOST is the most items a layer of a chart's tree holds before one item
@@ -121,6 +121,22 @@ describe_chart :: proc(
 	if m.said_dir != r.dir || m.said_generation != r.generation {
 		clear(&m.said_open)
 		m.said_dir, m.said_generation = r.dir, r.generation
+	}
+	// A reader's expand or collapse of a folder drawn, before the layers are
+	// worked out, so this frame says the folder as it now is.
+	for b in boxes {
+		if b.arc < 0 || !r.arcs[b.arc].directory {
+			continue
+		}
+		node := r.arcs[b.arc].node
+		for e in ui.events(gtx, entry_id(p.id, r, b.arc)) {
+			#partial switch e.kind {
+			case .Expand:
+				m.said_open[node] = true
+			case .Collapse:
+				delete_key(&m.said_open, node)
+			}
+		}
 	}
 	n := len(r.arcs)
 	t := Teller {

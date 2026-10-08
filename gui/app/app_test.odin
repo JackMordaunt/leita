@@ -1,3 +1,4 @@
+//review:ignore history-coupled-file the chart tree this tests lives in gui/view/chart_tree.odin; view.odin needs nothing
 package sonar_app
 
 import "core:fmt"
@@ -1481,4 +1482,57 @@ each_chart_is_a_tree_a_screen_reader_walks :: proc(t: ^testing.T) {
 	hidden := `  tree item "photos, 264.0 KiB, 98.5% of sonar_gui_said, Folder" level 1 selected expandable at`
 	said = ui.probe_semantics(&r.p, context.temp_allocator)
 	testing.expectf(t, said_after(said, hidden), "the folder it is in is selected:\n%s", said)
+}
+
+// labelled_node is the id of the semantic node in the current frame whose label
+// starts with prefix, or 0.
+@(private = "file")
+labelled_node :: proc(r: ^Rig, prefix: string) -> ops.Area_Id {
+	for n in ui.probe_current(&r.p).nodes {
+		if strings.has_prefix(n.semantics.label, prefix) {
+			return n.id
+		}
+	}
+	return 0
+}
+
+// A reader opens a folder of the chart's tree with its expand action, which
+// says the folder's own entries under it, and closes it with collapse.
+@(test)
+a_reader_opens_and_closes_a_folder_of_the_chart :: proc(t: ^testing.T) {
+	root := fixture(t, "said_open")
+	defer os.remove_all(root)
+	r: Rig
+	rig_open(&r, root)
+	defer rig_close(&r)
+	testing.expect(t, settle(&r, "Done"))
+	testing.expect(t, settle(&r, "arc photos"))
+	ui.probe_advance(&r.p, 60, 1.0 / 60)
+
+	photos := labelled_node(&r, "photos, ")
+	testing.expect(t, photos != 0, "photos is an item of the tree")
+	testing.expect_value(t, labelled_node(&r, "big.raw, "), ops.Area_Id(0))
+
+	// As the platform's bridge pushes a reader's expand.
+	ui.router_push(&r.p.router, {kind = .Expand, area = photos})
+	ui.probe_frame(&r.p)
+	ui.probe_frame(&r.p)
+	said := ui.probe_semantics(&r.p, context.temp_allocator)
+	testing.expectf(
+		t,
+		strings.contains(said, `level 1 expandable expanded at`),
+		"photos says it is open:\n%s",
+		said,
+	)
+	testing.expectf(
+		t,
+		strings.contains(said, `    tree item "big.raw, 256.0 KiB`),
+		"and its files under it:\n%s",
+		said,
+	)
+
+	ui.router_push(&r.p.router, {kind = .Collapse, area = photos})
+	ui.probe_frame(&r.p)
+	ui.probe_frame(&r.p)
+	testing.expect_value(t, labelled_node(&r, "big.raw, "), ops.Area_Id(0))
 }
