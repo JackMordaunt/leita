@@ -628,6 +628,7 @@ lay_ring :: proc(
 	depth: u8,
 	branch: u8,
 	start, sweep: f32,
+	up: i32 = -1,
 ) {
 	at := start
 	for e, i in sorted_children(s, dir) {
@@ -650,10 +651,11 @@ lay_ring :: proc(
 				branch = b,
 				start = at,
 				sweep = w,
+				up = up,
 			},
 		)
 		if e.directory && depth < query.RING_DEPTH {
-			lay_ring(s, arcs, e.node, e.bytes, depth + 1, b, at, w)
+			lay_ring(s, arcs, e.node, e.bytes, depth + 1, b, at, w, i32(len(arcs) - 1))
 		}
 		at += w
 	}

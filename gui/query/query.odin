@@ -105,15 +105,17 @@ Largest_Result :: struct {
 
 LARGEST_LIMIT :: 20
 
-// Rings is a directory drawn as a sunburst: its contents in the first ring, theirs
-// in the next, out to RING_DEPTH rings.
+// Rings is a directory's contents to RING_DEPTH levels deep, each laid out as its
+// share of what holds it: the sunburst draws them as rings, the treemap as boxes
+// within boxes.
 Rings :: struct {
 	generation: u32,
 	dir:        u32, // ROOT for the top of the scan
 }
 
 // Arc is one entry in a ring. Its sweep is its share of its parent's, so the
-// sweeps in a ring never add to more than their parent's.
+// sweeps in a ring never add to more than their parent's. The arcs under one come
+// largest first.
 Arc :: struct {
 	node:      u32,
 	name:      string,
@@ -123,6 +125,7 @@ Arc :: struct {
 	branch:    u8, // which entry of the first ring it lies under, for its colour
 	start:     f32, // turns clockwise from twelve o'clock, 0 to 1
 	sweep:     f32, // turns
+	up:        i32, // the index of the arc it lies in, -1 for the first ring
 }
 
 Rings_Result :: struct {

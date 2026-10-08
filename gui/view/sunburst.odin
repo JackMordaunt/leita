@@ -149,11 +149,15 @@ ease :: proc(gtx: ^ui.Ctx, m: ^Model, r: ^query.Rings_Result) -> []query.Arc {
 	return out
 }
 
-// rings_panel is the sunburst with the way to it above and what the pointer is
-// over below it.
+// rings_panel is the mode switch over the directory shown, drawn in the mode
+// chosen: for the sunburst, what the pointer is over, then the disc.
 @(private)
 rings_panel :: proc(gtx: ^ui.Ctx, m: ^Model) {
 	ui.column(gtx, gap = 8, align = .Fill)
+	// In a row, so the switch is as wide as its segments rather than the panel.
+	if ui.row(gtx) {
+		mode_switch(gtx, m)
+	}
 	answer, _ := ui.need(
 		gtx,
 		query.Rings{generation = m.generation, dir = m.dir},
@@ -161,6 +165,10 @@ rings_panel :: proc(gtx: ^ui.Ctx, m: ^Model) {
 	)
 	if answer == nil || answer.generation != m.generation || len(answer.crumbs) == 0 {
 		primer.skeleton_box(gtx, width = 320, height = 320, delay = .Short)
+		return
+	}
+	if m.mode == .Treemap {
+		treemap_panel(gtx, m, answer)
 		return
 	}
 	// The answer is the delivered shape, kept across frames, so the arcs as drawn
@@ -402,7 +410,7 @@ sunburst :: proc(
 	ops.tag(gtx.scene, p.id, "hub")
 
 	ops.input_area(gtx.scene, p.id, ops.Rect{0, 0, side, side}, {.Press, .Move, .Enter, .Leave})
-	ops.tag(gtx.scene, p.id, "Sunburst")
+	ops.tag(gtx.scene, p.id, "Sunburst chart")
 
 	if menu {
 		switch u, at := hit_at(r, b, m.pointer); u {

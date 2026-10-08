@@ -26,6 +26,7 @@ HISTORY :: 256
 // Menu_From is where the right-click menu was opened, which is where it is drawn.
 Menu_From :: enum u8 {
 	Sunburst,
+	Treemap,
 	Contents,
 	Largest,
 }

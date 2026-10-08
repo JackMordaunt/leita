@@ -94,6 +94,14 @@ Model :: struct {
 	poses_next:       map[u32]Pose,
 	poses_dir:        u32,
 	poses_generation: u32,
+	// How the directory shown is drawn, and the treemap's boxes as drawn last
+	// frame by node, around which centre, in what room (treemap.odin).
+	mode:             Mode,
+	boxes:            map[u32]ops.Rect,
+	boxes_next:       map[u32]ops.Rect,
+	boxes_dir:        u32,
+	boxes_generation: u32,
+	tree_room:        ops.Size,
 }
 
 model_init :: proc(m: ^Model, path: string) {
@@ -109,6 +117,8 @@ model_destroy :: proc(m: ^Model) {
 	delete(m.target.name)
 	delete(m.poses)
 	delete(m.poses_next)
+	delete(m.boxes)
+	delete(m.boxes_next)
 	forget_trail(m)
 	delete(m.trail)
 }

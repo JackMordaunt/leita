@@ -211,7 +211,7 @@ a_click_on_an_arc_opens_it_and_the_hub_goes_back_up :: proc(t: ^testing.T) {
 	// photos, the larger, sweeps from twelve o'clock round past six, so the first
 	// ring straight below the hub is photos, once the arcs have grown into place.
 	ui.probe_advance(&r.p, 60, 1.0 / 60)
-	b := ui.probe_bounds(&r.p, "Sunburst")
+	b := ui.probe_bounds(&r.p, "Sunburst chart")
 	radius := b.w / 2
 	ring := radius * (view.HUB + (1 - view.HUB) / (2 * query.RING_DEPTH))
 	ui.probe_click_at(&r.p, {b.x + b.w / 2, b.y + b.h / 2 + ring})
@@ -233,7 +233,7 @@ a_click_on_an_arc_opens_it_and_the_hub_goes_back_up :: proc(t: ^testing.T) {
 ring_point :: proc(r: ^Rig, t: f32) -> ops.Point {
 	// The arcs grow into place; a second of frames lets them arrive.
 	ui.probe_advance(&r.p, 60, 1.0 / 60)
-	b := ui.probe_bounds(&r.p, "Sunburst")
+	b := ui.probe_bounds(&r.p, "Sunburst chart")
 	radius := b.w / 2
 	dist := radius * (view.HUB + (1 - view.HUB) / (2 * query.RING_DEPTH))
 	a := t * math.TAU - math.PI / 2
@@ -519,7 +519,7 @@ the_sunburst_sits_in_the_middle_of_its_room :: proc(t: ^testing.T) {
 	for size in ([]ops.Size{{1100, 700}, {760, 1100}}) {
 		r.p.size = size
 		ui.probe_advance(&r.p, 60, 1.0 / 60)
-		disc := ui.probe_bounds(&r.p, "Sunburst")
+		disc := ui.probe_bounds(&r.p, "Sunburst chart")
 		grip := ui.probe_bounds(&r.p, "Resize panels")
 		title := primer.text_style(.Medium, .Semibold).line_height + view.INFO_GAP
 		block := ui.probe_bounds(&r.p, "268.0 KiB").y - title + view.info_height()
@@ -560,7 +560,7 @@ hovering_a_long_path_leaves_the_sunburst_where_it_is :: proc(t: ^testing.T) {
 	testing.expect(t, settle(&r, fmt.tprintf("arc %s", long)))
 	r.p.size = {760, 900}
 	ui.probe_advance(&r.p, 60, 1.0 / 60)
-	before := ui.probe_bounds(&r.p, "Sunburst")
+	before := ui.probe_bounds(&r.p, "Sunburst chart")
 
 	// The long directory is the largest, the first quarter of the ring from
 	// twelve o'clock: hover there, and the block says so in a line it cuts.
@@ -568,7 +568,7 @@ hovering_a_long_path_leaves_the_sunburst_where_it_is :: proc(t: ^testing.T) {
 	ui.probe_move(&r.p, at.x, at.y)
 	ui.probe_advance(&r.p, 10, 1.0 / 60)
 	testing.expect(t, ui.probe_tagged(&r.p, long), "the block names what is hovered")
-	after := ui.probe_bounds(&r.p, "Sunburst")
+	after := ui.probe_bounds(&r.p, "Sunburst chart")
 	testing.expectf(t, before == after, "the disc moved from %v to %v", before, after)
 }
 
@@ -695,4 +695,40 @@ a_deep_path_shows_its_deepest_steps :: proc(t: ^testing.T) {
 		top.x,
 		bar.x,
 	)
+}
+
+@(test)
+the_treemap_draws_the_same_directory_as_boxes :: proc(t: ^testing.T) {
+	root := fixture(t, "treemap")
+	defer os.remove_all(root)
+	r: Rig
+	rig_open(&r, root)
+	defer rig_close(&r)
+	testing.expect(t, settle(&r, "Done"))
+	testing.expect(t, settle(&r, "arc photos"))
+
+	testing.expect(t, ui.probe_click(&r.p, "Treemap"))
+	press_and_hand_on(&r)
+	ui.probe_advance(&r.p, 60, 1.0 / 60)
+	testing.expect(t, ui.probe_tagged(&r.p, "box photos"), "photos is a box")
+	testing.expect(t, ui.probe_tagged(&r.p, "box notes.txt"), "and so is notes.txt")
+	testing.expect(t, !ui.probe_tagged(&r.p, "Sunburst chart"), "the sunburst is put away")
+
+	// photos holds 264 of the 268 KiB, so its box takes nearly all the room.
+	room := ui.probe_bounds(&r.p, "Treemap chart")
+	photos := ui.probe_bounds(&r.p, "box photos")
+	share := (photos.w * photos.h) / (room.w * room.h)
+	testing.expectf(t, share > 0.95 && share < 0.99, "photos takes %v of the room", share)
+
+	// The entry menu, and a click on a directory's box opens it.
+	ui.probe_click_at(&r.p, {photos.x + photos.w / 2, photos.y + photos.h / 2}, .Right)
+	press_and_hand_on(&r)
+	press_and_hand_on(&r)
+	testing.expect(t, ui.probe_tagged(&r.p, "Rename"), "the box has the entry menu")
+	ui.probe_key(&r.p, .Escape)
+	press_and_hand_on(&r)
+	ui.probe_click_at(&r.p, {photos.x + photos.w / 2, photos.y + photos.h / 2})
+	press_and_hand_on(&r)
+	testing.expect(t, settle(&r, "264.0 KiB in 2 items"), "photos opened")
+	testing.expect(t, settle(&r, "box big.raw"), "and shows its files as boxes")
 }
