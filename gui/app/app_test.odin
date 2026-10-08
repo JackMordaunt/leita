@@ -696,6 +696,21 @@ a_deep_path_shows_its_deepest_steps :: proc(t: ^testing.T) {
 		top.x,
 		bar.x,
 	)
+
+	// A wheel's notch moves the strip as far as a scroll box moves its content,
+	// back toward the top, and the strip stops following the deepest. probe_scroll
+	// runs the frame the notch lands in.
+	before := r.m.location_offset
+	testing.expect(t, ui.probe_scroll(&r.p, "Location", -1))
+	moved := before - r.m.location_offset
+	testing.expectf(
+		t,
+		moved == min(ui.SCROLL_STEP, before),
+		"one notch moved the strip %v of %v",
+		moved,
+		before,
+	)
+	testing.expect(t, !r.m.location_follow, "and it stays where it was scrolled")
 }
 
 @(test)

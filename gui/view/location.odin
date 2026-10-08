@@ -178,8 +178,9 @@ trail :: proc(gtx: ^ui.Ctx, m: ^Model, steps: []Step, here: string, loc := #call
 		#partial switch e.kind {
 		case .Scroll:
 			// A trackpad's sideways swipe, or the wheel, which most mice have only.
+			// A unit is a wheel's notch; jm's scroll boxes move SCROLL_STEP for one.
 			delta := e.scroll.x if e.scroll.x != 0 else e.scroll.y
-			m.location_offset = clamp(m.location_offset + delta, 0, most)
+			m.location_offset = clamp(m.location_offset + delta * ui.SCROLL_STEP, 0, most)
 			m.location_follow = false
 		case .Press:
 			if e.button == .Left {
@@ -192,7 +193,6 @@ trail :: proc(gtx: ^ui.Ctx, m: ^Model, steps: []Step, here: string, loc := #call
 	well := ops.Round_Rect{box, 6}
 	bg := primer.color(.Control_Bg_Color_Rest)
 	ops.fill(gtx.scene, well, bg)
-	ops.stroke(gtx.scene, well, primer.color(.Border_Color_Default), {width = 1})
 	ops.input_area(gtx.scene, p.id, box, {.Press, .Scroll}, .Text)
 
 	ops.clip_push(gtx.scene, ops.Round_Rect{{1, 1, width - 2, LOCATION_HEIGHT - 2}, 5})
@@ -238,23 +238,26 @@ trail :: proc(gtx: ^ui.Ctx, m: ^Model, steps: []Step, here: string, loc := #call
 			}
 		}
 	}
-	ops.clip_pop(gtx.scene)
 
 	// Fades where the strip runs past an edge, so a cut step reads as going on.
+	// They are inside the clip, which rounds them into the well's corners, and
+	// under the border, which is drawn last so nothing paints over it.
 	clear := bg
 	clear[3] = 0
 	fade :: proc(gtx: ^ui.Ctx, x0, x1: f32, from, to: ops.Color) {
 		stops := make([]ops.Gradient_Stop, 2, gtx.allocator)
 		stops[0], stops[1] = {0, from}, {1, to}
-		r := ops.Rect{min(x0, x1), 1, abs(x1 - x0), LOCATION_HEIGHT - 2}
+		r := ops.Rect{min(x0, x1), 0, abs(x1 - x0), LOCATION_HEIGHT}
 		ops.fill(gtx.scene, r, ops.Linear_Gradient{{x0, 0}, {x1, 0}, stops})
 	}
 	if m.location_offset > 0.5 {
-		fade(gtx, 1, LOCATION_FADE, bg, clear)
+		fade(gtx, 0, LOCATION_FADE, bg, clear)
 	}
 	if m.location_offset < most - 0.5 {
-		fade(gtx, width - LOCATION_FADE, width - 1, clear, bg)
+		fade(gtx, width - LOCATION_FADE, width, clear, bg)
 	}
+	ops.clip_pop(gtx.scene)
+	ops.stroke(gtx.scene, well, primer.color(.Border_Color_Default), {width = 1})
 
 	ops.tag(gtx.scene, p.id, "Location")
 	ui.semantics(
