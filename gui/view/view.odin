@@ -35,6 +35,28 @@ PAD :: f32(16)
 // SIZE_WIDTH is the size column's width in a listing row.
 SIZE_WIDTH :: 84
 
+// fonts are the faces FONTS names, for whatever opens the window: jm:ui's default
+// font at Primer's three weights, and again as the monospace face. The caller
+// deletes the slice.
+fonts :: proc(allocator := context.allocator) -> []ops.Font_Ref {
+	path := ui.default_font()
+	out := make([]ops.Font_Ref, 4, allocator)
+	weights := [3]f32{400, 500, 600}
+	for w, i in weights {
+		out[i] = {
+			id     = ops.Font_Id(i),
+			path   = path,
+			weight = w,
+		}
+	}
+	out[3] = {
+		id     = 3,
+		path   = path,
+		weight = 400,
+	}
+	return out
+}
+
 // Font ids main registers: Primer's three weights and a monospace face.
 FONTS :: primer.Fonts {
 	normal   = 0,

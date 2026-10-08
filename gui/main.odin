@@ -19,11 +19,10 @@ import "core:debug/trace"
 import "core:os"
 
 @(require) import "jm:debug"
-import "jm:ui"
-import "jm:ui/ops"
 import "jm:ui/shell"
 
 import "app"
+@(require) import "leaks"
 import "view"
 
 main :: proc() {
@@ -47,7 +46,7 @@ main :: proc() {
 	view.model_init(&m, path)
 	defer view.model_destroy(&m)
 
-	faces := fonts()
+	faces := view.fonts()
 	defer delete(faces)
 
 	shell.run(
@@ -66,36 +65,4 @@ main :: proc() {
 	)
 	app.stop(h)
 	free_all(context.temp_allocator)
-}
-
-// fonts are the faces view.FONTS names: jm:ui's default font at Primer's three
-// weights, and again as the monospace face.
-fonts :: proc() -> []ops.Font_Ref {
-	path := ui.default_font()
-	out := make([]ops.Font_Ref, 4)
-	weights := [3]f32{400, 500, 600}
-	for w, i in weights {
-		out[i] = {
-			id     = ops.Font_Id(i),
-			path   = path,
-			weight = w,
-		}
-	}
-	out[3] = {
-		id     = 3,
-		path   = path,
-		weight = 400,
-	}
-	return out
-}
-
-/*
-What LeakSanitizer is not to report in a build under -sanitize:address: the one
-allocation the system's EGL makes, through pthread_once, when SDL loads it for the
-window's renderer, and keeps for the life of the process. It is the driver's, not
-sonar's; reported, it would bury a real leak under one nobody can fix here.
-*/
-@(export, link_name = "__lsan_default_suppressions")
-lsan_default_suppressions :: proc "c" () -> cstring {
-	return "leak:SDL_EGL_LoadLibrary\n"
 }

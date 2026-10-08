@@ -7,6 +7,7 @@
 #   just clean      remove build/
 #   just deps       fetch the jm submodule and the native libraries the window links
 #   just gui [dir]  open the window on a directory, the home directory by default
+#   just hot [dir]  the same, the view reloaded in place on every edit
 #   just gui-test   run the window's tests, the host's on a real directory
 #
 # The debug allocator, flow, stream and ui come from the jm collection, pinned as
@@ -73,14 +74,55 @@ gui-build: deps
     mkdir -p build/debug
     {{odin}} build gui -debug {{san}} {{flags}} -out:build/debug/{{gui}}{{exe}}
 
+# The window with its view hot-reloaded. The host (gui/host) owns the window and
+# the scan; the view runs as gui/child in a subprocess, rebuilt here whenever an
+# .odin file it is made of changes, into its own timestamped binary under
+# build/hot, named in build/hot/view.watch, which the host re-reads and respawns
+# from (ui/shell.run_host). The scan keeps running across reloads; a change to
+# the scan or the pipeline (gui/app, survey, scan, walk, ntfs) needs the recipe
+# run again. A shell loop rather than jm's tools/hot-watch, which passes its own
+# checkout as the jm collection. GNU stat and date.
+#
+# Open the window, reloading the view on every edit: just hot [dir]
+hot *args: deps
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p build/debug build/hot
+    {{odin}} build gui/host -debug {{san}} {{flags}} -out:build/debug/{{gui}}-host{{exe}}
+    rm -f build/hot/view.watch
+    (
+      last=""
+      while true; do
+        mt=$(stat -c %Y gui/child/*.odin gui/view/*.odin gui/query/*.odin gui/command/*.odin human/*.odin | sort -n | tail -1)
+        if [ "$mt" != "$last" ]; then
+          last=$mt
+          out=build/hot/view-$(date +%s%N){{exe}}
+          if {{odin}} build gui/child -debug {{san}} {{flags}} -out:"$out"; then
+            printf '%s' "$out" > build/hot/view.watch
+            echo "hot: view ready $out"
+            ls -t build/hot/view-* | tail -n +3 | xargs -r rm -f
+          else
+            echo "hot: build failed; the window keeps the last good view"
+          fi
+        fi
+        sleep 0.4
+      done
+    ) &
+    watcher=$!
+    trap 'kill $watcher 2>/dev/null' EXIT
+    while [ ! -f build/hot/view.watch ]; do sleep 0.2; done
+    build/debug/{{gui}}-host{{exe}} build/hot/view.watch {{args}}
+
 # Optimised build of the window -> build/release/sonar-gui
 gui-release: deps
     mkdir -p build/release
     {{odin}} build gui -o:speed {{flags}} -out:build/release/{{gui}}{{exe}}
 
-# Run the window's suites under ASan: the view in a probe over the host on a real
-# directory, the view's own, and the platform package. Not -all-packages, which would run every
-# jm:ui suite the window imports too.
+# The view in a probe over the host on a real directory, the view's own suite,
+# and the platform package's. Not -all-packages, which would run every jm:ui
+# suite the window imports too.
+#
+# Run the window's suites under ASan
 gui-test: deps
     mkdir -p build/test
     {{odin}} test gui/app -debug {{san}} {{flags}} -out:build/test/{{gui}}{{exe}}
