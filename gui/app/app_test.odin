@@ -5,6 +5,7 @@ import "core:fmt"
 import "core:log"
 import "core:math"
 import "core:os"
+import "core:path/filepath"
 import "core:slice"
 import "core:strings"
 import "core:sync"
@@ -111,17 +112,49 @@ open_row :: proc(r: ^Rig, name: string, button := ui.Button.Left) {
 trash_env: sync.Mutex
 
 /*
+own_trash readies notes.txt in root for a test that trashes it, and says the name
+to trash it by and where it will land. The freedesktop.org Trash is pointed at one
+beside root through XDG_DATA_HOME, which the caller holds trash_env for and unsets.
+The Finder's cannot be pointed anywhere, so there notes.txt is given a name no other
+entry has, which the Finder keeps, and the caller deletes what landed.
+*/
+@(private = "file")
+own_trash :: proc(t: ^testing.T, root: string) -> (name, landed: string) {
+	when ODIN_OS == .Darwin {
+		name = fmt.tprintf("notes-%d.txt", time.to_unix_nanoseconds(time.now()))
+		from := fmt.tprintf("%s/notes.txt", root)
+		testing.expect(t, os.rename(from, fmt.tprintf("%s/%s", root, name)) == nil)
+		home := os.get_env("HOME", context.temp_allocator)
+		return name, fmt.tprintf("%s/.Trash/%s", home, name)
+	} else {
+		data := fmt.tprintf("%s-data", root)
+		os.remove_all(data)
+		testing.expect(t, os.set_env("XDG_DATA_HOME", data) == nil)
+		return "notes.txt", fmt.tprintf("%s/Trash/files/notes.txt", data)
+	}
+}
+
+/*
 A directory to scan, made fresh:
 
 	<root>/photos/big.raw    256 KiB
 	<root>/photos/small.jpg  8 KiB
 	<root>/notes.txt         4 KiB
 */
+// scratch is the temp directory as a scan names it: with its links resolved, since
+// macOS's is under /var, a link to /private/var, and no trailing separator.
 @(private = "file")
-fixture :: proc(t: ^testing.T, name: string) -> string {
+scratch :: proc(t: ^testing.T) -> string {
 	dir, dir_err := os.temp_directory(context.temp_allocator)
 	testing.expect(t, dir_err == nil, "no temp directory")
-	root := fmt.tprintf("%s/sonar_gui_%s", dir, name)
+	info, stat_err := os.stat(dir, context.temp_allocator)
+	testing.expect(t, stat_err == nil, "the temp directory is not there")
+	return strings.trim_right(info.fullpath, "/")
+}
+
+@(private = "file")
+fixture :: proc(t: ^testing.T, name: string) -> string {
+	root := fmt.tprintf("%s/sonar_gui_%s", scratch(t), name)
 	os.remove_all(root)
 
 	write :: proc(t: ^testing.T, path: string, size: int) {
@@ -309,13 +342,11 @@ a_right_click_renames_an_entry_on_disk_and_in_the_rings :: proc(t: ^testing.T) {
 a_right_click_moves_an_entry_to_the_trash_and_out_of_the_totals :: proc(t: ^testing.T) {
 	root := fixture(t, "trash")
 	defer os.remove_all(root)
-	// The Trash is the test's own, beside the fixture, never the user's.
-	data := fmt.tprintf("%s-data", root)
-	os.remove_all(data)
-	defer os.remove_all(data)
+	defer os.remove_all(fmt.tprintf("%s-data", root))
 	sync.guard(&trash_env)
-	testing.expect(t, os.set_env("XDG_DATA_HOME", data) == nil)
+	name, landed := own_trash(t, root)
 	defer os.unset_env("XDG_DATA_HOME")
+	defer os.remove(landed)
 
 	r: Rig
 	rig_open(&r, root)
@@ -323,7 +354,7 @@ a_right_click_moves_an_entry_to_the_trash_and_out_of_the_totals :: proc(t: ^test
 
 	// notes.txt is the smaller entry, the last stretch of the ring before twelve.
 	testing.expect(t, settle(&r, "Done"))
-	testing.expect(t, settle(&r, "arc notes.txt"))
+	testing.expect(t, settle(&r, fmt.tprintf("arc %s", name)))
 	ui.probe_click_at(&r.p, ring_point(&r, 0.9925), .Right)
 	press_and_hand_on(&r)
 	press_and_hand_on(&r)
@@ -333,24 +364,27 @@ a_right_click_moves_an_entry_to_the_trash_and_out_of_the_totals :: proc(t: ^test
 	testing.expect(t, ui.probe_click(&r.p, "Trash"), "the dialog asks first")
 	press_and_hand_on(&r)
 
-	testing.expect(t, settle(&r, "Moved notes.txt to the Trash"), "the notice says so")
-	testing.expect(t, settle(&r, "arc notes.txt", present = false), "its arc is gone")
+	said := fmt.tprintf("Moved %s to the Trash", name)
+	testing.expect(t, settle(&r, said), "the notice says so")
+	testing.expect(t, settle(&r, fmt.tprintf("arc %s", name), present = false), "its arc is gone")
 	testing.expect(t, settle(&r, "264.0 KiB in 1 items"), "the totals dropped")
-	testing.expect(t, !os.exists(fmt.tprintf("%s/notes.txt", root)), "gone from the folder")
-	testing.expect(t, os.exists(fmt.tprintf("%s/Trash/files/notes.txt", data)), "in the Trash")
-	testing.expect(t, os.exists(fmt.tprintf("%s/Trash/info/notes.txt.trashinfo", data)))
+	testing.expect(t, !os.exists(fmt.tprintf("%s/%s", root, name)), "gone from the folder")
+	testing.expect(t, os.exists(landed), "in the Trash")
+	when ODIN_OS != .Darwin {
+		info := fmt.tprintf("%s-data/Trash/info/notes.txt.trashinfo", root)
+		testing.expect(t, os.exists(info), "with a record of where it was")
+	}
 }
 
 @(test)
 a_right_click_on_a_contents_row_trashes_it :: proc(t: ^testing.T) {
 	root := fixture(t, "rowtrash")
 	defer os.remove_all(root)
-	data := fmt.tprintf("%s-data", root)
-	os.remove_all(data)
-	defer os.remove_all(data)
+	defer os.remove_all(fmt.tprintf("%s-data", root))
 	sync.guard(&trash_env)
-	testing.expect(t, os.set_env("XDG_DATA_HOME", data) == nil)
+	name, landed := own_trash(t, root)
 	defer os.unset_env("XDG_DATA_HOME")
+	defer os.remove(landed)
 
 	r: Rig
 	rig_open(&r, root)
@@ -358,7 +392,7 @@ a_right_click_on_a_contents_row_trashes_it :: proc(t: ^testing.T) {
 	testing.expect(t, settle(&r, "Done"))
 	testing.expect(t, settle(&r, "268.0 KiB in 2 items"))
 
-	open_row(&r, "notes.txt", .Right)
+	open_row(&r, name, .Right)
 	press_and_hand_on(&r)
 	testing.expect(t, ui.probe_click(&r.p, "Trash"), "the row's menu offers Trash")
 	press_and_hand_on(&r)
@@ -366,7 +400,7 @@ a_right_click_on_a_contents_row_trashes_it :: proc(t: ^testing.T) {
 	testing.expect(t, ui.probe_click(&r.p, "Trash"), "the dialog asks first")
 	press_and_hand_on(&r)
 	testing.expect(t, settle(&r, "264.0 KiB in 1 items"), "the row is gone from the totals")
-	testing.expect(t, os.exists(fmt.tprintf("%s/Trash/files/notes.txt", data)), "in the Trash")
+	testing.expect(t, os.exists(landed), "in the Trash")
 }
 
 @(test)
@@ -436,11 +470,10 @@ a_long_name_stops_short_of_its_share_bar :: proc(t: ^testing.T) {
 	render.render(&r.r, ui.probe_current(&r.p), &img, r.clear)
 	data: bl.ImageData
 	testing.expect(t, bl.image_get_data(&img, &data) == 0)
-	// inked counts the pixels other than the background in a strip of the rows just
-	// above the bar, from x0 to x1.
-	// It reads only inside the image.
-	inked :: proc(data: bl.ImageData, bar: ops.Rect, x0, x1: f32) -> (n: int) {
-		for y in max(int(bar.y) - 7, 0) ..< min(int(bar.y), int(data.size.h)) {
+	// inked counts the pixels other than the background from x0 to x1, in the
+	// rows from y0 to y1. It reads only inside the image.
+	inked :: proc(data: bl.ImageData, x0, x1, y0, y1: f32) -> (n: int) {
+		for y in max(int(y0), 0) ..< min(int(y1), int(data.size.h)) {
 			line := ([^]u32)(rawptr(uintptr(data.pixel_data) + uintptr(y * int(data.stride))))
 			for x in max(int(x0), 0) ..< min(int(x1), int(data.size.w)) {
 				if line[x] != 0xFFFFFFFF {
@@ -451,13 +484,29 @@ a_long_name_stops_short_of_its_share_bar :: proc(t: ^testing.T) {
 		return
 	}
 	// The name is drawn where it fits, so a strip with nothing in it means clipped,
-	// not a frame that drew nothing.
+	// not a frame that drew nothing. The strips are the name's own rows: with
+	// macOS's system face its letters start in the row the bar starts in, so a
+	// name running on shows in its rows below the bar as well as above. The rows
+	// the bar's edges are smoothed into are left out.
+	name := ui.probe_bounds(&r.p, long)
+	top, bottom := math.floor(bar.y), math.ceil(bar.y + bar.h)
+	if !testing.expectf(
+		t,
+		name.y < top && bottom < name.y + name.h,
+		"the name's rows %v do not reach past the bar's %v",
+		name,
+		bar,
+	) {
+		return
+	}
 	testing.expect(
 		t,
-		inked(data, bar, bar.x - 200, bar.x - 60) > 0,
+		inked(data, bar.x - 200, bar.x - 60, name.y, name.y + name.h) > 0,
 		"the name is drawn before the bar",
 	)
-	over := inked(data, bar, bar.x, bar.x + bar.w)
+	over :=
+		inked(data, bar.x, bar.x + bar.w, name.y, top) +
+		inked(data, bar.x, bar.x + bar.w, bottom, name.y + name.h)
 	testing.expectf(t, over == 0, "%d pixels over the bar are not background", over)
 }
 
@@ -594,7 +643,8 @@ the_location_bar_walks_the_path_and_scans_above_it :: proc(t: ^testing.T) {
 	testing.expect(t, settle(&r, "Done"))
 	testing.expect(t, settle(&r, "arc photos"))
 	testing.expect(t, settle(&r, "sonar_gui_bar"), "the scan's top is a step")
-	testing.expect(t, settle(&r, "tmp"), "and so is the directory above it")
+	above := filepath.dir(root)
+	testing.expect(t, settle(&r, filepath.base(above)), "and so is the directory above it")
 
 	// Into photos and back by its step.
 	ui.probe_click_at(&r.p, ring_point(&r, 0.5))
@@ -606,7 +656,7 @@ the_location_bar_walks_the_path_and_scans_above_it :: proc(t: ^testing.T) {
 	testing.expect(t, settle(&r, "268.0 KiB in 2 items"), "the top's step opened the top")
 
 	// A step above the scan asks for a scan from there.
-	testing.expect(t, ui.probe_click(&r.p, "tmp"))
+	testing.expect(t, ui.probe_click(&r.p, filepath.base(above)))
 	scanned := ""
 	for c in ui.probe_commands(&r.p) {
 		if cmd, ok := ui.command_as(c, command.Command); ok {
@@ -616,7 +666,7 @@ the_location_bar_walks_the_path_and_scans_above_it :: proc(t: ^testing.T) {
 			}
 		}
 	}
-	testing.expect_value(t, scanned, "/tmp/")
+	testing.expect_value(t, scanned, fmt.tprintf("%s/", above))
 	ui.router_commands_clear(&r.p.router)
 }
 
@@ -692,7 +742,8 @@ a_deep_path_shows_its_deepest_steps :: proc(t: ^testing.T) {
 		rescan.x,
 	)
 	deepest := ui.probe_bounds(&r.p, "fourth_level_directory")
-	top := ui.probe_bounds(&r.p, "tmp")
+	top := ui.probe_bounds(&r.p, filepath.base(filepath.dir(root)))
+	testing.expect(t, top.w > 0, "the directory above the scan is a step")
 	testing.expectf(
 		t,
 		deepest.x + deepest.w <= bar.x + bar.w,
@@ -703,7 +754,7 @@ a_deep_path_shows_its_deepest_steps :: proc(t: ^testing.T) {
 	testing.expectf(
 		t,
 		top.x < bar.x,
-		"the top has scrolled off the left: tmp at %v, bar from %v",
+		"the top has scrolled off the left: its parent at %v, bar from %v",
 		top.x,
 		bar.x,
 	)
@@ -865,7 +916,7 @@ hovering_a_largest_file_lights_its_arc :: proc(t: ^testing.T) {
 	testing.expect(t, settle(&r, "268.0 KiB in 2 items"))
 
 	// The largest files are an answer of their own, too.
-	testing.expect(t, settle(&r, "/tmp/sonar_gui_lfh/photos/big.raw"))
+	testing.expect(t, settle(&r, fmt.tprintf("%s/photos/big.raw", root)))
 
 	// big.raw is in the largest files, and in the second ring, under photos.
 	said := "256.0 KiB · 95.5% of sonar_gui_lfh"
@@ -1100,9 +1151,7 @@ A directory of projects, made fresh:
 */
 @(private = "file")
 projects :: proc(t: ^testing.T, name: string) -> string {
-	dir, dir_err := os.temp_directory(context.temp_allocator)
-	testing.expect(t, dir_err == nil, "no temp directory")
-	root := fmt.tprintf("%s/sonar_gui_%s", dir, name)
+	root := fmt.tprintf("%s/sonar_gui_%s", scratch(t), name)
 	os.remove_all(root)
 	for d in ([]string{"", "web", "web/node_modules", "web/node_modules/lib", "rust", "rust/target", "plain", "plain/build"}) {
 		testing.expectf(
