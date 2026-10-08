@@ -14,8 +14,10 @@ import "core:fmt"
 import "core:strings"
 
 import "jm:ui"
+import "jm:ui/design"
 import "jm:ui/ops"
 import "jm:ui/primer"
+import tok "jm:ui/primer/tokens"
 
 import "../../human"
 import "../command"
@@ -146,7 +148,7 @@ view :: proc(gtx: ^ui.Ctx, user: rawptr) {
 @(private)
 toolbar :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result) {
 	ui.row(gtx, gap = 8, align = .Center)
-	primer.heading(gtx, "sonar", level = 1, variant = .Medium)
+	title(gtx, "sonar")
 	ui.spacer(gtx, 8)
 	ui.flexible(gtx, 1)
 	field := primer.text_input(
@@ -392,6 +394,26 @@ largest :: proc(gtx: ^ui.Ctx, m: ^Model) {
 }
 
 // --- small parts ---------------------------------------------------------------
+
+// TITLE is the window's name in the toolbar: Primer's semibold title face at 24px,
+// between its medium (20px) and large (32px) steps, a brand rather than a page
+// heading.
+TITLE :: tok.Type_Style {
+	weight      = tok.BASE_TEXT_WEIGHT_SEMIBOLD,
+	size        = 24,
+	line_height = 32,
+}
+
+// title is s set in TITLE, read as the window's one first-level heading.
+@(private)
+title :: proc(gtx: ^ui.Ctx, s: string, loc := #caller_location) {
+	p := ui.widget_open(gtx, loc = loc)
+	para := design.layout_style(gtx, s, TITLE, primer.font_for(gtx, TITLE.weight))
+	design.draw_paragraph(gtx, para, {0, 0}, primer.color(.Fg_Color_Default))
+	ops.tag(gtx.scene, p.id, s)
+	ui.semantics(gtx, &p, {role = .Heading, level = 1, label = s})
+	ui.widget_close(gtx, &p, {size = {para.width, para.height}})
+}
 
 // NAME_FADE is how far a name too long for its cell fades out before its end.
 NAME_FADE :: f32(32)
