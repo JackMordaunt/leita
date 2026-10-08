@@ -8,6 +8,8 @@ import "core:strings"
 import NS "core:sys/darwin/Foundation"
 import "core:sys/posix"
 
+import "../../scan"
+
 foreign import libc "system:System"
 
 SEPARATOR  :: "/"
@@ -16,48 +18,9 @@ SEPARATORS :: "/"
 @(private = "file")
 RENAME_EXCL :: 0x00000004
 
-@(private = "file")
-MAXPATHLEN :: 1024
-
-// Stat_FS is struct statfs from <sys/mount.h> as __DARWIN_STRUCT_STATFS64 lays it
-// out, which is what the statfs symbol takes on arm64 and statfs$INODE64 on x86_64.
-// statvfs is not used: core:sys/posix declares its block counts c.uint on Darwin,
-// too few blocks for a large volume.
-@(private = "file")
-Stat_FS :: struct {
-	bsize:       u32,
-	iosize:      i32,
-	blocks:      u64,
-	bfree:       u64,
-	bavail:      u64,
-	files:       u64,
-	ffree:       u64,
-	fsid:        [2]i32,
-	owner:       u32,
-	type:        u32,
-	flags:       u32,
-	fssubtype:   u32,
-	fstypename:  [16]u8,
-	mntonname:   [MAXPATHLEN]u8,
-	mntfromname: [MAXPATHLEN]u8,
-	flags_ext:   u32,
-	reserved:    [7]u32,
-}
-#assert(size_of(Stat_FS) == 2168)
-
-when ODIN_ARCH == .amd64 {
-	@(private = "file")
-	STATFS :: "statfs$INODE64"
-} else {
-	@(private = "file")
-	STATFS :: "statfs"
-}
-
 @(private = "file", default_calling_convention = "c")
 foreign libc {
 	renamex_np :: proc(from, to: cstring, flags: c.uint) -> c.int ---
-	@(link_name = STATFS)
-	statfs :: proc(path: cstring, buf: ^Stat_FS) -> c.int ---
 }
 
 @(private = "file", objc_class = "NSFileManager")
@@ -160,10 +123,7 @@ errno_error :: proc(errno: posix.Errno) -> Error {
 // space is the size of the filesystem holding path and what of it is free to
 // this user: statfs's available blocks, as df shows, not those kept for root.
 space :: proc(path: string) -> (total, free: u64, ok: bool) {
-	st: Stat_FS
-	if statfs(strings.clone_to_cstring(path, context.temp_allocator), &st) != 0 {
-		return 0, 0, false
-	}
+	st := scan.stat_fs(path) or_return
 	unit := u64(st.bsize)
 	return st.blocks * unit, st.bavail * unit, true
 }

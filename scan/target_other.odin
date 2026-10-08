@@ -152,7 +152,9 @@ mounted_at :: proc(
 	fs: Filesystem,
 	found: bool,
 ) {
-	when ODIN_OS != .Linux {
+	when ODIN_OS == .Darwin {
+		return mounted_at_statfs(path, allocator)
+	} else when ODIN_OS != .Linux {
 		// Other unixes report their mounts through getmntinfo rather than a file.
 		return "", "", .Unknown, false
 	} else {
@@ -234,7 +236,7 @@ filesystem_from_name :: proc(name: string) -> Filesystem {
 		return .Exfat
 	case "vfat", "msdos":
 		return .Fat32
-	case "nfs", "nfs4", "cifs", "smb3":
+	case "nfs", "nfs4", "cifs", "smb3", "smbfs", "afpfs", "webdav":
 		return .Network
 	}
 	return .Other
