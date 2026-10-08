@@ -29,11 +29,9 @@ Colouring :: enum u8 {
 // Kind is what an entry is, for colouring by type.
 Kind :: enum u8 {
 	Folder, // a directory, neither build nor cache
-	Video,
-	Audio,
+	Media, // video and audio
 	Image,
-	Archive,
-	Disk_Image,
+	Archive, // archives, packages and disk images
 	Document,
 	Code,
 	Binary,
@@ -43,11 +41,9 @@ Kind :: enum u8 {
 
 KIND_NAMES := [Kind]string {
 	.Folder      = "Folder",
-	.Video       = "Video",
-	.Audio       = "Audio",
+	.Media       = "Video and audio",
 	.Image       = "Image",
-	.Archive     = "Archive",
-	.Disk_Image  = "Disk image",
+	.Archive     = "Archive and disk image",
 	.Document    = "Document",
 	.Code        = "Code and text",
 	.Binary      = "Binary",
@@ -55,39 +51,47 @@ KIND_NAMES := [Kind]string {
 	.Other       = "Other",
 }
 
-// kind_colour is a kind's colour, from Primer's emphasis colours as BRANCHES are.
-// The build and cache is the one most worth finding, so it takes the boldest; its
-// two purples are one colour in Primer's themes (done and upsell emphasis are
-// both #8250df light and #8957e5 dark, primer/tokens), so a document is a mix of two
-// others; and what is not a kind of content is grey.
+/*
+KIND_COLOURS are the kinds' colours: seven, every pair of which can be told apart
+wherever they meet, as a treemap or a sunburst puts any two side by side. Each is
+used as it is, never lightened, which would undo the separation.
+
+They were checked with the dataviz skill's validator over all pairs, on Primer's
+white and its dark ground, where it reported normal-vision ΔE at least 15.1,
+protan and deutan ΔE at least 8.2 (OKLab ×100), and contrast at least 3:1 on
+white but 2.96:1 for the berry on dark, which the legend and labels relieve:
+
+	node validate_palette.js "#984260,#5b6c00,#2e64a6,#b07a20,#249c74,#bb76b5,#4693f1" \
+		--mode light --surface "#ffffff" --pairs all
+	node validate_palette.js "#984260,#5b6c00,#2e64a6,#b07a20,#249c74,#bb76b5,#4693f1" \
+		--mode dark --surface "#0d1117" --pairs all
+
+Run it again after any change here; the_kinds_colours_stay_apart checks the
+normal-vision floor alone. The seven came from a max-clique search over colours
+generated in both lightness bands, which found no eighth to add, so the kinds are
+seven and what is not a kind is grey.
+*/
+@(rodata)
+KIND_COLOURS := [Kind]ops.Color {
+	.Folder      = {},
+	.Media       = {0xbb, 0x76, 0xb5, 255}, // orchid
+	.Image       = {0x24, 0x9c, 0x74, 255}, // green
+	.Archive     = {0x98, 0x42, 0x60, 255}, // berry
+	.Document    = {0x46, 0x93, 0xf1, 255}, // light blue
+	.Code        = {0x2e, 0x64, 0xa6, 255}, // blue
+	.Binary      = {0x5b, 0x6c, 0x00, 255}, // olive
+	.Build_Cache = {0xb0, 0x7a, 0x20, 255}, // ochre
+	.Other       = {},
+}
+
+// kind_colour is a kind's colour; what is not a kind of content is a grey set
+// on the page's ground, far lighter (or darker) than any of the seven.
 kind_colour :: proc(kind: Kind) -> ops.Color {
-	switch kind {
-	case .Video:
-		return primer.color(.Bg_Color_Done_Emphasis)
-	case .Audio:
-		return primer.color(.Bg_Color_Sponsors_Emphasis)
-	case .Image:
-		return primer.color(.Bg_Color_Success_Emphasis)
-	case .Archive:
-		return primer.color(.Bg_Color_Attention_Emphasis)
-	case .Disk_Image:
-		return primer.color(.Bg_Color_Danger_Emphasis)
-	case .Document:
-		return mix(
-			primer.color(.Bg_Color_Accent_Emphasis),
-			primer.color(.Bg_Color_Success_Emphasis),
-			0.5,
-		)
-	case .Code:
-		return primer.color(.Bg_Color_Accent_Emphasis)
-	case .Binary:
-		return primer.color(.Bg_Color_Neutral_Emphasis)
-	case .Build_Cache:
-		return primer.color(.Bg_Color_Severe_Emphasis)
-	case .Folder, .Other:
+	if kind == .Folder || kind == .Other {
+		// Neutral muted is translucent; set it on the page's ground.
+		return mix(primer.color(.Fg_Color_Muted), primer.color(.Bg_Color_Default), 0.7)
 	}
-	// Neutral muted is translucent; set it on the page's ground.
-	return mix(primer.color(.Fg_Color_Muted), primer.color(.Bg_Color_Default), 0.7)
+	return KIND_COLOURS[kind]
 }
 
 // BUILD_CACHE are directory names that hold what a tool made and will make again.
@@ -122,20 +126,20 @@ EXTENSIONS := [?]struct {
 	ext:  string,
 	kind: Kind,
 } {
-	{"mp4", .Video},
-	{"mkv", .Video},
-	{"mov", .Video},
-	{"avi", .Video},
-	{"webm", .Video},
-	{"m4v", .Video},
-	{"wmv", .Video},
-	{"mp3", .Audio},
-	{"flac", .Audio},
-	{"wav", .Audio},
-	{"ogg", .Audio},
-	{"opus", .Audio},
-	{"m4a", .Audio},
-	{"aac", .Audio},
+	{"mp4", .Media},
+	{"mkv", .Media},
+	{"mov", .Media},
+	{"avi", .Media},
+	{"webm", .Media},
+	{"m4v", .Media},
+	{"wmv", .Media},
+	{"mp3", .Media},
+	{"flac", .Media},
+	{"wav", .Media},
+	{"ogg", .Media},
+	{"opus", .Media},
+	{"m4a", .Media},
+	{"aac", .Media},
 	{"png", .Image},
 	{"jpg", .Image},
 	{"jpeg", .Image},
@@ -163,14 +167,14 @@ EXTENSIONS := [?]struct {
 	{"deb", .Archive},
 	{"rpm", .Archive},
 	{"jar", .Archive},
-	{"iso", .Disk_Image},
-	{"img", .Disk_Image},
-	{"qcow2", .Disk_Image},
-	{"vdi", .Disk_Image},
-	{"vmdk", .Disk_Image},
-	{"vhd", .Disk_Image},
-	{"vhdx", .Disk_Image},
-	{"dmg", .Disk_Image},
+	{"iso", .Archive},
+	{"img", .Archive},
+	{"qcow2", .Archive},
+	{"vdi", .Archive},
+	{"vmdk", .Archive},
+	{"vhd", .Archive},
+	{"vhdx", .Archive},
+	{"dmg", .Archive},
 	{"pdf", .Document},
 	{"doc", .Document},
 	{"docx", .Document},
@@ -291,9 +295,13 @@ fill_of :: proc(m: ^Model, r: ^query.Rings_Result, at: int, lit, framed: bool) -
 	case .Type:
 		fill := kind_colour(kind_in(r, at))
 		if lit {
-			return fill
+			// Darker, not lighter: the seven are used as they are, so a lit one
+			// stands apart by going toward the ink.
+			return mix(fill, primer.color(.Fg_Color_Default), 0.3)
 		}
-		return mix(fill, bg, 0.45 if framed && a.directory else 0.15)
+		// A framed directory is lightened so its contents stand out; its contents,
+		// the files, keep their colour exactly.
+		return mix(fill, bg, 0.45) if framed && a.directory else fill
 	}
 	return bg
 }

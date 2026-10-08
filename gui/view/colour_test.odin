@@ -1,16 +1,19 @@
 package sonar_view
 
+import "core:math"
 import "core:testing"
+
+import "jm:ui/ops"
 
 import "../query"
 
 @(test)
 a_name_says_what_kind_of_file_it_is :: proc(t: ^testing.T) {
-	testing.expect_value(t, kind_of("holiday.MKV", false), Kind.Video)
+	testing.expect_value(t, kind_of("holiday.MKV", false), Kind.Media)
 	testing.expect_value(t, kind_of("libssl.so.3", false), Kind.Binary)
 	testing.expect_value(t, kind_of("notes.txt", false), Kind.Code)
 	testing.expect_value(t, kind_of("backup.tar.gz", false), Kind.Archive)
-	testing.expect_value(t, kind_of("win11.iso", false), Kind.Disk_Image)
+	testing.expect_value(t, kind_of("win11.iso", false), Kind.Archive)
 	testing.expect_value(t, kind_of("README", false), Kind.Other)
 	testing.expect_value(t, kind_of(".bashrc", false), Kind.Other)
 	testing.expect_value(t, kind_of("node_modules", true), Kind.Build_Cache)
@@ -32,4 +35,49 @@ a_file_under_a_cache_is_cache :: proc(t: ^testing.T) {
 	testing.expect_value(t, kind_in(&r, 2), Kind.Build_Cache)
 	testing.expect_value(t, kind_in(&r, 3), Kind.Image)
 	testing.expect_value(t, kind_in(&r, 0), Kind.Folder)
+}
+
+// Every pair of the kinds' colours stays at least 15 apart in OKLab (×100) to the
+// eye, the dataviz skill's normal-vision floor. The colour-blind views are not
+// checked here: KIND_COLOURS says how to run the skill's validator for them.
+@(test)
+the_kinds_colours_stay_apart :: proc(t: ^testing.T) {
+	oklab :: proc(c: ops.Color) -> [3]f64 {
+		lin :: proc(v: u8) -> f64 {
+			s := f64(v) / 255
+			return s / 12.92 if s <= 0.04045 else math.pow((s + 0.055) / 1.055, 2.4)
+		}
+		r, g, b := lin(c[0]), lin(c[1]), lin(c[2])
+		l := math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b)
+		m := math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b)
+		s := math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b)
+		return {
+			0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s,
+			1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+			0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s,
+		}
+	}
+	coloured := 0
+	for c in KIND_COLOURS {
+		if c != {} {
+			coloured += 1
+		}
+	}
+	testing.expect_value(t, coloured, 7)
+	for a in Kind {
+		for b in Kind {
+			if a >= b || KIND_COLOURS[a] == {} || KIND_COLOURS[b] == {} {
+				continue
+			}
+			x, y := oklab(KIND_COLOURS[a]), oklab(KIND_COLOURS[b])
+			d :=
+				100 *
+				math.sqrt(
+					(x[0] - y[0]) * (x[0] - y[0]) +
+					(x[1] - y[1]) * (x[1] - y[1]) +
+					(x[2] - y[2]) * (x[2] - y[2]),
+				)
+			testing.expectf(t, d >= 15, "%v and %v are only %.1f apart", a, b, d)
+		}
+	}
 }

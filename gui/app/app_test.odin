@@ -826,11 +826,11 @@ colouring_by_type_names_the_kind :: proc(t: ^testing.T) {
 	defer rig_close(&r)
 	testing.expect(t, settle(&r, "Done"))
 	testing.expect(t, settle(&r, "268.0 KiB in 2 items"))
-	testing.expect(t, !ui.probe_tagged(&r.p, "Disk image"), "no legend by folder")
+	testing.expect(t, !ui.probe_tagged(&r.p, "Archive and disk image"), "no legend by folder")
 
 	testing.expect(t, ui.probe_click(&r.p, "Type"))
 	press_and_hand_on(&r)
-	testing.expect(t, ui.probe_tagged(&r.p, "Disk image"), "the legend names the kinds")
+	testing.expect(t, ui.probe_tagged(&r.p, "Archive and disk image"), "the legend names the kinds")
 	row := ui.probe_bounds(&r.p, "notes.txt")
 	ui.probe_move(&r.p, row.x + 24, row.y + row.h / 2)
 	ui.probe_advance(&r.p, 3, 1.0 / 60)
