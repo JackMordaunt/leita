@@ -30,6 +30,9 @@ text_of :: proc(t: ^Text) -> string {
 Command :: union {
 	Scan,
 	Stop,
+	Locate,
+	Trash,
+	Rename,
 }
 
 // Scan reads what is at path, calling off any scan still running.
@@ -39,3 +42,25 @@ Scan :: struct {
 
 // Stop calls off the running scan, keeping what it has read.
 Stop :: struct {}
+
+// Entry names an entry the window was shown: a node of one scan's tree.
+Entry :: struct {
+	generation: u32,
+	node:       u32,
+}
+
+// Locate shows the entry in the system's file manager.
+Locate :: struct {
+	entry: Entry,
+}
+
+// Trash moves the entry to the Trash and takes it out of the totals.
+Trash :: struct {
+	entry: Entry,
+}
+
+// Rename gives the entry a new name in the same folder.
+Rename :: struct {
+	entry: Entry,
+	name:  Text,
+}

@@ -42,20 +42,32 @@ FONTS :: primer.Fonts {
 }
 
 Model :: struct {
-	path:       ui.Text_State,
-	dark:       bool,
-	scheme:     primer.Scheme,
+	path:         ui.Text_State,
+	dark:         bool,
+	scheme:       primer.Scheme,
 	// The directory shown, as an index into the tree of that generation. Each scan
 	// fills a tree of its own, so on a new one the view returns to its top.
-	generation: u32,
-	dir:        u32,
-	scroll:     ui.Scroll_Offset,
-	side:       ui.Scroll_Offset,
+	generation:   u32,
+	dir:          u32,
+	scroll:       ui.Scroll_Offset,
+	side:         ui.Scroll_Offset,
 	// The pointer over the sunburst, and the size it was last drawn at, so a frame
 	// can say what is under the pointer before it draws the disc.
-	pointer:    ops.Point,
-	inside:     bool,
-	burst:      f32,
+	pointer:      ops.Point,
+	inside:       bool,
+	burst:        f32,
+	// The way back and forth through the directories opened (actions.odin).
+	back:         [dynamic]u32,
+	forward:      [dynamic]u32,
+	// The right-click menu, what it is about, and the questions it can ask.
+	target:       Target,
+	menu_open:    bool,
+	menu_at:      ops.Point, // in the sunburst's space
+	trash_open:   bool,
+	rename_open:  bool,
+	rename:       ui.Text_State,
+	rename_focus: bool, // the rename field takes focus when next drawn
+	notice_seen:  u32, // the notice last dismissed
 }
 
 model_init :: proc(m: ^Model, path: string) {
@@ -65,12 +77,10 @@ model_init :: proc(m: ^Model, path: string) {
 
 model_destroy :: proc(m: ^Model) {
 	ui.text_destroy(&m.path)
-}
-
-// open makes dir the one shown, in the sunburst and the listing both.
-open :: proc(m: ^Model, dir: u32) {
-	m.dir = dir
-	m.scroll = {}
+	ui.text_destroy(&m.rename)
+	delete(m.back)
+	delete(m.forward)
+	delete(m.target.name)
 }
 
 view :: proc(gtx: ^ui.Ctx, user: rawptr) {
@@ -91,14 +101,17 @@ view :: proc(gtx: ^ui.Ctx, user: rawptr) {
 		m.dir = query.ROOT
 		m.scroll = {}
 		m.side = {}
+		m.menu_open, m.trash_open, m.rename_open = false, false, false
+		forget_history(m)
 	}
+	walk_history(gtx, m)
 
 	ui.inset(gtx, {left = PAD, top = PAD, bottom = PAD})
 	ui.column(gtx, gap = 12, align = .Fill)
 	if ui.inset(gtx, {right = PAD}) {
 		if ui.column(gtx, gap = 12, align = .Fill) {
 			toolbar(gtx, m, prog)
-			status(gtx, prog)
+			status(gtx, m, prog)
 		}
 	}
 	if prog == nil || prog.generation == 0 {
@@ -116,7 +129,7 @@ view :: proc(gtx: ^ui.Ctx, user: rawptr) {
 				largest(gtx, m)
 			}
 		}
-	}
+	}; dialogs(gtx, m)
 }
 
 // --- the bar along the top -----------------------------------------------------
@@ -166,7 +179,7 @@ toolbar :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result) {
 // --- how the scan is going -----------------------------------------------------
 
 @(private)
-status :: proc(gtx: ^ui.Ctx, prog: ^query.Progress_Result) {
+status :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result) {
 	if prog == nil || prog.generation == 0 {
 		primer.text(
 			gtx,
@@ -190,6 +203,7 @@ status :: proc(gtx: ^ui.Ctx, prog: ^query.Progress_Result) {
 		primer.text(gtx, prog.target, weight = .Semibold)
 		primer.text(gtx, counters(gtx, prog), color = primer.color(.Fg_Color_Muted))
 	}
+	notice(gtx, m, prog.notice)
 	if prog.state == .Failed && prog.problem != "" {
 		primer.banner(gtx, "The scan failed", prog.problem, .Critical)
 	}

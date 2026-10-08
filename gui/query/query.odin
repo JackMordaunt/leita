@@ -38,6 +38,16 @@ Progress_Result :: struct {
 	pending:    int, // read, but waiting on a parent before they can be counted
 	seconds:    f64, // since the scan began, or how long it took
 	problem:    string, // why it failed
+	notice:     Notice, // what came of the window's last request
+}
+
+// Notice is what came of a request the window made of an entry: moved to the
+// Trash, renamed, or why not. id moves on with each, so a dismissed notice stays
+// dismissed until there is a new one.
+Notice :: struct {
+	id:     u32,
+	failed: bool,
+	text:   string,
 }
 
 // Listing is a directory's contents, largest first.

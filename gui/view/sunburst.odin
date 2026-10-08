@@ -14,7 +14,8 @@ import "../query"
 /*
 The directory shown, as a sunburst: its contents in the first ring around a hub,
 theirs in the next, each arc's sweep its share of its parent's. A click on a
-directory's arc opens it, which makes it the hub; a click on the hub goes up.
+directory's arc opens it, which makes it the hub; a click on the hub goes up. A
+right click opens the entry's menu (actions.odin).
 
 Every arc is one entry the host laid out (query.Rings); the view only turns turns
 into radians. Hit testing is done here rather than per arc: the disc is one input
@@ -179,7 +180,7 @@ sunburst :: proc(
 	b := burst_of(side)
 
 	p := ui.widget_open(gtx, loc = loc)
-	pressed := false
+	pressed, menu := false, false
 	for e in ui.events(gtx, p.id) {
 		#partial switch e.kind {
 		case .Move, .Enter:
@@ -187,9 +188,12 @@ sunburst :: proc(
 		case .Leave:
 			m.inside = false
 		case .Press:
-			if e.button == .Left {
-				m.pointer, m.inside = e.pos, true
+			m.pointer, m.inside = e.pos, true
+			#partial switch e.button {
+			case .Left:
 				pressed = true
+			case .Right:
+				menu = true
 			}
 		}
 	}
@@ -216,6 +220,21 @@ sunburst :: proc(
 
 	ops.input_area(gtx.scene, p.id, ops.Rect{0, 0, side, side}, {.Press, .Move, .Enter, .Leave})
 	ops.tag(gtx.scene, p.id, "Sunburst")
+
+	if menu {
+		switch u, at := hit_at(r, b, m.pointer); u {
+		case .Arc:
+			a := r.arcs[at]
+			aim(m, {node = a.node, name = a.name, directory = a.directory})
+			m.menu_open, m.menu_at = true, m.pointer
+		case .Hub:
+			here := r.crumbs[len(r.crumbs) - 1]
+			aim(m, {node = here.node, name = here.name, directory = true, hub = true})
+			m.menu_open, m.menu_at = true, m.pointer
+		case .Nothing:
+		}
+	}
+	entry_menu(gtx, m, p.id)
 	ui.widget_close(gtx, &p, {size = {side, side}})
 
 	if !pressed {

@@ -98,6 +98,7 @@ Scan :: struct {
 	fill:     survey.Fill,
 	roll:     survey.Rollup,
 	reader:   ^thread.Thread,
+	names:    [dynamic]string, // new names given by a rename, which the tree borrows
 }
 
 // Desk is the stage pinned to the desk thread: the current scan and every live
@@ -108,6 +109,7 @@ Desk :: struct {
 	generation: u32,
 	scan:       ^Scan,
 	live:       map[ui.Need_Key]Query,
+	notice:     query.Notice, // its text owned
 }
 
 Host :: struct {
@@ -186,6 +188,7 @@ stop :: proc(h: ^Host) {
 	scan_end(&h.desk)
 	stream.destroy(h.p)
 	delete(h.desk.live)
+	delete(h.desk.notice.text)
 	ui.inbox_destroy(&h.inbox)
 }
 
@@ -284,6 +287,9 @@ desk_step :: proc(d: ^Desk, v: Desk_In) {
 				s.stopped = true
 				scan.cancel(&s.tree)
 			}
+		case command.Locate, command.Trash, command.Rename:
+			act(d, &e)
+			answer_all(d)
 		}
 	case Tick:
 		if advance(d) {
@@ -361,6 +367,10 @@ scan_end :: proc(d: ^Desk) {
 	if s.resolved {
 		scan.target_destroy(&s.fill.target)
 	}
+	for n in s.names {
+		delete(n)
+	}
+	delete(s.names)
 	delete(s.path)
 	delete(s.problem)
 	free(s)
@@ -447,6 +457,7 @@ progress :: proc(d: ^Desk) -> query.Progress_Result {
 	if s == nil {
 		return r
 	}
+	r.notice = d.notice
 	r.state = s.state
 	r.target = s.path
 	r.slow = s.slow
@@ -652,6 +663,9 @@ largest :: proc(
 			continue
 		}
 		if n.disk == 0 || (count == len(top) && n.disk <= top[count - 1].bytes) {
+			continue
+		}
+		if survey.removed(&s.roll, &s.tree, i) {
 			continue
 		}
 		at := min(count, len(top) - 1)

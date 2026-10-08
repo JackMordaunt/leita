@@ -1,12 +1,14 @@
 package sonar_app
 
 import "core:fmt"
+import "core:math"
 import "core:os"
 import "core:slice"
 import "core:testing"
 import "core:time"
 
 import "jm:ui"
+import "jm:ui/ops"
 
 import "../query"
 import "../view"
@@ -202,4 +204,110 @@ a_click_on_an_arc_opens_it_and_the_hub_goes_back_up :: proc(t: ^testing.T) {
 	ui.probe_frame(&r.p)
 	hand_on(&r)
 	testing.expect(t, settle(&r, "arc photos"), "back at the top")
+}
+
+// ring_point is the point in the sunburst's first ring at turn t, clockwise from
+// twelve o'clock, in device space.
+@(private = "file")
+ring_point :: proc(r: ^Rig, t: f32) -> ops.Point {
+	b := ui.probe_bounds(&r.p, "Sunburst")
+	radius := b.w / 2
+	dist := radius * (view.HUB + (1 - view.HUB) / (2 * query.RING_DEPTH))
+	a := t * math.TAU - math.PI / 2
+	return {b.x + b.w / 2 + dist * math.cos(a), b.y + b.h / 2 + dist * math.sin(a)}
+}
+
+// press_and_hand_on hands the host what the frame a click or key ran in asked
+// for, commands among it, then runs one more frame and hands on its needs: a
+// frame run first would clear the commands unsent.
+@(private = "file")
+press_and_hand_on :: proc(r: ^Rig) {
+	hand_on(r)
+	ui.probe_frame(&r.p)
+	hand_on(r)
+}
+
+@(test)
+the_back_and_forward_buttons_walk_the_directories_opened :: proc(t: ^testing.T) {
+	root := fixture(t, "history")
+	defer os.remove_all(root)
+	r: Rig
+	rig_open(&r, root)
+	defer rig_close(&r)
+
+	testing.expect(t, settle(&r, "arc photos"))
+	ui.probe_click_at(&r.p, ring_point(&r, 0.5))
+	press_and_hand_on(&r)
+	testing.expect(t, settle(&r, "arc big.raw"), "photos opened")
+
+	ui.probe_key(&r.p, .Browser_Back)
+	press_and_hand_on(&r)
+	testing.expect(t, settle(&r, "arc photos"), "back at the top")
+
+	ui.probe_key(&r.p, .Browser_Forward)
+	press_and_hand_on(&r)
+	testing.expect(t, settle(&r, "arc big.raw"), "forward into photos again")
+}
+
+@(test)
+a_right_click_renames_an_entry_on_disk_and_in_the_rings :: proc(t: ^testing.T) {
+	root := fixture(t, "rename")
+	defer os.remove_all(root)
+	r: Rig
+	rig_open(&r, root)
+	defer rig_close(&r)
+
+	testing.expect(t, settle(&r, "Done"))
+	testing.expect(t, settle(&r, "arc photos"))
+	ui.probe_click_at(&r.p, ring_point(&r, 0.5), .Right)
+	press_and_hand_on(&r)
+	press_and_hand_on(&r)
+	testing.expect(t, ui.probe_click(&r.p, "Rename…"), "the menu offers Rename")
+	press_and_hand_on(&r)
+	press_and_hand_on(&r)
+
+	// The field opens holding the old name, selected, so typing replaces it.
+	testing.expect_value(t, ui.probe_focus_name(&r.p), "New name")
+	ui.probe_type(&r.p, "pictures")
+	ui.probe_key(&r.p, .Enter)
+	press_and_hand_on(&r)
+	testing.expect(t, settle(&r, "Renamed photos to pictures"), "the notice says so")
+	testing.expect(t, settle(&r, "arc pictures"), "the arc took the new name")
+	testing.expect(t, os.exists(fmt.tprintf("%s/pictures/big.raw", root)), "renamed on disk")
+	testing.expect(t, !os.exists(fmt.tprintf("%s/photos", root)))
+}
+
+@(test)
+a_right_click_moves_an_entry_to_the_trash_and_out_of_the_totals :: proc(t: ^testing.T) {
+	root := fixture(t, "trash")
+	defer os.remove_all(root)
+	// The Trash is the test's own, beside the fixture, never the user's.
+	data := fmt.tprintf("%s-data", root)
+	os.remove_all(data)
+	defer os.remove_all(data)
+	testing.expect(t, os.set_env("XDG_DATA_HOME", data) == nil)
+	defer os.unset_env("XDG_DATA_HOME")
+
+	r: Rig
+	rig_open(&r, root)
+	defer rig_close(&r)
+
+	// notes.txt is the smaller entry, the last stretch of the ring before twelve.
+	testing.expect(t, settle(&r, "Done"))
+	testing.expect(t, settle(&r, "arc notes.txt"))
+	ui.probe_click_at(&r.p, ring_point(&r, 0.9925), .Right)
+	press_and_hand_on(&r)
+	press_and_hand_on(&r)
+	testing.expect(t, ui.probe_click(&r.p, "Move to Trash"), "the menu offers the Trash")
+	press_and_hand_on(&r)
+	press_and_hand_on(&r)
+	testing.expect(t, ui.probe_click(&r.p, "Move to Trash"), "the dialog asks first")
+	press_and_hand_on(&r)
+
+	testing.expect(t, settle(&r, "Moved notes.txt to the Trash"), "the notice says so")
+	testing.expect(t, settle(&r, "arc notes.txt", present = false), "its arc is gone")
+	testing.expect(t, settle(&r, "264.0 KiB in 1 items"), "the totals dropped")
+	testing.expect(t, !os.exists(fmt.tprintf("%s/notes.txt", root)), "gone from the folder")
+	testing.expect(t, os.exists(fmt.tprintf("%s/Trash/files/notes.txt", data)), "in the Trash")
+	testing.expect(t, os.exists(fmt.tprintf("%s/Trash/info/notes.txt.trashinfo", data)))
 }
