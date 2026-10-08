@@ -17,8 +17,8 @@ package walk
 import "core:mem"
 import "core:strings"
 
-import "jm:flow"
 import "../scan"
+import "jm:flow"
 
 Config :: struct {
 	workers: int, // 0 selects DEFAULT_WORKERS
@@ -76,11 +76,13 @@ read :: proc(root: string, t: ^scan.Tree, cfg := Config{}) -> Error {
 			writer    = scan.writer(t, i),
 			found     = make([dynamic]Dir, allocator),
 			follow    = cfg.follow,
+			scratch   = scratch_make(allocator),
 			allocator = allocator,
 		}
 	}
 	defer for &s in states {
 		delete(s.found)
+		scratch_destroy(&s.scratch)
 	}
 
 	seed := []Dir{{index = first, path = strings.clone(root, allocator)}}
@@ -134,6 +136,7 @@ Worker :: struct {
 	found:     [dynamic]Dir,
 	follow:    bool,
 	err:       Error, // why this worker gave up, which only the manager acts on
+	scratch:   Scratch, // reused by the platform's reader between directories
 	allocator: mem.Allocator,
 }
 

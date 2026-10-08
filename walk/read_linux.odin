@@ -2,6 +2,7 @@
 package walk
 
 import "core:mem"
+import "core:slice"
 import "core:strings"
 import "core:sys/linux"
 
@@ -35,6 +36,10 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 	}
 	defer linux.close(fd)
 
+	// Every name first, then every statx in inode order (see Scratch).
+	s := &w.scratch
+	clear(&s.names)
+	clear(&s.listed)
 	// Sized so a directory of any ordinary size comes back in one call. core:os
 	// starts at 512 bytes and grows only when the kernel refuses, which cost it
 	// roughly twice the getdents calls for the same tree.
@@ -42,10 +47,10 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 	for {
 		n, errno := linux.getdents(fd, buf[:])
 		if errno != .NONE {
-			return nodes, bytes, false
+			return 0, 0, false
 		}
 		if n == 0 {
-			return nodes, bytes, true
+			break
 		}
 		offset := 0
 		for entry in linux.dirent_iterate_buf(buf[:n], &offset) {
@@ -53,45 +58,106 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 			if name == "." || name == ".." {
 				continue
 			}
-			e := Entry {
-				name      = name,
-				directory = entry.type == .DIR,
-				symlink   = entry.type == .LNK,
+			// Kept terminated, so statx can be handed the name where it lies.
+			at := len(s.names)
+			if _, err := append(&s.names, name); err != nil {
+				w.err = .Out_Of_Memory
+				return 0, 0, false
 			}
-			// The name sits in the buffer already terminated, so it addresses the
-			// entry without being copied anywhere first.
-			mask := linux.Statx_Mask{.TYPE, .SIZE, .BLOCKS}
-			st: linux.Statx
-			if linux.statx(fd, cstring(raw_data(name)), {.SYMLINK_NOFOLLOW}, mask, &st) == .NONE {
-				// Some filesystems leave the type out of a directory entry. Those are
-				// the only ones that have to be told apart here.
-				if entry.type == .UNKNOWN {
-					e.directory = linux.S_ISDIR(st.mode)
-					e.symlink = linux.S_ISLNK(st.mode)
-				}
-				e.size = st.size
-				if !e.directory && !e.symlink {
-					// Blocks are counted in 512 byte units whatever the filesystem
-					// builds them from.
-					e.disk = st.blocks * 512
-				}
+			if _, err := append(&s.names, 0); err != nil {
+				w.err = .Out_Of_Memory
+				return 0, 0, false
 			}
-			index, descend, recorded := record(w, d.index, e)
-			if !recorded {
-				return nodes, bytes, false
+			if _, err := append(&s.listed, Dirent{u64(entry.ino), at, len(name), entry.type});
+			   err != nil {
+				w.err = .Out_Of_Memory
+				return 0, 0, false
 			}
-			if descend {
-				child, join_err := join(d.path, name, w.allocator)
-				if join_err != nil {
-					w.err = .Out_Of_Memory
-					return nodes, bytes, false
-				}
-				append(&w.found, Dir{index = index, path = child})
-			}
-			nodes += 1
-			bytes += e.disk
 		}
 	}
+	slice.sort_by_key(s.listed[:], proc(l: Dirent) -> u64 {return l.ino})
+
+	for l in s.listed {
+		name := string(s.names[l.at:][:l.len])
+		e := Entry {
+			name      = name,
+			directory = l.type == .DIR,
+			symlink   = l.type == .LNK,
+		}
+		mask := linux.Statx_Mask{.TYPE, .SIZE, .BLOCKS}
+		st: linux.Statx
+		if linux.statx(fd, cstring(&s.names[l.at]), {.SYMLINK_NOFOLLOW}, mask, &st) == .NONE {
+			// Some filesystems leave the type out of a directory entry. Those are
+			// the only ones that have to be told apart here.
+			if l.type == .UNKNOWN {
+				e.directory = linux.S_ISDIR(st.mode)
+				e.symlink = linux.S_ISLNK(st.mode)
+			}
+			e.size = st.size
+			if !e.directory && !e.symlink {
+				// Blocks are counted in 512 byte units whatever the filesystem
+				// builds them from.
+				e.disk = st.blocks * 512
+			}
+		}
+		index, descend, recorded := record(w, d.index, e)
+		if !recorded {
+			return nodes, bytes, false
+		}
+		if descend {
+			child, join_err := join(d.path, name, w.allocator)
+			if join_err != nil {
+				w.err = .Out_Of_Memory
+				return nodes, bytes, false
+			}
+			append(&w.found, Dir{index = index, path = child})
+		}
+		nodes += 1
+		bytes += e.disk
+	}
+	return nodes, bytes, true
+}
+
+/*
+Scratch is what one worker reuses from one directory to the next: the names a
+directory holds, each terminated, and where each lies with its inode number.
+
+A directory is listed whole before any entry is asked about, so the entries can be
+asked about in inode order. getdents hands entries back in the order the directory
+keeps them, which on an indexed ext4 directory is the order of their names'
+hashes, unrelated to where their inodes lie. Asked in inode order, a cold read
+can take the inode table's blocks in turn rather than jumping between them. btrfs
+keys its inode items by inode number too, so the order suits its tree as well. The
+cold-cache gain is expected, not yet measured: measuring it needs the caches
+dropped, which needs root. With the
+table already cached it changes nothing measurable: /usr on btrfs, 442,612 entries,
+read in 133 to 189 ms with the sort and without (2026-10-08).
+*/
+@(private)
+Scratch :: struct {
+	names:  [dynamic]u8,
+	listed: [dynamic]Dirent,
+}
+
+// Dirent is one directory entry as getdents described it: its inode, where its
+// name lies in Scratch.names, and its type if the filesystem says.
+@(private)
+Dirent :: struct {
+	ino:  u64,
+	at:   int,
+	len:  int,
+	type: linux.Dirent_Type,
+}
+
+@(private)
+scratch_make :: proc(allocator: mem.Allocator) -> Scratch {
+	return {names = make([dynamic]u8, allocator), listed = make([dynamic]Dirent, allocator)}
+}
+
+@(private)
+scratch_destroy :: proc(s: ^Scratch) {
+	delete(s.names)
+	delete(s.listed)
 }
 
 // A path as the kernel wants it. Long enough for anything the kernel will accept, so

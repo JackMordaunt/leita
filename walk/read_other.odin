@@ -1,6 +1,7 @@
 #+build !linux
 package walk
 
+import "core:mem"
 import "core:os"
 import "core:strings"
 
@@ -69,3 +70,15 @@ round_up :: proc(v, unit: u64) -> u64 {
 	}
 	return (v + unit - 1) / unit * unit
 }
+
+// Scratch is what a worker reuses between directories: nothing, here.
+@(private)
+Scratch :: struct {}
+
+@(private)
+scratch_make :: proc(allocator: mem.Allocator) -> Scratch {
+	return {}
+}
+
+@(private)
+scratch_destroy :: proc(s: ^Scratch) {}
