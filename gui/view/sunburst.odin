@@ -2,8 +2,10 @@ package sonar_view
 
 import "core:fmt"
 import "core:math"
+import "core:strings"
 
 import "jm:ui"
+import "jm:ui/design"
 import "jm:ui/ops"
 import "jm:ui/primer"
 import tok "jm:ui/primer/tokens"
@@ -178,14 +180,14 @@ rings_panel :: proc(gtx: ^ui.Ctx, m: ^Model) {
 		open(m, r.crumbs[at].node)
 	}
 
-	// What the pointer is over, as of the last frame's size: the caption comes
+	// What the pointer is over, as of the last frame's size: the block comes
 	// before the disc that would measure it this frame.
 	b := burst_of(m.burst)
 	u, at := hit_at(r, b, m.pointer)
 	if !m.inside {
 		u = .Nothing
 	}
-	primer.text(gtx, caption(gtx, r, u, at), .Small, color = primer.color(.Fg_Color_Muted))
+	info(gtx, r, answer, u, at)
 
 	// The disc is as big as the smaller side of the room it is given, and sits in
 	// the middle of the other.
@@ -195,34 +197,160 @@ rings_panel :: proc(gtx: ^ui.Ctx, m: ^Model) {
 	}
 }
 
+// INFO_GAP is the space between the info block's lines.
+INFO_GAP :: f32(2)
+
+// info_height is the info block's height, whatever it holds: a title line and
+// two small ones.
+info_height :: proc() -> f32 {
+	return(
+		primer.text_style(.Medium, .Semibold).line_height +
+		2 * primer.text_style(.Small).line_height +
+		2 * INFO_GAP \
+	)
+}
+
+/*
+info is the block above the disc saying what the pointer is over, or, with it over
+nothing, the directory at the centre: the name, then its size, share and what a
+click does, then its whole path. Each is one line, cut to fit rather than wrapped,
+and the block keeps the height of all three whatever they hold: a block that grew
+under a long name would shrink the disc, move the arc from under the pointer and
+shrink back, flickering.
+
+drawn is the rings as eased this frame, which the pointer is hit against; laid is
+the host's layout, whose rings nest exactly, for the path.
+*/
 @(private)
-caption :: proc(gtx: ^ui.Ctx, r: ^query.Rings_Result, u: Hit, at: int) -> string {
-	here := r.crumbs[len(r.crumbs) - 1].name
+info :: proc(gtx: ^ui.Ctx, drawn, laid: ^query.Rings_Result, u: Hit, at: int) {
+	small := primer.text_style(.Small)
+	height := info_height()
+	ui.sized(gtx, {min = {0, height}, max = {ui.INF, height}})
+	ui.column(gtx, gap = INFO_GAP, align = .Fill)
+	width := gtx.constraints.max.x
+	muted := primer.color(.Fg_Color_Muted)
+
+	here := drawn.crumbs[len(drawn.crumbs) - 1].name
+	name, detail, path: string
 	switch u {
 	case .Arc:
-		a := r.arcs[at]
-		share := r.bytes > 0 ? 100 * f64(a.bytes) / f64(r.bytes) : 0
-		return fmt.aprintf(
-			"%s · %s · %.1f%% of %s%s",
-			a.name,
+		a := drawn.arcs[at]
+		share := drawn.bytes > 0 ? 100 * f64(a.bytes) / f64(drawn.bytes) : 0
+		name = a.name
+		detail = fmt.aprintf(
+			"%s · %.1f%% of %s%s",
 			human.bytes(a.bytes),
 			share,
-			here,
+			base_name(here),
 			a.directory ? " · click to open" : "",
 			allocator = gtx.allocator,
 		)
-	case .Hub:
-		if len(r.crumbs) > 1 {
-			return fmt.aprintf(
-				"%s · %s · click to go up",
-				here,
-				human.bytes(r.bytes),
-				allocator = gtx.allocator,
-			)
-		}
-	case .Nothing:
+		path = arc_path(gtx, laid, at)
+	case .Hub, .Nothing:
+		name = base_name(here)
+		up := u == .Hub && len(drawn.crumbs) > 1
+		detail = fmt.aprintf(
+			"%s%s",
+			human.bytes(drawn.bytes),
+			up ? " · click to go up" : "",
+			allocator = gtx.allocator,
+		)
+		path = crumb_path(gtx, drawn.crumbs)
 	}
-	return fmt.aprintf("%s · %s", here, human.bytes(r.bytes), allocator = gtx.allocator)
+	primer.truncate(gtx, name, max_width = ui.INF, weight = .Semibold)
+	primer.truncate(gtx, detail, max_width = ui.INF, size = .Small, color = muted)
+	primer.truncate(
+		gtx,
+		middle_cut(gtx, path, small, width),
+		title = path,
+		max_width = ui.INF,
+		size = .Small,
+		color = muted,
+	)
+}
+
+// separator is the one the scan's paths use, read off the top's own name: a
+// drive letter's backslash, else a slash.
+@(private)
+separator :: proc(crumbs: []query.Crumb) -> string {
+	top := crumbs[0].name
+	return `\` if strings.contains_rune(top, '\\') && !strings.contains_rune(top, '/') else "/"
+}
+
+// crumb_path is the path down the crumbs: the top's name, which is a whole path,
+// and each name under it.
+@(private)
+crumb_path :: proc(gtx: ^ui.Ctx, crumbs: []query.Crumb, more: ..string) -> string {
+	sep := separator(crumbs)
+	sb := strings.builder_make(gtx.allocator)
+	strings.write_string(&sb, crumbs[0].name)
+	join :: proc(sb: ^strings.Builder, sep, name: string) {
+		if !strings.has_suffix(strings.to_string(sb^), sep) {
+			strings.write_string(sb, sep)
+		}
+		strings.write_string(sb, name)
+	}
+	for c in crumbs[1:] {
+		join(&sb, sep, c.name)
+	}
+	for name in more {
+		join(&sb, sep, name)
+	}
+	return strings.to_string(sb)
+}
+
+// arc_path is the path of the entry arc at stands for: the way down to the centre,
+// then the arc in each ring between that holds it. Each ring nests in the one
+// inside it, so the ancestor in a ring is the arc there whose sweep spans this
+// arc's middle.
+@(private)
+arc_path :: proc(gtx: ^ui.Ctx, r: ^query.Rings_Result, at: int) -> string {
+	a := r.arcs[at]
+	mid := a.start + a.sweep / 2
+	names := make([dynamic]string, gtx.allocator)
+	for depth in 1 ..< a.depth {
+		for b in r.arcs {
+			if b.depth == depth && b.directory && mid >= b.start && mid < b.start + b.sweep {
+				append(&names, b.name)
+				break
+			}
+		}
+	}
+	append(&names, a.name)
+	return crumb_path(gtx, r.crumbs, ..names[:])
+}
+
+/*
+middle_cut fits path to width by leaving out the middle of it: its first part,
+an ellipsis, and as many of its last parts as fit, since the start says where it
+is and the end says what it is. A path that fits is left whole; one whose last
+part alone does not fit is left to the line's own cut at its end.
+*/
+@(private)
+middle_cut :: proc(gtx: ^ui.Ctx, path: string, st: tok.Type_Style, width: f32) -> string {
+	fits :: proc(gtx: ^ui.Ctx, s: string, st: tok.Type_Style, width: f32) -> bool {
+		return design.layout_style(gtx, s, st, primer.font_for(gtx, st.weight)).width <= width
+	}
+	if !ui.is_finite(width) || fits(gtx, path, st, width) {
+		return path
+	}
+	sep := "/" if strings.contains_rune(path, '/') else `\`
+	parts := strings.split(path, sep, gtx.allocator)
+	head, rest := parts[0], parts[1:]
+	if head == "" && len(rest) > 0 {
+		head, rest = strings.concatenate({sep, rest[0]}, gtx.allocator), rest[1:]
+	}
+	for keep := len(rest) - 1; keep >= 1; keep -= 1 {
+		tail := strings.join(rest[len(rest) - keep:], sep, gtx.allocator)
+		cut := strings.concatenate({head, sep, "…", sep, tail}, gtx.allocator)
+		if fits(gtx, cut, st, width) {
+			return cut
+		}
+	}
+	return strings.concatenate(
+		{"…", sep, rest[len(rest) - 1] if len(rest) > 0 else head},
+		gtx.allocator,
+	)
 }
 
 // sunburst draws r as a disc as large as it is offered, and opens what is clicked.

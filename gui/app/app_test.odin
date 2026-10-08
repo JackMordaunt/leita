@@ -508,9 +508,10 @@ the_sunburst_sits_in_the_middle_of_its_room :: proc(t: ^testing.T) {
 	defer rig_close(&r)
 	testing.expect(t, settle(&r, "Done"))
 	testing.expect(t, settle(&r, "arc photos"))
-	caption := fmt.tprintf("%s · 268.0 KiB", root)
+	name := fmt.tprintf("sonar_gui_%s", "centre")
 
-	// The disc's room runs from under the caption, past the column's 8 point gap,
+	// The disc's room runs from under the info block, three lines whose first is
+	// the open directory's name, past the column's 8 point gap,
 	// to the window's margin, and across from the window's margin to the grip.
 	// Wide, the disc is held by its height and has as much room left as right;
 	// tall, by its width, with as much above as below.
@@ -519,9 +520,9 @@ the_sunburst_sits_in_the_middle_of_its_room :: proc(t: ^testing.T) {
 		ui.probe_advance(&r.p, 60, 1.0 / 60)
 		disc := ui.probe_bounds(&r.p, "Sunburst")
 		grip := ui.probe_bounds(&r.p, "Resize panels")
-		said := ui.probe_bounds(&r.p, caption)
+		block := ui.probe_bounds(&r.p, name).y + view.info_height()
 		left, right := disc.x - view.PAD, grip.x - (disc.x + disc.w)
-		above, below := disc.y - (said.y + said.h + 8), size.y - view.PAD - (disc.y + disc.h)
+		above, below := disc.y - (block + 8), size.y - view.PAD - (disc.y + disc.h)
 		testing.expectf(
 			t,
 			abs(left - right) < 2,
@@ -539,4 +540,32 @@ the_sunburst_sits_in_the_middle_of_its_room :: proc(t: ^testing.T) {
 			below,
 		)
 	}
+}
+
+@(test)
+hovering_a_long_path_leaves_the_sunburst_where_it_is :: proc(t: ^testing.T) {
+	root := fixture(t, "hover")
+	defer os.remove_all(root)
+	long := "a_directory_whose_name_runs_on_far_past_the_width_of_the_window_it_is_drawn_in"
+	testing.expect(t, os.make_directory(fmt.tprintf("%s/%s", root, long)) == nil)
+	body := make([]byte, 512 * 1024, context.temp_allocator)
+	testing.expect(t, os.write_entire_file(fmt.tprintf("%s/%s/big.bin", root, long), body) == nil)
+
+	r: Rig
+	rig_open(&r, root)
+	defer rig_close(&r)
+	testing.expect(t, settle(&r, "Done"))
+	testing.expect(t, settle(&r, fmt.tprintf("arc %s", long)))
+	r.p.size = {760, 900}
+	ui.probe_advance(&r.p, 60, 1.0 / 60)
+	before := ui.probe_bounds(&r.p, "Sunburst")
+
+	// The long directory is the largest, the first quarter of the ring from
+	// twelve o'clock: hover there, and the block says so in a line it cuts.
+	at := ring_point(&r, 0.1)
+	ui.probe_move(&r.p, at.x, at.y)
+	ui.probe_advance(&r.p, 10, 1.0 / 60)
+	testing.expect(t, ui.probe_tagged(&r.p, long), "the block names what is hovered")
+	after := ui.probe_bounds(&r.p, "Sunburst")
+	testing.expectf(t, before == after, "the disc moved from %v to %v", before, after)
 }
