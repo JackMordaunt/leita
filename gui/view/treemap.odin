@@ -281,6 +281,9 @@ treemap_panel :: proc(gtx: ^ui.Ctx, m: ^Model, answer: ^query.Rings_Result) {
 	u, at := Hit.Nothing, -1
 	if i := box_at(boxes, m.pointer); m.inside && i >= 0 {
 		u, at = .Arc, boxes[i].arc
+	} else if row := arc_of(answer, m.row_hover); row >= 0 {
+		// With the pointer off the boxes, a hovered contents row stands for its box.
+		u, at = .Arc, row
 	}
 	info(gtx, answer, answer, u, at)
 	ui.flexible(gtx, 1)

@@ -102,11 +102,16 @@ Model :: struct {
 	boxes_dir:        u32,
 	boxes_generation: u32,
 	tree_room:        ops.Size,
+	// The contents row hovered, by node: the frame's rows say so as they are drawn,
+	// after the chart, so the chart reads the last frame's. NO_NODE for none.
+	row_hover:        u32,
+	row_hover_next:   u32,
 }
 
 model_init :: proc(m: ^Model, path: string) {
 	ui.text_set(&m.path, path)
 	m.dir = query.ROOT
+	m.row_hover, m.row_hover_next = NO_NODE, NO_NODE
 }
 
 model_destroy :: proc(m: ^Model) {
@@ -145,6 +150,12 @@ view :: proc(gtx: ^ui.Ctx, user: rawptr) {
 		forget_history(m)
 	}
 	walk_history(gtx, m)
+	// Last frame's hovered row is this frame's to show; a change needs the frame
+	// that shows it.
+	if m.row_hover != m.row_hover_next {
+		ui.request_frame(gtx)
+	}
+	m.row_hover, m.row_hover_next = m.row_hover_next, NO_NODE
 
 	ui.inset(gtx, {left = PAD, top = PAD, bottom = PAD})
 	ui.column(gtx, gap = 12, align = .Fill)
@@ -427,6 +438,9 @@ entry :: proc(gtx: ^ui.Ctx, m: ^Model, e: query.Entry, total: u64) -> (opened: b
 	clicked, name := name_button(gtx, e.name, e.directory ? .File_Directory_Fill : .File)
 	opened = clicked && e.directory
 	row_menu(gtx, m, .Contents, name, {node = e.node, name = e.name, directory = e.directory})
+	if ui.widget_state(gtx, name.id).hovered {
+		m.row_hover_next = e.node
+	}
 	share := total > 0 ? 100 * f32(f64(e.bytes) / f64(total)) : 0
 	ui.flexible(gtx, 2)
 	primer.progress_bar(
@@ -513,6 +527,23 @@ title :: proc(gtx: ^ui.Ctx, s: string, loc := #caller_location) {
 	ops.tag(gtx.scene, p.id, s)
 	ui.semantics(gtx, &p, {role = .Heading, level = 1, label = s})
 	ui.widget_close(gtx, &p, {size = {para.width, para.height}})
+}
+
+// NO_NODE names no node.
+NO_NODE :: max(u32)
+
+// arc_of is the index of the arc for node in r, or -1.
+@(private)
+arc_of :: proc(r: ^query.Rings_Result, node: u32) -> int {
+	if node == NO_NODE {
+		return -1
+	}
+	for a, i in r.arcs {
+		if a.node == node {
+			return i
+		}
+	}
+	return -1
 }
 
 // NAME_FADE is how far a name too long for its cell fades out before its end.

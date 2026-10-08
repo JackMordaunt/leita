@@ -732,3 +732,39 @@ the_treemap_draws_the_same_directory_as_boxes :: proc(t: ^testing.T) {
 	testing.expect(t, settle(&r, "264.0 KiB in 2 items"), "photos opened")
 	testing.expect(t, settle(&r, "box big.raw"), "and shows its files as boxes")
 }
+
+@(test)
+hovering_a_contents_row_lights_its_arc_and_its_box :: proc(t: ^testing.T) {
+	root := fixture(t, "link")
+	defer os.remove_all(root)
+	r: Rig
+	rig_open(&r, root)
+	defer rig_close(&r)
+	testing.expect(t, settle(&r, "Done"))
+	testing.expect(t, settle(&r, "arc notes.txt"))
+
+	// The info block says what the chart has lit, the same as pointing at it.
+	said := "4.0 KiB · 1.5% of sonar_gui_link"
+	testing.expect(t, !ui.probe_tagged(&r.p, said), "nothing is lit yet")
+	row := ui.probe_bounds(&r.p, "notes.txt")
+	ui.probe_move(&r.p, row.x + 24, row.y + row.h / 2)
+	ui.probe_advance(&r.p, 3, 1.0 / 60)
+	testing.expect(
+		t,
+		ui.probe_tagged(&r.p, said),
+		"hovering the row lights notes.txt in the sunburst",
+	)
+
+	// Off the row, the light goes out.
+	ui.probe_move(&r.p, 4, 4)
+	ui.probe_advance(&r.p, 3, 1.0 / 60)
+	testing.expect(t, !ui.probe_tagged(&r.p, said), "and goes out off it")
+
+	// The same in the treemap.
+	testing.expect(t, ui.probe_click(&r.p, "Treemap"))
+	press_and_hand_on(&r)
+	ui.probe_advance(&r.p, 30, 1.0 / 60)
+	ui.probe_move(&r.p, row.x + 24, row.y + row.h / 2)
+	ui.probe_advance(&r.p, 3, 1.0 / 60)
+	testing.expect(t, ui.probe_tagged(&r.p, said), "hovering the row lights notes.txt's box")
+}

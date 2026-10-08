@@ -184,6 +184,10 @@ rings_panel :: proc(gtx: ^ui.Ctx, m: ^Model) {
 	if !m.inside {
 		u = .Nothing
 	}
+	// With the pointer off the disc, a hovered contents row stands for its arc.
+	if i := arc_of(r, m.row_hover); u == .Nothing && i >= 0 {
+		u, at = .Arc, i
+	}
 	info(gtx, r, answer, u, at)
 
 	// The disc is as big as the smaller side of the room it is given, and sits in
