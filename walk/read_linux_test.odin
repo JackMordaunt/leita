@@ -47,15 +47,19 @@ test_a_sparse_file_is_charged_what_it_occupies :: proc(t: ^testing.T) {
 	defer scan.tree_destroy(&tree)
 	testing.expect_value(t, read(root, &tree, Config{}), Error.None)
 
+	seen := 0
 	for i in 0 ..< tree.count {
 		n := scan.node(&tree, i)
-		switch n.name {
+		switch scan.name_of(&tree, i) {
 		case "hole.bin":
 			testing.expectf(t, n.disk < 64 * 1024, "a hole was charged %d bytes", n.disk)
+			seen += 1
 		case "solid.bin":
 			testing.expectf(t, n.disk >= 1 << 20, "a full megabyte was charged %d bytes", n.disk)
+			seen += 1
 		}
 	}
+	testing.expect_value(t, seen, 2)
 }
 
 // A path the kernel would refuse is refused here, rather than silently truncated to
@@ -113,7 +117,7 @@ test_entries_are_read_in_inode_order :: proc(t: ^testing.T) {
 			continue
 		}
 		path := strings.clone_to_cstring(
-			fmt.tprintf("%s/%s", root, n.name),
+			fmt.tprintf("%s/%s", root, scan.name_of(&tree, i)),
 			context.temp_allocator,
 		)
 		st: linux.Statx
@@ -122,7 +126,7 @@ test_entries_are_read_in_inode_order :: proc(t: ^testing.T) {
 			t,
 			u64(st.ino) > last,
 			"%s (inode %d) was read after inode %d",
-			n.name,
+			scan.name_of(&tree, i),
 			st.ino,
 			last,
 		)

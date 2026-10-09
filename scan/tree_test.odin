@@ -1,5 +1,6 @@
 package scan
 
+import "core:mem/virtual"
 import "core:strings"
 import "core:testing"
 
@@ -65,10 +66,76 @@ test_interned_names_outlive_the_source :: proc(t: ^testing.T) {
 	defer tree_destroy(&tree)
 	w := writer(&tree)
 
+	claim(&w, 1)
 	buf := [8]byte{'r', 'e', 'p', 'o', 'r', 't', 0, 0}
-	name := intern(&w, string(buf[:6]))
+	node(&tree, 0).name = intern(&w, string(buf[:6]))
 	buf = {'x', 'x', 'x', 'x', 'x', 'x', 0, 0} // the source is reused, as a read buffer is
-	testing.expect_value(t, name, "report")
+	testing.expect_value(t, name_of(&tree, 0), "report")
+}
+
+@(test)
+test_each_writer_names_into_a_pool_of_its_own :: proc(t: ^testing.T) {
+	tree: Tree
+	testing.expect_value(t, tree_init(&tree, 2), Error.None)
+	defer tree_destroy(&tree)
+	testing.expect_value(t, writers(&tree), 2)
+	a, b := writer(&tree, 0), writer(&tree, 1)
+	claim(&a, 2)
+	node(&tree, 0).name = intern(&a, "left")
+	node(&tree, 1).name = intern(&b, "right")
+	testing.expect(t, node(&tree, 0).name.pool != node(&tree, 1).name.pool, "writers share a pool")
+	testing.expect_value(t, name_of(&tree, 0), "left")
+	testing.expect_value(t, name_of(&tree, 1), "right")
+}
+
+@(test)
+test_a_name_too_long_for_a_handle_comes_back_empty :: proc(t: ^testing.T) {
+	tree := fresh(t)
+	defer tree_destroy(&tree)
+	w := writer(&tree)
+	claim(&w, 2)
+	long := strings.repeat("x", int(max(u16)) + 1, context.temp_allocator)
+	node(&tree, 0).name = intern(&w, long)
+	node(&tree, 1).name = intern(&w, long[:max(u16)])
+	testing.expect_value(t, name_of(&tree, 0), "")
+	testing.expect_value(t, len(name_of(&tree, 1)), int(max(u16)))
+}
+
+@(test)
+test_a_name_given_later_is_copied :: proc(t: ^testing.T) {
+	tree := fresh(t)
+	defer tree_destroy(&tree)
+	w := writer(&tree)
+	claim(&w, 1)
+	node(&tree, 0).name = intern(&w, "before")
+	given := [5]byte{'a', 'f', 't', 'e', 'r'}
+	node(&tree, 0).name = name_copy(&tree, string(given[:]))
+	given[0] = 'X' // the source is the caller's, and may change after
+	testing.expect_value(t, name_of(&tree, 0), "after")
+}
+
+@(test)
+test_a_lent_arena_names_nodes_without_a_copy :: proc(t: ^testing.T) {
+	tree := fresh(t)
+	defer tree_destroy(&tree)
+	w := writer(&tree)
+	claim(&w, 1)
+
+	lent: virtual.Arena
+	testing.expect_value(t, virtual.arena_init_static(&lent, 1 << 20), nil)
+	defer virtual.arena_destroy(&lent)
+	testing.expect_value(t, lend(&tree, &lent), Error.None)
+	text := strings.clone("borrowed", virtual.arena_allocator(&lent))
+
+	name, ok := name_in(&tree, text)
+	testing.expect(t, ok, "a name in a lent arena was not found")
+	node(&tree, 0).name = name
+	testing.expect_value(t, raw_data(name_of(&tree, 0)), raw_data(text))
+	testing.expect_value(t, name_of(&tree, 0), "borrowed")
+
+	elsewhere := strings.clone("elsewhere", context.temp_allocator)
+	_, found := name_in(&tree, elsewhere)
+	testing.expect(t, !found, "a name outside every pool was found")
 }
 
 @(test)
@@ -81,17 +148,17 @@ test_path_walks_to_a_root :: proc(t: ^testing.T) {
 
 	node(&tree, 0)^ = Node {
 		parent = 0,
-		name   = "C:",
+		name   = intern(&w, "C:"),
 		flags  = {.Used, .Directory},
 	}
 	node(&tree, 1)^ = Node {
 		parent = 0,
-		name   = "Windows",
+		name   = intern(&w, "Windows"),
 		flags  = {.Used, .Directory},
 	}
 	node(&tree, 2)^ = Node {
 		parent = 1,
-		name   = "notepad.exe",
+		name   = intern(&w, "notepad.exe"),
 		flags  = {.Used},
 	}
 
@@ -115,12 +182,12 @@ test_path_stops_at_a_cycle :: proc(t: ^testing.T) {
 	claim(&w, 2)
 	node(&tree, 0)^ = Node {
 		parent = 1,
-		name   = "a",
+		name   = intern(&w, "a"),
 		flags  = {.Used, .Directory},
 	}
 	node(&tree, 1)^ = Node {
 		parent = 0,
-		name   = "b",
+		name   = intern(&w, "b"),
 		flags  = {.Used, .Directory},
 	}
 

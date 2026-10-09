@@ -2,7 +2,6 @@ package sonar_app
 
 import "core:fmt"
 import "core:os"
-import "core:strings"
 import "core:time"
 
 import "../../human"
@@ -67,9 +66,7 @@ act :: proc(d: ^Desk, c: ^command.Command) {
 		}
 		s := d.scan
 		was := name_of(d, c.entry)
-		owned := strings.clone(name)
-		append(&s.names, owned)
-		scan.node(&s.tree, c.entry.node).name = owned
+		scan.node(&s.tree, c.entry.node).name = scan.name_copy(&s.tree, name)
 		tell(d, false, "Renamed %s to %s", was, name)
 	}
 }
@@ -106,7 +103,7 @@ tell :: proc(d: ^Desk, failed: bool, format: string, args: ..any) {
 // name_of is the name the tree has for e, which entry_path has already checked.
 @(private = "file")
 name_of :: proc(d: ^Desk, e: command.Entry) -> string {
-	return scan.node(&d.scan.tree, e.node).name
+	return scan.name_of(&d.scan.tree, e.node)
 }
 
 // --- Reclaim -------------------------------------------------------------------
@@ -137,7 +134,7 @@ reclaim_answer :: proc(d: ^Desk, q: query.Reclaim) -> (r: query.Reclaim_Result) 
 		name = proc(
 			data: rawptr,
 			node: u32,
-		) -> string {return scan.node(&(^Scan)(data).tree, node).name},
+		) -> string {return scan.name_of(&(^Scan)(data).tree, node)},
 		directory = proc(data: rawptr, node: u32) -> bool {
 			return .Directory in scan.node_flags(scan.node(&(^Scan)(data).tree, node))
 		},

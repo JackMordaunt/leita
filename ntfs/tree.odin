@@ -20,6 +20,7 @@ Projection :: struct {
 	// caller is the one that knows where the volume is mounted. Setting it here rather
 	// than afterwards keeps a watching thread from ever catching the placeholder.
 	root_name:  string,
+	root:       scan.Name, // root_name, copied into the tree once
 	links_done: int,
 	settled:    []u64, // one bit per record
 	allocator:  mem.Allocator,
@@ -81,6 +82,12 @@ to_tree :: proc(m: ^Mft, t: ^scan.Tree, p: ^Projection) -> scan.Error {
 			return .Out_Of_Memory
 		}
 		p.settled = bits
+		// Names stay in the table's arenas and nodes borrow them, so the tree has to be
+		// able to read those arenas. Once per tree, which is when `settled` is made.
+		for &s in m.sinks {
+			scan.lend(t, &s.names) or_return
+		}
+		p.root = scan.name_copy(t, p.root_name)
 	}
 
 	used, bytes: u64
@@ -99,7 +106,7 @@ to_tree :: proc(m: ^Mft, t: ^scan.Tree, p: ^Projection) -> scan.Error {
 		n := scan.node(t, i)
 		// Borrowed, not copied: names live in the table's arenas and stay put for its
 		// life, so repeating this projection allocates nothing.
-		n.name = e.name
+		n.name = borrow(t, e.name) or_return
 		n.disk = e.allocated
 
 		flags := scan.Node_Flags{.Used}
@@ -130,7 +137,7 @@ to_tree :: proc(m: ^Mft, t: ^scan.Tree, p: ^Projection) -> scan.Error {
 		index := u32(len(m.entries) + p.links_done + k)
 		n := scan.node(t, index)
 		n.parent = l.parent
-		n.name = l.name
+		n.name = borrow(t, l.name) or_return
 		n.disk = m.entries[l.record].allocated
 		scan.node_publish(n, {.Used, .Settled, .Extra_Name})
 	}
@@ -138,11 +145,22 @@ to_tree :: proc(m: ^Mft, t: ^scan.Tree, p: ^Projection) -> scan.Error {
 
 	t.root = RECORD_ROOT
 	if p.root_name != "" {
-		scan.node(t, RECORD_ROOT).name = p.root_name
+		scan.node(t, RECORD_ROOT).name = p.root
 	}
 	t.nodes_done = used
 	t.bytes_done = bytes
 	return .None
+}
+
+// The tree's handle on a name in one of the table's arenas. Every name the table holds
+// is in one, so failing here means a name came from somewhere else.
+@(private)
+borrow :: proc(t: ^scan.Tree, s: string) -> (scan.Name, scan.Error) {
+	name, ok := scan.name_in(t, s)
+	if !ok {
+		return {}, .Out_Of_Memory
+	}
+	return name, .None
 }
 
 @(private)

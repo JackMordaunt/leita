@@ -67,7 +67,7 @@ read :: proc(root: string, t: ^scan.Tree, cfg := Config{}) -> Error {
 	}
 	// One writer per worker, and a writer needs an arena of its own, so the tree
 	// caps how wide this can run.
-	workers = min(workers, len(t.arenas))
+	workers = min(workers, scan.writers(t))
 
 	states := make([]Worker, workers, allocator)
 	defer delete(states, allocator)

@@ -7,6 +7,8 @@ import "core:sync"
 import "core:unicode/utf16"
 import "core:unicode/utf8"
 
+import "../scan"
+
 // One row per MFT record. Indexed by record number in Mft.entries.
 Entry :: struct {
 	parent:          u32, // record number of the directory holding `name`
@@ -107,7 +109,8 @@ mft_init :: proc(
 	m.links = make([dynamic]Hard_Link, allocator)
 	m.sinks = make([]Sink, max(sinks, 1), allocator)
 	for &s in m.sinks {
-		if virtual.arena_init_growing(&s.names) != nil {
+		// Static, so the tree can borrow names by offset; see `to_tree`.
+		if virtual.arena_init_static(&s.names, scan.POOL_RESERVE) != nil {
 			mft_destroy(m)
 			return .Out_Of_Memory
 		}
@@ -124,7 +127,9 @@ mft_destroy :: proc(m: ^Mft) {
 	for &s in m.sinks {
 		delete(s.links)
 		delete(s.deferred)
-		virtual.arena_destroy(&s.names)
+		if s.names.curr_block != nil {
+			virtual.arena_destroy(&s.names)
+		}
 	}
 	delete(m.sinks, m.allocator)
 	m^ = {}

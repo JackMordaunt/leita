@@ -56,7 +56,7 @@ named :: proc(tree: ^scan.Tree, name: string) -> (^scan.Node, int) {
 	count := 0
 	for i in 0 ..< tree.count {
 		n := scan.node(tree, i)
-		if .Used in n.flags && n.name == name {
+		if .Used in n.flags && scan.name_of(tree, i) == name {
 			found = n
 			count += 1
 		}

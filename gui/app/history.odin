@@ -88,7 +88,7 @@ collect_kept :: proc(s: ^Scan, into: ^[dynamic]history.Entry, dir: u32, at: stri
 		if bytes < history.KEPT_MIN {
 			continue
 		}
-		path := path_under(at, n.name)
+		path := path_under(at, scan.name_of(&s.tree, c))
 		append(into, history.Entry{path, bytes})
 		if directory {
 			collect_kept(s, into, c, path)
@@ -144,7 +144,7 @@ note_was :: proc(s: ^Scan, d: ^Desk, then: map[string]u64, dir: u32, at: string)
 	it := survey.children(&s.roll, dir)
 	for c in survey.next_child(&it) {
 		n := scan.node(&s.tree, c)
-		path := path_under(at, n.name)
+		path := path_under(at, scan.name_of(&s.tree, c))
 		bytes, found := then[path]
 		if !found {
 			continue

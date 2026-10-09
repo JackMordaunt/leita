@@ -105,7 +105,6 @@ Scan :: struct {
 	fill:                  survey.Fill,
 	roll:                  survey.Rollup,
 	reader:                ^thread.Thread,
-	names:                 [dynamic]string, // new names given by a rename, which the tree borrows
 	// The filesystem the target is on, as of the last measure.
 	disk_total, disk_free: u64,
 }
@@ -429,10 +428,6 @@ scan_end :: proc(d: ^Desk) {
 	if s.resolved {
 		scan.target_destroy(&s.fill.target)
 	}
-	for n in s.names {
-		delete(n)
-	}
-	delete(s.names)
 	delete(s.path)
 	delete(s.problem)
 	free(s)
@@ -607,7 +602,7 @@ sorted_children :: proc(d: ^Desk, dir: u32) -> []query.Entry {
 			&entries,
 			query.Entry {
 				node = c,
-				name = n.name,
+				name = scan.name_of(&s.tree, c),
 				bytes = directory ? s.roll.totals[c] : n.disk,
 				directory = directory,
 				was = was_of(d, c),
@@ -735,7 +730,7 @@ crumbs :: proc(s: ^Scan, dir, top: u32) -> []query.Crumb {
 	out := make([]query.Crumb, depth, context.temp_allocator)
 	for i in 0 ..< depth {
 		c := chain[depth - 1 - i]
-		out[i] = {c, scan.node(&s.tree, c).name}
+		out[i] = {c, scan.name_of(&s.tree, c)}
 	}
 	return out
 }
