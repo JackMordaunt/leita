@@ -11,6 +11,7 @@ import "jm:ui/primer"
 import tok "jm:ui/primer/tokens"
 
 import "../../human"
+import "../../kinds"
 import mark "../mark"
 import "../query"
 
@@ -310,7 +311,7 @@ colour_note :: proc(gtx: ^ui.Ctx, m: ^Model, r: ^query.Rings_Result, at: int) ->
 	a := r.arcs[at]
 	#partial switch m.colour {
 	case .Type:
-		return KIND_NAMES[kind_in(r, at)]
+		return kinds.NAMES[kind_in(r, at)]
 	case .Change:
 		return strings.trim_prefix(change_note(gtx, a.bytes, a.was, r.compared), " · ")
 	}

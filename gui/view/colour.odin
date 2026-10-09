@@ -1,14 +1,12 @@
 package estoile_view
 
-import "core:path/filepath"
-import "core:strings"
-
 import "jm:ui"
 import "jm:ui/design"
 import "jm:ui/ops"
 import "jm:ui/primer"
 import tok "jm:ui/primer/tokens"
 
+import "../../kinds"
 import "../query"
 
 /*
@@ -31,30 +29,12 @@ Colouring :: enum u8 {
 	Change,
 }
 
-// Kind is what an entry is, for colouring by type.
-Kind :: enum u8 {
-	Folder, // a directory, neither build nor cache
-	Multimedia, // video and audio
-	Image,
-	Archive, // archives, packages and disk images
-	Document,
-	Text, // source code and text
-	Binary,
-	Cache, // a build or cache directory, and all it holds
-	Other,
-}
+// Kind is what an entry is, for colouring by type (package kinds).
+Kind :: kinds.Kind
 
-KIND_NAMES := [Kind]string {
-	.Folder     = "Folder",
-	.Multimedia = "Multimedia",
-	.Image      = "Image",
-	.Archive    = "Archive",
-	.Document   = "Document",
-	.Text       = "Text",
-	.Binary     = "Binary",
-	.Cache      = "Cache",
-	.Other      = "Other",
-}
+// kind_of is what a file is, by its name's extension, or what a directory is, by
+// its name.
+kind_of :: kinds.of
 
 /*
 KIND_COLOURS are the kinds' colours: seven, every pair of which can be told apart
@@ -97,173 +77,6 @@ kind_colour :: proc(kind: Kind) -> ops.Color {
 		return mix(primer.color(.Fg_Color_Muted), primer.color(.Bg_Color_Default), 0.7)
 	}
 	return KIND_COLOURS[kind]
-}
-
-// BUILD_CACHE are directory names that hold what a tool made and will make again.
-@(rodata)
-BUILD_CACHE := [?]string {
-	"node_modules",
-	"target",
-	"build",
-	"dist",
-	"out",
-	".cache",
-	"cache",
-	"Cache",
-	"__pycache__",
-	".gradle",
-	".m2",
-	".venv",
-	"venv",
-	".tox",
-	".next",
-	".nuxt",
-	".parcel-cache",
-	".turbo",
-	"DerivedData",
-	".zig-cache",
-	"zig-cache",
-	".odin-cache",
-}
-
-@(private)
-EXTENSIONS := [?]struct {
-	ext:  string,
-	kind: Kind,
-} {
-	{"mp4", .Multimedia},
-	{"mkv", .Multimedia},
-	{"mov", .Multimedia},
-	{"avi", .Multimedia},
-	{"webm", .Multimedia},
-	{"m4v", .Multimedia},
-	{"wmv", .Multimedia},
-	{"mp3", .Multimedia},
-	{"flac", .Multimedia},
-	{"wav", .Multimedia},
-	{"ogg", .Multimedia},
-	{"opus", .Multimedia},
-	{"m4a", .Multimedia},
-	{"aac", .Multimedia},
-	{"png", .Image},
-	{"jpg", .Image},
-	{"jpeg", .Image},
-	{"gif", .Image},
-	{"webp", .Image},
-	{"heic", .Image},
-	{"raw", .Image},
-	{"cr2", .Image},
-	{"nef", .Image},
-	{"tif", .Image},
-	{"tiff", .Image},
-	{"bmp", .Image},
-	{"svg", .Image},
-	{"psd", .Image},
-	{"zip", .Archive},
-	{"tar", .Archive},
-	{"gz", .Archive},
-	{"tgz", .Archive},
-	{"xz", .Archive},
-	{"zst", .Archive},
-	{"bz2", .Archive},
-	{"7z", .Archive},
-	{"rar", .Archive},
-	{"pack", .Archive},
-	{"deb", .Archive},
-	{"rpm", .Archive},
-	{"jar", .Archive},
-	{"iso", .Archive},
-	{"img", .Archive},
-	{"qcow2", .Archive},
-	{"vdi", .Archive},
-	{"vmdk", .Archive},
-	{"vhd", .Archive},
-	{"vhdx", .Archive},
-	{"dmg", .Archive},
-	{"pdf", .Document},
-	{"doc", .Document},
-	{"docx", .Document},
-	{"odt", .Document},
-	{"xls", .Document},
-	{"xlsx", .Document},
-	{"ods", .Document},
-	{"ppt", .Document},
-	{"pptx", .Document},
-	{"odp", .Document},
-	{"epub", .Document},
-	{"txt", .Text},
-	{"md", .Text},
-	{"json", .Text},
-	{"yaml", .Text},
-	{"yml", .Text},
-	{"toml", .Text},
-	{"xml", .Text},
-	{"csv", .Text},
-	{"sql", .Text},
-	{"log", .Text},
-	{"odin", .Text},
-	{"c", .Text},
-	{"h", .Text},
-	{"cc", .Text},
-	{"cpp", .Text},
-	{"hpp", .Text},
-	{"go", .Text},
-	{"rs", .Text},
-	{"py", .Text},
-	{"js", .Text},
-	{"ts", .Text},
-	{"tsx", .Text},
-	{"jsx", .Text},
-	{"java", .Text},
-	{"kt", .Text},
-	{"swift", .Text},
-	{"rb", .Text},
-	{"php", .Text},
-	{"sh", .Text},
-	{"lua", .Text},
-	{"zig", .Text},
-	{"css", .Text},
-	{"html", .Text},
-	{"exe", .Binary},
-	{"dll", .Binary},
-	{"so", .Binary},
-	{"a", .Binary},
-	{"o", .Binary},
-	{"lib", .Binary},
-	{"bin", .Binary},
-	{"wasm", .Binary},
-	{"class", .Binary},
-	{"pyc", .Binary},
-	{"gguf", .Binary},
-	{"safetensors", .Binary},
-}
-
-// kind_of is what a file is, by its name's extension, or what a directory is, by
-// its name.
-kind_of :: proc(name: string, directory: bool) -> Kind {
-	if directory {
-		for n in BUILD_CACHE {
-			if name == n {
-				return .Cache
-			}
-		}
-		return .Folder
-	}
-	ext := filepath.ext(name)
-	if len(ext) < 2 {
-		return .Other
-	}
-	ext = ext[1:]
-	// A shared library's version follows its extension: libfoo.so.1.2.
-	if strings.contains(name, ".so.") {
-		return .Binary
-	}
-	for e in EXTENSIONS {
-		if strings.equal_fold(ext, e.ext) {
-			return e.kind
-		}
-	}
-	return .Other
 }
 
 // kind_in is what the arc at stands for is, by type: Cache if it or a
@@ -354,12 +167,12 @@ legend_line_count :: proc(gtx: ^ui.Ctx, width: f32) -> int {
 	text :: proc(gtx: ^ui.Ctx, s: string, st: tok.Type_Style, font: ops.Font_Id) -> f32 {
 		return design.layout_style(gtx, s, st, font).width
 	}
-	kinds := make([dynamic]f32, gtx.allocator)
+	chips := make([dynamic]f32, gtx.allocator)
 	for kind in Kind {
 		if legend_shown(kind) {
 			append(
-				&kinds,
-				2 * CHIP_PAD + LEGEND_DOT + LEGEND_INSET + text(gtx, KIND_NAMES[kind], st, font),
+				&chips,
+				2 * CHIP_PAD + LEGEND_DOT + LEGEND_INSET + text(gtx, kinds.NAMES[kind], st, font),
 			)
 		}
 	}
@@ -372,7 +185,7 @@ legend_line_count :: proc(gtx: ^ui.Ctx, width: f32) -> int {
 	for c in Change {
 		append(&changes, LEGEND_DOT + LEGEND_INSET + text(gtx, CHANGE_NAMES[c], st, font))
 	}
-	return max(lines_of(kinds[:], width), lines_of(changes[:], width))
+	return max(lines_of(chips[:], width), lines_of(changes[:], width))
 }
 
 // lines_of is how many lines items of widths take wrapped across width.
@@ -467,7 +280,7 @@ chip :: proc(
 	hovered, clicked: bool,
 ) {
 	st := primer.text_style(.Small)
-	para := design.layout_style(gtx, KIND_NAMES[kind], st, primer.font_for(gtx, st.weight))
+	para := design.layout_style(gtx, kinds.NAMES[kind], st, primer.font_for(gtx, st.weight))
 	size := ops.Size{2 * CHIP_PAD + LEGEND_DOT + LEGEND_INSET + para.width, st.line_height}
 	p := ui.widget_open(gtx, loc = loc)
 	box := ops.Rect{0, 0, size.x, size.y}
@@ -490,11 +303,11 @@ chip :: proc(
 		ink,
 	)
 	design.listen(gtx, c.st, p.id, box, design.CLICK_KINDS, .Pointer)
-	ops.tag(gtx.scene, p.id, KIND_NAMES[kind])
+	ops.tag(gtx.scene, p.id, kinds.NAMES[kind])
 	ui.semantics(
 		gtx,
 		&p,
-		{role = .Checkbox, label = KIND_NAMES[kind], states = {.Checked} if on else {}},
+		{role = .Checkbox, label = kinds.NAMES[kind], states = {.Checked} if on else {}},
 	)
 	ui.widget_close(gtx, &p, {size = size})
 	return c.hovered, c.clicked
