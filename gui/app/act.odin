@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:os"
 import "core:time"
 
+import "../../history"
 import "../../human"
 import "../../reclaim"
 import "../../scan"
@@ -11,7 +12,6 @@ import "../../survey"
 import "../../synth"
 import "../command"
 import "../files"
-import "../history"
 import "../query"
 
 /*

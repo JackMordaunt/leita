@@ -122,7 +122,7 @@ directory for those, "" for the process's own.
 
 previous is an earlier scan of the same place to compare with: its entries by
 path under the top, names joined by "/", "" for the top, as the window keeps
-them (gui/history).
+them (history).
 */
 Options :: struct {
 	top:      int,

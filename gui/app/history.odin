@@ -5,9 +5,9 @@ import "core:strings"
 import "core:sync"
 import "core:time"
 
+import "../../history"
 import "../../scan"
 import "../../survey"
-import "../history"
 import "../query"
 
 /*

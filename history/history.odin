@@ -25,7 +25,7 @@ import "core:path/filepath"
 
 import "jm:sqlite3"
 
-import "../query"
+import "../gui/query"
 
 // KEPT_MIN is the least an entry holds to be kept in a snapshot, as the window
 // is told it is.
