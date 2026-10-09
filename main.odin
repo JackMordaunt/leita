@@ -16,6 +16,7 @@ import "core:fmt"
 import "core:os"
 import "core:time"
 
+import "history"
 import "human"
 @(require) import "jm:debug"
 import "ntfs"
@@ -51,6 +52,7 @@ Options :: struct {
 	format:       string `usage:"The report's format, csv, json or html, whatever its file is called."`,
 	top:          int `usage:"Largest directories and files a report lists, 50 unless set."`,
 	reclaim:      bool `usage:"Include in the report what can be deleted and made again."`,
+	no_history:   bool `usage:"Neither compare with earlier scans of this place nor keep this one."`,
 }
 
 main :: proc() {
@@ -79,12 +81,20 @@ run :: proc() -> int {
 		return 0 if asked_for_help else 1
 	}
 
-	return scan_and_say(opt)
+	// Each finished scan is kept where the window keeps its own, to compare the next with.
+	return scan_and_say(
+		opt,
+		"" if opt.no_history else history.default_path(context.temp_allocator),
+	)
 }
 
-// scan_and_say scans what opt names and says what it found: a summary on the
-// terminal, a report as well or instead when one is asked for.
-scan_and_say :: proc(opt: Options) -> int {
+/*
+scan_and_say scans what opt names and says what it found: a summary on the
+terminal, a report as well or instead when one is asked for. kept is the history
+store the scan is compared with and kept in, "" for none; --no-history makes it
+none whatever it is.
+*/
+scan_and_say :: proc(opt: Options, kept := "") -> int {
 	// Checked before anything is read, so a mistake costs nothing.
 	format, format_err := report_format(opt)
 	if format_err != "" {
@@ -202,9 +212,10 @@ scan_and_say :: proc(opt: Options) -> int {
 	// The same charging the live scan does, run once over a tree nobody is still
 	// filling. A node left uncharged here has an ancestor that never resolved, and
 	// another pass would not change that. Reclaim walks directories' children,
-	// which only a linked rollup lists.
+	// which only a linked rollup lists, as is keeping a scan.
+	kept := "" if opt.no_history else kept
 	roll := survey.Rollup {
-		linked = opt.reclaim,
+		linked = opt.reclaim || kept != "",
 	}
 	defer survey.rollup_destroy(&roll)
 	survey.rollup_advance(&roll, &t)
@@ -213,6 +224,8 @@ scan_and_say :: proc(opt: Options) -> int {
 		print_largest(&t, &roll, .files)
 		print_largest(&t, &roll, .directories)
 	}
+	k := keep_scan(kept, &t, &roll, engine.engine)
+	say_kept(k, survey.total(&roll, t.root) if t.root < roll.seen else 0, quiet)
 	if opt.report == "" {
 		return 0
 	}
@@ -237,7 +250,12 @@ scan_and_say :: proc(opt: Options) -> int {
 			facts.space = report.Space{total, free}
 		}
 	}
-	r := report.build(&t, &roll, facts, {top = opt.top, reclaim = opt.reclaim})
+	r := report.build(
+		&t,
+		&roll,
+		facts,
+		{top = opt.top, reclaim = opt.reclaim, previous = k.previous},
+	)
 	defer report.destroy(&r)
 	return write_report(&r, opt.report, format)
 }
@@ -274,8 +292,7 @@ report_format :: proc(opt: Options) -> (report.Format, string) {
 	return f, ""
 }
 
-// Write the report to path, or standard output for "-". The command line does
-// not keep scans, so it has none to compare with, and says so.
+// Write the report to path, or standard output for "-".
 write_report :: proc(r: ^report.Report, path: string, format: report.Format) -> int {
 	if path == "-" {
 		if err := report.export(os.to_writer(os.stdout), r, format); err != nil {
@@ -300,7 +317,6 @@ write_report :: proc(r: ^report.Report, path: string, format: report.Format) -> 
 	}
 	fmt.println()
 	fmt.printfln("report     %s, %s", path, report.FORMAT_NAMES[format])
-	fmt.println("           no earlier scan to compare with: the command line keeps none")
 	return 0
 }
 

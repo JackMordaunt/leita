@@ -16,12 +16,14 @@ It also keeps the audit trail: every change estoile made on disk at the person's
 request, or tried to and could not, with when, what and why not. That is never
 forgotten; the snapshots' pruning leaves it be.
 
-It is not thread-safe: one thread uses it.
+A Store is not thread-safe: one thread uses it. The window and the command line
+may each have the one file open at once.
 */
 package estoile_history
 
 import "core:os"
 import "core:path/filepath"
+import "core:time"
 
 import "jm:sqlite3"
 
@@ -33,6 +35,10 @@ KEPT_MIN :: query.KEPT_MIN
 
 // KEPT is how many snapshots of one place are kept, newest first.
 KEPT :: 30
+
+// BUSY_WAIT is how long a write waits for another connection's to finish before
+// it gives up.
+BUSY_WAIT :: 2 * time.Second
 
 Store :: struct {
 	db: sqlite3.Db,
@@ -114,9 +120,11 @@ open :: proc(st: ^Store, path: string) -> sqlite3.Error {
 			_ = os.make_directory_all(dir)
 		}
 	}
+	// The window and the command line may both write at once: one waits for the
+	// other's write, a short transaction, rather than failing at once.
 	db := sqlite3.open(
 		path,
-		{wal = true, busy_timeout = 1000, on_open = "PRAGMA foreign_keys = ON"},
+		{wal = true, busy_timeout = BUSY_WAIT, on_open = "PRAGMA foreign_keys = ON"},
 		context.allocator,
 	) or_return
 	if err := sqlite3.exec(db, SCHEMA); err != nil {

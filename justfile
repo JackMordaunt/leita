@@ -6,6 +6,7 @@
 #   just check      type-check both modes without producing a binary
 #   just clean      remove build/
 #   just deps       fetch the jm submodule and the native libraries the window links
+#   just sqlite     fetch the jm submodule and build SQLite, all the command line links
 #   just gui [dir]  open the window on a directory, the home directory by default
 #   just hot [dir]  the same, the view reloaded in place on every edit
 #   just gui-test   run the window's tests, the host's on a real directory
@@ -35,18 +36,18 @@ default:
     @just --list --unsorted
 
 # Debug build with AddressSanitizer -> build/debug/estoile
-build:
+build: sqlite
     mkdir -p build/debug
     {{odin}} build . -debug {{san}} {{flags}} -out:build/debug/{{bin}}{{exe}}
 
 # Optimised build -> build/release/estoile
-release:
+release: sqlite
     mkdir -p build/release
     {{odin}} build . -o:speed {{flags}} -out:build/release/{{bin}}{{exe}}
 
 # Run the tests of every package the binary imports, and of pdf, which it does
 # not import yet, under ASan -> build/test/
-test:
+test: sqlite
     mkdir -p build/test
     {{odin}} test . -all-packages -debug {{san}} {{flags}} -out:build/test/{{bin}}{{exe}}
     {{odin}} test pdf -debug {{san}} {{flags}} -out:build/test/pdf{{exe}}
@@ -56,19 +57,26 @@ check:
     {{odin}} check . {{flags}}
     {{odin}} check . -debug {{flags}}
 
-# The jm submodule, when JM does not name another checkout, and the libraries
-# jm:ui links: Blend2D to draw, kb_text_shape to shape text, AccessKit for screen
-# readers; and SQLite, which keeps the window's scans. Each is built or fetched by
-# jm's own recipe, once.
-deps:
+# The jm submodule, when JM does not name another checkout, and SQLite, which
+# keeps both binaries' scans: all the command line links that is not Odin. Built
+# by jm's own recipe, once.
+sqlite:
     #!/usr/bin/env bash
     set -euo pipefail
     if [ "{{jm}}" = "{{root}}/jm" ] && [ ! -e jm/.git ]; then git submodule update --init jm; fi
     cd "{{jm}}"
+    ls sqlite3/lib/sqlite3.* >/dev/null 2>&1 || just sqlite
+
+# What sqlite fetches, and the libraries jm:ui links: Blend2D to draw,
+# kb_text_shape to shape text, AccessKit for screen readers. Each is built or
+# fetched by jm's own recipe, once.
+deps: sqlite
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{jm}}"
     ls ui/blend2d/lib/*blend2d* >/dev/null 2>&1 || just blend2d
     ls ui/kb/lib/kb_text_shape.* >/dev/null 2>&1 || just kb
     ls ui/accesskit/lib/*accesskit* >/dev/null 2>&1 || just accesskit
-    ls sqlite3/lib/sqlite3.* >/dev/null 2>&1 || just sqlite
     just sdl3
 
 # Build the window and open it on a directory, the home directory by default
