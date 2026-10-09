@@ -9,8 +9,8 @@ against.
 
 A directory listing is already the shape of the tree, so it writes straight into it.
 Reading one directory is the only part that differs by platform, and it is the part
-worth specialising: `read_dir` is portable through core:os everywhere but Linux,
-which asks the kernel directly.
+worth specialising: `read_dir` is portable through core:os everywhere but Linux and
+macOS, which ask the kernel directly.
 */
 package walk
 
