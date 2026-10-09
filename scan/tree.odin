@@ -7,14 +7,16 @@ import "core:sync"
 import "core:unicode/utf16"
 import "core:unicode/utf8"
 
-// A file or directory, in the form every reader reduces to.
+// A file or directory, in the form every reader reduces to. Flags sit beside the
+// parent so the two share a word instead of each padding one out to 8 bytes.
 Node :: struct {
 	parent: u32, // index of the holding directory; a root points at itself
-	name:   string, // UTF-8, owned by the tree
-	size:   u64, // logical length
-	disk:   u64, // bytes actually allocated
 	flags:  Node_Flags,
+	name:   string, // UTF-8, owned by the tree
+	disk:   u64, // bytes actually allocated
 }
+// Every node in a scan pays this, so growing it is a decision, never an accident.
+#assert(size_of(Node) == 32)
 
 Node_Flag  :: enum u8 {
 	Used, // written by a reader; an untouched slot has this clear

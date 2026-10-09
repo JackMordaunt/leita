@@ -157,7 +157,6 @@ walk_dir :: proc(d: Dir, w: ^Worker) -> bool {
 @(private)
 Entry :: struct {
 	name:      string,
-	size:      u64,
 	disk:      u64,
 	directory: bool,
 	symlink:   bool,
@@ -181,7 +180,6 @@ record :: proc(w: ^Worker, parent: u32, e: Entry) -> (index: u32, descend: bool,
 	n := scan.node(w.writer.tree, index)
 	n.parent = parent
 	n.name = scan.intern(&w.writer, e.name)
-	n.size = e.size
 
 	// A walker reaches a child through its parent, so the link is never in doubt.
 	flags := scan.Node_Flags{.Used, .Settled}

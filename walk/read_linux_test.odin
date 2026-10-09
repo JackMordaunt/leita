@@ -51,10 +51,8 @@ test_a_sparse_file_is_charged_what_it_occupies :: proc(t: ^testing.T) {
 		n := scan.node(&tree, i)
 		switch n.name {
 		case "hole.bin":
-			testing.expect_value(t, n.size, u64(1 << 20))
 			testing.expectf(t, n.disk < 64 * 1024, "a hole was charged %d bytes", n.disk)
 		case "solid.bin":
-			testing.expect_value(t, n.size, u64(1 << 20))
 			testing.expectf(t, n.disk >= 1 << 20, "a full megabyte was charged %d bytes", n.disk)
 		}
 	}

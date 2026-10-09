@@ -84,7 +84,7 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 			directory = l.type == .DIR,
 			symlink   = l.type == .LNK,
 		}
-		mask := linux.Statx_Mask{.TYPE, .SIZE, .BLOCKS}
+		mask := linux.Statx_Mask{.TYPE, .BLOCKS}
 		st: linux.Statx
 		if linux.statx(fd, cstring(&s.names[l.at]), {.SYMLINK_NOFOLLOW}, mask, &st) == .NONE {
 			// Some filesystems leave the type out of a directory entry. Those are
@@ -93,7 +93,6 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 				e.directory = linux.S_ISDIR(st.mode)
 				e.symlink = linux.S_ISLNK(st.mode)
 			}
-			e.size = st.size
 			if !e.directory && !e.symlink {
 				// Blocks are counted in 512 byte units whatever the filesystem
 				// builds them from.

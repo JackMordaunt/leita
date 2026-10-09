@@ -37,15 +37,15 @@ test_claim_grows_across_blocks :: proc(t: ^testing.T) {
 	testing.expect_value(t, err, Error.None)
 	testing.expect_value(t, first, u32(0))
 
-	node(&tree, 0).size = 11
-	node(&tree, BLOCK_NODES - 1).size = 22
-	node(&tree, BLOCK_NODES).size = 33
-	node(&tree, BLOCK_NODES + 15).size = 44
+	node(&tree, 0).disk = 11
+	node(&tree, BLOCK_NODES - 1).disk = 22
+	node(&tree, BLOCK_NODES).disk = 33
+	node(&tree, BLOCK_NODES + 15).disk = 44
 
-	testing.expect_value(t, node(&tree, 0).size, u64(11))
-	testing.expect_value(t, node(&tree, BLOCK_NODES - 1).size, u64(22))
-	testing.expect_value(t, node(&tree, BLOCK_NODES).size, u64(33))
-	testing.expect_value(t, node(&tree, BLOCK_NODES + 15).size, u64(44))
+	testing.expect_value(t, node(&tree, 0).disk, u64(11))
+	testing.expect_value(t, node(&tree, BLOCK_NODES - 1).disk, u64(22))
+	testing.expect_value(t, node(&tree, BLOCK_NODES).disk, u64(33))
+	testing.expect_value(t, node(&tree, BLOCK_NODES + 15).disk, u64(44))
 }
 
 @(test)
@@ -55,8 +55,8 @@ test_reserve_makes_every_slot_addressable :: proc(t: ^testing.T) {
 	defer tree_destroy(&tree)
 	testing.expect_value(t, reserve(&tree, 100_000), Error.None)
 	testing.expect_value(t, tree.count, u32(100_000))
-	node(&tree, 99_999).size = 7
-	testing.expect_value(t, node(&tree, 99_999).size, u64(7))
+	node(&tree, 99_999).disk = 7
+	testing.expect_value(t, node(&tree, 99_999).disk, u64(7))
 }
 
 @(test)

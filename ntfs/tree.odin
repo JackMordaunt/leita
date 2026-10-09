@@ -100,7 +100,6 @@ to_tree :: proc(m: ^Mft, t: ^scan.Tree, p: ^Projection) -> scan.Error {
 		// Borrowed, not copied: names live in the table's arenas and stay put for its
 		// life, so repeating this projection allocates nothing.
 		n.name = e.name
-		n.size = e.size
 		n.disk = e.allocated
 
 		flags := scan.Node_Flags{.Used}
@@ -133,7 +132,6 @@ to_tree :: proc(m: ^Mft, t: ^scan.Tree, p: ^Projection) -> scan.Error {
 		n.parent = l.parent
 		n.name = l.name
 		n.disk = m.entries[l.record].allocated
-		n.size = m.entries[l.record].size
 		scan.node_publish(n, {.Used, .Settled, .Extra_Name})
 	}
 	p.links_done = links
