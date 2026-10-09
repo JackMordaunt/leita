@@ -9,6 +9,8 @@ import "core:testing"
 import "core:time"
 import "core:unicode/utf8"
 
+import "jm:debug"
+
 import "../kinds"
 import "../pdf"
 import "../reclaim"
@@ -511,4 +513,51 @@ build_leaves_out_what_was_not_asked :: proc(t: ^testing.T) {
 	testing.expect(t, r.reclaim == nil)
 	testing.expect_value(t, len(r.largest_directories), 2)
 	testing.expect_value(t, len(r.largest_files), 3)
+}
+
+/*
+A report built from a scan, written in every format and destroyed, frees each
+block at the size it was made. The test runner's mem.Tracking_Allocator checks
+only that a freed pointer was allocated, not its size (its free case looks the
+pointer up and drops the entry), so jm's debug allocator stands in: the paths
+scan.path made were freed short of their builder's capacity, a Size_Mismatch
+issue for every path in an export.
+*/
+@(test)
+every_format_frees_what_build_made_at_its_size :: proc(t: ^testing.T) {
+	da: debug.Allocator
+	debug.init(&da, context.allocator)
+	defer debug.destroy(&da)
+	context.allocator = debug.allocator(&da)
+
+	tree: scan.Tree
+	roll: survey.Rollup
+	small_tree(t, &tree, &roll)
+	defer scan.tree_destroy(&tree)
+	defer survey.rollup_destroy(&roll)
+
+	previous := make(map[string]u64)
+	defer delete(previous)
+	previous["proj"] = 50
+	before := debug.snapshot(&da)
+	for format in Format {
+		r := build(
+			&tree,
+			&roll,
+			{engine = .Walk},
+			{reclaim = true, home = "/nowhere", previous = Snapshot{time.unix(1, 0), previous}},
+		)
+		sb := strings.builder_make()
+		err := export(strings.to_writer(&sb), &r, format)
+		testing.expectf(t, err == .None || err == .No_Font, "%v: %v", format, err)
+		// A PDF's text is compressed; the others name the largest directory.
+		text := strings.to_string(sb)
+		wrote :=
+			strings.has_prefix(text, "%PDF-") if format == .Pdf else strings.contains(text, "/r/proj")
+		testing.expectf(t, err != .None || wrote, "a %v report was written", format)
+		strings.builder_destroy(&sb)
+		destroy(&r)
+	}
+	testing.expect(t, debug.expect_released(&da, before), "the reports freed what they made")
+	testing.expect_value(t, debug.issue_count(&da), 0)
 }

@@ -379,5 +379,9 @@ path :: proc(t: ^Tree, i: u32, allocator := context.allocator) -> string {
 	if strings.builder_len(sb) == 0 {
 		strings.write_string(&sb, SEPARATOR)
 	}
+	// The builder grew past the path. A caller frees the string it is given, so
+	// the block must be exactly the string's length, or the free names the wrong
+	// size: jm:debug reports that as a Size_Mismatch issue.
+	shrink(&sb.buf)
 	return strings.to_string(sb)
 }
