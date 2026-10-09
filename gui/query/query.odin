@@ -45,12 +45,14 @@ Progress_Result :: struct {
 	notice:     Notice, // what came of the window's last request
 }
 
-// Notice is what came of a request the window made of an entry: moved to the
-// Trash, renamed, or why not. id moves on with each, so a dismissed notice stays
-// dismissed until there is a new one.
+// Notice is what came of a request the window made: an entry moved to the
+// Trash, renamed, a report saved, or why not. id moves on with each, so a
+// dismissed notice stays dismissed until there is a new one. saved is set when
+// it names a file just written, which command.Reveal shows.
 Notice :: struct {
 	id:     u32,
 	failed: bool,
+	saved:  bool,
 	text:   string,
 }
 

@@ -12,6 +12,8 @@ package estoile_files
 
 import "base:runtime"
 
+import "core:fmt"
+import "core:io"
 import "core:os"
 import "core:strings"
 import "core:thread"
@@ -132,6 +134,52 @@ rename :: proc(path, name: string, allocator := context.allocator) -> (to: strin
 		return "", err
 	}
 	return to, .None
+}
+
+// reports_folder is where the window saves what it exports: the user's
+// Documents folder, or their home where that is missing; "" for neither.
+reports_folder :: proc(allocator := context.allocator) -> string {
+	if docs := documents(context.temp_allocator); docs != "" && os.is_dir(docs) {
+		return strings.clone(docs, allocator)
+	}
+	home, err := os.user_home_dir(allocator)
+	return home if err == nil else ""
+}
+
+/*
+create_new makes a file in dir that was not there, named stem and ext, else
+stem-2 and ext, stem-3 and on, and opens it to write. It never replaces a file,
+even one made after it looked: the create claims the name or fails.
+*/
+create_new :: proc(
+	dir, stem, ext: string,
+	allocator := context.allocator,
+) -> (
+	path: string,
+	file: ^os.File,
+	err: Error,
+) {
+	for n in 1 ..= 999 {
+		buf: [512]u8
+		name :=
+			fmt.bprintf(buf[:], "%s%s", stem, ext) if n == 1 else fmt.bprintf(buf[:], "%s-%d%s", stem, n, ext)
+		path = strings.concatenate({dir, SEPARATOR, name}, allocator)
+		f, open_err := os.open(path, {.Write, .Create, .Excl}, os.Permissions_Default_File)
+		if open_err == nil {
+			return path, f, .None
+		}
+		delete(path, allocator)
+		switch {
+		case open_err == os.General_Error.Exist:
+			continue
+		case open_err == os.General_Error.Not_Exist:
+			return "", nil, .Missing
+		case open_err == io.Error.Permission_Denied:
+			return "", nil, .Denied
+		}
+		return "", nil, .Other
+	}
+	return "", nil, .Exists
 }
 
 /*

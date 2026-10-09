@@ -94,6 +94,7 @@ Scan :: struct {
 	state:                 query.State,
 	problem:               string,
 	started:               time.Tick,
+	begun:                 time.Time, // started, as a date
 	seconds:               f64, // frozen once the scan is over
 	stopped:               bool, // the window called it off
 	resolved:              bool, // fill.target holds a target to destroy
@@ -123,6 +124,10 @@ Desk :: struct {
 	snapshot:    i64,
 	compared:    query.Snapshot,
 	was:         map[u32]u64,
+	// Where reports are exported to, "" for files.reports_folder; and each one
+	// saved, by the notice that said so (export.odin).
+	reports:     string,
+	saved:       map[u32]string,
 }
 
 Host :: struct {
@@ -142,15 +147,17 @@ Host :: struct {
 Build the pipeline and start the threads, then scan path if it is not empty.
 
 wake is called, from the desk thread, whenever an answer has been put in the inbox:
-a frame loop runs a frame on it.
+a frame loop runs a frame on it. kept is the history store's path, "" for none;
+reports the folder reports are exported to, "" for the user's Documents.
 */
-init :: proc(h: ^Host, path: string, wake: proc() = nil, kept := "") {
+init :: proc(h: ^Host, path: string, wake: proc() = nil, kept := "", reports := "") {
 	allocator := context.allocator
 	ui.inbox_init(&h.inbox, allocator)
 	h.desk = {
-		inbox = &h.inbox,
-		wake  = wake,
-		live  = make(map[ui.Need_Key]Query, allocator),
+		inbox   = &h.inbox,
+		wake    = wake,
+		live    = make(map[ui.Need_Key]Query, allocator),
+		reports = strings.clone(reports, allocator),
 	}
 	history_open(&h.desk, kept)
 
@@ -204,6 +211,11 @@ stop :: proc(h: ^Host) {
 	delete(h.desk.live)
 	delete(h.desk.reclaimable)
 	delete(h.desk.notice.text)
+	delete(h.desk.reports)
+	for _, path in h.desk.saved {
+		delete(path)
+	}
+	delete(h.desk.saved)
 	history_close(&h.desk)
 	ui.inbox_destroy(&h.inbox)
 }
@@ -326,6 +338,11 @@ desk_step :: proc(d: ^Desk, v: Desk_In) {
 				compare(d, c.snapshot)
 				answer_all(d)
 			}
+		case command.Export:
+			export(d, c)
+			answer_all(d)
+		case command.Reveal:
+			reveal(d, c)
 		case command.Locate, command.Trash, command.Rename, command.Clean, command.Empty_Trash:
 			act(d, &e)
 			if d.scan != nil {
@@ -352,6 +369,7 @@ scan_begin :: proc(d: ^Desk, path: string) {
 	d.scan = s
 	s.path = strings.clone(path)
 	s.started = time.tick_now()
+	s.begun = time.now()
 	s.state = .Failed
 
 	target, choice, err := scan.resolve(path)

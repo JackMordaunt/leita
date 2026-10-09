@@ -160,3 +160,38 @@ errno_error :: proc(errno: i32) -> Error {
 	}
 	return .Other
 }
+
+// documents is the user's Documents folder as xdg-user-dirs names it in
+// user-dirs.dirs (XDG_DOCUMENTS_DIR="$HOME/Documents"), else ~/Documents; ""
+// when there is no home to find it in.
+@(private)
+documents :: proc(allocator := context.allocator) -> string {
+	home := os.get_env("HOME", context.temp_allocator)
+	if home == "" {
+		return ""
+	}
+	config := os.get_env("XDG_CONFIG_HOME", context.temp_allocator)
+	if config == "" || !filepath.is_abs(config) {
+		config, _ = filepath.join({home, ".config"}, context.temp_allocator)
+	}
+	dirs, _ := filepath.join({config, "user-dirs.dirs"}, context.temp_allocator)
+	if data, err := os.read_entire_file(dirs, context.temp_allocator); err == nil {
+		text := string(data)
+		for line in strings.split_lines_iterator(&text) {
+			KEY :: "XDG_DOCUMENTS_DIR="
+			entry := strings.trim_space(line)
+			if !strings.has_prefix(entry, KEY) {
+				continue
+			}
+			value := strings.trim(entry[len(KEY):], `"`)
+			if strings.has_prefix(value, "$HOME") {
+				return strings.concatenate({home, value[len("$HOME"):]}, allocator)
+			}
+			if filepath.is_abs(value) {
+				return strings.clone(value, allocator)
+			}
+		}
+	}
+	path, _ := filepath.join({home, "Documents"}, allocator)
+	return path
+}

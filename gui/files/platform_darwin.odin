@@ -4,6 +4,7 @@ package estoile_files
 import "base:intrinsics"
 
 import "core:c"
+import "core:os"
 import "core:strings"
 import NS "core:sys/darwin/Foundation"
 import "core:sys/posix"
@@ -116,4 +117,15 @@ errno_error :: proc(errno: posix.Errno) -> Error {
 		return .Unsupported
 	}
 	return .Other
+}
+
+// documents is ~/Documents, where the Finder keeps them; "" when there is no
+// home to find it in.
+@(private)
+documents :: proc(allocator := context.allocator) -> string {
+	home := os.get_env("HOME", context.temp_allocator)
+	if home == "" {
+		return ""
+	}
+	return strings.concatenate({home, "/Documents"}, allocator)
 }

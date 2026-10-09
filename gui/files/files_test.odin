@@ -134,3 +134,33 @@ delete_tree_is_careful_with_links_and_read_only_trees :: proc(t: ^testing.T) {
 	os.remove(strings.concatenate({root, "/alias"}, context.temp_allocator))
 	os.remove(root)
 }
+
+// A new file never takes the name of one there: the second is -2, the third -3,
+// and the first is left as it was.
+@(test)
+a_new_file_never_replaces_one :: proc(t: ^testing.T) {
+	tmp, _ := os.temp_directory(context.temp_allocator)
+	dir := strings.concatenate({tmp, "/estoile_files_create_new"}, context.temp_allocator)
+	os.remove_all(dir)
+	testing.expect(t, os.make_directory(dir) == nil)
+	defer os.remove_all(dir)
+
+	names: [3]string
+	for &name, i in names {
+		path, f, err := create_new(dir, "report", ".pdf", context.temp_allocator)
+		testing.expect_value(t, err, Error.None)
+		if f != nil {
+			_, _ = os.write_string(f, "first" if i == 0 else "later")
+			os.close(f)
+		}
+		name = path[len(dir) + 1:]
+	}
+	testing.expect_value(t, names, [3]string{"report.pdf", "report-2.pdf", "report-3.pdf"})
+	first := strings.concatenate({dir, "/report.pdf"}, context.temp_allocator)
+	data, _ := os.read_entire_file(first, context.temp_allocator)
+	testing.expect_value(t, string(data), "first")
+
+	missing := strings.concatenate({dir, "/missing"}, context.temp_allocator)
+	_, _, err := create_new(missing, "report", ".pdf", context.temp_allocator)
+	testing.expect_value(t, err, Error.Missing)
+}

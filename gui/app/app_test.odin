@@ -1,6 +1,7 @@
 //review:ignore history-coupled-file the chart tree this tests lives in gui/view/chart_tree.odin; view.odin needs nothing
 package estoile_app
 
+import "core:encoding/json"
 import "core:fmt"
 import "core:log"
 import "core:math"
@@ -14,6 +15,7 @@ import "core:time"
 
 import "jm:sqlite3"
 import "jm:stream"
+import "jm:timefmt"
 
 import "jm:ui"
 import bl "jm:ui/blend2d"
@@ -43,8 +45,8 @@ Rig :: struct {
 }
 
 @(private = "file")
-rig_open :: proc(r: ^Rig, path: string, kept := "") {
-	init(&r.h, path, kept = kept)
+rig_open :: proc(r: ^Rig, path: string, kept := "", reports := "") {
+	init(&r.h, path, kept = kept, reports = reports)
 	r.data = data_host(&r.h)
 	view.model_init(&r.m, path)
 	ui.subscriptions_init(&r.needs)
@@ -1664,6 +1666,239 @@ a_made_up_disk_changes_nothing_on_disk :: proc(t: ^testing.T) {
 			t,
 			d.notice.text,
 			"Nothing was changed: this disk is made up, so its files are not on disk",
+		)
+	}
+}
+
+// saved_as is the path of a report a notice says was saved as a file ending
+// in ext, the latest shown, once a frame shows one; "" if none does in time.
+@(private = "file")
+saved_as :: proc(r: ^Rig, ext: string) -> string {
+	PREFIX :: "Saved report to "
+	deadline := time.tick_now()._nsec + i64(30 * time.Second)
+	for time.tick_now()._nsec < deadline {
+		#reverse for t in ui.probe_current(&r.p).tags {
+			if strings.has_prefix(t.name, PREFIX) && strings.has_suffix(t.name, ext) {
+				return strings.clone(t.name[len(PREFIX):], context.temp_allocator)
+			}
+		}
+		if ui.inbox_pending(&r.h.inbox) {
+			ui.inbox_drain(&r.h.inbox, &r.p.layout)
+			ui.probe_frame(&r.p)
+			hand_on(r)
+		}
+		time.sleep(time.Millisecond)
+	}
+	return ""
+}
+
+// An Export writes a report of the finished scan in each format into the
+// folder reports go to, named for the target, and a second of the same kind
+// beside the first rather than over it.
+@(test)
+export_writes_a_report_of_each_format :: proc(t: ^testing.T) {
+	root := fixture(t, "export")
+	defer os.remove_all(root)
+	// A project's installed dependencies, for Reclaim to find.
+	testing.expect(t, os.make_directory(fmt.tprintf("%s/app", root)) == nil)
+	testing.expect(t, os.make_directory(fmt.tprintf("%s/app/node_modules", root)) == nil)
+	testing.expect(t, os.write_entire_file(fmt.tprintf("%s/app/package.json", root), "{}") == nil)
+	module := make([]byte, 64 << 10, context.temp_allocator)
+	testing.expect(
+		t,
+		os.write_entire_file(fmt.tprintf("%s/app/node_modules/x.js", root), module) == nil,
+	)
+	reports := fmt.tprintf("%s-reports", root)
+	os.remove_all(reports)
+	testing.expect(t, os.make_directory(reports) == nil)
+	defer os.remove_all(reports)
+	r: Rig
+	rig_open(&r, root, reports = reports)
+	defer rig_close(&r)
+	testing.expect(t, settle(&r, "Done"))
+
+	exts := [command.Export_Format]string {
+		.Csv  = ".csv",
+		.Json = ".json",
+		.Html = ".html",
+		.Pdf  = ".pdf",
+	}
+	for format in command.Export_Format {
+		stream.port_send(
+			r.h.cmd_port,
+			command.Command(
+				command.Export{generation = r.m.generation, format = format, reclaim = true},
+			),
+		)
+		path := saved_as(&r, exts[format])
+		if !testing.expectf(t, path != "", "a %v report was saved", format) {
+			continue
+		}
+		testing.expectf(
+			t,
+			strings.has_prefix(
+				path,
+				fmt.tprintf("%s/estoile-report-estoile_gui_export-", reports),
+			),
+			"%s is in the folder, named for the target",
+			path,
+		)
+		data, err := os.read_entire_file(path, context.temp_allocator)
+		testing.expect(t, err == nil, "the report is there")
+		text := string(data)
+		switch format {
+		case .Csv:
+			testing.expect(t, strings.has_prefix(text, "\xef\xbb\xbfsection,"), "a CSV")
+			testing.expect(t, strings.contains(text, "big.raw"), "it names the files")
+		case .Json:
+			v, jerr := json.parse(data, parse_integers = true, allocator = context.temp_allocator)
+			testing.expect_value(t, jerr, json.Error.None)
+			top := v.(json.Object)
+			testing.expect_value(t, top["schema"].(json.String), "estoile.report/1")
+			// Reclaim was asked for, and found the dependencies.
+			groups := top["reclaim"].(json.Object)["groups"].(json.Array)
+			if testing.expect_value(t, len(groups), 1) {
+				group := groups[0].(json.Object)
+				testing.expect_value(t, group["category"].(json.String), "dependencies")
+				item := group["items"].(json.Array)[0].(json.Object)
+				testing.expect_value(
+					t,
+					item["path"].(json.String),
+					fmt.tprintf("%s/app/node_modules", root),
+				)
+			}
+		case .Html:
+			testing.expect(t, strings.has_prefix(text, "<!doctype html>"), "an HTML page")
+		case .Pdf:
+			testing.expect(t, strings.has_prefix(text, "%PDF-1.7"), "a PDF")
+			testing.expect(t, strings.has_suffix(text, "%%EOF\n"), "written whole")
+		}
+	}
+
+	// Another PDF: in the same minute it is named -2, in the next one a name of
+	// its own; either way one more file, none replaced.
+	before, _ := os.read_all_directory_by_path(reports, context.temp_allocator)
+	stream.port_send(
+		r.h.cmd_port,
+		command.Command(command.Export{generation = r.m.generation, format = .Pdf}),
+	)
+	ui.probe_advance(&r.p, 400, 1.0 / 60) // the earlier toasts time out
+	testing.expect(t, saved_as(&r, ".pdf") != "", "the second PDF was saved")
+	after, _ := os.read_all_directory_by_path(reports, context.temp_allocator)
+	testing.expect_value(t, len(after), len(before) + 1)
+}
+
+// The toolbar's Export opens a dialog that sends the format chosen, and the
+// notice of the file saved offers Locate.
+@(test)
+the_export_dialog_saves_a_report_and_offers_locate :: proc(t: ^testing.T) {
+	root := fixture(t, "export_dialog")
+	defer os.remove_all(root)
+	reports := fmt.tprintf("%s-reports", root)
+	os.remove_all(reports)
+	testing.expect(t, os.make_directory(reports) == nil)
+	defer os.remove_all(reports)
+	r: Rig
+	rig_open(&r, root, reports = reports)
+	defer rig_close(&r)
+	testing.expect(t, settle(&r, "Done"))
+
+	ui.probe_advance(&r.p, 10, 1.0 / 60)
+	testing.expect(t, ui.probe_click(&r.p, "Export"), "the toolbar offers Export")
+	ui.probe_advance(&r.p, 20, 1.0 / 60)
+	testing.expect(t, ui.probe_tagged(&r.p, "Export report"), "the dialog opened")
+	testing.expect(t, ui.probe_tagged(&r.p, "Pages to print or attach to a ticket"), "PDF first")
+	testing.expect(t, ui.probe_click(&r.p, "HTML"))
+	ui.probe_frame(&r.p)
+	testing.expect(t, ui.probe_tagged(&r.p, "One page that opens in any browser"))
+	testing.expect(t, ui.probe_click_top(&r.p, "Export"), "the dialog's Export")
+	hand_on(&r)
+	path := saved_as(&r, ".html")
+	testing.expect(t, path != "", "the notice says where the report went")
+	testing.expect(t, os.exists(path), "and it is there")
+	testing.expect(t, !r.m.export_open, "the dialog closed")
+	testing.expect(t, ui.probe_tagged(&r.p, "Locate"), "the notice offers Locate")
+}
+
+// A report of a rescan is compared with the scan before, as the window is.
+@(test)
+an_export_compares_with_the_scan_before :: proc(t: ^testing.T) {
+	root := fixture(t, "export_compare")
+	defer os.remove_all(root)
+	reports := fmt.tprintf("%s-reports", root)
+	kept := fmt.tprintf("%s-kept", root)
+	for dir in ([]string{reports, kept}) {
+		os.remove_all(dir)
+		testing.expect(t, os.make_directory(dir) == nil)
+	}
+	defer os.remove_all(reports)
+	defer os.remove_all(kept)
+	r: Rig
+	rig_open(&r, root, fmt.tprintf("%s/history.db", kept), reports)
+	defer rig_close(&r)
+	testing.expect(t, settle(&r, "Done"))
+	first := r.m.generation
+	added := make([]byte, 2 << 20, context.temp_allocator)
+	testing.expect(t, os.write_entire_file(fmt.tprintf("%s/added.bin", root), added) == nil)
+
+	stream.port_send(r.h.cmd_port, command.Command(command.Scan{path = command.text_make(root)}))
+	deadline := time.tick_now()._nsec + i64(30 * time.Second)
+	for r.m.generation == first && time.tick_now()._nsec < deadline {
+		if ui.inbox_pending(&r.h.inbox) {
+			ui.inbox_drain(&r.h.inbox, &r.p.layout)
+			ui.probe_frame(&r.p)
+			hand_on(&r)
+		}
+		time.sleep(time.Millisecond)
+	}
+	testing.expect(t, settle(&r, "Done"), "the rescan finished")
+	stream.port_send(
+		r.h.cmd_port,
+		command.Command(command.Export{generation = r.m.generation, format = .Json}),
+	)
+	path := saved_as(&r, ".json")
+	data, err := os.read_entire_file(path, context.temp_allocator)
+	if !testing.expect(t, err == nil, "the report was saved") {
+		return
+	}
+	v, _ := json.parse(data, parse_integers = true, allocator = context.temp_allocator)
+	top := v.(json.Object)
+	compared, ok := top["compared"].(json.Object)
+	if !testing.expect(t, ok, "it is compared with the first scan") {
+		return
+	}
+	taken, _ := compared["taken"].(json.String)
+	testing.expect(t, strings.has_prefix(taken, "20"), "it says when the first was taken")
+	// The first held all but the file added since, which it never saw.
+	totals := top["totals"].(json.Object)
+	testing.expect_value(
+		t,
+		compared["bytes"].(json.Integer),
+		totals["bytes"].(json.Integer) - (2 << 20),
+	)
+	grown := top["largest_files"].(json.Array)[0].(json.Object)
+	testing.expect_value(t, grown["path"].(json.String), fmt.tprintf("%s/added.bin", root))
+	testing.expect(t, grown["bytes_before"].(json.Null) == nil, "the added file is new")
+}
+
+// A report is named for its target's last name, kept to letters, digits and
+// a few marks, and the minute.
+@(test)
+a_report_is_named_for_its_target :: proc(t: ^testing.T) {
+	now := time.unix(1791547200, 0)
+	minute := timefmt.local(now, "%Y-%m-%d-%H%M", context.temp_allocator)
+	cases := [][2]string {
+		{"/home/jfm/Source", "Source"},
+		{"/home/jfm/My Stuff: 2026?/", "My-Stuff-2026"},
+		{"/", "root"},
+		{`C:\`, "C"},
+		{"/data/日本語", "日本語"},
+	}
+	for c in cases {
+		testing.expect_value(
+			t,
+			report_stem(c[0], now),
+			fmt.tprintf("estoile-report-%s-%s", c[1], minute),
 		)
 	}
 }

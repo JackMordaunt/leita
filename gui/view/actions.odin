@@ -239,12 +239,37 @@ dialogs :: proc(gtx: ^ui.Ctx, m: ^Model) {
 
 // notice floats what came of each request in a toast at the window's lower left,
 // clear of the actions at the foot of the panels, such as Reclaim's Clean up. One
-// that went well leaves on its own; one that failed stays until dismissed.
+// that went well leaves on its own; one that failed stays until dismissed. One
+// that saved a file offers Locate, which shows it in the file manager.
 @(private)
 notice :: proc(gtx: ^ui.Ctx, m: ^Model, n: query.Notice) {
 	if n.id != 0 && n.id != m.notice_seen {
 		m.notice_seen = n.id
-		primer.toast_push(&m.toasts, n.text, .Error if n.failed else .Success)
+		opts: primer.Toast_Options
+		if n.saved {
+			opts.action = "Locate"
+		}
+		toast := primer.toast_push(&m.toasts, n.text, .Error if n.failed else .Success, opts)
+		if n.saved {
+			m.saved_toasts[toast] = n.id
+		}
 	}
-	primer.toaster(gtx, &m.toasts, .Bottom_Start)
+	ev := primer.toaster(gtx, &m.toasts, .Bottom_Start)
+	if notice, ok := m.saved_toasts[ev.action]; ok && ev.action != 0 {
+		ui.command(gtx, command.Command(command.Reveal{notice = notice}))
+	}
+	// A toast gone, timed out or dismissed, has no Locate to press.
+	gone := make([dynamic]int, gtx.allocator)
+	for toast in m.saved_toasts {
+		showing := false
+		for t in m.toasts.items {
+			showing ||= t.id == toast && !t.leaving
+		}
+		if !showing {
+			append(&gone, toast)
+		}
+	}
+	for toast in gone {
+		delete_key(&m.saved_toasts, toast)
+	}
 }

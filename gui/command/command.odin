@@ -36,6 +36,8 @@ Command :: union {
 	Clean,
 	Empty_Trash,
 	Baseline,
+	Export,
+	Reveal,
 }
 
 // Scan reads what is at path, calling off any scan still running.
@@ -90,4 +92,25 @@ Empty_Trash :: struct {
 Baseline :: struct {
 	generation: u32,
 	snapshot:   i64,
+}
+
+// Export_Format is what an Export writes, as report.Format names them.
+Export_Format :: enum u8 {
+	Csv,
+	Json,
+	Html,
+	Pdf,
+}
+
+// Export writes a report of the finished scan to a file of its own, with what
+// Reclaim finds when reclaim is set, and says where in a notice.
+Export :: struct {
+	generation: u32,
+	format:     Export_Format,
+	reclaim:    bool,
+}
+
+// Reveal shows the file a notice said was saved in the system's file manager.
+Reveal :: struct {
+	notice: u32,
 }

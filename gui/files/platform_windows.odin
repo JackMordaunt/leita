@@ -56,3 +56,17 @@ win32_error :: proc(code: win32.DWORD) -> Error {
 	}
 	return .Other
 }
+
+// documents is the user's Documents folder as the shell knows it, wherever it
+// was moved to; "" when the shell cannot say.
+@(private)
+documents :: proc(allocator := context.allocator) -> string {
+	wide: win32.LPWSTR
+	id := win32.FOLDERID_Documents
+	if win32.SHGetKnownFolderPath(&id, 0, nil, &wide) != 0 {
+		return ""
+	}
+	defer win32.CoTaskMemFree(wide)
+	path, err := win32.wstring_to_utf8(win32.wstring(wide), -1, allocator)
+	return path if err == nil else ""
+}

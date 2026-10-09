@@ -153,12 +153,19 @@ Model :: struct {
 	trash_bytes:      u64,
 	// Colouring by change (change.odin): whether the menu of snapshots is open.
 	since_open:       bool,
+	// Exporting a report (export.odin): the dialog and what it was last set to,
+	// and the notice of each file saved, by the toast that shows it.
+	export_open:      bool,
+	export_format:    command.Export_Format,
+	export_reclaim:   bool,
+	saved_toasts:     map[int]u32,
 }
 
 model_init :: proc(m: ^Model, path: string) {
 	ui.text_set(&m.path, path)
 	m.dir = query.ROOT
 	m.toasts.allocator = context.allocator
+	m.export_format = .Pdf
 }
 
 model_destroy :: proc(m: ^Model) {
@@ -173,6 +180,7 @@ model_destroy :: proc(m: ^Model) {
 	delete(m.boxes_next)
 	delete(m.said_open)
 	delete(m.reclaim_pick)
+	delete(m.saved_toasts)
 	primer.toasts_destroy(&m.toasts)
 	forget_trail(m)
 	delete(m.trail)
@@ -197,6 +205,7 @@ view :: proc(gtx: ^ui.Ctx, user: rawptr) {
 		m.scroll = {}
 		m.side = {}
 		m.menu_open, m.trash_open, m.rename_open = false, false, false
+		m.export_open = false
 		clear(&m.reclaim_pick)
 		forget_history(m)
 	}
@@ -232,6 +241,7 @@ view :: proc(gtx: ^ui.Ctx, user: rawptr) {
 	}
 	dialogs(gtx, m)
 	reclaim_dialogs(gtx, m)
+	export_dialog(gtx, m, prog)
 }
 
 // --- the side column ----------------------------------------------------------
@@ -342,6 +352,7 @@ toolbar :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result) {
 	ui.spacer(gtx, 8)
 	ui.flexible(gtx, 1)
 	location(gtx, m, prog)
+	export_button(gtx, m, prog)
 	switch {
 	case prog != nil && prog.state == .Scanning:
 		if primer.button(gtx, "Stop", .Danger, leading = .Square_Fill) {
