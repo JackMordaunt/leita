@@ -10,6 +10,7 @@ import "core:time"
 import "core:unicode/utf8"
 
 import "../kinds"
+import "../pdf"
 import "../reclaim"
 import "../scan"
 import "../survey"
@@ -310,14 +311,86 @@ a_format_is_named_by_its_extension :: proc(t: ^testing.T) {
 	testing.expect(t, ok && f == .Html)
 }
 
+// A PDF of the sample is a whole file, the same each time it is written; one
+// with more rows than a page holds runs onto more pages. A machine with none
+// of pdf's system fonts cannot set one: that fails, as it does in pdf's tests.
 @(test)
-a_pdf_is_not_built_yet :: proc(t: ^testing.T) {
+a_pdf_is_written_whole_and_runs_onto_pages :: proc(t: ^testing.T) {
 	r := sample()
 	sb := strings.builder_make(context.temp_allocator)
-	testing.expect_value(t, export(strings.to_writer(&sb), &r, .Pdf), Error.Pdf_Not_Built)
-	testing.expect_value(t, strings.builder_len(sb), 0)
-	testing.expect_value(t, export(strings.to_writer(&sb), &r, .Json), Error.None)
-	testing.expect(t, strings.has_prefix(strings.to_string(sb), "{"))
+	if !testing.expect_value(t, export(strings.to_writer(&sb), &r, .Pdf), Error.None) {
+		return
+	}
+	one := strings.clone(strings.to_string(sb), context.temp_allocator)
+	testing.expect(t, strings.has_prefix(one, "%PDF-1.7"))
+	testing.expect(t, strings.has_suffix(one, "%%EOF\n"))
+	testing.expect(t, strings.contains(one, "/Count 1 "), "the sample fits one page")
+
+	strings.builder_reset(&sb)
+	testing.expect_value(t, export(strings.to_writer(&sb), &r, .Pdf), Error.None)
+	testing.expect(t, strings.to_string(sb) == one, "the same report makes the same file")
+
+	many := make([]Entry, 150, context.temp_allocator)
+	for &e, i in many {
+		e = {
+			path  = strings.concatenate(
+				{"/data/", strings.repeat("deep/", i % 40, context.temp_allocator), "file.bin"},
+				context.temp_allocator,
+			),
+			bytes = u64(1000 - i),
+		}
+	}
+	r.largest_files = many
+	strings.builder_reset(&sb)
+	testing.expect_value(t, export(strings.to_writer(&sb), &r, .Pdf, .Letter), Error.None)
+	text := strings.to_string(sb)
+	testing.expect(t, !strings.contains(text, "/Count 1 "), "150 rows take more than a page")
+	testing.expect(t, strings.contains(text, "/MediaBox [0 0 612 792]"), "on Letter")
+}
+
+// A path too long for its column breaks after a separator onto a second line,
+// and one too long for two keeps its start and its end.
+@(test)
+a_long_path_wraps_then_loses_its_middle :: proc(t: ^testing.T) {
+	r := sample()
+	doc: pdf.Document
+	pdf.init(&doc)
+	defer pdf.destroy(&doc)
+	p := Pen {
+		doc = &doc,
+		r   = &r,
+	}
+	font, ok := pdf.add_system_fonts(&doc)
+	if !testing.expect(t, ok, "no system font to measure with") {
+		return
+	}
+	p.regular = font
+	path := "/home/someone/projects/website/node_modules/.cache/babel-loader/index.js"
+	first, second := path_lines(&p, path, 1000)
+	testing.expect_value(t, first, path)
+	testing.expect_value(t, second, "")
+
+	width := pdf.text_width(&doc, path, font, BODY_SIZE) * 0.7
+	first, second = path_lines(&p, path, width)
+	testing.expect(t, strings.has_suffix(first, "/"), "the break falls after a separator")
+	testing.expect_value(t, strings.concatenate({first, second}, context.temp_allocator), path)
+
+	width = pdf.text_width(&doc, path, font, BODY_SIZE) * 0.3
+	first, second = path_lines(&p, path, width)
+	testing.expect(t, strings.has_prefix(path, first), "the start is kept")
+	testing.expect(t, strings.has_prefix(second, "…"), "the middle is left out")
+	testing.expect(t, strings.has_suffix(second, "/index.js"), "the end is kept")
+	testing.expect(t, pdf.text_width(&doc, second, font, BODY_SIZE) <= width)
+}
+
+@(test)
+a_locale_says_its_paper :: proc(t: ^testing.T) {
+	testing.expect_value(t, paper_of("en_US.UTF-8"), Paper.Letter)
+	testing.expect_value(t, paper_of("es_MX"), Paper.Letter)
+	testing.expect_value(t, paper_of("en_GB.UTF-8"), Paper.A4)
+	testing.expect_value(t, paper_of("de_DE@euro"), Paper.A4)
+	testing.expect_value(t, paper_of("C"), Paper.A4)
+	testing.expect_value(t, paper_of("C.UTF-8"), Paper.A4)
 }
 
 /*

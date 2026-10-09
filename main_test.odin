@@ -82,11 +82,33 @@ a_report_of_a_directory_reads_back :: proc(t: ^testing.T) {
 	testing.expect(t, space["free"].(json.Integer) <= space["total"].(json.Integer))
 }
 
+// A report named .pdf is a PDF, on the paper asked for.
+@(test)
+a_pdf_report_is_written_on_its_paper :: proc(t: ^testing.T) {
+	dir, dir_err := os.temp_directory(context.temp_allocator)
+	testing.expect(t, dir_err == nil, "no temp directory")
+	root := fmt.tprintf("%s/estoile_report_pdf", dir)
+	os.remove_all(root)
+	defer os.remove_all(root)
+	testing.expect(t, os.make_directory(root) == nil, "could not make the root")
+	testing.expect(t, os.write_entire_file(fmt.tprintf("%s/a.txt", root), "hello") == nil)
+	out := fmt.tprintf("%s.pdf", root)
+	defer os.remove(out)
+
+	testing.expect_value(t, scan_and_say({target = root, report = out, paper = "letter"}), 0)
+	data, read_err := os.read_entire_file(out, context.temp_allocator)
+	testing.expect(t, read_err == nil, "no report written")
+	text := string(data)
+	testing.expect(t, strings.has_prefix(text, "%PDF-"), "it is a PDF")
+	testing.expect(t, strings.contains(text, "/MediaBox [0 0 612 792]"), "on Letter")
+}
+
 // A report the command line cannot write is refused before anything is read.
 @(test)
 a_report_it_cannot_write_is_refused :: proc(t: ^testing.T) {
 	cases := [?]Options {
-		{report = "out.pdf"},
+		{report = "out.pdf", paper = "a5"},
+		{report = "out.csv", paper = "a4"},
 		{report = "out.txt"},
 		{report = "-"},
 		{report = "out.json", format = "xml"},

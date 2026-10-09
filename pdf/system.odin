@@ -63,10 +63,14 @@ SYSTEM_FONTS :: [][]string {
 // first. false when no sans-serif font of SYSTEM_FONTS is installed. Fonts
 // are read whole and kept until destroy: NotoSansCJK-Regular.ttc is
 // 19,484,784 bytes on Arch (noto-fonts-cjk, 2025-02).
-add_system_fonts :: proc(doc: ^Document) -> (Font, bool) {
-	primary := Font(-1)
+//
+// Given bold, it also adds the bold face of the sans-serif chosen, with the
+// same fallbacks, and sets bold to it; to the regular face where SYSTEM_BOLD
+// names none beside it, or that one is not installed.
+add_system_fonts :: proc(doc: ^Document, bold: ^Font = nil) -> (Font, bool) {
+	primary, heavy := Font(-1), Font(-1)
 	for paths in SYSTEM_FONTS {
-		for path in paths {
+		for path, i in paths {
 			if !os.exists(path) {
 				continue
 			}
@@ -76,8 +80,16 @@ add_system_fonts :: proc(doc: ^Document) -> (Font, bool) {
 			}
 			if primary < 0 {
 				primary = font
+				if bolds := SYSTEM_BOLD; bold != nil && i < len(bolds) && os.exists(bolds[i]) {
+					if b, berr := add_font_file(doc, bolds[i]); berr == .None {
+						heavy = b
+					}
+				}
 			} else {
 				add_fallback(doc, primary, font)
+				if heavy >= 0 {
+					add_fallback(doc, heavy, font)
+				}
 			}
 			break
 		}
@@ -85,5 +97,26 @@ add_system_fonts :: proc(doc: ^Document) -> (Font, bool) {
 			return -1, false
 		}
 	}
+	if bold != nil {
+		bold^ = heavy if heavy >= 0 else primary
+	}
 	return primary, true
+}
+
+// SYSTEM_BOLD is the bold face of each sans-serif in SYSTEM_FONTS' first list,
+// at the same index.
+@(private)
+SYSTEM_BOLD :: []string {
+	"/usr/share/fonts/liberation/LiberationSans-Bold.ttf",
+	"/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+	"/usr/share/fonts/liberation-sans/LiberationSans-Bold.ttf",
+	"/usr/share/fonts/TTF/LiberationSans-Bold.ttf",
+	"/usr/share/fonts/noto/NotoSans-Bold.ttf",
+	"/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
+	"/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+	"/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+	"C:/Windows/Fonts/arialbd.ttf",
+	"C:/Windows/Fonts/segoeuib.ttf",
+	"/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+	"/Library/Fonts/Arial Bold.ttf",
 }

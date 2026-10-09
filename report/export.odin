@@ -15,7 +15,7 @@ import "../scan"
 /*
 Format is how a report is written.
 
-CSV and HTML are for a person reading: a byte of a path that is not UTF-8 reads as
+CSV, HTML and PDF are for a person reading: a byte of a path that is not UTF-8 reads as
 U+FFFD, and a control character as its Unicode control picture (a newline as ␊),
 so a hostile name stays on its own row and cannot break the page. JSON is for a
 program: a path is its exact text, and one that is not UTF-8 is also given whole,
@@ -30,14 +30,14 @@ Format :: enum u8 {
 
 Error :: enum u8 {
 	None,
-	Pdf_Not_Built,
+	No_Font,
 	Write_Failed,
 }
 
 ERROR_TEXT := [Error]string {
-	.None          = "",
-	.Pdf_Not_Built = "PDF export is not built yet",
-	.Write_Failed  = "could not write the report",
+	.None         = "",
+	.No_Font      = "no font to set a PDF in: install Liberation Sans, Noto Sans or DejaVu Sans",
+	.Write_Failed = "could not write the report",
 }
 
 // format_of is the format a file's extension names, ignoring case.
@@ -74,11 +74,12 @@ FORMAT_NAMES := [Format]string {
 }
 
 /*
-export writes r to w as format. It is the one call every export goes through,
-the command line's and later the window's, so whatever decides who may export
-wraps this alone.
+export writes r to w as format, a PDF on paper. It is the one call every export
+goes through, the command line's and the window's, so whatever decides who may
+export wraps this alone. Nothing is written to w when the format cannot be made,
+as a PDF on a machine with no font to set it in.
 */
-export :: proc(w: io.Writer, r: ^Report, format: Format) -> Error {
+export :: proc(w: io.Writer, r: ^Report, format: Format, paper := Paper.A4) -> Error {
 	sb := strings.builder_make(context.temp_allocator)
 	switch format {
 	case .Csv:
@@ -88,7 +89,7 @@ export :: proc(w: io.Writer, r: ^Report, format: Format) -> Error {
 	case .Html:
 		write_html(&sb, r)
 	case .Pdf:
-		return .Pdf_Not_Built
+		return write_pdf(w, r, paper)
 	}
 	if _, err := io.write_string(w, strings.to_string(sb)); err != nil {
 		return .Write_Failed

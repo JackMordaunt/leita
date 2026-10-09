@@ -48,8 +48,9 @@ Options :: struct {
 	walk_workers: int `usage:"Directory readers to run at once."`,
 	gentle:       bool `usage:"Leave the disk and cores to other work by reading with fewer threads."`,
 	chunk:        int `usage:"Bytes per volume read."`,
-	report:       string `usage:"Write a report of the scan to this file, .csv, .json or .html; - writes it to standard output instead of the usual summary."`,
-	format:       string `usage:"The report's format, csv, json or html, whatever its file is called."`,
+	report:       string `usage:"Write a report of the scan to this file, .csv, .json, .html or .pdf; - writes it to standard output instead of the usual summary."`,
+	format:       string `usage:"The report's format, csv, json, html or pdf, whatever its file is called."`,
+	paper:        string `usage:"The paper a PDF report is laid out on, a4 or letter; the locale's unless set."`,
 	top:          int `usage:"Largest directories and files a report lists, 50 unless set."`,
 	reclaim:      bool `usage:"Include in the report what can be deleted and made again."`,
 	no_history:   bool `usage:"Neither compare with earlier scans of this place nor keep this one."`,
@@ -110,9 +111,17 @@ scan_and_say :: proc(opt: Options, kept := "") -> int {
 		fmt.eprintln("error: a report is written from a finished scan, not a live one")
 		return 1
 	}
-	if format == .Pdf {
-		fmt.eprintfln("error: %s", report.ERROR_TEXT[.Pdf_Not_Built])
-		return 1
+	paper := report.paper_of_locale()
+	if opt.paper != "" {
+		ok: bool
+		if paper, ok = report.paper_named(opt.paper); !ok {
+			fmt.eprintfln("error: no paper %q: use a4 or letter", opt.paper)
+			return 1
+		}
+		if format != .Pdf || opt.report == "" {
+			fmt.eprintln("error: --paper lays out a PDF report; name one with --report")
+			return 1
+		}
 	}
 	// A report on standard output is the whole of it; the summary would corrupt it.
 	quiet := opt.report == "-"
@@ -262,7 +271,7 @@ scan_and_say :: proc(opt: Options, kept := "") -> int {
 		{top = opt.top, reclaim = opt.reclaim, previous = k.previous},
 	)
 	defer report.destroy(&r)
-	return write_report(&r, opt.report, format)
+	return write_report(&r, opt.report, format, paper)
 }
 
 /*
@@ -274,7 +283,7 @@ report_format :: proc(opt: Options) -> (report.Format, string) {
 	if opt.format != "" {
 		f, ok := report.format_named(opt.format)
 		if !ok {
-			return {}, fmt.tprintf("no report format %q: use csv, json or html", opt.format)
+			return {}, fmt.tprintf("no report format %q: use csv, json, html or pdf", opt.format)
 		}
 		if opt.report == "" {
 			return {}, "--format says how to write a report; name one with --report"
@@ -288,19 +297,25 @@ report_format :: proc(opt: Options) -> (report.Format, string) {
 		return {}, ""
 	}
 	if opt.report == "-" {
-		return {}, "a report on standard output needs --format csv, json or html"
+		return {}, "a report on standard output needs --format csv, json, html or pdf"
 	}
 	f, ok := report.format_of(opt.report)
 	if !ok {
-		return {}, fmt.tprintf("cannot tell the format of %s from its name: end it .csv, .json or .html, or give --format", opt.report)
+		return {}, fmt.tprintf("cannot tell the format of %s from its name: end it .csv, .json, .html or .pdf, or give --format", opt.report)
 	}
 	return f, ""
 }
 
-// Write the report to path, or standard output for "-".
-write_report :: proc(r: ^report.Report, path: string, format: report.Format) -> int {
+// Write the report to path, or standard output for "-". A report that could
+// not be written whole is not left behind half written.
+write_report :: proc(
+	r: ^report.Report,
+	path: string,
+	format: report.Format,
+	paper: report.Paper,
+) -> int {
 	if path == "-" {
-		if err := report.export(os.to_writer(os.stdout), r, format); err != nil {
+		if err := report.export(os.to_writer(os.stdout), r, format, paper); err != nil {
 			fmt.eprintfln("error: %s", report.ERROR_TEXT[err])
 			return 1
 		}
@@ -312,11 +327,12 @@ write_report :: proc(r: ^report.Report, path: string, format: report.Format) -> 
 		return 1
 	}
 	w := os.to_writer(file)
-	err := report.export(w, r, format)
+	err := report.export(w, r, format, paper)
 	if close_err := os.close(file); close_err != nil && err == nil {
 		err = .Write_Failed
 	}
 	if err != nil {
+		os.remove(path)
 		fmt.eprintfln("error: %s: %s", report.ERROR_TEXT[err], path)
 		return 1
 	}
