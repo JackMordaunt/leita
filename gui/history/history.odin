@@ -11,6 +11,11 @@ then, or not there at all: nothing smaller can have held something bigger, so a
 directory kept is all the way down to its entries kept.
 
 The store keeps the KEPT newest snapshots of each place and forgets older ones.
+
+It also keeps the audit trail: every change sonar made on disk at the person's
+request, or tried to and could not, with when, what and why not. That is never
+forgotten; the snapshots' pruning leaves it be.
+
 It is not thread-safe: one thread uses it.
 */
 package sonar_history
@@ -42,6 +47,35 @@ Snapshot :: struct {
 	items: u64,
 }
 
+// Action is one change sonar made on disk, or tried to: taken in Unix seconds,
+// the path it was made to, and what that path held. detail is the new name of a
+// rename, or why a failed action failed.
+Action :: struct {
+	taken:  i64,
+	kind:   Action_Kind,
+	path:   string,
+	detail: string,
+	bytes:  u64,
+	failed: bool,
+}
+
+// Action_Kind is what was done: moved to the Trash, renamed, deleted for good by
+// Reclaim, or deleted for good from the Trash as it was emptied.
+Action_Kind :: enum u8 {
+	Trash,
+	Rename,
+	Delete,
+	Empty_Trash,
+}
+
+// ACTION_KINDS are the names the action table keeps the kinds by.
+ACTION_KINDS := [Action_Kind]string {
+	.Trash       = "trash",
+	.Rename      = "rename",
+	.Delete      = "delete",
+	.Empty_Trash = "empty-trash",
+}
+
 // Entry is one entry of a snapshot: its path under the top, and what it held.
 Entry :: struct {
 	path:  string,
@@ -61,7 +95,16 @@ SCHEMA :: `
 		snapshot INTEGER NOT NULL REFERENCES snapshot(id) ON DELETE CASCADE,
 		path TEXT NOT NULL,
 		bytes INTEGER NOT NULL,
-		PRIMARY KEY(snapshot, path)) WITHOUT ROWID;`
+		PRIMARY KEY(snapshot, path)) WITHOUT ROWID;
+	CREATE TABLE IF NOT EXISTS action(
+		id INTEGER PRIMARY KEY,
+		taken INTEGER NOT NULL,
+		kind TEXT NOT NULL,
+		path TEXT NOT NULL,
+		detail TEXT NOT NULL,
+		bytes INTEGER NOT NULL,
+		failed INTEGER NOT NULL);
+	CREATE INDEX IF NOT EXISTS action_taken ON action(taken);`
 
 // open opens the store at path, making it and its folder if they are missing.
 // ":memory:" opens one that lasts as long as the connection.
@@ -148,6 +191,42 @@ save :: proc(
 	}
 	sqlite3.transact(st.db, body, &s) or_return
 	return s.id, nil
+}
+
+// record adds actions to the audit trail, all or none.
+record :: proc(st: ^Store, actions: []Action) -> sqlite3.Error {
+	if len(actions) == 0 {
+		return nil
+	}
+	actions := actions
+	body :: proc(db: sqlite3.Db, user: rawptr) -> sqlite3.Error {
+		actions := (^[]Action)(user)^
+		stmt := sqlite3.prepare(
+			db,
+			`INSERT INTO action(taken, kind, path, detail, bytes, failed)
+				VALUES (?, ?, ?, ?, ?, ?)`,
+			context.temp_allocator,
+		) or_return
+		defer sqlite3.finish(&stmt)
+		for a in actions {
+			sqlite3.bind(
+				&stmt,
+				a.taken,
+				ACTION_KINDS[a.kind],
+				a.path,
+				a.detail,
+				i64(a.bytes),
+				a.failed,
+			) or_return
+			for sqlite3.next(&stmt) {}
+			if stmt.err != nil {
+				return stmt.err
+			}
+			sqlite3.reset(&stmt) or_return
+		}
+		return nil
+	}
+	return sqlite3.transact(st.db, body, &actions)
 }
 
 // list is the snapshots of top, newest first, in allocator.

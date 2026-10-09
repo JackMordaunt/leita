@@ -2,6 +2,8 @@ package sonar_history
 
 import "core:testing"
 
+import "jm:sqlite3"
+
 @(test)
 a_snapshot_comes_back_as_it_was_saved :: proc(t: ^testing.T) {
 	st: Store
@@ -51,4 +53,40 @@ only_the_newest_snapshots_of_a_place_are_kept :: proc(t: ^testing.T) {
 	kept, _ := load(&st, first)
 	defer forget(kept)
 	testing.expect_value(t, len(kept), 1)
+}
+
+@(test)
+actions_are_kept_in_the_audit_trail_as_recorded :: proc(t: ^testing.T) {
+	st: Store
+	testing.expect(t, open(&st, ":memory:") == nil)
+	defer close(&st)
+
+	testing.expect(t, record(&st, nil) == nil, "nothing to record is no error")
+	done := []Action {
+		{1000, .Trash, "/home/ann/old.iso", "", 4 << 30, false},
+		{1001, .Rename, "/home/ann/photos", "pictures", 2 << 20, false},
+		{1002, .Delete, "/home/ann/app/node_modules", "permission denied", 9 << 20, true},
+		{1003, .Empty_Trash, "/home/ann/.Trash/ünï.txt", "", 12, false},
+	}
+	testing.expect(t, record(&st, done) == nil)
+
+	rows, err := sqlite3.query(
+		st.db,
+		"SELECT taken, kind, path, detail, bytes, failed FROM action ORDER BY id",
+		allocator = context.temp_allocator,
+	)
+	testing.expect(t, err == nil)
+	got := 0
+	for sqlite3.next(&rows) {
+		want := done[got]
+		testing.expect_value(t, sqlite3.integer(rows, 0), want.taken)
+		testing.expect_value(t, sqlite3.text(rows, 1), ACTION_KINDS[want.kind])
+		testing.expect_value(t, sqlite3.text(rows, 2), want.path)
+		testing.expect_value(t, sqlite3.text(rows, 3), want.detail)
+		testing.expect_value(t, u64(sqlite3.integer(rows, 4)), want.bytes)
+		testing.expect_value(t, sqlite3.integer(rows, 5) != 0, want.failed)
+		got += 1
+	}
+	testing.expect(t, sqlite3.finish(&rows) == nil)
+	testing.expect_value(t, got, len(done))
 }
