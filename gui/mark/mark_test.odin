@@ -1,6 +1,5 @@
-package sonar_mark
+package estoile_mark
 
-import "core:fmt"
 import "core:math"
 import "core:strings"
 import "core:testing"
@@ -67,16 +66,16 @@ svg_carries_every_cell :: proc(t: ^testing.T) {
 	write_svg(&b, ink, SEA)
 	svg := strings.to_string(b)
 	testing.expect_value(t, strings.count(svg, "<circle "), 1)
-	testing.expect_value(t, strings.count(svg, "<path "), len(CELLS))
+	testing.expect_value(t, strings.count(svg, "<path "), CELLS)
 	rest := svg
-	for c, i in CELLS {
+	for i in 0 ..< CELLS {
 		at := strings.index(rest, "<path ")
 		if at < 0 {
 			break
 		}
 		rest = rest[at + 1:]
 		path := rest[:strings.index_byte(rest, '\n')]
-		want := fmt.tprintf(`fill="%s"`, hex(SEA if c.lit else ink))
+		want := `fill="#0e7490"` if i == LIT else `fill="#1c1b1a"`
 		testing.expectf(t, strings.contains(path, want), "cell %d wants %s: %s", i, want, path)
 	}
 }
