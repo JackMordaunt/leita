@@ -381,7 +381,7 @@ scan_begin :: proc(d: ^Desk, path: string) {
 
 	target, choice, err := scan.resolve(path)
 	if err != nil {
-		s.problem = fmt.aprintf("cannot scan %s: %v", path, err)
+		s.problem = strings.clone(fmt.tprintf("cannot scan %s: %v", path, err))
 		return
 	}
 	s.resolved = true
@@ -396,7 +396,7 @@ scan_begin :: proc(d: ^Desk, path: string) {
 		media = target.media,
 	}
 	if tree_err := scan.tree_init(&s.tree, walk.width(s.fill.wcfg)); tree_err != nil {
-		s.problem = fmt.aprintf("%v", tree_err)
+		s.problem = strings.clone(fmt.tprintf("%v", tree_err))
 		return
 	}
 	s.grown = true
