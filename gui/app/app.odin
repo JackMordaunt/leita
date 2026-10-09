@@ -51,7 +51,6 @@ import "../../survey"
 import "../../synth"
 import "../../walk"
 import "../command"
-import "../files"
 import "../history"
 import "../query"
 
@@ -406,7 +405,7 @@ measure :: proc(s: ^Scan) {
 		return
 	}
 	where_ := scan.location(s.fill.target, context.temp_allocator)
-	if total, free, ok := files.space(where_); ok {
+	if total, free, ok := scan.space(where_); ok {
 		s.disk_total, s.disk_free = total, free
 	}
 }

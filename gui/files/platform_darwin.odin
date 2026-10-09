@@ -8,8 +8,6 @@ import "core:strings"
 import NS "core:sys/darwin/Foundation"
 import "core:sys/posix"
 
-import "../../scan"
-
 foreign import libc "system:System"
 
 SEPARATOR  :: "/"
@@ -118,12 +116,4 @@ errno_error :: proc(errno: posix.Errno) -> Error {
 		return .Unsupported
 	}
 	return .Other
-}
-
-// space is the size of the filesystem holding path and what of it is free to
-// this user: statfs's available blocks, as df shows, not those kept for root.
-space :: proc(path: string) -> (total, free: u64, ok: bool) {
-	st := scan.stat_fs(path) or_return
-	unit := u64(st.bsize)
-	return st.blocks * unit, st.bavail * unit, true
 }
