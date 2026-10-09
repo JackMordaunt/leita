@@ -28,6 +28,9 @@ resolve :: proc(
 	c: Choice,
 	err: Error,
 ) {
+	if made, choice, ok := synthetic(input, allocator); ok {
+		return made, choice, .None
+	}
 	info, stat_err := os.stat(input, context.temp_allocator)
 	if stat_err != nil {
 		if stat_err == io.Error.Permission_Denied {

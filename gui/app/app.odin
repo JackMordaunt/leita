@@ -48,6 +48,7 @@ import "../../ntfs"
 import "../../reclaim"
 import "../../scan"
 import "../../survey"
+import "../../synth"
 import "../../walk"
 import "../command"
 import "../files"
@@ -399,6 +400,11 @@ measure :: proc(s: ^Scan) {
 	if !s.resolved || s.fill.target.mount == "" {
 		return
 	}
+	if s.engine == .Synthetic {
+		cfg, _ := synth.from_env()
+		s.disk_total, s.disk_free = synth.space(cfg.day)
+		return
+	}
 	where_ := scan.location(s.fill.target, context.temp_allocator)
 	if total, free, ok := files.space(where_); ok {
 		s.disk_total, s.disk_free = total, free
@@ -535,6 +541,8 @@ progress :: proc(d: ^Desk) -> query.Progress_Result {
 		r.engine = "MFT"
 	case .Walk:
 		r.engine = "walk"
+	case .Synthetic:
+		r.engine = "synthetic"
 	case .None:
 	}
 	if s.grown {

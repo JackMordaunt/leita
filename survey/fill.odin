@@ -10,6 +10,7 @@ import "core:thread"
 
 import "../ntfs"
 import "../scan"
+import "../synth"
 import "../walk"
 
 /*
@@ -25,23 +26,24 @@ while it runs watches that; one that does not simply waits for `fill_run` to ret
 */
 Fill :: struct {
 	// What to read, and how.
-	target:   scan.Target,
-	engine:   scan.Engine,
-	opts:     ntfs.Read_Options,
-	wcfg:     walk.Config,
+	target:    scan.Target,
+	engine:    scan.Engine,
+	opts:      ntfs.Read_Options,
+	wcfg:      walk.Config,
 	// Whether anything is reading the tree while it fills. A reader that has to fold
 	// pays for doing so repeatedly, which is worth it only if someone is looking.
-	watched:  bool,
-	tree:     ^scan.Tree,
+	watched:   bool,
+	tree:      ^scan.Tree,
 	// The MFT reader's own table, which carries what only NTFS knows. It outlives the
 	// tree, whose names are borrowed from it.
-	table:    ntfs.Mft,
+	table:     ntfs.Mft,
 	// What it left behind.
-	mft_err:  ntfs.Error,
-	walk_err: walk.Error,
-	tree_err: scan.Error,
-	reading:  b32, // the table is still being read
-	scanning: b32, // the tree is still being filled
+	mft_err:   ntfs.Error,
+	walk_err:  walk.Error,
+	synth_err: synth.Error,
+	tree_err:  scan.Error,
+	reading:   b32, // the table is still being read
+	scanning:  b32, // the tree is still being filled
 }
 
 fill_destroy :: proc(f: ^Fill) {
@@ -57,6 +59,8 @@ fill_run :: proc(f: ^Fill) {
 		fill_mft(f)
 	case .Walk:
 		fill_walk(f)
+	case .Synthetic:
+		fill_synthetic(f)
 	case .None:
 	}
 }
@@ -86,6 +90,9 @@ problem :: proc(f: ^Fill, allocator := context.temp_allocator) -> string {
 			f.walk_err,
 			allocator = allocator,
 		)
+	}
+	if f.synth_err != nil {
+		return fmt.aprintf("making the disk up: %v", f.synth_err, allocator = allocator)
 	}
 	if f.tree_err != nil {
 		return fmt.aprintf("%v", f.tree_err, allocator = allocator)
@@ -161,4 +168,13 @@ fill_walk :: proc(f: ^Fill) {
 	root := scan.location(f.target, context.allocator)
 	defer delete(root)
 	f.walk_err = walk.read(root, f.tree, f.wcfg)
+}
+
+// Make the disk up, at the pace of a walk, for the day scan.SYNTHETIC_ENV names.
+@(private)
+fill_synthetic :: proc(f: ^Fill) {
+	cfg, _ := synth.from_env()
+	root := scan.location(f.target, context.allocator)
+	defer delete(root)
+	f.synth_err = synth.read(root, f.tree, cfg)
 }

@@ -54,7 +54,7 @@ keep :: proc(d: ^Desk) {
 	entries := make([dynamic]history.Entry, context.temp_allocator)
 	append(&entries, history.Entry{"", survey.total(&s.roll, top)})
 	collect_kept(s, &entries, top, "")
-	place := scan.path(&s.tree, top, context.temp_allocator)
+	place := place_of(s, top)
 	id, err := history.save(
 		d.history,
 		place,
@@ -104,6 +104,16 @@ path_under :: proc(at, name: string) -> string {
 	return strings.concatenate({at, "/", name}, context.temp_allocator)
 }
 
+// place_of is what a scan's snapshots are kept under: the path of its top, and a
+// made-up disk's apart from the real one at the same path.
+place_of :: proc(s: ^Scan, top: u32) -> string {
+	path := scan.path(&s.tree, top, context.temp_allocator)
+	if s.engine == .Synthetic {
+		return strings.concatenate({"synthetic:", path}, context.temp_allocator)
+	}
+	return path
+}
+
 // compare compares the scan with snapshot id of its place, or with none for 0 or
 // for a snapshot of somewhere else.
 compare :: proc(d: ^Desk, id: i64) {
@@ -117,7 +127,7 @@ compare :: proc(d: ^Desk, id: i64) {
 	if id == 0 || d.history == nil || !ok {
 		return
 	}
-	snapshots, _ := history.list(d.history, scan.path(&s.tree, top, context.temp_allocator))
+	snapshots, _ := history.list(d.history, place_of(s, top))
 	for snap in snapshots {
 		if snap.id == id {
 			d.compared = {snap.id, snap.taken, snap.bytes, snap.items}
@@ -181,7 +191,7 @@ history_answer :: proc(d: ^Desk, q: query.History) -> query.History_Result {
 	if q.generation != d.generation || d.history == nil || !ok {
 		return r
 	}
-	snapshots, _ := history.list(d.history, scan.path(&s.tree, top, context.temp_allocator))
+	snapshots, _ := history.list(d.history, place_of(s, top))
 	earlier := make([dynamic]query.Snapshot, context.temp_allocator)
 	for snap in snapshots {
 		if snap.id != d.snapshot {

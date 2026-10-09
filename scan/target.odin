@@ -1,6 +1,7 @@
 package scan
 
 import "core:mem"
+import "core:os"
 import "core:strings"
 
 /*
@@ -51,6 +52,30 @@ top :: proc(t: Target) -> string {
 // every target is real.
 SYNTHETIC_ENV :: "SONAR_SYNTHETIC"
 
+/*
+The made-up target in place of input, when SYNTHETIC_ENV asks for one. It is
+named and shaped as input would be, on a flash disk, so the window and the
+command line show it as they would the real one; resolve asks this first.
+*/
+synthetic :: proc(
+	input: string,
+	allocator := context.allocator,
+) -> (
+	t: Target,
+	c: Choice,
+	ok: bool,
+) {
+	if os.get_env(SYNTHETIC_ENV, context.temp_allocator) == "" {
+		return {}, {}, false
+	}
+	t.allocator = allocator
+	t.input = strings.clone(input, allocator)
+	t.mount = strings.clone(input, allocator)
+	t.fs = .Other
+	t.media = .Solid
+	return t, {engine = .Synthetic}, true
+}
+
 // The full path of what will be scanned: the top, and the subtree below it.
 location :: proc(t: Target, allocator := context.allocator) -> string {
 	if t.root == "" {
@@ -89,6 +114,7 @@ Engine :: enum {
 	None, // nothing here can be scanned
 	Mft, // read the NTFS master file table whole
 	Walk, // enumerate directories
+	Synthetic, // make a disk up, with no one's real files in it (package synth)
 }
 
 Choice :: struct {

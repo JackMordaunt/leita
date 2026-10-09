@@ -21,6 +21,7 @@ import "jm:ui/ops"
 import "jm:ui/primer"
 import "jm:ui/render"
 
+import "../../scan"
 import "../command"
 import "../query"
 import "../view"
@@ -1635,4 +1636,49 @@ a_reader_opens_and_closes_a_folder_of_the_chart :: proc(t: ^testing.T) {
 	ui.probe_frame(&r.p)
 	ui.probe_frame(&r.p)
 	testing.expect_value(t, labelled_node(&r, "big.raw, "), ops.Area_Id(0))
+}
+
+// A made-up disk's paths can name real files, so no request about one reaches
+// the disk: it is refused before anything is tried, and nothing is audited.
+@(test)
+a_made_up_disk_changes_nothing_on_disk :: proc(t: ^testing.T) {
+	s: Scan
+	s.engine = .Synthetic
+	d := Desk {
+		scan = &s,
+	}
+	defer delete(d.notice.text)
+	requests := []command.Command {
+		command.Trash{entry = {node = 1}},
+		command.Rename{entry = {node = 1}},
+		command.Clean{},
+		command.Empty_Trash{},
+		command.Locate{entry = {node = 1}},
+	}
+	for &c in requests {
+		act(&d, &c)
+		testing.expectf(t, d.notice.failed, "%v is refused", c)
+		testing.expect_value(
+			t,
+			d.notice.text,
+			"Nothing was changed: this disk is made up, so its files are not on disk",
+		)
+	}
+}
+
+// A made-up disk's scans are kept apart from the real disk's at the same path.
+@(test)
+a_made_up_disk_is_kept_apart :: proc(t: ^testing.T) {
+	s: Scan
+	testing.expect(t, scan.tree_init(&s.tree) == nil)
+	defer scan.tree_destroy(&s.tree)
+	w := scan.writer(&s.tree, 0)
+	top, _ := scan.claim(&w, 1)
+	n := scan.node(&s.tree, top)
+	n.parent = top
+	n.name = scan.intern(&w, "/")
+	scan.node_publish(n, {.Used, .Settled, .Directory})
+	testing.expect_value(t, place_of(&s, top), "/")
+	s.engine = .Synthetic
+	testing.expect_value(t, place_of(&s, top), "synthetic:/")
 }

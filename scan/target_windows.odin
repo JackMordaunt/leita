@@ -32,6 +32,9 @@ resolve :: proc(
 	c: Choice,
 	err: Error,
 ) {
+	if made, choice, ok := synthetic(input, allocator); ok {
+		return made, choice, .None
+	}
 	t.allocator = allocator
 	t.input = strings.clone(input, allocator)
 

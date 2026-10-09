@@ -8,6 +8,7 @@ import "../../human"
 import "../../reclaim"
 import "../../scan"
 import "../../survey"
+import "../../synth"
 import "../command"
 import "../files"
 import "../history"
@@ -28,6 +29,12 @@ the request is done. A request refused before it touched the disk does not.
 
 // act carries out c, one of the requests about an entry.
 act :: proc(d: ^Desk, c: ^command.Command) {
+	// A made-up disk's paths may name real files, /Applications/Xcode.app among
+	// them, which no request about the made-up ones may touch.
+	if d.scan != nil && d.scan.engine == .Synthetic {
+		tell(d, true, "Nothing was changed: this disk is made up, so its files are not on disk")
+		return
+	}
 	done := make([dynamic]history.Action, context.temp_allocator)
 	defer audit(d, done[:])
 	#partial switch &c in c {
@@ -190,7 +197,8 @@ reclaim_answer :: proc(d: ^Desk, q: query.Reclaim) -> (r: query.Reclaim_Result) 
 			}
 		},
 	}
-	home := os.get_env("HOME", context.temp_allocator)
+	synthetic := s.engine == .Synthetic
+	home := synth.HOME if synthetic else os.get_env("HOME", context.temp_allocator)
 	found := reclaim.find(
 		src,
 		dir,
@@ -212,7 +220,10 @@ reclaim_answer :: proc(d: ^Desk, q: query.Reclaim) -> (r: query.Reclaim_Result) 
 			if c.category != category {
 				continue
 			}
-			modified, is_dir := newest_modification(c.path)
+			modified, is_dir := synth.modified(c.path), true
+			if !synthetic {
+				modified, is_dir = newest_modification(c.path)
+			}
 			if !is_dir {
 				continue
 			}
