@@ -237,14 +237,14 @@ dialogs :: proc(gtx: ^ui.Ctx, m: ^Model) {
 	}
 }
 
-// notice shows what came of the last request, until it is dismissed.
+// notice floats what came of each request in a toast at the window's lower left,
+// clear of the actions at the foot of the panels, such as Reclaim's Clean up. One
+// that went well leaves on its own; one that failed stays until dismissed.
 @(private)
 notice :: proc(gtx: ^ui.Ctx, m: ^Model, n: query.Notice) {
-	if n.id == 0 || n.id == m.notice_seen {
-		return
-	}
-	if primer.banner(gtx, n.text, variant = n.failed ? .Critical : .Success, dismissible = true) ==
-	   .Dismiss {
+	if n.id != 0 && n.id != m.notice_seen {
 		m.notice_seen = n.id
+		primer.toast_push(&m.toasts, n.text, .Error if n.failed else .Success)
 	}
+	primer.toaster(gtx, &m.toasts, .Bottom_Start)
 }

@@ -101,7 +101,8 @@ Model :: struct {
 	rename_open:      bool,
 	rename:           ui.Text_State,
 	rename_focus:     bool, // the rename field takes focus when next drawn
-	notice_seen:      u32, // the notice last dismissed
+	notice_seen:      u32, // the notice last made a toast
+	toasts:           primer.Toasts, // the notices floating over the window
 	// The side column: its width as dragged (0 for SIDE_WIDTH), whether a drag has
 	// folded it away, and the share of its height the contents list takes (0 for
 	// SPLIT). The *_from fields are where a drag began.
@@ -156,6 +157,7 @@ Model :: struct {
 model_init :: proc(m: ^Model, path: string) {
 	ui.text_set(&m.path, path)
 	m.dir = query.ROOT
+	m.toasts.allocator = context.allocator
 }
 
 model_destroy :: proc(m: ^Model) {
@@ -170,6 +172,7 @@ model_destroy :: proc(m: ^Model) {
 	delete(m.boxes_next)
 	delete(m.said_open)
 	delete(m.reclaim_pick)
+	primer.toasts_destroy(&m.toasts)
 	forget_trail(m)
 	delete(m.trail)
 }
