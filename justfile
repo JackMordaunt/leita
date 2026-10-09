@@ -23,7 +23,11 @@
 odin  := env("ODIN", "odin")
 root  := justfile_directory()
 jm    := env("JM", root / "jm")
-flags := "-vet -strict-style -collection:jm=" + jm
+# Which estoile a build is, the one place either binary learns it: the tag
+# described, or a bare commit as git describe names one, g and its hash, so Odin
+# never reads it as a number; dev without git. ESTOILE_VERSION=<v> sets it instead.
+version := env("ESTOILE_VERSION", `git describe --tags --dirty 2>/dev/null || { h=$(git describe --always --dirty 2>/dev/null) && echo "g$h"; } || echo dev`)
+flags := "-vet -strict-style -collection:jm=" + jm + " -define:ESTOILE_VERSION=" + version
 san   := env("SAN", "-sanitize:address")
 exe   := if os() == "windows" { ".exe" } else { "" }
 bin   := "estoile"

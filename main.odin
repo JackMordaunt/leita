@@ -53,6 +53,7 @@ Options :: struct {
 	top:          int `usage:"Largest directories and files a report lists, 50 unless set."`,
 	reclaim:      bool `usage:"Include in the report what can be deleted and made again."`,
 	no_history:   bool `usage:"Neither compare with earlier scans of this place nor keep this one."`,
+	version:      bool `usage:"Print which estoile this is and stop."`,
 }
 
 main :: proc() {
@@ -79,6 +80,10 @@ run :: proc() -> int {
 		flags.print_errors(Options, err, PROGRAM, .Unix)
 		_, asked_for_help := err.(flags.Help_Request)
 		return 0 if asked_for_help else 1
+	}
+	if opt.version {
+		fmt.println(version_line())
+		return 0
 	}
 
 	// Each finished scan is kept where the window keeps its own, to compare the next with.

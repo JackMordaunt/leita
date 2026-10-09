@@ -4,6 +4,7 @@ import "core:encoding/json"
 import "core:fmt"
 import "core:os"
 import "core:path/filepath"
+import "core:strings"
 import "core:testing"
 import "core:thread"
 import "core:time"
@@ -11,6 +12,21 @@ import "core:time"
 import "jm:sqlite3"
 
 import "history"
+import "report"
+
+// --version names the build and where it runs.
+@(test)
+the_version_says_which_estoile_this_is :: proc(t: ^testing.T) {
+	line := version_line()
+	want := fmt.tprintf(
+		"estoile %s (%s/%s, built ",
+		report.VERSION,
+		ODIN_OS_STRING,
+		ODIN_ARCH_STRING,
+	)
+	testing.expectf(t, strings.has_prefix(line, want), "%q does not start %q", line, want)
+	testing.expect_value(t, len(line), len(want) + len("2026-10-09)"))
+}
 
 /*
 The command line asked for a JSON report of a directory writes one that reads

@@ -27,8 +27,9 @@ import "../scan"
 import "../survey"
 import "../synth"
 
-// VERSION is the estoile a report says made it, set with -define:ESTOILE_VERSION=x
-// by whatever builds a release.
+// VERSION is which estoile this is, set with -define:ESTOILE_VERSION=x by whatever
+// builds it (the justfile, from git): what a report says made it, what
+// `estoile --version` prints and the window's title shows.
 VERSION :: #config(ESTOILE_VERSION, "dev")
 
 // DEFAULT_TOP is how many of the largest directories and files a report lists
