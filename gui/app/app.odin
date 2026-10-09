@@ -128,6 +128,8 @@ Desk :: struct {
 	// saved, by the notice that said so (export.odin).
 	reports:     string,
 	saved:       map[u32]string,
+	// A report is being written, for Progress to say so while the desk is busy.
+	exporting:   bool,
 }
 
 Host :: struct {
@@ -339,7 +341,12 @@ desk_step :: proc(d: ^Desk, v: Desk_In) {
 				answer_all(d)
 			}
 		case command.Export:
+			// The window hears that a report is under way before the desk
+			// stops answering to write it, and that it is done after.
+			d.exporting = true
+			answer_all(d)
 			export(d, c)
+			d.exporting = false
 			answer_all(d)
 		case command.Reveal:
 			reveal(d, c)
@@ -539,6 +546,7 @@ notify :: proc(d: ^Desk) {
 progress :: proc(d: ^Desk) -> query.Progress_Result {
 	r := query.Progress_Result {
 		generation = d.generation,
+		exporting  = d.exporting,
 	}
 	s := d.scan
 	if s == nil {

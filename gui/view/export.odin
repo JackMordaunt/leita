@@ -17,16 +17,37 @@ notice whose Locate shows it in the file manager.
 
 // export_button is the toolbar's Export, there whenever there is a scan and
 // live once it is done, since a report is of a finished scan: shown from the
-// start, the toolbar keeps its layout when the scan ends.
+// start, the toolbar keeps its layout when the scan ends. While a report is
+// written it reads Exporting… with a spinner for its icon, and is heard as
+// disabled; a click then does nothing, so one export runs at a time.
 @(private)
 export_button :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result) {
 	if prog == nil || prog.generation == 0 {
 		return
 	}
+	busy := exporting(m, prog)
 	state := design.Interaction.Live if prog.state == .Done else .Disabled
-	if primer.button(gtx, "Export", leading = .Download, state = state) {
+	if primer.button(
+		gtx,
+		"Exporting…" if busy else "Export",
+		leading = .Download,
+		loading = busy,
+		state = state,
+	) {
 		m.export_open = true
 	}
+}
+
+// exporting is whether a report asked for is still being written: from the
+// frame Export is sent until the host says it is writing it, then for as long
+// as it says so. Every export ends in a notice, which also ends the wait, should
+// it be over before the window heard it begin.
+@(private)
+exporting :: proc(m: ^Model, prog: ^query.Progress_Result) -> bool {
+	if sent, waiting := m.export_sent.?; waiting && (prog.exporting || prog.notice.id != sent) {
+		m.export_sent = nil
+	}
+	return prog.exporting || m.export_sent != nil
 }
 
 // export_dialog asks how to write the report, and sends Export when asked to.
@@ -86,6 +107,7 @@ export_dialog :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result) {
 	}
 	if export {
 		m.export_open = false
+		m.export_sent = prog.notice.id
 		ui.command(
 			gtx,
 			command.Command(

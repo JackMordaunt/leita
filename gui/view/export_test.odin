@@ -1,5 +1,6 @@
 package estoile_view
 
+import "core:strings"
 import "core:testing"
 
 import "jm:ui"
@@ -83,4 +84,84 @@ export_asks_for_a_format_and_sends_it :: proc(t: ^testing.T) {
 		Maybe(command.Export)(command.Export{generation = 3, format = .Json, reclaim = true}),
 	)
 	testing.expect(t, !c.m.export_open, "the dialog closed")
+}
+
+// From the dialog's Export until the host's notice, the toolbar's Export reads
+// Exporting… and is heard as a disabled button, and a click on it opens nothing;
+// the notice ends it whether the report was saved or not, and whether or not
+// the window heard the host begin.
+@(test)
+export_is_busy_until_its_notice :: proc(t: ^testing.T) {
+	c: Export_Case
+	c.m.export_format = .Csv
+	c.m.generation = 3
+	c.prog = {
+		generation = 3,
+		state = .Done,
+		target = "/data",
+		notice = {id = 7},
+	}
+	defer model_destroy(&c.m)
+	fonts := []ops.Font_Ref {
+		{0, ui.default_font(), 400},
+		{1, ui.default_font(), 500},
+		{2, ui.default_font(), 600},
+		{3, ui.default_font(), 400},
+	}
+	h: render.Headless
+	render.headless_init(&h, export_frame, &c, {800, 600}, fonts)
+	defer render.headless_destroy(&h)
+
+	send :: proc(t: ^testing.T, h: ^render.Headless) {
+		ui.probe_frame(&h.p)
+		testing.expect(t, ui.probe_click(&h.p, "Export"), "the toolbar's Export")
+		ui.probe_advance(&h.p, 20, 1.0 / 60)
+		testing.expect(t, ui.probe_click_top(&h.p, "Export"), "the dialog's Export")
+		ui.probe_advance(&h.p, 20, 1.0 / 60)
+	}
+	busy :: proc(t: ^testing.T, h: ^render.Headless, c: ^Export_Case, want: bool, why: string) {
+		testing.expectf(t, ui.probe_tagged(&h.p, "Exporting…") == want, "busy %v: %s", want, why)
+		testing.expectf(t, ui.probe_tagged(&h.p, "Export") == !want, "idle %v: %s", !want, why)
+		said := ui.probe_semantics(&h.p, context.temp_allocator)
+		testing.expectf(
+			t,
+			// The report spells the ellipsis as an escape.
+			strings.contains(said, `button "Exporting\u2026" disabled`) == want,
+			"%s:\n%s",
+			why,
+			said,
+		)
+		if want {
+			// A second Export cannot be asked for while one runs.
+			ui.probe_click(&h.p, "Exporting…")
+			ui.probe_advance(&h.p, 20, 1.0 / 60)
+			testing.expect(t, !c.m.export_open, "the busy button opens no dialog")
+		}
+	}
+
+	busy(t, &h, &c, false, "nothing asked for yet")
+	send(t, &h)
+	busy(t, &h, &c, true, "sent, before the host has said anything")
+	c.prog.exporting = true
+	ui.probe_frame(&h.p)
+	busy(t, &h, &c, true, "the host is writing it")
+	c.prog.exporting = false
+	c.prog.notice = {
+		id    = 8,
+		saved = true,
+		text  = "Saved report to /home/me/Documents/r.csv",
+	}
+	ui.probe_frame(&h.p)
+	busy(t, &h, &c, false, "saved")
+
+	// A failure the window never saw begin ends it as well.
+	send(t, &h)
+	busy(t, &h, &c, true, "sent again")
+	c.prog.notice = {
+		id     = 9,
+		failed = true,
+		text   = "Could not save the report: could not write the report",
+	}
+	ui.probe_frame(&h.p)
+	busy(t, &h, &c, false, "failed")
 }

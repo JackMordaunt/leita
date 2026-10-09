@@ -1836,6 +1836,65 @@ the_export_dialog_saves_a_report_and_offers_locate :: proc(t: ^testing.T) {
 	testing.expect(t, ui.probe_tagged(&r.p, "Locate"), "the notice offers Locate")
 }
 
+// shows_notice is whether a frame shows a notice starting with prefix before the deadline.
+@(private = "file")
+shows_notice :: proc(r: ^Rig, prefix: string) -> bool {
+	deadline := time.tick_now()._nsec + i64(30 * time.Second)
+	for time.tick_now()._nsec < deadline {
+		for t in ui.probe_current(&r.p).tags {
+			if strings.has_prefix(t.name, prefix) {
+				return true
+			}
+		}
+		if ui.inbox_pending(&r.h.inbox) {
+			ui.inbox_drain(&r.h.inbox, &r.p.layout)
+			ui.probe_frame(&r.p)
+			hand_on(r)
+		}
+		time.sleep(time.Millisecond)
+	}
+	return false
+}
+
+// The toolbar's Export reads Exporting… from the dialog's Export until the
+// host's notice says how it went, saved or not, then reads Export again.
+@(test)
+export_is_busy_until_it_is_saved_or_fails :: proc(t: ^testing.T) {
+	root := fixture(t, "export_busy")
+	defer os.remove_all(root)
+	reports := fmt.tprintf("%s-reports", root)
+	os.remove_all(reports)
+	testing.expect(t, os.make_directory(reports) == nil)
+	defer os.remove_all(reports)
+
+	export_once :: proc(t: ^testing.T, r: ^Rig, notice: string) {
+		testing.expect(t, settle(r, "Done"))
+		ui.probe_advance(&r.p, 10, 1.0 / 60)
+		testing.expect(t, ui.probe_click(&r.p, "Export"), "the toolbar offers Export")
+		ui.probe_advance(&r.p, 20, 1.0 / 60)
+		testing.expect(t, ui.probe_click_top(&r.p, "Export"), "the dialog's Export")
+		// The command goes with the frame that sent it; the next is busy
+		// before the host has answered.
+		hand_on(r)
+		ui.probe_frame(&r.p)
+		testing.expect(t, ui.probe_tagged(&r.p, "Exporting…"), "busy once asked")
+		testing.expectf(t, shows_notice(r, notice), "a notice starting %q", notice)
+		testing.expect(t, settle(r, "Exporting…", present = false), "no longer busy")
+		testing.expect(t, ui.probe_tagged(&r.p, "Export"), "Export again")
+	}
+
+	saves: Rig
+	rig_open(&saves, root, reports = reports)
+	export_once(t, &saves, "Saved report to ")
+	rig_close(&saves)
+
+	// A folder that is not there: the report cannot be saved.
+	fails: Rig
+	rig_open(&fails, root, reports = fmt.tprintf("%s/missing", reports))
+	defer rig_close(&fails)
+	export_once(t, &fails, "Could not save the report in ")
+}
+
 // A report of a rescan is compared with the scan before, as the window is.
 @(test)
 an_export_compares_with_the_scan_before :: proc(t: ^testing.T) {
