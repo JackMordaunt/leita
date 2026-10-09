@@ -21,6 +21,7 @@ import "core:slice"
 import "core:strings"
 import "core:time"
 
+import "../history"
 import "../kinds"
 import "../reclaim"
 import "../scan"
@@ -260,7 +261,7 @@ build :: proc(
 				kind  = kind,
 			}
 			if prev != nil {
-				if was, kept := prev.entries[path_under(t, top, s.node)]; kept {
+				if was, kept := prev.entries[history.entry_path(t, top, s.node)]; kept {
 					out[i].was = was
 				}
 			}
@@ -359,31 +360,6 @@ locate :: proc(t: ^scan.Tree, roll: ^survey.Rollup, places: []Place, i: u32) -> 
 		found = at
 	}
 	return found
-}
-
-// path_under is node i's path under top, its names joined by "/" whatever the
-// platform, as history keeps it.
-@(private)
-path_under :: proc(t: ^scan.Tree, top, i: u32) -> string {
-	chain: [64]u32
-	depth := 0
-	for cur := i; cur != top && depth < len(chain); {
-		chain[depth] = cur
-		depth += 1
-		parent := scan.node(t, cur).parent
-		if parent == cur {
-			break
-		}
-		cur = parent
-	}
-	sb := strings.builder_make(context.temp_allocator)
-	for j := depth - 1; j >= 0; j -= 1 {
-		if strings.builder_len(sb) > 0 {
-			strings.write_byte(&sb, '/')
-		}
-		strings.write_string(&sb, scan.name_of(t, chain[j]))
-	}
-	return strings.to_string(sb)
 }
 
 // Keep the n largest in descending order without sorting them all.

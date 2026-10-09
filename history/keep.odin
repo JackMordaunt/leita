@@ -73,6 +73,27 @@ path_under :: proc(at, name: string) -> string {
 	return strings.concatenate({at, "/", name}, context.temp_allocator)
 }
 
+// entry_path is node i's path under top as a snapshot names it, path_under from
+// top down, in the temp allocator: "" for top itself.
+entry_path :: proc(t: ^scan.Tree, top, i: u32) -> string {
+	chain: [64]u32
+	depth := 0
+	for cur := i; cur != top && depth < len(chain); {
+		chain[depth] = cur
+		depth += 1
+		parent := scan.node(t, cur).parent
+		if parent == cur {
+			break
+		}
+		cur = parent
+	}
+	path := ""
+	for j := depth - 1; j >= 0; j -= 1 {
+		path = path_under(path, scan.name_of(t, chain[j]))
+	}
+	return path
+}
+
 // place_of is what a scan's snapshots are kept under: the path of its top, and a
 // made-up disk's apart from the real one at the same path. In the temp allocator.
 place_of :: proc(t: ^scan.Tree, top: u32, engine: scan.Engine) -> string {

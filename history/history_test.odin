@@ -163,6 +163,10 @@ a_kept_scan_holds_what_is_at_least_kept_min :: proc(t: ^testing.T) {
 	for e in want {
 		testing.expectf(t, got[e.path] == e.bytes, "%q came back as %v", e.path, got[e.path])
 	}
+	// A node is looked up by the name it was kept under.
+	testing.expect_value(t, entry_path(&tree, first, first), "")
+	testing.expect_value(t, entry_path(&tree, first, first + 1), "big")
+	testing.expect_value(t, entry_path(&tree, first, first + 2), "big/a.bin")
 	snap, found := latest(&st, "/top")
 	testing.expect(t, found)
 	testing.expect_value(t, snap.items, 5)
