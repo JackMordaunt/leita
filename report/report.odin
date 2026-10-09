@@ -27,11 +27,7 @@ import "../reclaim"
 import "../scan"
 import "../survey"
 import "../synth"
-
-// VERSION is which estoile this is, set with -define:ESTOILE_VERSION=x by whatever
-// builds it (the justfile, from git): what a report says made it, what
-// `estoile --version` prints and the window's title shows.
-VERSION :: #config(ESTOILE_VERSION, "dev")
+import "../version"
 
 // DEFAULT_TOP is how many of the largest directories and files a report lists
 // when its caller does not say.
@@ -171,7 +167,7 @@ build :: proc(
 ) {
 	r.allocator = allocator
 	r.generated = time.now()
-	r.version = strings.clone(VERSION, allocator)
+	r.version = strings.clone(version.VERSION, allocator)
 	r.volume = strings.clone(facts.target.volume, allocator)
 	r.filesystem = facts.target.fs
 	r.engine = facts.engine

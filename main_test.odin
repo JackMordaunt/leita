@@ -12,7 +12,7 @@ import "core:time"
 import "jm:sqlite3"
 
 import "history"
-import "report"
+import "version"
 
 // --version names the build and where it runs.
 @(test)
@@ -20,7 +20,7 @@ the_version_says_which_estoile_this_is :: proc(t: ^testing.T) {
 	line := version_line()
 	want := fmt.tprintf(
 		"estoile %s (%s/%s, built ",
-		report.VERSION,
+		version.VERSION,
 		ODIN_OS_STRING,
 		ODIN_ARCH_STRING,
 	)

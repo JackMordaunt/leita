@@ -18,7 +18,7 @@ import "core:os"
 import "jm:ui/shell"
 
 import "../../history"
-import "../../report"
+import "../../version"
 import "../app"
 @(require) import "../leaks"
 
@@ -47,7 +47,7 @@ main :: proc() {
 	app.init(h, path, shell.wake, kept)
 	shell.run_host(
 		{
-			title = "estoile " + report.VERSION,
+			title = "estoile " + version.VERSION,
 			width = 1280,
 			height = 820,
 			min_width = 640,
