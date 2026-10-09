@@ -164,7 +164,7 @@ and anything else twice the logical cores, within the cap.
 */
 @(test)
 test_width_fits_the_media :: proc(t: ^testing.T) {
-	fitted := clamp(2 * os.get_processor_core_count(), 1, MAX_WORKERS)
+	fitted := clamp(2 * cpus(), 1, MAX_WORKERS)
 	cases := []struct {
 		cfg:  Config,
 		want: int,
@@ -177,5 +177,23 @@ test_width_fits_the_media :: proc(t: ^testing.T) {
 	}
 	for c in cases {
 		testing.expectf(t, width(c.cfg) == c.want, "%v: %d, want %d", c.cfg, width(c.cfg), c.want)
+	}
+}
+
+// A quota caps the CPUs counted, rounded up; no quota, or text that is not one, says
+// nothing.
+@(test)
+test_cpu_max_limit_reads_a_cgroup_quota :: proc(t: ^testing.T) {
+	limited := []struct {
+		text: string,
+		want: int,
+	}{{"150000 100000\n", 2}, {"100000 100000", 1}, {"50000 100000", 1}, {"800000 100000", 8}}
+	for c in limited {
+		got, ok := cpu_max_limit(c.text)
+		testing.expectf(t, ok && got == c.want, "%q: %d %v, want %d", c.text, got, ok, c.want)
+	}
+	for text in ([]string{"max 100000\n", "", "100000", "a b", "0 100000", "100000 0"}) {
+		_, ok := cpu_max_limit(text)
+		testing.expectf(t, !ok, "%q read as a quota", text)
 	}
 }

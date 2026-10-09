@@ -15,7 +15,6 @@ macOS, which ask the kernel directly.
 package walk
 
 import "core:mem"
-import "core:os"
 import "core:strings"
 import "core:sync"
 
@@ -40,6 +39,9 @@ not a limit anything was seen to hit. A spinning disk gets one, on the assumptio
 not measured, that every read in flight beyond the first moves the head away from
 the last. A volume that did not say what it is gets the flash count.
 
+The cores counted are the ones this process may use, which in a container can be
+far fewer than the host has.
+
 The tree needs a writer per worker, so a caller sizes it with this before reading.
 */
 width :: proc(cfg: Config) -> int {
@@ -49,7 +51,7 @@ width :: proc(cfg: Config) -> int {
 	if cfg.media == .Rotational {
 		return 1
 	}
-	return clamp(2 * os.get_processor_core_count(), 1, MAX_WORKERS)
+	return clamp(2 * cpus(), 1, MAX_WORKERS)
 }
 
 @(private)
