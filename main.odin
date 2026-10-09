@@ -1,8 +1,8 @@
 /*
-sonar: find out what is using the disk.
+estoile: find out what is using the disk.
 
 Usage:
-	sonar [drive-or-image] [flags]     -h lists the flags
+	estoile [drive-or-image] [flags]     -h lists the flags
 
 Reads the volume's MFT directly and prints the largest files and directories. Reading
 a live volume needs an elevated prompt.
@@ -25,7 +25,7 @@ import "walk"
 // Largest N files/folders to print.
 TOP_N :: 20
 
-PROGRAM :: "sonar"
+PROGRAM :: "estoile"
 
 /*
 What the command line can set.
@@ -97,7 +97,7 @@ run :: proc() -> int {
 	}
 
 	fmt.printfln(
-		"sonar: %s on %s (%v, %v media, %v engine, %v io)",
+		"estoile: %s on %s (%v, %v media, %v engine, %v io)",
 		scan.location(target, context.temp_allocator),
 		target.volume,
 		target.fs,

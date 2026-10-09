@@ -1,4 +1,4 @@
-package sonar_app
+package estoile_app
 
 import "core:fmt"
 import "core:strings"
@@ -27,7 +27,7 @@ history_open :: proc(d: ^Desk, path: string) {
 	}
 	st := new(history.Store)
 	if err := history.open(st, path); err != nil {
-		fmt.eprintln("sonar: scans will not be kept:", path, err)
+		fmt.eprintln("estoile: scans will not be kept:", path, err)
 		free(st)
 		return
 	}
@@ -64,7 +64,7 @@ keep :: proc(d: ^Desk) {
 		entries[:],
 	)
 	if err != nil {
-		fmt.eprintln("sonar: could not keep the scan:", err)
+		fmt.eprintln("estoile: could not keep the scan:", err)
 		return
 	}
 	d.snapshot = id
@@ -138,7 +138,7 @@ compare :: proc(d: ^Desk, id: i64) {
 	}
 	then, err := history.load(d.history, id, context.temp_allocator)
 	if err != nil {
-		fmt.eprintln("sonar: could not read the snapshot:", err)
+		fmt.eprintln("estoile: could not read the snapshot:", err)
 		d.compared = {}
 		return
 	}

@@ -1,7 +1,7 @@
 # Standard recipes: build (debug), release, clean, test, install.
 #
-#   just build      debug build with AddressSanitizer   -> build/debug/sonar
-#   just release    optimised build                     -> build/release/sonar
+#   just build      debug build with AddressSanitizer   -> build/debug/estoile
+#   just release    optimised build                     -> build/release/estoile
 #   just test       run every imported package's tests under ASan -> build/test/
 #   just check      type-check both modes without producing a binary
 #   just clean      remove build/
@@ -25,19 +25,21 @@ jm    := env("JM", root / "jm")
 flags := "-vet -strict-style -collection:jm=" + jm
 san   := env("SAN", "-sanitize:address")
 exe   := if os() == "windows" { ".exe" } else { "" }
-bin   := "sonar"
-gui   := "sonar-gui"
+bin   := "estoile"
+# The window is Estoile and builds into app/ beside the CLI: macOS and Windows
+# fold case by default, so estoile and Estoile in one directory are one file.
+gui   := "Estoile"
 
 # `just` alone lists the recipes.
 default:
     @just --list --unsorted
 
-# Debug build with AddressSanitizer -> build/debug/sonar
+# Debug build with AddressSanitizer -> build/debug/estoile
 build:
     mkdir -p build/debug
     {{odin}} build . -debug {{san}} {{flags}} -out:build/debug/{{bin}}{{exe}}
 
-# Optimised build -> build/release/sonar
+# Optimised build -> build/release/estoile
 release:
     mkdir -p build/release
     {{odin}} build . -o:speed {{flags}} -out:build/release/{{bin}}{{exe}}
@@ -69,12 +71,12 @@ deps:
 
 # Build the window and open it on a directory, the home directory by default
 gui *args: gui-build
-    build/debug/{{gui}}{{exe}} {{args}}
+    build/debug/app/{{gui}}{{exe}} {{args}}
 
-# Debug build of the window -> build/debug/sonar-gui
+# Debug build of the window -> build/debug/app/Estoile
 gui-build: deps
-    mkdir -p build/debug
-    {{odin}} build gui -debug {{san}} {{flags}} -out:build/debug/{{gui}}{{exe}}
+    mkdir -p build/debug/app
+    {{odin}} build gui -debug {{san}} {{flags}} -out:build/debug/app/{{gui}}{{exe}}
 
 # The window with its view hot-reloaded. The host (gui/host) owns the window and
 # the scan; the view runs as gui/child in a subprocess, rebuilt here whenever an
@@ -89,8 +91,8 @@ gui-build: deps
 hot *args: deps
     #!/usr/bin/env bash
     set -euo pipefail
-    mkdir -p build/debug build/hot
-    {{odin}} build gui/host -debug {{san}} {{flags}} -out:build/debug/{{gui}}-host{{exe}}
+    mkdir -p build/debug/app build/hot
+    {{odin}} build gui/host -debug {{san}} {{flags}} -out:build/debug/app/{{gui}}-host{{exe}}
     rm -f build/hot/view.watch
     (
       last=""
@@ -116,12 +118,12 @@ hot *args: deps
     watcher=$!
     trap 'kill $watcher 2>/dev/null' EXIT
     while [ ! -f build/hot/view.watch ]; do sleep 0.2; done
-    build/debug/{{gui}}-host{{exe}} build/hot/view.watch {{args}}
+    build/debug/app/{{gui}}-host{{exe}} build/hot/view.watch {{args}}
 
-# Optimised build of the window -> build/release/sonar-gui
+# Optimised build of the window -> build/release/app/Estoile
 gui-release: deps
-    mkdir -p build/release
-    {{odin}} build gui -o:speed {{flags}} -out:build/release/{{gui}}{{exe}}
+    mkdir -p build/release/app
+    {{odin}} build gui -o:speed {{flags}} -out:build/release/app/{{gui}}{{exe}}
 
 # The view in a probe over the host on a real directory, the view's own suite,
 # and the platform package's. Not -all-packages, which would run every jm:ui
@@ -129,12 +131,12 @@ gui-release: deps
 #
 # Run the window's suites under ASan
 gui-test: deps
-    mkdir -p build/test
-    {{odin}} test gui/app -debug {{san}} {{flags}} -out:build/test/{{gui}}{{exe}}
-    {{odin}} test gui/files -debug {{san}} {{flags}} -out:build/test/{{gui}}-files{{exe}}
-    {{odin}} test gui/view -debug {{san}} {{flags}} -out:build/test/{{gui}}-view{{exe}}
-    {{odin}} test reclaim -debug {{san}} {{flags}} -out:build/test/{{gui}}-reclaim{{exe}}
-    {{odin}} test gui/history -debug {{san}} {{flags}} -out:build/test/{{gui}}-history{{exe}}
+    mkdir -p build/test/app
+    {{odin}} test gui/app -debug {{san}} {{flags}} -out:build/test/app/{{gui}}{{exe}}
+    {{odin}} test gui/files -debug {{san}} {{flags}} -out:build/test/app/{{gui}}-files{{exe}}
+    {{odin}} test gui/view -debug {{san}} {{flags}} -out:build/test/app/{{gui}}-view{{exe}}
+    {{odin}} test reclaim -debug {{san}} {{flags}} -out:build/test/app/{{gui}}-reclaim{{exe}}
+    {{odin}} test gui/history -debug {{san}} {{flags}} -out:build/test/app/{{gui}}-history{{exe}}
 
 # Remove build/.
 clean:

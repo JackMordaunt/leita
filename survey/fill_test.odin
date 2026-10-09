@@ -8,7 +8,7 @@ import "core:time"
 
 import "../scan"
 
-// SONAR_SYNTHETIC turns any target into a made-up disk, read by the synthetic
+// ESTOILE_SYNTHETIC turns any target into a made-up disk, read by the synthetic
 // reader through the same fill as a real one. Called off part way, the fill
 // stops and says why, as a walk does.
 @(test)

@@ -1,4 +1,4 @@
-package sonar_files
+package estoile_files
 
 import "core:os"
 import "core:strings"
@@ -59,7 +59,7 @@ the_space_of_a_mounted_directory_is_its_filesystems :: proc(t: ^testing.T) {
 	testing.expect(t, total > 0, "a filesystem has a size")
 	testing.expect(t, free <= total, "no more is free than there is")
 
-	_, _, missing := space("/nonexistent/sonar")
+	_, _, missing := space("/nonexistent/estoile")
 	testing.expect(t, !missing, "a path that is not there has no filesystem")
 }
 
@@ -68,7 +68,7 @@ the_space_of_a_mounted_directory_is_its_filesystems :: proc(t: ^testing.T) {
 @(test)
 delete_tree_is_careful_with_links_and_read_only_trees :: proc(t: ^testing.T) {
 	base, _ := os.temp_directory(context.temp_allocator)
-	root := strings.concatenate({base, "/sonar_files_delete"}, context.temp_allocator)
+	root := strings.concatenate({base, "/estoile_files_delete"}, context.temp_allocator)
 	outside := strings.concatenate({root, "-outside"}, context.temp_allocator)
 	os.remove_all(root)
 	os.remove_all(outside)

@@ -20,7 +20,7 @@ rounding error but the wrong file.
 test_a_sparse_file_is_charged_what_it_occupies :: proc(t: ^testing.T) {
 	dir, dir_err := os.temp_directory(context.temp_allocator)
 	testing.expect(t, dir_err == nil, "no temp directory")
-	root := fmt.tprintf("%s/sonar_walk_sparse", dir)
+	root := fmt.tprintf("%s/estoile_walk_sparse", dir)
 	os.remove_all(root)
 	defer os.remove_all(root)
 	testing.expect(t, os.make_directory(root) == nil, "could not make the root")
@@ -88,7 +88,7 @@ file once and each lone file once.
 test_a_hard_linked_file_is_charged_once :: proc(t: ^testing.T) {
 	dir, dir_err := os.temp_directory(context.temp_allocator)
 	testing.expect(t, dir_err == nil, "no temp directory")
-	root := fmt.tprintf("%s/sonar_walk_links", dir)
+	root := fmt.tprintf("%s/estoile_walk_links", dir)
 	os.remove_all(root)
 	defer os.remove_all(root)
 	testing.expect(t, os.make_directory(root) == nil, "could not make the root")

@@ -50,7 +50,7 @@ top :: proc(t: Target) -> string {
 // SYNTHETIC_ENV names the day of a made-up disk to scan in place of whatever is
 // asked for, so a demo or a screenshot shows no one's real files. Unset or empty,
 // every target is real.
-SYNTHETIC_ENV :: "SONAR_SYNTHETIC"
+SYNTHETIC_ENV :: "ESTOILE_SYNTHETIC"
 
 /*
 The made-up target in place of input, when SYNTHETIC_ENV asks for one. It is

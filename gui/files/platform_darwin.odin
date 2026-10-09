@@ -1,5 +1,5 @@
 #+build darwin
-package sonar_files
+package estoile_files
 
 import "base:intrinsics"
 

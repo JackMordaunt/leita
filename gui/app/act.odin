@@ -1,4 +1,4 @@
-package sonar_app
+package estoile_app
 
 import "core:fmt"
 import "core:os"
@@ -137,7 +137,7 @@ audit :: proc(d: ^Desk, done: []history.Action) {
 		return
 	}
 	if err := history.record(d.history, done); err != nil {
-		fmt.eprintln("sonar: could not keep the audit trail:", err)
+		fmt.eprintln("estoile: could not keep the audit trail:", err)
 	}
 }
 

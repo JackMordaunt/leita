@@ -1,10 +1,10 @@
 /*
-sonar-gui-host: the window half of sonar-gui under hot reload. It owns the window
+Estoile-host: the window half of Estoile under hot reload. It owns the window
 and the application, the scan and the pipeline answering the view, and runs the
 view in a subprocess it respawns whenever the pointer file names a new build of
 gui/child. Editing the view reloads it in place; the scan keeps running.
 
-	sonar-gui-host build/hot/view.watch [PATH]
+	Estoile-host build/hot/view.watch [PATH]
 
 `just hot` builds this, keeps the pointer file fresh, and runs it.
 */
@@ -46,7 +46,7 @@ main :: proc() {
 	app.init(h, path, shell.wake, kept)
 	shell.run_host(
 		{
-			title = "sonar",
+			title = "estoile",
 			width = 1280,
 			height = 820,
 			min_width = 640,

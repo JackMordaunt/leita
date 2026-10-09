@@ -1,8 +1,8 @@
 /*
-sonar-gui: see what is using the disk, as the scan finds it.
+Estoile: see what is using the disk, as the scan finds it.
 
-	sonar-gui              scan the home directory
-	sonar-gui PATH         scan a directory, drive or image
+	Estoile                  scan the home directory
+	Estoile PATH             scan a directory, drive or image
 
 The window is jm:ui in Primer. Its pieces are gui's packages:
 
@@ -55,7 +55,7 @@ main :: proc() {
 
 	shell.run(
 		{
-			title = "sonar",
+			title = "estoile",
 			width = 1280,
 			height = 820,
 			min_width = 640,

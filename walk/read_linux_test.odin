@@ -21,7 +21,7 @@ other order. tmpfs, where the temp directory usually is, lists the newest first.
 test_entries_are_read_in_inode_order :: proc(t: ^testing.T) {
 	dir, dir_err := os.temp_directory(context.temp_allocator)
 	testing.expect(t, dir_err == nil, "no temp directory")
-	root := fmt.tprintf("%s/sonar_walk_inodes", dir)
+	root := fmt.tprintf("%s/estoile_walk_inodes", dir)
 	os.remove_all(root)
 	defer os.remove_all(root)
 	testing.expect(t, os.make_directory(root) == nil, "could not make the root")

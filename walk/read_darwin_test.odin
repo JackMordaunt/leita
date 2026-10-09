@@ -139,7 +139,7 @@ test_a_mount_point_is_not_walked :: proc(t: ^testing.T) {
 	testing.expect(t, os.make_directory(plain) == nil, "could not make the plain directory")
 	testing.expect(t, os.write_entire_file(fmt.tprintf("%s/kept", plain), []byte{'x'}) == nil)
 
-	if !hdiutil(t, "create", "-size", "1m", "-fs", "HFS+", "-volname", "sonar", image) {
+	if !hdiutil(t, "create", "-size", "1m", "-fs", "HFS+", "-volname", "estoile", image) {
 		return
 	}
 	if !hdiutil(t, "attach", "-nobrowse", "-noverify", "-mountpoint", mount, image) {
@@ -226,7 +226,7 @@ test_a_malformed_entry_is_refused :: proc(t: ^testing.T) {
 fresh_root :: proc(t: ^testing.T, name: string) -> string {
 	dir, dir_err := os.temp_directory(context.temp_allocator)
 	testing.expect(t, dir_err == nil, "no temp directory")
-	root := fmt.tprintf("%s/sonar_walk_darwin_%s", dir, name)
+	root := fmt.tprintf("%s/estoile_walk_darwin_%s", dir, name)
 	os.remove_all(root)
 	testing.expect(t, os.make_directory(root) == nil, "could not make the root")
 	return root

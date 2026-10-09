@@ -1,4 +1,4 @@
-package sonar_history
+package estoile_history
 
 import "core:testing"
 

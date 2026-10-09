@@ -1,4 +1,4 @@
-package sonar_view
+package estoile_view
 
 import "jm:ui"
 import "jm:ui/design"

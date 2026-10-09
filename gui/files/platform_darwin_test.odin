@@ -1,5 +1,5 @@
 #+build darwin
-package sonar_files
+package estoile_files
 
 import "core:os"
 import "core:strings"
@@ -10,7 +10,7 @@ import "core:testing"
 @(test)
 trash_moves_an_entry_into_the_finders_trash :: proc(t: ^testing.T) {
 	base, _ := os.temp_directory(context.temp_allocator)
-	path := strings.concatenate({base, "/sonar_files_trash.txt"}, context.temp_allocator)
+	path := strings.concatenate({base, "/estoile_files_trash.txt"}, context.temp_allocator)
 	testing.expect(t, os.write_entire_file(path, "x") == nil)
 	defer os.remove(path)
 
@@ -28,8 +28,8 @@ trash_moves_an_entry_into_the_finders_trash :: proc(t: ^testing.T) {
 @(test)
 rename_noreplace_refuses_a_name_already_taken :: proc(t: ^testing.T) {
 	base, _ := os.temp_directory(context.temp_allocator)
-	from := strings.concatenate({base, "/sonar_files_from.txt"}, context.temp_allocator)
-	to := strings.concatenate({base, "/sonar_files_to.txt"}, context.temp_allocator)
+	from := strings.concatenate({base, "/estoile_files_from.txt"}, context.temp_allocator)
+	to := strings.concatenate({base, "/estoile_files_to.txt"}, context.temp_allocator)
 	testing.expect(t, os.write_entire_file(from, "from") == nil)
 	testing.expect(t, os.write_entire_file(to, "to") == nil)
 	defer os.remove(from)

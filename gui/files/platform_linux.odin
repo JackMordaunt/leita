@@ -1,5 +1,5 @@
 #+build linux
-package sonar_files
+package estoile_files
 
 import "base:runtime"
 

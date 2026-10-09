@@ -1,12 +1,12 @@
 /*
-Package command is what sonar's window may ask of the application: the Command
+Package command is what estoile's window may ask of the application: the Command
 union, holding only what the window knows when it asks. The view emits these, the
 host decodes and carries them out; it imports nothing.
 
 Commands are values with fixed buffers, not strings, because they cross stream
 edges by copy between threads.
 */
-package sonar_command
+package estoile_command
 
 // MAX_PATH is the longest path a command carries, in bytes.
 MAX_PATH :: 1024

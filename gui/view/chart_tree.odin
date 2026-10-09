@@ -1,4 +1,4 @@
-package sonar_view
+package estoile_view
 
 import "core:fmt"
 import "core:slice"

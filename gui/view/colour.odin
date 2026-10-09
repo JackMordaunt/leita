@@ -1,4 +1,4 @@
-package sonar_view
+package estoile_view
 
 import "core:path/filepath"
 import "core:strings"

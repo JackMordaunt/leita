@@ -31,7 +31,7 @@ a_directory_resolves_to_its_mount_and_keeps_its_path :: proc(t: ^testing.T) {
 		testing.expect_value(t, location(target, context.temp_allocator), info.fullpath)
 	}
 
-	_, ok := stat_fs("/nonexistent/sonar")
+	_, ok := stat_fs("/nonexistent/estoile")
 	testing.expect(t, !ok, "a path that is not there has no filesystem")
 }
 
@@ -67,6 +67,6 @@ a_volume_has_the_medium_diskutil_reports :: proc(t: ^testing.T) {
 		}
 		testing.expectf(t, target.media == want, "%s: %v, diskutil %v", path, target.media, want)
 	}
-	testing.expect_value(t, media_of("/dev/disk-sonar-none"), Media.Unknown)
+	testing.expect_value(t, media_of("/dev/disk-estoile-none"), Media.Unknown)
 	testing.expect_value(t, media_of(""), Media.Unknown)
 }

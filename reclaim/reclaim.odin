@@ -1,7 +1,7 @@
 /*
 Package reclaim finds what can be deleted to free space without losing anything:
 what a build or a tool made and will make again. It is the safety-critical half of
-sonar's Reclaim mode, so it errs one way only: a candidate must prove what it is.
+estoile's Reclaim mode, so it errs one way only: a candidate must prove what it is.
 
 A directory is a candidate when a rule names it and, for every name that could
 also be someone's work (target, build, .venv), when the directory holding it also
