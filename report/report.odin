@@ -1,0 +1,470 @@
+/*
+Package report describes one finished scan of one target as plain data, and
+writes that description as CSV, JSON or HTML for a person to keep, attach to a
+ticket or feed to another program.
+
+A Report is built once from the scan (build) and then only read: every format is
+written from the same Report, so a CSV and an HTML of one scan never disagree,
+and whatever else writes one (a PDF, the window's export) builds it the same way.
+It holds no type from the window and nothing about the person beyond the paths
+scanned.
+
+Paths are kept as the tree has them: whatever bytes the filesystem allowed, which
+need not be UTF-8. Each format says how it writes those (see export).
+*/
+package report
+
+import "core:mem"
+import "core:os"
+import "core:path/filepath"
+import "core:slice"
+import "core:strings"
+import "core:time"
+
+import "../kinds"
+import "../reclaim"
+import "../scan"
+import "../survey"
+import "../synth"
+
+// VERSION is the estoile a report says made it, set with -define:ESTOILE_VERSION=x
+// by whatever builds a release.
+VERSION :: #config(ESTOILE_VERSION, "dev")
+
+// DEFAULT_TOP is how many of the largest directories and files a report lists
+// when its caller does not say.
+DEFAULT_TOP :: 50
+
+Report :: struct {
+	generated:           time.Time, // when the report was built
+	version:             string, // the estoile that built it
+	target:              string, // the path scanned, its top
+	volume:              string, // the device behind it, "" when unknown
+	filesystem:          scan.Filesystem,
+	engine:              scan.Engine,
+	started:             time.Time, // when the scan began
+	duration:            time.Duration, // how long it took
+	bytes:               u64, // on disk under the target, the target's own included
+	files:               u64,
+	directories:         u64, // under the target, not counting it
+	space:               Maybe(Space),
+	// The earlier scan the largest entries are compared with: absent when there
+	// is none, or the caller had none to give.
+	compared:            Maybe(Baseline),
+	largest_directories: []Entry, // largest first
+	largest_files:       []Entry, // largest first
+	// What the target holds by kind: every file by what it is, everything under a
+	// build or cache directory as Cache, and each directory's own allocation as
+	// Folder. They add up to bytes.
+	kinds:               [kinds.Kind]Kind_Total,
+	// What can be deleted without losing anything, by category, in the order of
+	// reclaim.Category, a category with nothing in it left out: absent unless the
+	// caller asked for it.
+	reclaim:             Maybe([]Group),
+	allocator:           mem.Allocator,
+}
+
+// Space is what the volume holds and has free, in bytes.
+Space :: struct {
+	total: u64,
+	free:  u64,
+}
+
+// Baseline is the earlier scan of the same place that sizes are compared with:
+// when it was taken and what its top held.
+Baseline :: struct {
+	taken: time.Time,
+	bytes: u64,
+}
+
+// Entry is a directory or a file: its full path, what it holds on disk, what
+// it is, and what it held in the scan compared with, when that scan kept it.
+Entry :: struct {
+	path:  string,
+	bytes: u64,
+	kind:  kinds.Kind,
+	was:   Maybe(u64),
+}
+
+Kind_Total :: struct {
+	bytes: u64,
+	files: u64, // files of this kind; directories are not counted
+}
+
+// Group is the candidates of one Reclaim category, largest first.
+Group :: struct {
+	category: reclaim.Category,
+	bytes:    u64,
+	items:    []Candidate,
+}
+
+Candidate :: struct {
+	path:  string,
+	bytes: u64,
+}
+
+// Facts are what the caller knows of a scan that its tree does not say.
+Facts :: struct {
+	target:   scan.Target,
+	engine:   scan.Engine,
+	started:  time.Time,
+	duration: time.Duration,
+	space:    Maybe(Space),
+}
+
+/*
+Options are what a report holds beyond the scan's own.
+
+top is how many of the largest directories and files to list, DEFAULT_TOP for 0.
+reclaim asks for Reclaim's candidates, which needs the rollup linked
+(survey.Rollup.linked) before it rolled anything up; home is the user's home
+directory for those, "" for the process's own.
+
+previous is an earlier scan of the same place to compare with: its entries by
+path under the top, names joined by "/", "" for the top, as the window keeps
+them (gui/history).
+*/
+Options :: struct {
+	top:      int,
+	reclaim:  bool,
+	home:     string,
+	previous: Maybe(Snapshot),
+}
+
+// Snapshot is an earlier scan as history keeps it: when it was taken, and what
+// each entry held by its path under the top.
+Snapshot :: struct {
+	taken:   time.Time,
+	entries: map[string]u64,
+}
+
+// share is what bytes is of the whole report, 0 to 1; 0 for an empty one.
+share :: proc(r: ^Report, bytes: u64) -> f64 {
+	if r.bytes == 0 {
+		return 0
+	}
+	return f64(bytes) / f64(r.bytes)
+}
+
+// change is what an entry gained since the scan compared with, negative for
+// what it lost, and whether that scan kept it at all.
+change :: proc(e: Entry) -> (delta: i64, ok: bool) {
+	was := e.was.? or_return
+	return i64(e.bytes) - i64(was), true
+}
+
+/*
+build describes the scan in t, rolled up by roll, from its top. The tree must be
+finished: nothing still filling it, its rollup advanced over all of it. What the
+report holds is in allocator; destroy frees it.
+*/
+build :: proc(
+	t: ^scan.Tree,
+	roll: ^survey.Rollup,
+	facts: Facts,
+	opt: Options,
+	allocator := context.allocator,
+) -> (
+	r: Report,
+) {
+	r.allocator = allocator
+	r.generated = time.now()
+	r.version = strings.clone(VERSION, allocator)
+	r.volume = strings.clone(facts.target.volume, allocator)
+	r.filesystem = facts.target.fs
+	r.engine = facts.engine
+	r.started = facts.started
+	r.duration = facts.duration
+	r.space = facts.space
+
+	top := t.root
+	if top >= roll.seen || .Used not_in scan.node_flags(scan.node(t, top)) {
+		r.target = scan.location(facts.target, allocator)
+		return
+	}
+	r.target = scan.path(t, top, allocator)
+	r.bytes = survey.total(roll, top)
+
+	n := opt.top if opt.top > 0 else DEFAULT_TOP
+	dirs := make([]Contender, n, context.temp_allocator)
+	files := make([]Contender, n, context.temp_allocator)
+	dir_count, file_count := 0, 0
+
+	// Where each node lies, found once per node rather than once per node and
+	// ancestor: survey.Rollup's doc records 2,581,257 nodes in one home
+	// directory, each reached through every directory above it.
+	places := make([]Place, roll.seen, context.temp_allocator)
+	places[top] = {.Known, .Under}
+	// The top is named by its whole path; its last name says what it is.
+	if kinds.of(filepath.base(scan.name_of(t, top)), true) == .Cache {
+		places[top] += {.Cache}
+	}
+	for i in 0 ..< roll.seen {
+		node := scan.node(t, i)
+		flags := scan.node_flags(node)
+		if .Used not_in flags || .Settled not_in flags || .Extra_Name in flags {
+			continue
+		}
+		at := locate(t, roll, places, i)
+		if .Under not_in at || survey.removed(roll, t, i) {
+			continue
+		}
+		if .Directory in flags {
+			r.kinds[.Cache if .Cache in at else .Folder].bytes += node.disk
+			if i == top {
+				continue
+			}
+			r.directories += 1
+			if bytes := survey.total(roll, i); bytes > 0 {
+				keep_largest(dirs, &dir_count, {bytes, i})
+			}
+			continue
+		}
+		kind := kinds.Kind.Cache if .Cache in at else kinds.of(scan.name_of(t, i), false)
+		r.kinds[kind].bytes += node.disk
+		r.kinds[kind].files += 1
+		r.files += 1
+		if node.disk > 0 {
+			keep_largest(files, &file_count, {node.disk, i})
+		}
+	}
+
+	prev, comparing := opt.previous.?
+	if comparing {
+		if bytes, kept := prev.entries[""]; kept {
+			r.compared = Baseline{prev.taken, bytes}
+		} else {
+			comparing = false
+		}
+	}
+	entries :: proc(
+		t: ^scan.Tree,
+		places: []Place,
+		top: u32,
+		ranked: []Contender,
+		prev: ^Snapshot,
+		allocator: mem.Allocator,
+	) -> []Entry {
+		out := make([]Entry, len(ranked), allocator)
+		for s, i in ranked {
+			flags := scan.node_flags(scan.node(t, s.node))
+			kind :=
+				kinds.Kind.Folder if .Directory in flags else kinds.of(scan.name_of(t, s.node), false)
+			if .Cache in places[s.node] {
+				kind = .Cache
+			}
+			out[i] = {
+				path  = scan.path(t, s.node, allocator),
+				bytes = s.bytes,
+				kind  = kind,
+			}
+			if prev != nil {
+				if was, kept := prev.entries[path_under(t, top, s.node)]; kept {
+					out[i].was = was
+				}
+			}
+		}
+		return out
+	}
+	p := &prev if comparing else nil
+	r.largest_directories = entries(t, places, top, dirs[:dir_count], p, allocator)
+	r.largest_files = entries(t, places, top, files[:file_count], p, allocator)
+
+	if opt.reclaim {
+		r.reclaim = candidates(t, roll, top, r.target, opt.home, facts.engine, allocator)
+	}
+	return
+}
+
+destroy :: proc(r: ^Report) {
+	for e in r.largest_directories {
+		delete(e.path, r.allocator)
+	}
+	delete(r.largest_directories, r.allocator)
+	for e in r.largest_files {
+		delete(e.path, r.allocator)
+	}
+	delete(r.largest_files, r.allocator)
+	if groups, ok := r.reclaim.?; ok {
+		for g in groups {
+			for c in g.items {
+				delete(c.path, r.allocator)
+			}
+			delete(g.items, r.allocator)
+		}
+		delete(groups, r.allocator)
+	}
+	delete(r.version, r.allocator)
+	delete(r.target, r.allocator)
+	delete(r.volume, r.allocator)
+	r^ = {}
+}
+
+// Contender is a node and what it holds, for keeping the largest.
+@(private)
+Contender :: struct {
+	bytes: u64,
+	node:  u32,
+}
+
+// Place is what build has learned of places a node lies: under the top, and
+// under a build or cache directory, once Known.
+@(private)
+Place_Flag :: enum u8 {
+	Known,
+	Under,
+	Cache,
+}
+@(private)
+Place :: bit_set[Place_Flag;u8]
+
+// locate is places node i lies, learning it for i and every ancestor of i not
+// yet known. A chain that ends anywhere but the top, an orphan's or one too deep
+// to follow, is not under it.
+@(private)
+locate :: proc(t: ^scan.Tree, roll: ^survey.Rollup, places: []Place, i: u32) -> Place {
+	chain: [64]u32
+	depth := 0
+	cur := i
+	found: Place
+	for {
+		if .Known in places[cur] {
+			found = places[cur]
+			break
+		}
+		if depth == len(chain) {
+			found = {.Known}
+			break
+		}
+		chain[depth] = cur
+		depth += 1
+		parent := scan.node(t, cur).parent
+		if parent == cur || parent >= roll.seen {
+			found = {.Known}
+			break
+		}
+		cur = parent
+	}
+	// Down from the ancestor known, each directory passing on what it is.
+	for j := depth - 1; j >= 0; j -= 1 {
+		at := found & {.Known, .Under, .Cache}
+		node := chain[j]
+		if .Under in at &&
+		   .Directory in scan.node_flags(scan.node(t, node)) &&
+		   kinds.of(scan.name_of(t, node), true) == .Cache {
+			at += {.Cache}
+		}
+		places[node] = at
+		found = at
+	}
+	return found
+}
+
+// path_under is node i's path under top, its names joined by "/" whatever the
+// platform, as history keeps it.
+@(private)
+path_under :: proc(t: ^scan.Tree, top, i: u32) -> string {
+	chain: [64]u32
+	depth := 0
+	for cur := i; cur != top && depth < len(chain); {
+		chain[depth] = cur
+		depth += 1
+		parent := scan.node(t, cur).parent
+		if parent == cur {
+			break
+		}
+		cur = parent
+	}
+	sb := strings.builder_make(context.temp_allocator)
+	for j := depth - 1; j >= 0; j -= 1 {
+		if strings.builder_len(sb) > 0 {
+			strings.write_byte(&sb, '/')
+		}
+		strings.write_string(&sb, scan.name_of(t, chain[j]))
+	}
+	return strings.to_string(sb)
+}
+
+// Keep the n largest in descending order without sorting them all.
+@(private)
+keep_largest :: proc(top: []Contender, count: ^int, cand: Contender) {
+	if count^ == len(top) && cand.bytes <= top[len(top) - 1].bytes {
+		return
+	}
+	i := count^ if count^ < len(top) else len(top) - 1
+	for i > 0 && top[i - 1].bytes < cand.bytes {
+		top[i] = top[i - 1]
+		i -= 1
+	}
+	top[i] = cand
+	if count^ < len(top) {
+		count^ += 1
+	}
+}
+
+// candidates is what Reclaim finds under top, grouped as the window groups it.
+@(private)
+candidates :: proc(
+	t: ^scan.Tree,
+	roll: ^survey.Rollup,
+	top: u32,
+	top_path, home: string,
+	engine: scan.Engine,
+	allocator: mem.Allocator,
+) -> []Group {
+	assert(roll.linked, "Reclaim needs a linked rollup")
+	Source_Data :: struct {
+		t:    ^scan.Tree,
+		roll: ^survey.Rollup,
+	}
+	data := Source_Data{t, roll}
+	src := reclaim.Source {
+		data = &data,
+		name = proc(data: rawptr, node: u32) -> string {
+			return scan.name_of((^Source_Data)(data).t, node)
+		},
+		directory = proc(data: rawptr, node: u32) -> bool {
+			return .Directory in scan.node_flags(scan.node((^Source_Data)(data).t, node))
+		},
+		bytes = proc(data: rawptr, node: u32) -> u64 {
+			d := (^Source_Data)(data)
+			n := scan.node(d.t, node)
+			return survey.total(d.roll, node) if .Directory in scan.node_flags(n) else n.disk
+		},
+		children = proc(data: rawptr, node: u32, into: ^[dynamic]u32) {
+			it := survey.children((^Source_Data)(data).roll, node)
+			for c in survey.next_child(&it) {
+				append(into, c)
+			}
+		},
+	}
+	home := home
+	if home == "" {
+		// A made-up disk has a made-up owner, whose home is places its caches are.
+		home = synth.HOME if engine == .Synthetic else os.get_env("HOME", context.temp_allocator)
+	}
+	found := reclaim.find(src, top, top_path, home, context.temp_allocator)
+	// By category, and within one largest first as find left them.
+	slice.stable_sort_by(found, proc(a, b: reclaim.Candidate) -> bool {
+		return a.category < b.category
+	})
+	groups := make([dynamic]Group, allocator)
+	for i := 0; i < len(found); {
+		j := i
+		for j < len(found) && found[j].category == found[i].category {
+			j += 1
+		}
+		g := Group {
+			category = found[i].category,
+			items    = make([]Candidate, j - i, allocator),
+		}
+		for c, k in found[i:j] {
+			g.items[k] = {strings.clone(c.path, allocator), c.bytes}
+			g.bytes += c.bytes
+		}
+		append(&groups, g)
+		i = j
+	}
+	shrink(&groups)
+	return groups[:]
+}
