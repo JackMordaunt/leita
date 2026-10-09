@@ -27,11 +27,9 @@ import "core:time"
 
 import "jm:sqlite3"
 
-import "../gui/query"
-
-// KEPT_MIN is the least an entry holds to be kept in a snapshot, as the window
-// is told it is.
-KEPT_MIN :: query.KEPT_MIN
+// KEPT_MIN is the least an entry holds to be kept in a snapshot: one that holds
+// less now may not have been, so its absence from a snapshot says nothing about it.
+KEPT_MIN :: 1 << 20
 
 // KEPT is how many snapshots of one place are kept, newest first.
 KEPT :: 30
