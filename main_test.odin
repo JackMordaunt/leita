@@ -55,6 +55,8 @@ a_report_of_a_directory_reads_back :: proc(t: ^testing.T) {
 		fmt.tprintf("%s/sub/b.mp4", root),
 	)
 	testing.expect(t, top["compared"].(json.Null) == nil, "the command line keeps no scans")
+	space := top["space"].(json.Object)
+	testing.expect(t, space["free"].(json.Integer) <= space["total"].(json.Integer))
 }
 
 // A report the command line cannot write is refused before anything is read.

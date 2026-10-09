@@ -22,6 +22,7 @@ import "ntfs"
 import "report"
 import "scan"
 import "survey"
+import "synth"
 import "walk"
 
 // Largest N files/folders to print.
@@ -222,8 +223,19 @@ scan_and_say :: proc(opt: Options) -> int {
 		started  = started,
 		duration = elapsed,
 	}
-	if engine.engine == .Mft {
+	// As the window says it: a made-up disk has made-up space, and a walk asks
+	// the filesystem it walked, which is mounted, or it could not be walked.
+	#partial switch engine.engine {
+	case .Mft:
 		facts.space = mft_space(&f.table)
+	case .Synthetic:
+		cfg, _ := synth.from_env()
+		total, free := synth.space(cfg.day)
+		facts.space = report.Space{total, free}
+	case .Walk:
+		if total, free, ok := scan.space(scan.location(target, context.temp_allocator)); ok {
+			facts.space = report.Space{total, free}
+		}
 	}
 	r := report.build(&t, &roll, facts, {top = opt.top, reclaim = opt.reclaim})
 	defer report.destroy(&r)
