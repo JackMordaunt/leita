@@ -2,6 +2,7 @@ package estoile_app
 
 import "core:fmt"
 import "core:os"
+import "core:strings"
 import "core:time"
 
 import "../../history"
@@ -110,13 +111,15 @@ entry_path :: proc(d: ^Desk, e: command.Entry, doing: string) -> (string, bool) 
 	return scan.path(&s.tree, e.node, context.temp_allocator), true
 }
 
-// tell replaces the notice the window is shown.
+// tell replaces the notice the window is shown. The text is cloned from a
+// temporary rather than made by fmt.aprintf, whose string is shorter than the
+// builder block it lives in, so freeing it would name the wrong size.
 tell :: proc(d: ^Desk, failed: bool, format: string, args: ..any) {
 	delete(d.notice.text)
 	d.notice = {
 		id     = d.notice.id + 1,
 		failed = failed,
-		text   = fmt.aprintf(format, ..args),
+		text   = strings.clone(fmt.tprintf(format, ..args)),
 	}
 }
 

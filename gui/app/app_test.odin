@@ -13,6 +13,7 @@ import "core:sync"
 import "core:testing"
 import "core:time"
 
+import "jm:debug"
 import "jm:sqlite3"
 import "jm:stream"
 import "jm:timefmt"
@@ -1702,9 +1703,16 @@ saved_as :: proc(r: ^Rig, ext: string) -> string {
 
 // An Export writes a report of the finished scan in each format into the
 // folder reports go to, named for the target, and a second of the same kind
-// beside the first rather than over it.
+// beside the first rather than over it. It runs under jm's debug allocator,
+// which the desk thread inherits: the test runner's tracking allocator does
+// not see a block freed at the wrong size, as each notice and report path was.
 @(test)
 export_writes_a_report_of_each_format :: proc(t: ^testing.T) {
+	da: debug.Allocator
+	debug.init(&da, context.allocator)
+	defer debug.destroy(&da)
+	context.allocator = debug.allocator(&da)
+	defer testing.expect_value(t, debug.issue_count(&da), 0)
 	root := fixture(t, "export")
 	defer os.remove_all(root)
 	// A project's installed dependencies, for Reclaim to find.
