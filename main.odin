@@ -42,6 +42,7 @@ Options :: struct {
 	min_skip:     int `usage:"Shortest run of dead records worth jumping over, in bytes."`,
 	workers:      int `usage:"MFT readers to run at once."`,
 	walk_workers: int `usage:"Directory readers to run at once."`,
+	gentle:       bool `usage:"Leave the disk and cores to other work by reading with fewer threads."`,
 	chunk:        int `usage:"Bytes per volume read."`,
 }
 
@@ -92,6 +93,7 @@ run :: proc() -> int {
 	wcfg := walk.Config {
 		workers = opt.walk_workers,
 		media   = target.media,
+		pace    = .Gentle if opt.gentle else .Full,
 	}
 
 	fmt.printfln(
@@ -104,7 +106,7 @@ run :: proc() -> int {
 		opts.io_mode,
 	)
 	if engine.engine == .Walk {
-		fmt.printfln("walk: %d readers", walk.width(wcfg))
+		fmt.printfln("walk: %d readers at %v pace", walk.width(wcfg), wcfg.pace)
 	}
 
 	if engine.permission_would_help {

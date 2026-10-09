@@ -25,6 +25,27 @@ Config :: struct {
 	workers: int, // 0 lets `width` choose
 	follow:  bool, // descend through symlinks and junctions; loops are not detected
 	media:   scan.Media, // what holds the tree, which `width` fits the choice to
+	pace:    Pace,
+}
+
+/*
+How hard a walk leans on the machine it runs on.
+
+Full takes what the volume and the cores can give. Gentle is for a machine with other
+work to do, a server or a shared host, and gives up readers rather than priority.
+
+Lowering the readers' priority made them worse neighbours on macOS. A cached `find`
+over /System/Library/Frameworks and /Applications took 2.2 s alone and the same
+beside a gentle walk at normal priority, but 5.1 to 6.0 s beside one in the Darwin
+background band or with its I/O throttled, and the walk itself slowed from 22 s to
+31 s and 37 s. The likely cause is a throttled reader sleeping while it holds the
+directory it is reading, so whatever needs that directory waits behind it. Linux's
+idle I/O class and Windows' background mode were not measured, and are not used
+either.
+*/
+Pace :: enum {
+	Full,
+	Gentle,
 }
 
 /*
@@ -39,6 +60,10 @@ not a limit anything was seen to hit. A spinning disk gets one, on the assumptio
 not measured, that every read in flight beyond the first moves the head away from
 the last. A volume that did not say what it is gets the flash count.
 
+Gentle stops at the knee of the same curve. Below 4 workers the scan slows in step
+and the CPU spent hardly falls: 1 worker took 73 s and 17 s of system time, 4 took
+21 s and 20 s, and 8 took 15.5 s and 35 s, the extra probably lost to contention.
+
 The cores counted are the ones this process may use, which in a container can be
 far fewer than the host has.
 
@@ -51,11 +76,16 @@ width :: proc(cfg: Config) -> int {
 	if cfg.media == .Rotational {
 		return 1
 	}
+	if cfg.pace == .Gentle {
+		return min(GENTLE_WORKERS, cpus())
+	}
 	return clamp(2 * cpus(), 1, MAX_WORKERS)
 }
 
 @(private)
 MAX_WORKERS :: 32
+@(private)
+GENTLE_WORKERS :: 4
 
 Error :: enum {
 	None,

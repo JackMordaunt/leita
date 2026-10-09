@@ -197,3 +197,32 @@ test_cpu_max_limit_reads_a_cgroup_quota :: proc(t: ^testing.T) {
 		testing.expectf(t, !ok, "%q read as a quota", text)
 	}
 }
+
+// Gentle stops at the knee, fewer still where the process has fewer cores, and a
+// spinning disk or an explicit count overrides it as it does a full walk.
+@(test)
+test_gentle_width_stays_at_the_knee :: proc(t: ^testing.T) {
+	testing.expect_value(t, width({pace = .Gentle}), min(GENTLE_WORKERS, cpus()))
+	testing.expect_value(t, width({pace = .Gentle, media = .Rotational}), 1)
+	testing.expect_value(t, width({pace = .Gentle, workers = 12}), 12)
+}
+
+// A gentle walk, at the width it chooses for itself, reads the same tree a full one
+// does at the width it chooses.
+@(test)
+test_a_gentle_walk_reads_everything :: proc(t: ^testing.T) {
+	root := fixture(t, "gentle")
+	defer os.remove_all(root)
+
+	read_with :: proc(t: ^testing.T, root: string, cfg: Config) -> u64 {
+		tree: scan.Tree
+		testing.expect_value(t, scan.tree_init(&tree, width(cfg)), scan.Error.None)
+		defer scan.tree_destroy(&tree)
+		testing.expect_value(t, read(root, &tree, cfg), Error.None)
+		return tree.nodes_done
+	}
+	full := read_with(t, root, Config{})
+	gentle := read_with(t, root, Config{pace = .Gentle})
+	testing.expect_value(t, gentle, full)
+	testing.expect(t, gentle > 1, "the walk found nothing below the root")
+}
