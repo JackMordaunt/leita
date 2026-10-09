@@ -21,6 +21,7 @@ import tok "jm:ui/primer/tokens"
 
 import "../../human"
 import "../command"
+import mark "../mark"
 import "../query"
 
 // SIDE_WIDTH is the side column's width until it is dragged: the open directory's
@@ -336,6 +337,7 @@ side :: proc(gtx: ^ui.Ctx, m: ^Model) {
 @(private)
 toolbar :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result) {
 	ui.row(gtx, gap = 8, align = .Center)
+	logo(gtx)
 	title(gtx, "sonar")
 	ui.spacer(gtx, 8)
 	ui.flexible(gtx, 1)
@@ -732,6 +734,18 @@ name_button :: proc(
 	}
 	ui.clip_box_close(&clip)
 	return
+}
+
+// LOGO is the mark's size in the toolbar, about the heading's cap height
+// and a half.
+LOGO :: 34
+
+// logo is sonar's mark in the scheme's ink, its one lit cell in sea.
+@(private)
+logo :: proc(gtx: ^ui.Ctx, loc := #caller_location) {
+	p := ui.widget_open(gtx, loc = loc)
+	mark.draw(gtx, {0, 0}, LOGO, primer.color(.Fg_Color_Default), mark.SEA)
+	ui.widget_close(gtx, &p, {size = {LOGO, LOGO}})
 }
 
 @(private)

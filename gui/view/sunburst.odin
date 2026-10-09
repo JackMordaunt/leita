@@ -11,6 +11,7 @@ import "jm:ui/primer"
 import tok "jm:ui/primer/tokens"
 
 import "../../human"
+import mark "../mark"
 import "../query"
 
 /*
@@ -506,8 +507,14 @@ sunburst :: proc(
 // of radius r about c.
 @(private)
 on_circle :: proc(c: ops.Point, r, t: f32) -> ops.Point {
-	a := t * math.TAU - math.PI / 2
-	return {c.x + r * math.cos(a), c.y + r * math.sin(a)}
+	return mark.on_circle(c, r, angle(t))
+}
+
+// angle is turn t, clockwise from twelve o'clock, in the radians from three
+// o'clock that mark's geometry takes.
+@(private)
+angle :: proc(t: f32) -> f32 {
+	return t * math.TAU - math.PI / 2
 }
 
 // band_bounds is the box around band(c, r0, r1, t0, t1): around its corners, and
@@ -529,42 +536,11 @@ band_bounds :: proc(c: ops.Point, r0, r1, t0, t1: f32) -> ops.Rect {
 	return {lo.x, lo.y, hi.x - lo.x, hi.y - lo.y}
 }
 
-// band is the ring between radii r0 and r1 from turn t0 to t1: one arc. Each
-// stretch of a quarter turn or less is one cubic, within 0.03% of the circle.
+// band is the ring between radii r0 and r1 from turn t0 to t1: one arc, drawn
+// as the mark draws its cells.
 @(private)
 band :: proc(gtx: ^ui.Ctx, c: ops.Point, r0, r1, t0, t1: f32) -> ops.Path_Ref {
-	verbs := make([dynamic]ops.Path_Verb, gtx.allocator)
-	pts := make([dynamic]ops.Point, gtx.allocator)
-	arc :: proc(
-		verbs: ^[dynamic]ops.Path_Verb,
-		pts: ^[dynamic]ops.Point,
-		c: ops.Point,
-		r, t0, t1: f32,
-	) {
-		n := max(1, int(math.ceil(abs(t1 - t0) * 4)))
-		step := (t1 - t0) / f32(n)
-		k := 4.0 / 3.0 * math.tan(step * math.TAU / 4) * r
-		for i in 0 ..< n {
-			s, e := t0 + f32(i) * step, t0 + f32(i + 1) * step
-			as, ae := s * math.TAU - math.PI / 2, e * math.TAU - math.PI / 2
-			p0, p1 := on_circle(c, r, s), on_circle(c, r, e)
-			append(verbs, ops.Path_Verb.Cubic)
-			append(
-				pts,
-				ops.Point{p0.x - k * math.sin(as), p0.y + k * math.cos(as)},
-				ops.Point{p1.x + k * math.sin(ae), p1.y - k * math.cos(ae)},
-				p1,
-			)
-		}
-	}
-	append(&verbs, ops.Path_Verb.Move)
-	append(&pts, on_circle(c, r1, t0))
-	arc(&verbs, &pts, c, r1, t0, t1)
-	append(&verbs, ops.Path_Verb.Line)
-	append(&pts, on_circle(c, r0, t1))
-	arc(&verbs, &pts, c, r0, t1, t0)
-	append(&verbs, ops.Path_Verb.Close)
-	return {ops.add_path(gtx.scene, {verbs = verbs[:], points = pts[:]})}
+	return mark.band(gtx, c, r0, r1, angle(t0), angle(t1))
 }
 
 // mix is a with t of b blended in.
