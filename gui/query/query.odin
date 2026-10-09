@@ -2,8 +2,7 @@
 Package query is what estoile's window may read: each query is a pair, the params a
 need asks with and the result it is answered with, named Name and Name_Result. The
 view needs these; the host answers them from the scan, again every time the scan
-has moved on, for as long as the need is live. It imports only history, for the
-size a snapshot keeps.
+has moved on, for as long as the need is live. It imports nothing.
 
 Every type here is plain data: it crosses a pipe or a wire as cbor, under its
 "estoile_query.Name" kind, and ui.need keys a query by its bytes.
@@ -13,8 +12,6 @@ numbered it, so every query that names one also names the scan's generation. A
 query for a generation that is gone is answered empty rather than wrongly.
 */
 package estoile_query
-
-import "../../history"
 
 // ROOT names the top of whatever was scanned, before the view knows its index.
 ROOT :: max(u32)
@@ -176,9 +173,9 @@ History :: struct {
 	generation: u32,
 }
 
-// KEPT_MIN is the least an entry holds to be kept in a snapshot (history's): one
-// that holds less now may not have been, so was -1 says nothing about it.
-KEPT_MIN :: history.KEPT_MIN
+// KEPT_MIN is the least an entry holds to be kept in a snapshot: one that holds
+// less now may not have been, so was -1 says nothing about it.
+KEPT_MIN :: 1 << 20
 
 // Snapshot is one earlier scan: when it was taken, in Unix seconds, and its
 // totals.
