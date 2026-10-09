@@ -17,7 +17,6 @@ Entry :: struct {
 	flags:           Record_Flags, // .In_Use and .Directory are the ones that matter
 	attributes:      File_Attributes, // from $STANDARD_INFORMATION; .Reparse_Point marks junctions and cloud placeholders
 	name:            string, // UTF-8; empty when the record has no $FILE_NAME (free records, extension records)
-	size:            u64, // logical length of the unnamed $DATA stream
 	allocated:       u64, // bytes on disk across every non-resident attribute: data, alternate streams, indexes
 }
 
@@ -267,14 +266,9 @@ mft_add_record :: proc(m: ^Mft, record_number: u32, rec: []byte, sink: ^Sink) ->
 			}
 		case .Data:
 			if a.non_resident {
-				// Every extent contributes its own clusters, but only the first carries the
-				// logical size; later extents repeat it.
+				// Every extent contributes its own clusters.
 				e.allocated += attr_disk_size(a, m.bytes_per_cluster)
-				if a.lowest_vcn == 0 && len(a.name) == 0 {
-					e.size = a.data_size
-				}
 			} else if len(a.name) == 0 {
-				e.size = u64(len(a.value))
 				sink.stats.resident_files += 1
 				sink.stats.resident_bytes += u64(len(a.value))
 			}
