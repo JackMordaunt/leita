@@ -6,12 +6,15 @@ import "core:strings"
 import "core:sync"
 
 // A file or directory, in the form every reader reduces to. The name is a handle
-// rather than a string, and sits with the flags beside the parent, so all three share
-// the space a string alone would take.
+// rather than a string, and sits with the flags and directory number beside the
+// parent, so all four share the space a string alone would take.
 Node :: struct {
 	parent: u32, // index of the holding directory; a root points at itself
 	name:   Name, // read with `name_of`
 	flags:  Node_Flags,
+	// A directory's number plus one, given by whatever rolls the tree up so it can keep
+	// totals by directory rather than by node. 0 until then. No reader writes it.
+	dir:    u32,
 	disk:   u64, // bytes actually allocated
 }
 // Every node in a scan pays this, so growing it is a decision, never an accident.

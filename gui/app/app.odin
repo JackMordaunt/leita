@@ -551,7 +551,7 @@ root :: proc(s: ^Scan) -> (u32, bool) {
 		return 0, false
 	}
 	i := sync.atomic_load(&s.tree.root)
-	if i >= u32(len(s.roll.totals)) || .Used not_in scan.node_flags(scan.node(&s.tree, i)) {
+	if i >= s.roll.seen || .Used not_in scan.node_flags(scan.node(&s.tree, i)) {
 		return 0, false
 	}
 	return i, true
@@ -571,11 +571,11 @@ listing :: proc(d: ^Desk, q: query.Listing) -> query.Listing_Result {
 		return r
 	}
 	dir := q.dir == query.ROOT ? top : q.dir
-	if dir >= u32(len(s.roll.totals)) {
+	if dir >= s.roll.seen {
 		return r
 	}
 	r.dir = dir
-	r.bytes = s.roll.totals[dir]
+	r.bytes = survey.total(&s.roll, dir)
 	r.was = was_of(d, dir)
 	r.compared = d.compared.id != 0
 	r.crumbs = crumbs(s, dir, top)
@@ -603,7 +603,7 @@ sorted_children :: proc(d: ^Desk, dir: u32) -> []query.Entry {
 			query.Entry {
 				node = c,
 				name = scan.name_of(&s.tree, c),
-				bytes = directory ? s.roll.totals[c] : n.disk,
+				bytes = directory ? survey.total(&s.roll, c) : n.disk,
 				directory = directory,
 				was = was_of(d, c),
 			},
@@ -632,11 +632,11 @@ rings :: proc(d: ^Desk, q: query.Rings) -> query.Rings_Result {
 		return r
 	}
 	dir := q.dir == query.ROOT ? top : q.dir
-	if dir >= u32(len(s.roll.totals)) {
+	if dir >= s.roll.seen {
 		return r
 	}
 	r.dir = dir
-	r.bytes = s.roll.totals[dir]
+	r.bytes = survey.total(&s.roll, dir)
 	r.was = was_of(d, dir)
 	r.compared = d.compared.id != 0
 	r.crumbs = crumbs(s, dir, top)
@@ -703,7 +703,7 @@ ancestors :: proc(s: ^Scan, node: u32, allocator := context.temp_allocator) -> [
 	cur := node
 	for len(out) < 64 {
 		n := scan.node(&s.tree, cur)
-		if n.parent == cur || n.parent >= u32(len(s.roll.totals)) {
+		if n.parent == cur || n.parent >= s.roll.seen {
 			break
 		}
 		cur = n.parent
@@ -722,7 +722,7 @@ crumbs :: proc(s: ^Scan, dir, top: u32) -> []query.Crumb {
 		chain[depth] = cur
 		depth += 1
 		n := scan.node(&s.tree, cur)
-		if cur == top || n.parent == cur || n.parent >= u32(len(s.roll.totals)) {
+		if cur == top || n.parent == cur || n.parent >= s.roll.seen {
 			break
 		}
 		cur = n.parent
@@ -748,7 +748,7 @@ largest :: proc(
 	}
 	top: [query.LARGEST_LIMIT]query.File
 	count := 0
-	for i in 0 ..< u32(len(s.roll.totals)) {
+	for i in 0 ..< s.roll.seen {
 		n := scan.node(&s.tree, i)
 		f := scan.node_flags(n)
 		if .Used not_in f || .Settled not_in f || .Directory in f || .Extra_Name in f {

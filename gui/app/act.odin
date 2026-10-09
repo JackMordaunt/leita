@@ -75,7 +75,7 @@ act :: proc(d: ^Desk, c: ^command.Command) {
 // none to `doing`.
 entry_path :: proc(d: ^Desk, e: command.Entry, doing: string) -> (string, bool) {
 	s := d.scan
-	if s == nil || e.generation != d.generation || !s.grown || e.node >= u32(len(s.roll.totals)) {
+	if s == nil || e.generation != d.generation || !s.grown || e.node >= s.roll.seen {
 		tell(d, true, "Could not %s it: the scan it came from is gone", doing)
 		return "", false
 	}
@@ -125,7 +125,7 @@ reclaim_answer :: proc(d: ^Desk, q: query.Reclaim) -> (r: query.Reclaim_Result) 
 		return
 	}
 	dir := top if q.dir == query.ROOT else q.dir
-	if dir >= u32(len(s.roll.totals)) {
+	if dir >= s.roll.seen {
 		return
 	}
 	r.ready = true
@@ -141,7 +141,7 @@ reclaim_answer :: proc(d: ^Desk, q: query.Reclaim) -> (r: query.Reclaim_Result) 
 		bytes = proc(data: rawptr, node: u32) -> u64 {
 			s := (^Scan)(data)
 			n := scan.node(&s.tree, node)
-			return s.roll.totals[node] if .Directory in scan.node_flags(n) else n.disk
+			return survey.total(&s.roll, node) if .Directory in scan.node_flags(n) else n.disk
 		},
 		children = proc(data: rawptr, node: u32, into: ^[dynamic]u32) {
 			it := survey.children(&(^Scan)(data).roll, node)
@@ -223,7 +223,7 @@ clean :: proc(d: ^Desk, c: ^command.Clean) {
 			refused += 1
 			continue
 		}
-		bytes := s.roll.totals[node]
+		bytes := survey.total(&s.roll, node)
 		left, err := files.delete_tree(scan.path(&s.tree, node, context.temp_allocator))
 		if err != .None {
 			failed += 1
@@ -260,7 +260,7 @@ empty_trash :: proc(d: ^Desk, e: command.Entry) {
 		tell(d, true, "Could not empty the Trash: it is not the Trash Reclaim found")
 		return
 	}
-	bytes := s.roll.totals[e.node]
+	bytes := survey.total(&s.roll, e.node)
 	failed := 0
 	it := survey.children(&s.roll, e.node)
 	held := make([dynamic]u32, context.temp_allocator)
@@ -287,7 +287,7 @@ empty_trash :: proc(d: ^Desk, e: command.Entry) {
 			survey.forget(&s.roll, &s.tree, c)
 		}
 	}
-	freed := bytes - s.roll.totals[e.node]
+	freed := bytes - survey.total(&s.roll, e.node)
 	if failed > 0 {
 		tell(
 			d,

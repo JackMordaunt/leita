@@ -52,14 +52,14 @@ keep :: proc(d: ^Desk) {
 		return
 	}
 	entries := make([dynamic]history.Entry, context.temp_allocator)
-	append(&entries, history.Entry{"", s.roll.totals[top]})
+	append(&entries, history.Entry{"", survey.total(&s.roll, top)})
 	collect_kept(s, &entries, top, "")
 	place := scan.path(&s.tree, top, context.temp_allocator)
 	id, err := history.save(
 		d.history,
 		place,
 		time.time_to_unix(time.now()),
-		s.roll.totals[top],
+		survey.total(&s.roll, top),
 		sync.atomic_load(&s.tree.nodes_done),
 		entries[:],
 	)
@@ -84,7 +84,7 @@ collect_kept :: proc(s: ^Scan, into: ^[dynamic]history.Entry, dir: u32, at: stri
 	for c in survey.next_child(&it) {
 		n := scan.node(&s.tree, c)
 		directory := .Directory in scan.node_flags(n)
-		bytes := s.roll.totals[c] if directory else n.disk
+		bytes := survey.total(&s.roll, c) if directory else n.disk
 		if bytes < history.KEPT_MIN {
 			continue
 		}
