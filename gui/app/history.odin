@@ -1,9 +1,7 @@
 package estoile_app
 
 import "core:fmt"
-import "core:strings"
 import "core:sync"
-import "core:time"
 
 import "../../history"
 import "../../scan"
@@ -51,67 +49,23 @@ keep :: proc(d: ^Desk) {
 	if d.history == nil || !ok {
 		return
 	}
-	entries := make([dynamic]history.Entry, context.temp_allocator)
-	append(&entries, history.Entry{"", survey.total(&s.roll, top)})
-	collect_kept(s, &entries, top, "")
-	place := place_of(s, top)
-	id, err := history.save(
+	place := history.place_of(&s.tree, top, s.engine)
+	id, err := history.keep(
 		d.history,
 		place,
-		time.time_to_unix(time.now()),
-		survey.total(&s.roll, top),
+		&s.tree,
+		&s.roll,
+		top,
 		sync.atomic_load(&s.tree.nodes_done),
-		entries[:],
 	)
 	if err != nil {
 		fmt.eprintln("estoile: could not keep the scan:", err)
 		return
 	}
 	d.snapshot = id
-	snapshots, _ := history.list(d.history, place)
-	for snap in snapshots {
-		if snap.id != id {
-			compare(d, snap.id)
-			break
-		}
+	if then, found := history.latest(d.history, place, id); found {
+		compare(d, then.id)
 	}
-}
-
-// collect_kept adds what dir holds of at least history.KEPT_MIN, all the way down,
-// each named by its path under the top: dir's own is at.
-collect_kept :: proc(s: ^Scan, into: ^[dynamic]history.Entry, dir: u32, at: string) {
-	it := survey.children(&s.roll, dir)
-	for c in survey.next_child(&it) {
-		n := scan.node(&s.tree, c)
-		directory := .Directory in scan.node_flags(n)
-		bytes := survey.total(&s.roll, c) if directory else n.disk
-		if bytes < history.KEPT_MIN {
-			continue
-		}
-		path := path_under(at, scan.name_of(&s.tree, c))
-		append(into, history.Entry{path, bytes})
-		if directory {
-			collect_kept(s, into, c, path)
-		}
-	}
-}
-
-// path_under is the path of name in the directory at path at, under the top.
-path_under :: proc(at, name: string) -> string {
-	if at == "" {
-		return strings.clone(name, context.temp_allocator)
-	}
-	return strings.concatenate({at, "/", name}, context.temp_allocator)
-}
-
-// place_of is what a scan's snapshots are kept under: the path of its top, and a
-// made-up disk's apart from the real one at the same path.
-place_of :: proc(s: ^Scan, top: u32) -> string {
-	path := scan.path(&s.tree, top, context.temp_allocator)
-	if s.engine == .Synthetic {
-		return strings.concatenate({"synthetic:", path}, context.temp_allocator)
-	}
-	return path
 }
 
 // compare compares the scan with snapshot id of its place, or with none for 0 or
@@ -127,7 +81,7 @@ compare :: proc(d: ^Desk, id: i64) {
 	if id == 0 || d.history == nil || !ok {
 		return
 	}
-	snapshots, _ := history.list(d.history, place_of(s, top))
+	snapshots, _ := history.list(d.history, history.place_of(&s.tree, top, s.engine))
 	for snap in snapshots {
 		if snap.id == id {
 			d.compared = {snap.id, snap.taken, snap.bytes, snap.items}
@@ -154,7 +108,7 @@ note_was :: proc(s: ^Scan, d: ^Desk, then: map[string]u64, dir: u32, at: string)
 	it := survey.children(&s.roll, dir)
 	for c in survey.next_child(&it) {
 		n := scan.node(&s.tree, c)
-		path := path_under(at, scan.name_of(&s.tree, c))
+		path := history.path_under(at, scan.name_of(&s.tree, c))
 		bytes, found := then[path]
 		if !found {
 			continue
@@ -191,7 +145,7 @@ history_answer :: proc(d: ^Desk, q: query.History) -> query.History_Result {
 	if q.generation != d.generation || d.history == nil || !ok {
 		return r
 	}
-	snapshots, _ := history.list(d.history, place_of(s, top))
+	snapshots, _ := history.list(d.history, history.place_of(&s.tree, top, s.engine))
 	earlier := make([dynamic]query.Snapshot, context.temp_allocator)
 	for snap in snapshots {
 		if snap.id != d.snapshot {

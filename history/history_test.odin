@@ -4,6 +4,9 @@ import "core:testing"
 
 import "jm:sqlite3"
 
+import "../scan"
+import "../survey"
+
 @(test)
 a_snapshot_comes_back_as_it_was_saved :: proc(t: ^testing.T) {
 	st: Store
@@ -89,4 +92,80 @@ actions_are_kept_in_the_audit_trail_as_recorded :: proc(t: ^testing.T) {
 	}
 	testing.expect(t, sqlite3.finish(&rows) == nil)
 	testing.expect_value(t, got, len(done))
+}
+
+// A made-up disk's scans are kept apart from the real disk's at the same path.
+@(test)
+a_made_up_disk_is_kept_apart :: proc(t: ^testing.T) {
+	tree: scan.Tree
+	testing.expect(t, scan.tree_init(&tree) == nil)
+	defer scan.tree_destroy(&tree)
+	w := scan.writer(&tree, 0)
+	top, _ := scan.claim(&w, 1)
+	n := scan.node(&tree, top)
+	n.parent = top
+	n.name = scan.intern(&w, "/")
+	scan.node_publish(n, {.Used, .Settled, .Directory})
+	testing.expect_value(t, place_of(&tree, top, .Walk), "/")
+	testing.expect_value(t, place_of(&tree, top, .Synthetic), "synthetic:/")
+}
+
+/*
+A scan kept holds its top and everything under it of at least KEPT_MIN, all the
+way down, and nothing smaller:
+
+	/top/                 3 MiB + 10 bytes
+	/top/big/             3 MiB
+	/top/big/a.bin        2 MiB
+	/top/big/b.bin        1 MiB
+	/top/small.txt        10 bytes
+*/
+@(test)
+a_kept_scan_holds_what_is_at_least_kept_min :: proc(t: ^testing.T) {
+	tree: scan.Tree
+	testing.expect(t, scan.tree_init(&tree) == nil)
+	defer scan.tree_destroy(&tree)
+	w := scan.writer(&tree, 0)
+	first, _ := scan.claim(&w, 5)
+	add :: proc(w: ^scan.Writer, i, parent: u32, name: string, disk: u64, flags: scan.Node_Flags) {
+		n := scan.node(w.tree, i)
+		n.parent = parent
+		n.disk = disk
+		n.name = scan.intern(w, name)
+		scan.node_publish(n, flags)
+	}
+	add(&w, first, first, "/top", 0, {.Used, .Settled, .Directory})
+	add(&w, first + 1, first, "big", 0, {.Used, .Settled, .Directory})
+	add(&w, first + 2, first + 1, "a.bin", 2 << 20, {.Used, .Settled})
+	add(&w, first + 3, first + 1, "b.bin", 1 << 20, {.Used, .Settled})
+	add(&w, first + 4, first, "small.txt", 10, {.Used, .Settled})
+	roll := survey.Rollup {
+		linked = true,
+	}
+	defer survey.rollup_destroy(&roll)
+	survey.rollup_advance(&roll, &tree)
+
+	st: Store
+	testing.expect(t, open(&st, ":memory:") == nil)
+	defer close(&st)
+	id, err := keep(&st, "/top", &tree, &roll, first, 5)
+	testing.expect(t, err == nil)
+
+	got, _ := load(&st, id)
+	defer forget(got)
+	want := []Entry {
+		{"", 3 << 20 + 10},
+		{"big", 3 << 20},
+		{"big/a.bin", 2 << 20},
+		{"big/b.bin", 1 << 20},
+	}
+	testing.expect_value(t, len(got), len(want))
+	for e in want {
+		testing.expectf(t, got[e.path] == e.bytes, "%q came back as %v", e.path, got[e.path])
+	}
+	snap, found := latest(&st, "/top")
+	testing.expect(t, found)
+	testing.expect_value(t, snap.items, 5)
+	_, other := latest(&st, "/top", id)
+	testing.expect(t, !other, "no snapshot but the one kept")
 }

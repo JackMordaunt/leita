@@ -21,7 +21,6 @@ import "jm:ui/ops"
 import "jm:ui/primer"
 import "jm:ui/render"
 
-import "../../scan"
 import "../command"
 import "../query"
 import "../view"
@@ -1667,21 +1666,4 @@ a_made_up_disk_changes_nothing_on_disk :: proc(t: ^testing.T) {
 			"Nothing was changed: this disk is made up, so its files are not on disk",
 		)
 	}
-}
-
-// A made-up disk's scans are kept apart from the real disk's at the same path.
-@(test)
-a_made_up_disk_is_kept_apart :: proc(t: ^testing.T) {
-	s: Scan
-	testing.expect(t, scan.tree_init(&s.tree) == nil)
-	defer scan.tree_destroy(&s.tree)
-	w := scan.writer(&s.tree, 0)
-	top, _ := scan.claim(&w, 1)
-	n := scan.node(&s.tree, top)
-	n.parent = top
-	n.name = scan.intern(&w, "/")
-	scan.node_publish(n, {.Used, .Settled, .Directory})
-	testing.expect_value(t, place_of(&s, top), "/")
-	s.engine = .Synthetic
-	testing.expect_value(t, place_of(&s, top), "synthetic:/")
 }
