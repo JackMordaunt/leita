@@ -1,18 +1,26 @@
 package estoile_view
 
+import "core:strings"
+import "core:time"
+
 import "jm:ui"
 import "jm:ui/design"
+import "jm:ui/ops"
 import "jm:ui/primer"
 
 import "../command"
+import "../files"
 import "../query"
 
 /*
 Exporting a report of the finished scan. The toolbar's Export opens a dialog
 that asks for the format and whether to include what Reclaim finds; its
-Export sends that to the host, which writes the file in the user's Documents
-folder, under a name of its own so nothing is replaced, and says where in a
-notice whose Locate shows it in the file manager.
+Export opens the platform's save dialog in the reports folder, the user's
+Documents, with a name for the target and the minute, filtered to the format.
+The path chosen goes to the host, which writes the file and says where in a
+notice whose Locate shows it in the file manager. A cancel ends the export with
+nothing said. Where no save dialog can open, the host saves in the reports
+folder under a name of its own, so nothing is replaced.
 */
 
 // export_button is the toolbar's Export, there whenever there is a scan and
@@ -38,21 +46,40 @@ export_button :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result) {
 	}
 }
 
-// exporting is whether a report asked for is still being written: from the
-// frame Export is sent until the host says it is writing it, then for as long
-// as it says so. Every export ends in a notice, which also ends the wait, should
-// it be over before the window heard it begin.
+// exporting is whether a report asked for is still being written: while the
+// save dialog asks where, from the frame Export is sent until the host says it
+// is writing it, then for as long as it says so. Every export ends in a notice,
+// which also ends the wait, should it be over before the window heard it begin.
 @(private)
 exporting :: proc(m: ^Model, prog: ^query.Progress_Result) -> bool {
 	if sent, waiting := m.export_sent.?; waiting && (prog.exporting || prog.notice.id != sent) {
 		m.export_sent = nil
 	}
-	return prog.exporting || m.export_sent != nil
+	return prog.exporting || m.export_sent != nil || m.export_picking
 }
 
-// export_dialog asks how to write the report, and sends Export when asked to.
+// export_dialog asks how to write the report, then where, and sends Export once
+// the save dialog answers with a path, or could not open.
 @(private)
 export_dialog :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result) {
+	for e in ui.events(gtx, EXPORT_PICK) {
+		#partial switch e.kind {
+		case .Picked:
+			// A path too long for the command would be cut short and name
+			// another file: the host names one in the reports folder instead.
+			m.export_picking = false
+			if e.text != "" && prog != nil {
+				send_export(gtx, m, prog, e.text if len(e.text) <= command.MAX_PATH else "")
+			}
+		case .Pick_Failed:
+			// No dialog to ask with: the host names a new file in the
+			// reports folder instead.
+			m.export_picking = false
+			if prog != nil {
+				send_export(gtx, m, prog, "")
+			}
+		}
+	}
 	if !m.export_open || prog == nil {
 		return
 	}
@@ -97,7 +124,7 @@ export_dialog :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result) {
 		)
 		primer.text(
 			gtx,
-			"Saved in your Documents folder under a new name; nothing is replaced.",
+			"Next, choose where to save it; your Documents folder to begin with.",
 			.Small,
 			color = primer.color(.Fg_Color_Muted),
 		)
@@ -107,18 +134,46 @@ export_dialog :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result) {
 	}
 	if export {
 		m.export_open = false
-		m.export_sent = prog.notice.id
-		ui.command(
-			gtx,
-			command.Command(
-				command.Export {
-					generation = m.generation,
-					format = m.export_format,
-					reclaim = m.export_reclaim,
-				},
-			),
+		m.export_picking = true
+		name := strings.concatenate(
+			{files.report_stem(prog.target, time.now()), command.EXTENSIONS[m.export_format]},
+			context.temp_allocator,
 		)
+		filter := [1]ui.Pick_Filter{FORMAT_FILTERS[m.export_format]}
+		ui.pick_save(gtx, EXPORT_PICK, name, prog.reports, filter[:])
 	}
+}
+
+// send_export sends the Export the dialog was set to, to path, or to a new file
+// in the reports folder when path is empty.
+@(private)
+send_export :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result, path: string) {
+	m.export_sent = prog.notice.id
+	ui.command(
+		gtx,
+		command.Command(
+			command.Export {
+				generation = m.generation,
+				format = m.export_format,
+				reclaim = m.export_reclaim,
+				path = command.text_make(path),
+			},
+		),
+	)
+}
+
+// EXPORT_PICK is the area the save dialog answers: no widget's, so a constant
+// rather than a claimed id.
+@(private)
+EXPORT_PICK :: ops.Area_Id(0x6573_746f_696c_6570) // "estoilep"
+
+// FORMAT_FILTERS are what the save dialog offers for each format.
+@(private)
+FORMAT_FILTERS := [command.Export_Format]ui.Pick_Filter {
+	.Pdf  = {"PDF document", "pdf"},
+	.Html = {"Web page", "html;htm"},
+	.Csv  = {"CSV spreadsheet", "csv"},
+	.Json = {"JSON data", "json"},
 }
 
 // FORMAT_CAPTIONS say what each format is for.

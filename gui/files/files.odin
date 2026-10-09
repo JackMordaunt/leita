@@ -15,8 +15,13 @@ import "base:runtime"
 import "core:fmt"
 import "core:io"
 import "core:os"
+import "core:path/filepath"
 import "core:strings"
 import "core:thread"
+import "core:time"
+import "core:unicode"
+
+import "jm:timefmt"
 
 Error :: enum u8 {
 	None,
@@ -169,17 +174,79 @@ create_new :: proc(
 			return path, f, .None
 		}
 		delete(path, allocator)
-		switch {
-		case open_err == os.General_Error.Exist:
+		if open_err == os.General_Error.Exist {
 			continue
-		case open_err == os.General_Error.Not_Exist:
-			return "", nil, .Missing
-		case open_err == io.Error.Permission_Denied:
-			return "", nil, .Denied
 		}
-		return "", nil, .Other
+		return "", nil, open_error(open_err)
 	}
 	return "", nil, .Exists
+}
+
+/*
+create_at opens the file at path to write, making it or emptying what was there:
+for a path the person chose in a save dialog, which asks them before it names a
+file that exists (ui.pick_save says which backend asks how).
+*/
+create_at :: proc(path: string) -> (file: ^os.File, err: Error) {
+	f, open_err := os.open(path, {.Write, .Create, .Trunc}, os.Permissions_Default_File)
+	if open_err != nil {
+		return nil, open_error(open_err)
+	}
+	return f, .None
+}
+
+// open_error is the Error an open of a file to write failed with.
+@(private)
+open_error :: proc(err: os.Error) -> Error {
+	switch {
+	case err == os.General_Error.Exist:
+		return .Exists
+	case err == os.General_Error.Not_Exist:
+		return .Missing
+	case err == io.Error.Permission_Denied:
+		return .Denied
+	}
+	return .Other
+}
+
+/*
+report_stem is what a report of target made at now is called, less its
+extension: estoile-report-<target's last name>-<local date and minute>. The name is
+kept to letters, digits, dots, dashes and underscores, anything else a dash: none
+of those is reserved in a name on Linux, macOS or Windows, and the prefix keeps
+it from being one of the names Windows reserves (CON, NUL). A target with no last
+name, a volume's top, is "root". The window suggests it in the save dialog, and
+the host names a report it saves without one so.
+*/
+report_stem :: proc(target: string, now: time.Time) -> string {
+	base := filepath.base(strings.trim_right(target, `/\`))
+	sb := strings.builder_make(context.temp_allocator)
+	dash := false
+	for r in base {
+		if unicode.is_letter(r) || unicode.is_digit(r) || r == '.' || r == '_' || r == '-' {
+			strings.write_rune(&sb, r)
+			dash = false
+		} else if !dash {
+			strings.write_byte(&sb, '-')
+			dash = true
+		}
+		if strings.builder_len(sb) >= 48 {
+			break
+		}
+	}
+	name := strings.trim(strings.to_string(sb), "-.")
+	if name == "" {
+		name = "root"
+	}
+	return strings.concatenate(
+		{
+			"estoile-report-",
+			name,
+			"-",
+			timefmt.local(now, "%Y-%m-%d-%H%M", context.temp_allocator),
+		},
+		context.temp_allocator,
+	)
 }
 
 /*

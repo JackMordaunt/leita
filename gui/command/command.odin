@@ -102,12 +102,23 @@ Export_Format :: enum u8 {
 	Pdf,
 }
 
-// Export writes a report of the finished scan to a file of its own, with what
-// Reclaim finds when reclaim is set, and says where in a notice.
+// EXTENSIONS end the name of a report in each format.
+EXTENSIONS := [Export_Format]string {
+	.Csv  = ".csv",
+	.Json = ".json",
+	.Html = ".html",
+	.Pdf  = ".pdf",
+}
+
+// Export writes a report of the finished scan, with what Reclaim finds when
+// reclaim is set, and says where in a notice: to path, replacing what is there,
+// as the person chose in the save dialog, or when path is empty to a file of its
+// own in the reports folder.
 Export :: struct {
 	generation: u32,
 	format:     Export_Format,
 	reclaim:    bool,
+	path:       Text,
 }
 
 // Reveal shows the file a notice said was saved in the system's file manager.

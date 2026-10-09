@@ -44,6 +44,7 @@ Progress_Result :: struct {
 	disk_free:  u64,
 	notice:     Notice, // what came of the window's last request
 	exporting:  bool, // a report is being written; its notice says how it went
+	reports:    string, // the folder the save dialog opens in, and a report goes to when it names none; "" for none
 }
 
 // Notice is what came of a request the window made: an entry moved to the

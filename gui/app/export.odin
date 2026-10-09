@@ -1,12 +1,8 @@
 package estoile_app
 
 import "core:os"
-import "core:path/filepath"
 import "core:strings"
 import "core:time"
-import "core:unicode"
-
-import "jm:timefmt"
 
 import "../../history"
 import "../../report"
@@ -16,26 +12,32 @@ import "../files"
 
 /*
 Export: a report of the finished scan, written by report.export as the command
-line writes one, to a file of its own in the reports folder (files.reports_folder,
-or the one init was given). It runs on the desk thread, which owns the tree, so
-the window goes on drawing while it is written; the desk answers again once the
-file is closed, with a notice saying where it went or why it could not.
+line writes one, to the path the person chose in the window's save dialog. It
+runs on the desk thread, which owns the tree, so the window goes on drawing while
+it is written; the desk answers again once the file is closed, with a notice
+saying where it went or why it could not.
+
+A file already at the chosen path is replaced: the platform's save dialog asks
+the person before it names one (ui.pick_save says which backend asks how). Without a path, as when no dialog could open, the
+report goes to a file of its own in the reports folder (files.reports_folder, or
+the one init was given), named for the target and the minute, and never replaces
+another: a second export in the same minute gets -2 on its name.
 
 A report is compared with the snapshot the window compares the scan with, so
-it shows what changed as the window does. The file is named for the target and
-the minute, and never replaces another: a second export in the same minute gets
--2 on its name.
+it shows what changed as the window does.
 */
 
 // export writes the report c asks for.
 export :: proc(d: ^Desk, c: command.Export) {
+	c := c
 	s := d.scan
 	if s == nil || c.generation != d.generation || !s.grown || s.state != .Done {
 		tell(d, true, "Could not export a report: the scan is not finished")
 		return
 	}
-	folder := d.reports if d.reports != "" else files.reports_folder(context.temp_allocator)
-	if folder == "" {
+	chosen := command.text_of(&c.path)
+	folder := d.reports
+	if chosen == "" && folder == "" {
 		tell(
 			d,
 			true,
@@ -67,11 +69,23 @@ export :: proc(d: ^Desk, c: command.Export) {
 	defer report.destroy(&r)
 
 	format := FORMATS[c.format]
-	stem := report_stem(r.target, time.now())
-	path, f, err := files.create_new(folder, stem, EXTENSIONS[c.format])
-	if err != .None {
-		tell(d, true, "Could not save the report in %s: %s", folder, files.describe(err))
-		return
+	path: string
+	f: ^os.File
+	err: files.Error
+	if chosen != "" {
+		path = strings.clone(chosen)
+		if f, err = files.create_at(path); err != .None {
+			tell(d, true, "Could not save the report to %s: %s", path, files.describe(err))
+			delete(path)
+			return
+		}
+	} else {
+		stem := files.report_stem(r.target, time.now())
+		path, f, err = files.create_new(folder, stem, command.EXTENSIONS[c.format])
+		if err != .None {
+			tell(d, true, "Could not save the report in %s: %s", folder, files.describe(err))
+			return
+		}
 	}
 	defer delete(path)
 	written := report.export(os.to_writer(f), &r, format, report.paper_of_locale())
@@ -101,51 +115,4 @@ FORMATS := [command.Export_Format]report.Format {
 	.Json = .Json,
 	.Html = .Html,
 	.Pdf  = .Pdf,
-}
-
-@(private)
-EXTENSIONS := [command.Export_Format]string {
-	.Csv  = ".csv",
-	.Json = ".json",
-	.Html = ".html",
-	.Pdf  = ".pdf",
-}
-
-/*
-report_stem is what a report of target made at now is called, less its
-extension: estoile-report-<target's last name>-<local date and minute>. The name is
-kept to letters, digits, dots, dashes and underscores, anything else a dash: none
-of those is reserved in a name on Linux, macOS or Windows, and the prefix keeps
-it from being one of the names Windows reserves (CON, NUL). A target with no last
-name, a volume's top, is "root".
-*/
-report_stem :: proc(target: string, now: time.Time) -> string {
-	base := filepath.base(strings.trim_right(target, `/\`))
-	sb := strings.builder_make(context.temp_allocator)
-	dash := false
-	for r in base {
-		if unicode.is_letter(r) || unicode.is_digit(r) || r == '.' || r == '_' || r == '-' {
-			strings.write_rune(&sb, r)
-			dash = false
-		} else if !dash {
-			strings.write_byte(&sb, '-')
-			dash = true
-		}
-		if strings.builder_len(sb) >= 48 {
-			break
-		}
-	}
-	name := strings.trim(strings.to_string(sb), "-.")
-	if name == "" {
-		name = "root"
-	}
-	return strings.concatenate(
-		{
-			"estoile-report-",
-			name,
-			"-",
-			timefmt.local(now, "%Y-%m-%d-%H%M", context.temp_allocator),
-		},
-		context.temp_allocator,
-	)
 }

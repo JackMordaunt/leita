@@ -154,11 +154,13 @@ Model :: struct {
 	// Colouring by change (change.odin): whether the menu of snapshots is open.
 	since_open:       bool,
 	// Exporting a report (export.odin): the dialog and what it was last set to,
-	// the notice id when Export was sent until the host takes it up, and the
-	// notice of each file saved, by the toast that shows it.
+	// whether the save dialog it opens is still asking where, the notice id
+	// when Export was sent until the host takes it up, and the notice of each
+	// file saved, by the toast that shows it.
 	export_open:      bool,
 	export_format:    command.Export_Format,
 	export_reclaim:   bool,
+	export_picking:   bool,
 	export_sent:      Maybe(u32),
 	saved_toasts:     map[int]u32,
 }

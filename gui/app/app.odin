@@ -52,6 +52,7 @@ import "../../survey"
 import "../../synth"
 import "../../walk"
 import "../command"
+import "../files"
 import "../query"
 
 // TICK is how often a running scan is folded and its answers sent: often enough
@@ -124,8 +125,9 @@ Desk :: struct {
 	snapshot:    i64,
 	compared:    query.Snapshot,
 	was:         map[u32]u64,
-	// Where reports are exported to, "" for files.reports_folder; and each one
-	// saved, by the notice that said so (export.odin).
+	// Where reports are exported to when the window names no file, and where
+	// its save dialog opens: files.reports_folder unless init was given one, ""
+	// for neither; and each one saved, by the notice that said so (export.odin).
 	reports:     string,
 	saved:       map[u32]string,
 	// A report is being written, for Progress to say so while the desk is busy.
@@ -159,7 +161,7 @@ init :: proc(h: ^Host, path: string, wake: proc() = nil, kept := "", reports := 
 		inbox   = &h.inbox,
 		wake    = wake,
 		live    = make(map[ui.Need_Key]Query, allocator),
-		reports = strings.clone(reports, allocator),
+		reports = strings.clone(reports, allocator) if reports != "" else files.reports_folder(allocator),
 	}
 	history_open(&h.desk, kept)
 
@@ -547,6 +549,7 @@ progress :: proc(d: ^Desk) -> query.Progress_Result {
 	r := query.Progress_Result {
 		generation = d.generation,
 		exporting  = d.exporting,
+		reports    = d.reports,
 	}
 	s := d.scan
 	if s == nil {

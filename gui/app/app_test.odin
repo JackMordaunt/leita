@@ -16,7 +16,6 @@ import "core:time"
 import "jm:debug"
 import "jm:sqlite3"
 import "jm:stream"
-import "jm:timefmt"
 
 import "jm:ui"
 import bl "jm:ui/blend2d"
@@ -1804,16 +1803,20 @@ export_writes_a_report_of_each_format :: proc(t: ^testing.T) {
 	testing.expect_value(t, len(after), len(before) + 1)
 }
 
-// The toolbar's Export opens a dialog that sends the format chosen, and the
-// notice of the file saved offers Locate.
+// The toolbar's Export opens a dialog for the format, then the save dialog in
+// the reports folder with a name for the target, filtered to the format; the
+// report goes where the person chose, over what was there, which the save
+// dialog asked them about, and the notice of the file saved offers Locate.
 @(test)
-the_export_dialog_saves_a_report_and_offers_locate :: proc(t: ^testing.T) {
+the_export_dialog_saves_a_report_where_chosen_and_offers_locate :: proc(t: ^testing.T) {
 	root := fixture(t, "export_dialog")
 	defer os.remove_all(root)
 	reports := fmt.tprintf("%s-reports", root)
 	os.remove_all(reports)
 	testing.expect(t, os.make_directory(reports) == nil)
 	defer os.remove_all(reports)
+	chosen := fmt.tprintf("%s/mine.html", reports)
+	testing.expect(t, os.write_entire_file(chosen, "an older report") == nil)
 	r: Rig
 	rig_open(&r, root, reports = reports)
 	defer rig_close(&r)
@@ -1828,18 +1831,81 @@ the_export_dialog_saves_a_report_and_offers_locate :: proc(t: ^testing.T) {
 	ui.probe_frame(&r.p)
 	testing.expect(t, ui.probe_tagged(&r.p, "One page that opens in any browser"))
 	testing.expect(t, ui.probe_click_top(&r.p, "Export"), "the dialog's Export")
+	q, asked := ui.probe_picking(&r.p)
+	testing.expect(t, asked, "the save dialog opened")
+	testing.expect_value(t, q.kind, ui.Pick_Kind.Save)
+	testing.expect_value(t, q.start, reports)
+	testing.expectf(
+		t,
+		strings.has_prefix(q.name, "estoile-report-estoile_gui_export_dialog-") &&
+		strings.has_suffix(q.name, ".html"),
+		"%s is named for the target and the format",
+		q.name,
+	)
+	testing.expect_value(t, len(q.filters), 1)
+	if len(q.filters) == 1 {
+		testing.expect_value(t, q.filters[0], ui.Pick_Filter{"Web page", "html;htm"})
+	}
+	ui.probe_frame(&r.p)
+	testing.expect(t, ui.probe_tagged(&r.p, "Exporting…"), "busy while it asks where")
+
+	testing.expect(t, ui.probe_pick(&r.p, chosen))
+	ui.probe_frame(&r.p)
 	hand_on(&r)
 	path := saved_as(&r, ".html")
-	testing.expect(t, path != "", "the notice says where the report went")
-	testing.expect(t, os.exists(path), "and it is there")
+	testing.expect_value(t, path, chosen)
+	data, err := os.read_entire_file(chosen, context.temp_allocator)
+	testing.expect(
+		t,
+		err == nil && strings.has_prefix(string(data), "<!doctype html>"),
+		"the report replaced the older one",
+	)
+	listed, _ := os.read_all_directory_by_path(reports, context.temp_allocator)
+	testing.expect_value(t, len(listed), 1)
 	testing.expect(t, !r.m.export_open, "the dialog closed")
 	testing.expect(t, ui.probe_tagged(&r.p, "Locate"), "the notice offers Locate")
 }
 
-// shows_notice is whether a frame shows a notice starting with prefix before the deadline.
+// A cancelled save dialog ends the export: nothing is written, nothing is said,
+// and the toolbar reads Export again.
+@(test)
+a_cancelled_save_dialog_exports_nothing :: proc(t: ^testing.T) {
+	root := fixture(t, "export_cancel")
+	defer os.remove_all(root)
+	reports := fmt.tprintf("%s-reports", root)
+	os.remove_all(reports)
+	testing.expect(t, os.make_directory(reports) == nil)
+	defer os.remove_all(reports)
+	r: Rig
+	rig_open(&r, root, reports = reports)
+	defer rig_close(&r)
+	testing.expect(t, settle(&r, "Done"))
+
+	ui.probe_advance(&r.p, 10, 1.0 / 60)
+	testing.expect(t, ui.probe_click(&r.p, "Export"), "the toolbar offers Export")
+	ui.probe_advance(&r.p, 20, 1.0 / 60)
+	testing.expect(t, ui.probe_click_top(&r.p, "Export"), "the dialog's Export")
+	ui.probe_frame(&r.p)
+	testing.expect(t, ui.probe_tagged(&r.p, "Exporting…"), "busy while it asks where")
+	testing.expect(t, ui.probe_pick(&r.p, ""), "the save dialog was open")
+	// The answer lands in one frame, which asks for the next to show it.
+	ui.probe_advance(&r.p, 2, 1.0 / 60)
+	hand_on(&r)
+	testing.expect(t, settle(&r, "Exporting…", present = false), "no longer busy")
+	testing.expect(t, ui.probe_tagged(&r.p, "Export"), "Export again")
+	ui.probe_advance(&r.p, 60, 1.0 / 60)
+	hand_on(&r)
+	testing.expect(t, !shows_notice(&r, "Saved report", 0.5), "no notice")
+	testing.expect(t, !shows_notice(&r, "Could not", 0.5), "no failure either")
+	listed, _ := os.read_all_directory_by_path(reports, context.temp_allocator)
+	testing.expect_value(t, len(listed), 0)
+}
+
+// shows_notice is whether a frame shows a notice starting with prefix within
+// seconds.
 @(private = "file")
-shows_notice :: proc(r: ^Rig, prefix: string) -> bool {
-	deadline := time.tick_now()._nsec + i64(30 * time.Second)
+shows_notice :: proc(r: ^Rig, prefix: string, seconds := 30.0) -> bool {
+	deadline := time.tick_now()._nsec + i64(seconds * f64(time.Second))
 	for time.tick_now()._nsec < deadline {
 		for t in ui.probe_current(&r.p).tags {
 			if strings.has_prefix(t.name, prefix) {
@@ -1857,7 +1923,9 @@ shows_notice :: proc(r: ^Rig, prefix: string) -> bool {
 }
 
 // The toolbar's Export reads Exporting… from the dialog's Export until the
-// host's notice says how it went, saved or not, then reads Export again.
+// host's notice says how it went, saved or not, then reads Export again. Where
+// no save dialog can open, the report goes to the reports folder under a name
+// of its own, or fails to when the folder is not there.
 @(test)
 export_is_busy_until_it_is_saved_or_fails :: proc(t: ^testing.T) {
 	root := fixture(t, "export_busy")
@@ -1873,8 +1941,10 @@ export_is_busy_until_it_is_saved_or_fails :: proc(t: ^testing.T) {
 		testing.expect(t, ui.probe_click(&r.p, "Export"), "the toolbar offers Export")
 		ui.probe_advance(&r.p, 20, 1.0 / 60)
 		testing.expect(t, ui.probe_click_top(&r.p, "Export"), "the dialog's Export")
-		// The command goes with the frame that sent it; the next is busy
-		// before the host has answered.
+		testing.expect(t, ui.probe_pick_fail(&r.p), "the save dialog was asked for")
+		// The command goes with the frame the failure reached; the next is
+		// busy before the host has answered.
+		ui.probe_frame(&r.p)
 		hand_on(r)
 		ui.probe_frame(&r.p)
 		testing.expect(t, ui.probe_tagged(&r.p, "Exporting…"), "busy once asked")
@@ -1887,6 +1957,15 @@ export_is_busy_until_it_is_saved_or_fails :: proc(t: ^testing.T) {
 	rig_open(&saves, root, reports = reports)
 	export_once(t, &saves, "Saved report to ")
 	rig_close(&saves)
+	listed, _ := os.read_all_directory_by_path(reports, context.temp_allocator)
+	if testing.expect_value(t, len(listed), 1) {
+		testing.expectf(
+			t,
+			strings.has_prefix(listed[0].name, "estoile-report-estoile_gui_export_busy-"),
+			"%s is named for the target in the reports folder",
+			listed[0].name,
+		)
+	}
 
 	// A folder that is not there: the report cannot be saved.
 	fails: Rig
@@ -1954,26 +2033,4 @@ an_export_compares_with_the_scan_before :: proc(t: ^testing.T) {
 	grown := top["largest_files"].(json.Array)[0].(json.Object)
 	testing.expect_value(t, grown["path"].(json.String), fmt.tprintf("%s/added.bin", root))
 	testing.expect(t, grown["bytes_before"].(json.Null) == nil, "the added file is new")
-}
-
-// A report is named for its target's last name, kept to letters, digits and
-// a few marks, and the minute.
-@(test)
-a_report_is_named_for_its_target :: proc(t: ^testing.T) {
-	now := time.unix(1791547200, 0)
-	minute := timefmt.local(now, "%Y-%m-%d-%H%M", context.temp_allocator)
-	cases := [][2]string {
-		{"/home/jfm/Source", "Source"},
-		{"/home/jfm/My Stuff: 2026?/", "My-Stuff-2026"},
-		{"/", "root"},
-		{`C:\`, "C"},
-		{"/data/日本語", "日本語"},
-	}
-	for c in cases {
-		testing.expect_value(
-			t,
-			report_stem(c[0], now),
-			fmt.tprintf("estoile-report-%s-%s", c[1], minute),
-		)
-	}
 }

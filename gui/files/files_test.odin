@@ -1,12 +1,15 @@
 package estoile_files
 
+import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:sync"
 import "core:testing"
 import "core:thread"
+import "core:time"
 
 import "jm:debug"
+import "jm:timefmt"
 
 // received is what the job saw, copied out: the job frees its path once it returns.
 @(private = "file")
@@ -163,4 +166,26 @@ a_new_file_never_replaces_one :: proc(t: ^testing.T) {
 	missing := strings.concatenate({dir, "/missing"}, context.temp_allocator)
 	_, _, err := create_new(missing, "report", ".pdf", context.temp_allocator)
 	testing.expect_value(t, err, Error.Missing)
+}
+
+// A report is named for its target's last name, kept to letters, digits and
+// a few marks, and the minute.
+@(test)
+a_report_is_named_for_its_target :: proc(t: ^testing.T) {
+	now := time.unix(1791547200, 0)
+	minute := timefmt.local(now, "%Y-%m-%d-%H%M", context.temp_allocator)
+	cases := [][2]string {
+		{"/home/jfm/Source", "Source"},
+		{"/home/jfm/My Stuff: 2026?/", "My-Stuff-2026"},
+		{"/", "root"},
+		{`C:\`, "C"},
+		{"/data/日本語", "日本語"},
+	}
+	for c in cases {
+		testing.expect_value(
+			t,
+			report_stem(c[0], now),
+			fmt.tprintf("estoile-report-%s-%s", c[1], minute),
+		)
+	}
 }
