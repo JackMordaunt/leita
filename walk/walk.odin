@@ -15,6 +15,7 @@ macOS, which ask the kernel directly.
 package walk
 
 import "core:mem"
+import "core:os"
 import "core:strings"
 import "core:sync"
 
@@ -22,13 +23,37 @@ import "../scan"
 import "jm:flow"
 
 Config :: struct {
-	workers: int, // 0 selects DEFAULT_WORKERS
+	workers: int, // 0 lets `width` choose
 	follow:  bool, // descend through symlinks and junctions; loops are not detected
+	media:   scan.Media, // what holds the tree, which `width` fits the choice to
 }
 
-// Directory reads are latency bound and hold no core while they wait, so more
-// workers than cores is right here in a way it was not for the MFT reader.
-DEFAULT_WORKERS :: 8
+/*
+How many directories a walk with `cfg` reads at once: what was asked for, or else a
+count fitted to the machine and to what stores the tree.
+
+A directory read mostly waits on the volume and holds no core while it does, so on
+flash twice as many workers as logical cores keep it busier than one per core would:
+reading a 2.6 million entry home directory on an 8-core M-series Mac took 15.8 s with
+8 workers, 12.5 s with 16 and 11.5 s with 32. The cap is the most that was measured,
+not a limit anything was seen to hit. A spinning disk gets one, on the assumption,
+not measured, that every read in flight beyond the first moves the head away from
+the last. A volume that did not say what it is gets the flash count.
+
+The tree needs a writer per worker, so a caller sizes it with this before reading.
+*/
+width :: proc(cfg: Config) -> int {
+	if cfg.workers > 0 {
+		return cfg.workers
+	}
+	if cfg.media == .Rotational {
+		return 1
+	}
+	return clamp(2 * os.get_processor_core_count(), 1, MAX_WORKERS)
+}
+
+@(private)
+MAX_WORKERS :: 32
 
 Error :: enum {
 	None,
@@ -62,13 +87,9 @@ read :: proc(root: string, t: ^scan.Tree, cfg := Config{}) -> Error {
 	n.flags = {.Used, .Settled, .Directory}
 	t.root = first
 
-	workers := cfg.workers
-	if workers <= 0 {
-		workers = DEFAULT_WORKERS
-	}
-	// One writer per worker, and a writer needs an arena of its own, so the tree
-	// caps how wide this can run.
-	workers = min(workers, len(t.arenas))
+	// One writer per worker, and a writer needs an arena of its own, so a tree sized
+	// for fewer caps how wide this can run.
+	workers := min(width(cfg), len(t.arenas))
 
 	linked := Linked_Files {
 		seen = make(map[File_Id]struct{}, allocator),

@@ -59,9 +59,6 @@ import "../query"
 // it is not every frame.
 TICK :: 100 * time.Millisecond
 
-// WRITERS is how many reader threads may write the tree at once.
-WRITERS :: 8
-
 // Query is every need the host answers.
 Query :: union {
 	query.Progress,
@@ -371,7 +368,10 @@ scan_begin :: proc(d: ^Desk, path: string) {
 		s.problem = strings.clone("nothing here can be scanned")
 		return
 	}
-	if tree_err := scan.tree_init(&s.tree, WRITERS); tree_err != nil {
+	s.fill.wcfg = walk.Config {
+		media = target.media,
+	}
+	if tree_err := scan.tree_init(&s.tree, walk.width(s.fill.wcfg)); tree_err != nil {
 		s.problem = fmt.aprintf("%v", tree_err)
 		return
 	}
@@ -379,7 +379,6 @@ scan_begin :: proc(d: ^Desk, path: string) {
 	s.roll.linked = true
 	s.fill.engine = choice.engine
 	s.fill.opts = ntfs.Read_Options{}
-	s.fill.wcfg = walk.Config{}
 	s.fill.watched = true
 	s.fill.tree = &s.tree
 	sync.atomic_store(&s.fill.scanning, true)

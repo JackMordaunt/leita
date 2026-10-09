@@ -82,9 +82,6 @@ run :: proc() -> int {
 		min_skip   = -1 if opt.no_skip else opt.min_skip,
 		workers    = opt.workers,
 	}
-	wcfg := walk.Config {
-		workers = opt.walk_workers,
-	}
 
 	target, engine, resolve_err := scan.resolve(target_str)
 	if resolve_err != nil {
@@ -92,15 +89,23 @@ run :: proc() -> int {
 		return 1
 	}
 	defer scan.target_destroy(&target)
+	wcfg := walk.Config {
+		workers = opt.walk_workers,
+		media   = target.media,
+	}
 
 	fmt.printfln(
-		"sonar: %s on %s (%v, %v engine, %v io)",
+		"sonar: %s on %s (%v, %v media, %v engine, %v io)",
 		scan.location(target, context.temp_allocator),
 		target.volume,
 		target.fs,
+		target.media,
 		engine.engine,
 		opts.io_mode,
 	)
+	if engine.engine == .Walk {
+		fmt.printfln("walk: %d readers", walk.width(wcfg))
+	}
 
 	if engine.permission_would_help {
 		when ODIN_OS == .Windows {
@@ -119,7 +124,7 @@ run :: proc() -> int {
 	}
 
 	t: scan.Tree
-	if err := scan.tree_init(&t, 8); err != nil {
+	if err := scan.tree_init(&t, walk.width(wcfg)); err != nil {
 		fmt.eprintfln("error: %v", err)
 		return 1
 	}

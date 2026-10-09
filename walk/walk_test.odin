@@ -157,3 +157,25 @@ test_walk_stops_when_cancelled :: proc(t: ^testing.T) {
 	scan.cancel(&tree)
 	testing.expect_value(t, read(root, &tree, Config{}), Error.Cancelled)
 }
+
+/*
+A count that was asked for is used as given; otherwise a spinning disk gets one reader
+and anything else twice the logical cores, within the cap.
+*/
+@(test)
+test_width_fits_the_media :: proc(t: ^testing.T) {
+	fitted := clamp(2 * os.get_processor_core_count(), 1, MAX_WORKERS)
+	cases := []struct {
+		cfg:  Config,
+		want: int,
+	} {
+		{Config{workers = 3, media = .Rotational}, 3},
+		{Config{workers = 64, media = .Solid}, 64},
+		{Config{media = .Rotational}, 1},
+		{Config{media = .Solid}, fitted},
+		{Config{media = .Unknown}, fitted},
+	}
+	for c in cases {
+		testing.expectf(t, width(c.cfg) == c.want, "%v: %d, want %d", c.cfg, width(c.cfg), c.want)
+	}
+}
