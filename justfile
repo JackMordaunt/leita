@@ -9,6 +9,8 @@
 #   just gui [dir]  open the window on a directory, the home directory by default
 #   just hot [dir]  the same, the view reloaded in place on every edit
 #   just gui-test   run the window's tests, the host's on a real directory
+#   just logo       open the logo lab, hot-reloading tools/logo as it is edited
+#   just branding   regenerate branding/ (SVG from tools/logo, PNG via rsvg-convert)
 #
 # The debug allocator, flow, sqlite3, stream and ui come from the jm collection, pinned as
 # the jm submodule (https://mordaunt.dev/code/jm); JM=<path> builds against another
@@ -132,6 +134,67 @@ gui-test: deps
     {{odin}} test gui/view -debug {{san}} {{flags}} -out:build/test/{{gui}}-view{{exe}}
     {{odin}} test reclaim -debug {{san}} {{flags}} -out:build/test/{{gui}}-reclaim{{exe}}
     {{odin}} test gui/history -debug {{san}} {{flags}} -out:build/test/{{gui}}-history{{exe}}
+
+# The logo lab: tools/logo/host owns the window; tools/logo draws the marks and
+# is rebuilt here every time one of its .odin files changes, into its own
+# timestamped binary under build/logo, and named in build/logo.watch, which the
+# host re-reads and respawns from (ui/shell.run_host). The loop is a shell one
+# rather than jm's tools/hot-watch, which passes its own checkout's root as the
+# jm collection. GNU stat and date; Linux and macOS with coreutils. Under
+# Hyprland the window opens on the project's workspace, named <parent>/<repo>
+# (Personal/sonar), or on LOGO_WORKSPACE when set; the rule lives for the
+# session only.
+#
+# Open the logo lab, hot-reloading tools/logo as it is edited
+logo: deps
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p build/debug build/logo
+    {{odin}} build tools/logo/host -debug {{flags}} -out:build/debug/logo-host{{exe}}
+    rm -f build/logo.watch
+    (
+      last=""
+      while true; do
+        mt=$(stat -c %Y tools/logo/*.odin | sort -n | tail -1)
+        if [ "$mt" != "$last" ]; then
+          last=$mt
+          out=build/logo/logo-$(date +%s%N){{exe}}
+          if {{odin}} build tools/logo -debug {{flags}} -out:"$out"; then
+            printf '%s' "$out" > build/logo.watch
+            echo "logo: ready $out"
+            ls -t build/logo/logo-* | tail -n +3 | xargs -r rm -f
+          else
+            echo "logo: build failed; the window keeps the last good build"
+          fi
+        fi
+        sleep 0.4
+      done
+    ) &
+    watcher=$!
+    trap 'kill $watcher 2>/dev/null' EXIT
+    while [ ! -f build/logo.watch ]; do sleep 0.2; done
+    if command -v hyprctl >/dev/null 2>&1 && [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]; then
+      ws="${LOGO_WORKSPACE:-$(basename "$(dirname "{{root}}")")/$(basename "{{root}}")}"
+      hyprctl eval "hl.window_rule({ match = { title = '^(sonar · logo lab)$' }, workspace = 'name:$ws' })" >/dev/null || true
+    fi
+    build/debug/logo-host{{exe}} build/logo.watch
+
+# branding/ holds the mark tools/logo settled on, the sunburst in gui/mark that
+# the window draws too. The SVGs come from that geometry; the PNGs are
+# rasterised from them, so editing gui/mark and rerunning this is the whole
+# workflow. Needs rsvg-convert (librsvg); the hero's wordmark wants JetBrains
+# Mono installed.
+#
+# Regenerate branding/ from tools/logo
+branding: deps
+    mkdir -p build/debug branding
+    {{odin}} build tools/logo -debug {{flags}} -out:build/debug/logo{{exe}}
+    build/debug/logo{{exe}} -svg branding
+    for s in light dark; do \
+      rsvg-convert -w 1024 -h 1024 branding/mark-$s.svg -o branding/mark-$s.png; \
+      rsvg-convert -w 1120 -h 400 branding/hero-$s.svg -o branding/hero-$s.png; \
+    done
+    ls -l branding
 
 # Remove build/.
 clean:
