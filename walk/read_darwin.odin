@@ -36,10 +36,10 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 
 	request := Attr_List {
 		bitmapcount = ATTR_BIT_MAP_COUNT,
-		fileattr    = ATTR_FILE_ALLOCSIZE | ATTR_FILE_DATALENGTH,
+		fileattr    = ATTR_FILE_LINKCOUNT | ATTR_FILE_ALLOCSIZE | ATTR_FILE_DATALENGTH,
 	}
 	request.commonattr = ATTR_CMN_RETURNED_ATTRS | ATTR_CMN_ERROR | ATTR_CMN_NAME
-	request.commonattr |= ATTR_CMN_OBJTYPE
+	request.commonattr |= ATTR_CMN_DEVID | ATTR_CMN_OBJTYPE | ATTR_CMN_FILEID
 	// The same size the Linux reader gives getdents, for the same reason: most
 	// directories come back in one call.
 	buf: [32 * mem.Kilobyte]u8
@@ -58,7 +58,7 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 				return nodes, bytes, false
 			}
 			at += length
-			index, descend, recorded := record(w, d.index, e)
+			index, descend, charged, recorded := record(w, d.index, e)
 			if !recorded {
 				return nodes, bytes, false
 			}
@@ -71,7 +71,7 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 				append(&w.found, Dir{index = index, path = child})
 			}
 			nodes += 1
-			bytes += e.disk
+			bytes += charged
 		}
 	}
 	return nodes, bytes, true
@@ -116,12 +116,27 @@ parse_entry :: proc(buf: []u8) -> (e: Entry, length: int, ok: bool) {
 		return {}, 0, false
 	}
 	e.name = take_name(&r) or_return
+	if returned.commonattr & ATTR_CMN_DEVID != 0 {
+		e.id.device = u64(take_u32(&r) or_return)
+	}
 	if returned.commonattr & ATTR_CMN_OBJTYPE != 0 {
 		switch take_u32(&r) or_return {
 		case VDIR:
 			e.directory = true
 		case VLNK:
 			e.symlink = true
+		}
+	}
+	if returned.commonattr & ATTR_CMN_FILEID != 0 {
+		e.id.inode = take_u64(&r) or_return
+	}
+	// Without both halves of the id there is no telling one file's names apart from
+	// another's, so the entry is charged as though it had one name.
+	if returned.fileattr & ATTR_FILE_LINKCOUNT != 0 {
+		links := take_u32(&r) or_return
+		if returned.commonattr & (ATTR_CMN_DEVID | ATTR_CMN_FILEID) ==
+		   ATTR_CMN_DEVID | ATTR_CMN_FILEID {
+			e.links = links
 		}
 	}
 	if returned.fileattr & ATTR_FILE_ALLOCSIZE != 0 {
@@ -209,11 +224,17 @@ ATTR_BIT_MAP_COUNT :: 5
 @(private)
 ATTR_CMN_NAME :: 0x00000001
 @(private)
+ATTR_CMN_DEVID :: 0x00000002
+@(private)
 ATTR_CMN_OBJTYPE :: 0x00000008
+@(private)
+ATTR_CMN_FILEID :: 0x02000000
 @(private)
 ATTR_CMN_ERROR :: 0x20000000
 @(private)
 ATTR_CMN_RETURNED_ATTRS :: 0x80000000
+@(private)
+ATTR_FILE_LINKCOUNT :: 0x00000001
 @(private)
 ATTR_FILE_ALLOCSIZE :: 0x00000004
 @(private)

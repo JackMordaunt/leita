@@ -40,7 +40,7 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 			// to a block.
 			e.disk = round_up(e.size, BLOCK_ESTIMATE)
 		}
-		index, descend, recorded := record(w, d.index, e)
+		index, descend, charged, recorded := record(w, d.index, e)
 		if !recorded {
 			return nodes, bytes, false
 		}
@@ -53,7 +53,7 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 			append(&w.found, Dir{index = index, path = path})
 		}
 		nodes += 1
-		bytes += e.disk
+		bytes += charged
 	}
 	return nodes, bytes, true
 }

@@ -83,7 +83,7 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 			directory = l.type == .DIR,
 			symlink   = l.type == .LNK,
 		}
-		mask := linux.Statx_Mask{.TYPE, .SIZE, .BLOCKS}
+		mask := linux.Statx_Mask{.TYPE, .SIZE, .BLOCKS, .NLINK}
 		st: linux.Statx
 		if linux.statx(fd, cstring(&s.names[l.at]), {.SYMLINK_NOFOLLOW}, mask, &st) == .NONE {
 			// Some filesystems leave the type out of a directory entry. Those are
@@ -97,9 +97,14 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 				// Blocks are counted in 512 byte units whatever the filesystem
 				// builds them from.
 				e.disk = st.blocks * 512
+				e.links = st.nlink
+				e.id = {
+					device = u64(st.dev_major) << 32 | u64(st.dev_minor),
+					inode  = u64(l.ino),
+				}
 			}
 		}
-		index, descend, recorded := record(w, d.index, e)
+		index, descend, charged, recorded := record(w, d.index, e)
 		if !recorded {
 			return nodes, bytes, false
 		}
@@ -112,7 +117,7 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 			append(&w.found, Dir{index = index, path = child})
 		}
 		nodes += 1
-		bytes += e.disk
+		bytes += charged
 	}
 	return nodes, bytes, true
 }

@@ -16,6 +16,7 @@ package walk
 
 import "core:mem"
 import "core:strings"
+import "core:sync"
 
 import "../scan"
 import "jm:flow"
@@ -69,6 +70,11 @@ read :: proc(root: string, t: ^scan.Tree, cfg := Config{}) -> Error {
 	// caps how wide this can run.
 	workers = min(workers, len(t.arenas))
 
+	linked := Linked_Files {
+		seen = make(map[File_Id]struct{}, allocator),
+	}
+	defer delete(linked.seen)
+
 	states := make([]Worker, workers, allocator)
 	defer delete(states, allocator)
 	for i in 0 ..< workers {
@@ -76,6 +82,7 @@ read :: proc(root: string, t: ^scan.Tree, cfg := Config{}) -> Error {
 			writer    = scan.writer(t, i),
 			found     = make([dynamic]Dir, allocator),
 			follow    = cfg.follow,
+			linked    = &linked,
 			scratch   = scratch_make(allocator),
 			allocator = allocator,
 		}
@@ -135,6 +142,7 @@ Worker :: struct {
 	writer:    scan.Writer,
 	found:     [dynamic]Dir,
 	follow:    bool,
+	linked:    ^Linked_Files, // shared by every worker
 	err:       Error, // why this worker gave up, which only the manager acts on
 	scratch:   Scratch, // reused by the platform's reader between directories
 	allocator: mem.Allocator,
@@ -153,7 +161,8 @@ walk_dir :: proc(d: Dir, w: ^Worker) -> bool {
 
 // One entry as a directory read describes it, before it becomes a node. `disk` is
 // whatever the platform could learn about allocation; every reader fills it, since
-// only the reader knows how good its own answer is.
+// only the reader knows how good its own answer is. `links` is how many names the
+// file has, left 0 by a reader that cannot tell, which charges every name.
 @(private)
 Entry :: struct {
 	name:      string,
@@ -161,21 +170,66 @@ Entry :: struct {
 	disk:      u64,
 	directory: bool,
 	symlink:   bool,
+	links:     u32,
+	id:        File_Id,
+}
+
+// Where a file's data lives, the same for every name it has.
+@(private)
+File_Id :: struct {
+	device: u64,
+	inode:  u64,
+}
+
+/*
+The files with more than one name that some worker has already charged.
+
+A hard-linked file is charged once, to the first of its names a worker records, and
+every later name is an Extra_Name: in the tree so the file can be found at each path,
+but not counted again, as the NTFS reader does with its extra names. Which name is
+first depends on how the workers' directories happened to interleave, so a file
+linked from two directories can be charged to either from one scan to the next. A
+rollup charges a node once and for good, so the choice has to be made when the node is
+published and cannot wait until every name is known. Only files with more than one
+name come here, which keeps the lock off the path almost every file takes.
+*/
+@(private)
+Linked_Files :: struct {
+	mutex: sync.Mutex,
+	seen:  map[File_Id]struct{},
+}
+
+// Record a name of `id`, and whether it is the first any worker has recorded.
+@(private)
+mark_charged :: proc(l: ^Linked_Files, id: File_Id) -> (first: bool, err: mem.Allocator_Error) {
+	sync.mutex_guard(&l.mutex)
+	_, _, first, err = map_entry(&l.seen, id)
+	return
 }
 
 /*
 Record one entry against the directory holding it.
 
 `descend` marks an entry to walk in turn: a directory, or a symlink when the caller
-asked for those to be followed. Shared so that what a node means cannot drift between
-one platform's reader and another's.
+asked for those to be followed. `charged` is what the node adds to the volume's total,
+which is nothing for a directory, a link, or a name of a file already charged. Shared
+so that what a node means cannot drift between one platform's reader and another's.
 */
 @(private)
-record :: proc(w: ^Worker, parent: u32, e: Entry) -> (index: u32, descend: bool, ok: bool) {
+record :: proc(
+	w: ^Worker,
+	parent: u32,
+	e: Entry,
+) -> (
+	index: u32,
+	descend: bool,
+	charged: u64,
+	ok: bool,
+) {
 	slot, err := scan.claim(&w.writer, 1)
 	if err != nil {
 		w.err = .Out_Of_Memory
-		return 0, false, false
+		return 0, false, 0, false
 	}
 	index = slot
 	n := scan.node(w.writer.tree, index)
@@ -194,8 +248,20 @@ record :: proc(w: ^Worker, parent: u32, e: Entry) -> (index: u32, descend: bool,
 		descend = w.follow
 	case:
 		n.disk = e.disk
+		charged = e.disk
+		if e.links > 1 {
+			first, map_err := mark_charged(w.linked, e.id)
+			if map_err != nil {
+				w.err = .Out_Of_Memory
+				return 0, false, 0, false
+			}
+			if !first {
+				flags |= {.Extra_Name}
+				charged = 0
+			}
+		}
 	}
 	// Last, so a builder watching this tree never sees a node before its size.
 	scan.node_publish(n, flags)
-	return index, descend, true
+	return index, descend, charged, true
 }
