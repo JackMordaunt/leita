@@ -50,6 +50,9 @@ resolve :: proc(
 			return {}, {}, sig_err
 		}
 		t.fs = fs
+		if !t.image {
+			t.media = media_of(path)
+		}
 		// Reading the signature opened it, so there is nothing left to find out.
 		return t, choose(t, true), .None
 
@@ -62,6 +65,10 @@ resolve :: proc(
 		t.volume = device
 		t.mount = mount
 		t.fs = fs
+		// A share's source names a server, not a device anything here could ask about.
+		if fs != .Network {
+			t.media = media_of(device)
+		}
 		// Whatever lies below the mount point is the subtree to report on. Kept so
 		// that the mount point and this concatenate back into the path.
 		if len(path) > len(mount) {

@@ -17,6 +17,7 @@ Target :: struct {
 	mount:     string, // where that volume is mounted, e.g. C:\
 	root:      string, // subtree within the volume; "" means all of it
 	fs:        Filesystem,
+	media:     Media,
 	image:     bool, // a file holding a volume rather than a mounted one
 	allocator: mem.Allocator,
 }
@@ -59,6 +60,22 @@ target_destroy :: proc(t: ^Target) {
 	delete(t.mount, t.allocator)
 	delete(t.root, t.allocator)
 	t^ = {}
+}
+
+/*
+What stores the volume, which decides how many reads it serves well at once.
+
+Flash has no head to move, so reads in flight are served side by side, and a reader
+that keeps many going finishes sooner: on an Apple NVMe drive, 16 directory readers
+took 12.5 s where 8 took 15.8 s. A spinning disk serves one place at a time,
+and each read in flight beyond the first sends the head somewhere else. That seeking
+between them costs more than the overlap gains is assumed, not measured: no spinning
+disk was at hand to time.
+*/
+Media :: enum {
+	Unknown, // the volume did not say: a network share, an image, a reader that is silent
+	Solid,
+	Rotational,
 }
 
 // Which reader to use. Named here so choosing needs no knowledge of the backends

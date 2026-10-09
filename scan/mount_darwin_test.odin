@@ -2,6 +2,7 @@
 package scan
 
 import "core:os"
+import "core:strings"
 import "core:testing"
 
 /*
@@ -32,4 +33,40 @@ a_directory_resolves_to_its_mount_and_keeps_its_path :: proc(t: ^testing.T) {
 
 	_, ok := stat_fs("/nonexistent/sonar")
 	testing.expect(t, !ok, "a path that is not there has no filesystem")
+}
+
+/*
+The medium resolved for a volume is the one diskutil reports for its device.
+
+diskutil answers for the device without this code, so the two agreeing on / and the
+home directory, both APFS volumes inside a container, says the search climbed from
+the volume to the drive. A name no device has, and no name at all, are Unknown.
+*/
+@(test)
+a_volume_has_the_medium_diskutil_reports :: proc(t: ^testing.T) {
+	home := os.get_env("HOME", context.temp_allocator)
+	for path in ([]string{"/", home}) {
+		target, _, err := resolve(path, context.temp_allocator)
+		if !testing.expect_value(t, err, Error.None) {
+			continue
+		}
+		state, stdout, _, exec_err := os.process_exec(
+			{command = {"diskutil", "info", target.volume}},
+			context.temp_allocator,
+		)
+		if !testing.expectf(t, exec_err == nil && state.exit_code == 0, "diskutil failed") {
+			continue
+		}
+		want := Media.Unknown
+		for line in strings.split_lines(string(stdout), context.temp_allocator) {
+			field := strings.trim_space(line)
+			if strings.has_prefix(field, "Solid State:") {
+				answer := strings.trim_space(field[len("Solid State:"):])
+				want = .Solid if answer == "Yes" else .Rotational if answer == "No" else .Unknown
+			}
+		}
+		testing.expectf(t, target.media == want, "%s: %v, diskutil %v", path, target.media, want)
+	}
+	testing.expect_value(t, media_of("/dev/disk-sonar-none"), Media.Unknown)
+	testing.expect_value(t, media_of(""), Media.Unknown)
 }
