@@ -10,6 +10,7 @@ import "../../scan"
 import "../../survey"
 import "../command"
 import "../files"
+import "../history"
 import "../query"
 
 /*
@@ -20,10 +21,15 @@ changes, and the next answers show it.
 
 The window names an entry by its node in one scan's tree, so a request carrying
 another generation's is refused rather than applied to whatever has that number now.
+
+Each path a request changed on disk, or failed to, goes in the audit trail, once
+the request is done. A request refused before it touched the disk does not.
 */
 
 // act carries out c, one of the requests about an entry.
 act :: proc(d: ^Desk, c: ^command.Command) {
+	done := make([dynamic]history.Action, context.temp_allocator)
+	defer audit(d, done[:])
 	#partial switch &c in c {
 	case command.Locate:
 		if path, ok := entry_path(d, c.entry, "locate"); ok {
@@ -34,7 +40,9 @@ act :: proc(d: ^Desk, c: ^command.Command) {
 		if !ok {
 			return
 		}
+		bytes := held(d.scan, c.entry.node)
 		if err := files.trash(path); err != .None {
+			note(&done, .Trash, path, files.describe(err), bytes, true)
 			tell(
 				d,
 				true,
@@ -44,12 +52,13 @@ act :: proc(d: ^Desk, c: ^command.Command) {
 			)
 			return
 		}
+		note(&done, .Trash, path, "", bytes, false)
 		survey.forget(&d.scan.roll, &d.scan.tree, c.entry.node)
 		tell(d, false, "Moved %s to the Trash", name_of(d, c.entry))
 	case command.Clean:
-		clean(d, &c)
+		clean(d, &c, &done)
 	case command.Empty_Trash:
-		empty_trash(d, c.entry)
+		empty_trash(d, c.entry, &done)
 	case command.Rename:
 		path, ok := entry_path(d, c.entry, "rename")
 		if !ok {
@@ -60,10 +69,14 @@ act :: proc(d: ^Desk, c: ^command.Command) {
 			tell(d, true, "Could not rename %s: %s", name_of(d, c.entry), why)
 			return
 		}
+		bytes := held(d.scan, c.entry.node)
 		if _, err := files.rename(path, name, context.temp_allocator); err != .None {
-			tell(d, true, "Could not rename %s: %s", name_of(d, c.entry), files.describe(err))
+			why := files.describe(err)
+			note(&done, .Rename, path, fmt.tprintf("to %s: %s", name, why), bytes, true)
+			tell(d, true, "Could not rename %s: %s", name_of(d, c.entry), why)
 			return
 		}
+		note(&done, .Rename, path, name, bytes, false)
 		s := d.scan
 		was := name_of(d, c.entry)
 		scan.node(&s.tree, c.entry.node).name = scan.name_copy(&s.tree, name)
@@ -98,6 +111,33 @@ tell :: proc(d: ^Desk, failed: bool, format: string, args: ..any) {
 		failed = failed,
 		text   = fmt.aprintf(format, ..args),
 	}
+}
+
+// note adds an action to done, taken now.
+note :: proc(
+	done: ^[dynamic]history.Action,
+	kind: history.Action_Kind,
+	path, detail: string,
+	bytes: u64,
+	failed: bool,
+) {
+	append(done, history.Action{time.time_to_unix(time.now()), kind, path, detail, bytes, failed})
+}
+
+// audit keeps done in the audit trail, if there is a store to keep it in.
+audit :: proc(d: ^Desk, done: []history.Action) {
+	if d.history == nil {
+		return
+	}
+	if err := history.record(d.history, done); err != nil {
+		fmt.eprintln("sonar: could not keep the audit trail:", err)
+	}
+}
+
+// held is what node holds: a directory's total, or a file's size on disk.
+held :: proc(s: ^Scan, node: u32) -> u64 {
+	n := scan.node(&s.tree, node)
+	return survey.total(&s.roll, node) if .Directory in scan.node_flags(n) else n.disk
 }
 
 // name_of is the name the tree has for e, which entry_path has already checked.
@@ -209,7 +249,7 @@ newest_modification :: proc(path: string) -> (modified: i64, is_dir: bool) {
 
 // clean deletes for good each entry of c that Reclaim offered, and takes it out of
 // the totals; anything else it was sent is refused.
-clean :: proc(d: ^Desk, c: ^command.Clean) {
+clean :: proc(d: ^Desk, c: ^command.Clean, done: ^[dynamic]history.Action) {
 	s := d.scan
 	if s == nil || c.generation != d.generation || !s.grown {
 		tell(d, true, "Could not clean up: the scan it came from is gone")
@@ -224,13 +264,18 @@ clean :: proc(d: ^Desk, c: ^command.Clean) {
 			continue
 		}
 		bytes := survey.total(&s.roll, node)
-		left, err := files.delete_tree(scan.path(&s.tree, node, context.temp_allocator))
+		path := scan.path(&s.tree, node, context.temp_allocator)
+		left, err := files.delete_tree(path)
 		if err != .None {
+			note(done, .Delete, path, files.describe(err), bytes, true)
 			failed += 1
 			continue
 		}
 		if left > 0 {
+			note(done, .Delete, path, fmt.tprintf("%d could not be deleted", left), bytes, true)
 			failed += 1
+		} else {
+			note(done, .Delete, path, "", bytes, false)
 		}
 		survey.forget(&s.roll, &s.tree, node)
 		delete_key(&d.reclaimable, node)
@@ -250,7 +295,7 @@ clean :: proc(d: ^Desk, c: ^command.Clean) {
 
 // empty_trash deletes what the Trash entry e holds, if Reclaim offered it as the
 // Trash: its files and their records, never the Trash itself.
-empty_trash :: proc(d: ^Desk, e: command.Entry) {
+empty_trash :: proc(d: ^Desk, e: command.Entry, done: ^[dynamic]history.Action) {
 	s := d.scan
 	if s == nil || e.generation != d.generation || !s.grown {
 		tell(d, true, "Could not empty the Trash: the scan it came from is gone")
@@ -263,19 +308,22 @@ empty_trash :: proc(d: ^Desk, e: command.Entry) {
 	bytes := survey.total(&s.roll, e.node)
 	failed := 0
 	it := survey.children(&s.roll, e.node)
-	held := make([dynamic]u32, context.temp_allocator)
+	children := make([dynamic]u32, context.temp_allocator)
 	for c in survey.next_child(&it) {
-		append(&held, c)
+		append(&children, c)
 	}
-	for c in held {
+	for c in children {
 		path := scan.path(&s.tree, c, context.temp_allocator)
+		size := held(s, c)
 		if .Directory not_in scan.node_flags(scan.node(&s.tree, c)) {
 			// The freedesktop.org Trash keeps everything in its files and info
 			// directories; the Finder's holds what was trashed itself.
 			when ODIN_OS == .Darwin {
-				if os.remove(path) == nil {
+				if err := os.remove(path); err == nil {
+					note(done, .Empty_Trash, path, "", size, false)
 					survey.forget(&s.roll, &s.tree, c)
 				} else {
+					note(done, .Empty_Trash, path, fmt.tprint(err), size, true)
 					failed += 1
 				}
 			}
@@ -283,6 +331,21 @@ empty_trash :: proc(d: ^Desk, e: command.Entry) {
 		}
 		left, err := files.delete_tree(path)
 		failed += left + (1 if err != .None else 0)
+		switch {
+		case err != .None:
+			note(done, .Empty_Trash, path, files.describe(err), size, true)
+		case left > 0:
+			note(
+				done,
+				.Empty_Trash,
+				path,
+				fmt.tprintf("%d could not be deleted", left),
+				size,
+				true,
+			)
+		case:
+			note(done, .Empty_Trash, path, "", size, false)
+		}
 		if err == .None {
 			survey.forget(&s.roll, &s.tree, c)
 		}

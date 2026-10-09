@@ -12,6 +12,7 @@ import "core:sync"
 import "core:testing"
 import "core:time"
 
+import "jm:sqlite3"
 import "jm:stream"
 
 import "jm:ui"
@@ -336,6 +337,49 @@ a_right_click_renames_an_entry_on_disk_and_in_the_rings :: proc(t: ^testing.T) {
 	testing.expect(t, settle(&r, "arc pictures"), "the arc took the new name")
 	testing.expect(t, os.exists(fmt.tprintf("%s/pictures/big.raw", root)), "renamed on disk")
 	testing.expect(t, !os.exists(fmt.tprintf("%s/photos", root)))
+}
+
+@(test)
+a_rename_is_kept_in_the_audit_trail :: proc(t: ^testing.T) {
+	root := fixture(t, "audit")
+	defer os.remove_all(root)
+	kept := fmt.tprintf("%s-kept/history.db", root)
+	defer os.remove_all(fmt.tprintf("%s-kept", root))
+	r: Rig
+	rig_open(&r, root, kept)
+	defer rig_close(&r)
+
+	testing.expect(t, settle(&r, "Done"))
+	testing.expect(t, settle(&r, "arc photos"))
+	ui.probe_click_at(&r.p, ring_point(&r, 0.5), .Right)
+	press_and_hand_on(&r)
+	press_and_hand_on(&r)
+	testing.expect(t, ui.probe_click(&r.p, "Rename"), "the menu offers Rename")
+	press_and_hand_on(&r)
+	press_and_hand_on(&r)
+	ui.probe_type(&r.p, "pictures")
+	ui.probe_key(&r.p, .Enter)
+	press_and_hand_on(&r)
+	testing.expect(t, settle(&r, "Renamed photos to pictures"), "the toast says so")
+
+	// The desk writes the trail before it answers, so the toast means it is there.
+	db, err := sqlite3.open(kept, {busy_timeout = 1000}, context.temp_allocator)
+	testing.expect(t, err == nil, "the store is there")
+	defer sqlite3.close(&db)
+	rows, qerr := sqlite3.query(
+		db,
+		"SELECT kind, path, detail, bytes, failed FROM action",
+		allocator = context.temp_allocator,
+	)
+	testing.expect(t, qerr == nil)
+	testing.expect(t, sqlite3.next(&rows), "the rename is in the trail")
+	testing.expect_value(t, sqlite3.text(rows, 0), "rename")
+	testing.expect_value(t, sqlite3.text(rows, 1), fmt.tprintf("%s/photos", root))
+	testing.expect_value(t, sqlite3.text(rows, 2), "pictures")
+	testing.expect(t, sqlite3.integer(rows, 3) >= 264 * 1024, "with what it held")
+	testing.expect_value(t, sqlite3.integer(rows, 4), 0)
+	testing.expect(t, !sqlite3.next(&rows), "and nothing else")
+	testing.expect(t, sqlite3.finish(&rows) == nil)
 }
 
 @(test)
