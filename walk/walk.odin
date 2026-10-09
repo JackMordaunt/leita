@@ -172,6 +172,7 @@ Entry :: struct {
 	symlink:   bool,
 	links:     u32,
 	id:        File_Id,
+	mount:     bool, // a directory another volume is mounted on
 }
 
 // Where a file's data lives, the same for every name it has.
@@ -211,9 +212,13 @@ mark_charged :: proc(l: ^Linked_Files, id: File_Id) -> (first: bool, err: mem.Al
 Record one entry against the directory holding it.
 
 `descend` marks an entry to walk in turn: a directory, or a symlink when the caller
-asked for those to be followed. `charged` is what the node adds to the volume's total,
-which is nothing for a directory, a link, or a name of a file already charged. Shared
-so that what a node means cannot drift between one platform's reader and another's.
+asked for those to be followed. A directory another volume is mounted on is recorded
+but not walked, so a scan stays on the volume it started on and never reaches the same
+files twice: / reaches the Data volume through the firmlinks /usr/share/firmlinks
+lists, such as /Users, and would read it again at /System/Volumes/Data. `charged` is
+what the node adds to the volume's total, which is nothing for a directory, a link, or
+a name of a file already charged. Shared so that what a node means cannot drift
+between one platform's reader and another's.
 */
 @(private)
 record :: proc(
@@ -242,7 +247,7 @@ record :: proc(
 	switch {
 	case e.directory:
 		flags |= {.Directory}
-		descend = true
+		descend = !e.mount
 	case e.symlink:
 		flags |= {.Reparse}
 		descend = w.follow

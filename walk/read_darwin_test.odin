@@ -121,6 +121,68 @@ test_a_directory_larger_than_a_batch_is_read_whole :: proc(t: ^testing.T) {
 	}
 }
 
+/*
+A volume mounted inside the scanned tree is recorded but not walked.
+
+The mount is a real one, a small disk image attached on a directory in the root, since
+only the kernel says which directories are mount points. A plain directory beside it
+holding a file shows the walk did descend where it should.
+*/
+@(test)
+test_a_mount_point_is_not_walked :: proc(t: ^testing.T) {
+	root := fresh_root(t, "mount")
+	defer os.remove_all(root)
+
+	image := fmt.tprintf("%s.dmg", root)
+	mount := fmt.tprintf("%s/mounted", root)
+	plain := fmt.tprintf("%s/plain", root)
+	defer os.remove(image)
+	testing.expect(t, os.make_directory(mount) == nil, "could not make the mount point")
+	testing.expect(t, os.make_directory(plain) == nil, "could not make the plain directory")
+	testing.expect(t, os.write_entire_file(fmt.tprintf("%s/kept", plain), []byte{'x'}) == nil)
+
+	if !hdiutil(t, "create", "-size", "1m", "-fs", "HFS+", "-volname", "sonar", image) {
+		return
+	}
+	if !hdiutil(t, "attach", "-nobrowse", "-noverify", "-mountpoint", mount, image) {
+		return
+	}
+	defer hdiutil(t, "detach", "-force", mount)
+	hidden := fmt.tprintf("%s/hidden", mount)
+	testing.expect(t, os.write_entire_file(hidden, []byte{'x'}) == nil, "could not write")
+
+	tree: scan.Tree
+	testing.expect_value(t, scan.tree_init(&tree, 1), scan.Error.None)
+	defer scan.tree_destroy(&tree)
+	testing.expect_value(t, read(root, &tree, Config{}), Error.None)
+
+	names: map[string]u32
+	defer delete(names)
+	for index in 0 ..< tree.count {
+		n := scan.node(&tree, index)
+		if .Used in n.flags {
+			names[n.name] = index
+		}
+	}
+	mounted, has_mount := names["mounted"]
+	testing.expect(t, has_mount, "the mount point was not recorded")
+	testing.expect(t, .Directory in scan.node(&tree, mounted).flags, "not a directory")
+	testing.expect(t, "kept" in names, "the plain directory was not walked")
+	testing.expect(t, "hidden" not_in names, "the mounted volume was walked")
+}
+
+// Run hdiutil, failing the test with what it said if it does not succeed.
+@(private = "file")
+hdiutil :: proc(t: ^testing.T, args: ..string) -> bool {
+	command := make([dynamic]string, context.temp_allocator)
+	append(&command, "hdiutil")
+	append(&command, ..args)
+	state, stdout, stderr, err := os.process_exec({command = command[:]}, context.temp_allocator)
+	ok := err == nil && state.exited && state.exit_code == 0
+	testing.expectf(t, ok, "hdiutil %v failed: %v %s%s", args, err, stdout, stderr)
+	return ok
+}
+
 // An entry claiming more than the buffer holds, or a name lying outside its entry, is
 // refused rather than read as a file.
 @(test)

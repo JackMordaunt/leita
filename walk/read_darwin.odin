@@ -36,6 +36,7 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 
 	request := Attr_List {
 		bitmapcount = ATTR_BIT_MAP_COUNT,
+		dirattr     = ATTR_DIR_MOUNTSTATUS,
 		fileattr    = ATTR_FILE_LINKCOUNT | ATTR_FILE_ALLOCSIZE | ATTR_FILE_DATALENGTH,
 	}
 	request.commonattr = ATTR_CMN_RETURNED_ATTRS | ATTR_CMN_ERROR | ATTR_CMN_NAME
@@ -82,9 +83,10 @@ One entry from the front of a getattrlistbulk buffer, and how far to step to the
 
 An entry is its length, the set of attributes actually returned, then each returned
 attribute in the order getattrlistbulk(2) lays them out: the error, then the rest of
-the common attributes by bit value, then the file attributes by bit value. Only what
-was returned is present, and a directory returns no file attributes, so each is read
-only if its bit is set. The name is a view into `buf`, which the next call overwrites.
+the common attributes by bit value, then the directory attributes, then the file
+attributes by bit value. Only what was returned is present, and a directory returns no
+file attributes nor a file any directory ones, so each is read only if its bit is set.
+The name is a view into `buf`, which the next call overwrites.
 
 Not ok if the entry claims more than the buffer holds; reading past the batch would
 describe garbage as a file.
@@ -129,6 +131,9 @@ parse_entry :: proc(buf: []u8) -> (e: Entry, length: int, ok: bool) {
 	}
 	if returned.commonattr & ATTR_CMN_FILEID != 0 {
 		e.id.inode = take_u64(&r) or_return
+	}
+	if returned.dirattr & ATTR_DIR_MOUNTSTATUS != 0 {
+		e.mount = (take_u32(&r) or_return) & DIR_MNTSTATUS_MNTPOINT != 0
 	}
 	// Without both halves of the id there is no telling one file's names apart from
 	// another's, so the entry is charged as though it had one name.
@@ -235,6 +240,10 @@ ATTR_CMN_ERROR :: 0x20000000
 ATTR_CMN_RETURNED_ATTRS :: 0x80000000
 @(private)
 ATTR_FILE_LINKCOUNT :: 0x00000001
+@(private)
+ATTR_DIR_MOUNTSTATUS :: 0x00000004
+@(private)
+DIR_MNTSTATUS_MNTPOINT :: 0x00000001
 @(private)
 ATTR_FILE_ALLOCSIZE :: 0x00000004
 @(private)
