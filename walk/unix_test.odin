@@ -48,14 +48,12 @@ test_a_sparse_file_is_charged_what_it_occupies :: proc(t: ^testing.T) {
 	saw_hole, saw_solid: bool
 	for i in 0 ..< tree.count {
 		n := scan.node(&tree, i)
-		switch n.name {
+		switch scan.name_of(&tree, i) {
 		case "hole.bin":
 			saw_hole = true
-			testing.expect_value(t, n.size, u64(1 << 20))
 			testing.expectf(t, n.disk < 64 * 1024, "a hole was charged %d bytes", n.disk)
 		case "solid.bin":
 			saw_solid = true
-			testing.expect_value(t, n.size, u64(1 << 20))
 			testing.expectf(t, n.disk >= 1 << 20, "a full megabyte was charged %d bytes", n.disk)
 		}
 	}
@@ -117,10 +115,9 @@ test_a_hard_linked_file_is_charged_once :: proc(t: ^testing.T) {
 	shared_disk, lone_disk: u64
 	for i in 0 ..< tree.count {
 		n := scan.node(&tree, i)
-		switch n.name {
+		switch scan.name_of(&tree, i) {
 		case "shared", "name":
 			names += 1
-			testing.expect_value(t, n.size, u64(len(body)))
 			if .Extra_Name not_in n.flags {
 				charged += 1
 				shared_disk = n.disk

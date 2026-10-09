@@ -7,6 +7,8 @@ import "core:sync"
 import "core:unicode/utf16"
 import "core:unicode/utf8"
 
+import "../scan"
+
 // One row per MFT record. Indexed by record number in Mft.entries.
 Entry :: struct {
 	parent:          u32, // record number of the directory holding `name`
@@ -17,7 +19,6 @@ Entry :: struct {
 	flags:           Record_Flags, // .In_Use and .Directory are the ones that matter
 	attributes:      File_Attributes, // from $STANDARD_INFORMATION; .Reparse_Point marks junctions and cloud placeholders
 	name:            string, // UTF-8; empty when the record has no $FILE_NAME (free records, extension records)
-	size:            u64, // logical length of the unnamed $DATA stream
 	allocated:       u64, // bytes on disk across every non-resident attribute: data, alternate streams, indexes
 }
 
@@ -108,7 +109,8 @@ mft_init :: proc(
 	m.links = make([dynamic]Hard_Link, allocator)
 	m.sinks = make([]Sink, max(sinks, 1), allocator)
 	for &s in m.sinks {
-		if virtual.arena_init_growing(&s.names) != nil {
+		// Static, so the tree can borrow names by offset; see `to_tree`.
+		if virtual.arena_init_static(&s.names, scan.POOL_RESERVE) != nil {
 			mft_destroy(m)
 			return .Out_Of_Memory
 		}
@@ -125,7 +127,9 @@ mft_destroy :: proc(m: ^Mft) {
 	for &s in m.sinks {
 		delete(s.links)
 		delete(s.deferred)
-		virtual.arena_destroy(&s.names)
+		if s.names.curr_block != nil {
+			virtual.arena_destroy(&s.names)
+		}
 	}
 	delete(m.sinks, m.allocator)
 	m^ = {}
@@ -267,14 +271,9 @@ mft_add_record :: proc(m: ^Mft, record_number: u32, rec: []byte, sink: ^Sink) ->
 			}
 		case .Data:
 			if a.non_resident {
-				// Every extent contributes its own clusters, but only the first carries the
-				// logical size; later extents repeat it.
+				// Every extent contributes its own clusters.
 				e.allocated += attr_disk_size(a, m.bytes_per_cluster)
-				if a.lowest_vcn == 0 && len(a.name) == 0 {
-					e.size = a.data_size
-				}
 			} else if len(a.name) == 0 {
-				e.size = u64(len(a.value))
 				sink.stats.resident_files += 1
 				sink.stats.resident_bytes += u64(len(a.value))
 			}

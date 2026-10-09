@@ -54,24 +54,21 @@ test_bulk_agrees_with_lstat :: proc(t: ^testing.T) {
 			continue
 		}
 		path := strings.clone_to_cstring(
-			fmt.tprintf("%s/%s", root, n.name),
+			fmt.tprintf("%s/%s", root, scan.name_of(&tree, i)),
 			context.temp_allocator,
 		)
 		st: posix.stat_t
-		testing.expectf(t, posix.lstat(path, &st) == .OK, "lstat refused %s", n.name)
 		testing.expectf(
 			t,
-			n.size == u64(st.st_size),
-			"%s: size %d, lstat %d",
-			n.name,
-			n.size,
-			st.st_size,
+			posix.lstat(path, &st) == .OK,
+			"lstat refused %s",
+			scan.name_of(&tree, i),
 		)
 		testing.expectf(
 			t,
 			n.disk == u64(st.st_blocks) * 512,
 			"%s: disk %d, lstat %d blocks",
-			n.name,
+			scan.name_of(&tree, i),
 			n.disk,
 			st.st_blocks,
 		)
@@ -110,10 +107,11 @@ test_a_directory_larger_than_a_batch_is_read_whole :: proc(t: ^testing.T) {
 		if i == tree.root || .Used not_in n.flags {
 			continue
 		}
-		testing.expectf(t, len(n.name) == 200, "a name came back as %q", n.name)
-		index, ok := strconv.parse_int(n.name[:4])
+		name := scan.name_of(&tree, i)
+		testing.expectf(t, len(name) == 200, "a name came back as %q", name)
+		index, ok := strconv.parse_int(name[:4])
 		ok = ok && index >= 0 && index < COUNT
-		testing.expectf(t, ok && !seen[index], "%s was read twice or not at all", n.name)
+		testing.expectf(t, ok && !seen[index], "%s was read twice or not at all", name)
 		seen[index] = true
 	}
 	for s, i in seen {
@@ -161,7 +159,7 @@ test_a_mount_point_is_not_walked :: proc(t: ^testing.T) {
 	for index in 0 ..< tree.count {
 		n := scan.node(&tree, index)
 		if .Used in n.flags {
-			names[n.name] = index
+			names[scan.name_of(&tree, index)] = index
 		}
 	}
 	mounted, has_mount := names["mounted"]

@@ -60,7 +60,7 @@ builder_pass :: proc(b: ^Builder, complete: bool) {
 	survey.rollup_advance(&b.roll, b.tree)
 
 	top: [TOP_N]Sized
-	count := rank(b.tree, b.roll.totals[:], top[:])
+	count := rank(b.tree, &b.roll, top[:])
 
 	s := Snapshot {
 		count    = count,

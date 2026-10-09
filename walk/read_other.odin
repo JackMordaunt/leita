@@ -30,7 +30,6 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 		}
 		e := Entry {
 			name      = info.name,
-			size      = u64(max(info.size, 0)),
 			directory = info.type == .Directory,
 			symlink   = info.type == .Symlink,
 		}
@@ -38,7 +37,7 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 			// core:os reports the logical length and nothing about allocation, so the
 			// on-disk figure is the best estimate available here: the size rounded up
 			// to a block.
-			e.disk = round_up(e.size, BLOCK_ESTIMATE)
+			e.disk = round_up(u64(max(info.size, 0)), BLOCK_ESTIMATE)
 		}
 		index, descend, charged, recorded := record(w, d.index, e)
 		if !recorded {

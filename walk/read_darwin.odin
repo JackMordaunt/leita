@@ -13,8 +13,8 @@ Read one directory with getattrlistbulk, which describes a batch of entries per 
 
 core:os reads the names with readdir and then calls fstatat on each entry
 (core/os/dir_posix.odin), and its File_Info carries only the length, so the on-disk
-figure had to be guessed from it. getattrlistbulk hands back each entry's name, type,
-length and allocated size together, as many as fit in the buffer, so a directory costs
+figure had to be guessed from it. getattrlistbulk hands back each entry's name, type
+and allocated size together, as many as fit in the buffer, so a directory costs
 one call per buffer rather than one per entry. getattrlist(2) defines the allocated
 size as the bytes on disk used by all of the file's forks, so a sparse disk image or a
 compressed file is charged what it occupies, not its length.
@@ -37,7 +37,7 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 	request := Attr_List {
 		bitmapcount = ATTR_BIT_MAP_COUNT,
 		dirattr     = ATTR_DIR_MOUNTSTATUS,
-		fileattr    = ATTR_FILE_LINKCOUNT | ATTR_FILE_ALLOCSIZE | ATTR_FILE_DATALENGTH,
+		fileattr    = ATTR_FILE_LINKCOUNT | ATTR_FILE_ALLOCSIZE,
 	}
 	request.commonattr = ATTR_CMN_RETURNED_ATTRS | ATTR_CMN_ERROR | ATTR_CMN_NAME
 	request.commonattr |= ATTR_CMN_DEVID | ATTR_CMN_OBJTYPE | ATTR_CMN_FILEID
@@ -147,9 +147,6 @@ parse_entry :: proc(buf: []u8) -> (e: Entry, length: int, ok: bool) {
 	if returned.fileattr & ATTR_FILE_ALLOCSIZE != 0 {
 		e.disk = u64(max(i64(take_u64(&r) or_return), 0))
 	}
-	if returned.fileattr & ATTR_FILE_DATALENGTH != 0 {
-		e.size = u64(max(i64(take_u64(&r) or_return), 0))
-	}
 	return e, length, true
 }
 
@@ -246,8 +243,6 @@ ATTR_DIR_MOUNTSTATUS :: 0x00000004
 DIR_MNTSTATUS_MNTPOINT :: 0x00000001
 @(private)
 ATTR_FILE_ALLOCSIZE :: 0x00000004
-@(private)
-ATTR_FILE_DATALENGTH :: 0x00000200
 
 // enum vtype from <sys/vnode.h>, the values ATTR_CMN_OBJTYPE takes.
 @(private)

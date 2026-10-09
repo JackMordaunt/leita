@@ -48,7 +48,7 @@ test_entries_are_read_in_inode_order :: proc(t: ^testing.T) {
 			continue
 		}
 		path := strings.clone_to_cstring(
-			fmt.tprintf("%s/%s", root, n.name),
+			fmt.tprintf("%s/%s", root, scan.name_of(&tree, i)),
 			context.temp_allocator,
 		)
 		st: linux.Statx
@@ -57,7 +57,7 @@ test_entries_are_read_in_inode_order :: proc(t: ^testing.T) {
 			t,
 			u64(st.ino) > last,
 			"%s (inode %d) was read after inode %d",
-			n.name,
+			scan.name_of(&tree, i),
 			st.ino,
 			last,
 		)

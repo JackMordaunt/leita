@@ -293,7 +293,6 @@ test_resident_file :: proc(t: ^testing.T) {
 	testing.expect_value(t, e.parent, u32(RECORD_ROOT))
 	testing.expect_value(t, e.parent_sequence, u16(5))
 	testing.expect_value(t, e.sequence, u16(7))
-	testing.expect_value(t, e.size, u64(13))
 	testing.expect_value(t, e.allocated, u64(0))
 	testing.expect(t, .In_Use in e.flags)
 	testing.expect(t, .Directory not_in e.flags)
@@ -348,7 +347,6 @@ test_nonresident_streams :: proc(t: ^testing.T) {
 	add(t, &m, rec)
 
 	e := m.entries[100]
-	testing.expect_value(t, e.size, u64(5000)) // unnamed stream only
 	testing.expect_value(t, e.allocated, u64(8192 + 4096 + 65536)) // every stream, measured from run lists
 	testing.expect_value(t, e.parent, u32(64))
 	testing.expect_value(t, e.parent_sequence, u16(3))
@@ -369,7 +367,6 @@ test_fragmented_extents_sum_their_own_clusters :: proc(t: ^testing.T) {
 	defer mft_destroy(&m)
 	add(t, &m, rec)
 	testing.expect_value(t, m.entries[100].allocated, u64(8192))
-	testing.expect_value(t, m.entries[100].size, u64(8000))
 }
 
 @(test)
@@ -436,7 +433,6 @@ test_extension_record_and_hard_links :: proc(t: ^testing.T) {
 	testing.expect_value(t, e.name, "b.txt") // first proper name seen wins
 	testing.expect_value(t, e.parent, u32(70))
 	testing.expect_value(t, e.allocated, u64(4096))
-	testing.expect_value(t, e.size, u64(10))
 	testing.expect_value(t, e.sequence, u16(9))
 	testing.expect_value(t, e.link_count, u16(2))
 	testing.expect_value(t, len(m.links), 1)
@@ -554,7 +550,6 @@ test_resident_file_costs_no_clusters :: proc(t: ^testing.T) {
 
 	// The bytes live inside the MFT record, so the file itself allocates nothing and
 	// the stats record what the directory totals will therefore miss.
-	testing.expect_value(t, m.entries[100].size, u64(5))
 	testing.expect_value(t, m.entries[100].allocated, u64(0))
 	testing.expect_value(t, m.stats.resident_files, u64(1))
 	testing.expect_value(t, m.stats.resident_bytes, u64(5))

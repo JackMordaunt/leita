@@ -56,7 +56,7 @@ named :: proc(tree: ^scan.Tree, name: string) -> (^scan.Node, int) {
 	count := 0
 	for i in 0 ..< tree.count {
 		n := scan.node(tree, i)
-		if .Used in n.flags && n.name == name {
+		if .Used in n.flags && scan.name_of(tree, i) == name {
 			found = n
 			count += 1
 		}
@@ -105,12 +105,10 @@ test_walk_marks_directories_and_sizes :: proc(t: ^testing.T) {
 
 	a, _ := named(&tree, "a.txt")
 	testing.expect(t, .Directory not_in a.flags, "a.txt is marked a directory")
-	testing.expect_value(t, a.size, u64(100))
 	// 100 bytes occupy a block, whether the reader knows the block or estimates it.
 	testing.expectf(t, a.disk >= 512 && a.disk <= 8192, "a.txt charged %d bytes", a.disk)
 
 	b, _ := named(&tree, "b.txt")
-	testing.expect_value(t, b.size, u64(5000))
 	testing.expectf(t, b.disk >= 5000, "b.txt charged %d for 5000 bytes", b.disk)
 }
 

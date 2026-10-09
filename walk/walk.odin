@@ -121,7 +121,7 @@ read :: proc(root: string, t: ^scan.Tree, cfg := Config{}) -> Error {
 
 	// One writer per worker, and a writer needs an arena of its own, so a tree sized
 	// for fewer caps how wide this can run.
-	workers := min(width(cfg), len(t.arenas))
+	workers := min(width(cfg), scan.writers(t))
 
 	linked := Linked_Files {
 		seen = make(map[File_Id]struct{}, allocator),
@@ -219,7 +219,6 @@ walk_dir :: proc(d: Dir, w: ^Worker) -> bool {
 @(private)
 Entry :: struct {
 	name:      string,
-	size:      u64,
 	disk:      u64,
 	directory: bool,
 	symlink:   bool,
@@ -293,7 +292,6 @@ record :: proc(
 	n := scan.node(w.writer.tree, index)
 	n.parent = parent
 	n.name = scan.intern(&w.writer, e.name)
-	n.size = e.size
 
 	// A walker reaches a child through its parent, so the link is never in doubt.
 	flags := scan.Node_Flags{.Used, .Settled}

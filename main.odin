@@ -171,8 +171,8 @@ run :: proc() -> int {
 	defer survey.rollup_destroy(&roll)
 	survey.rollup_advance(&roll, &t)
 
-	print_largest(&t, roll.totals[:], .files)
-	print_largest(&t, roll.totals[:], .directories)
+	print_largest(&t, &roll, .files)
+	print_largest(&t, &roll, .directories)
 	return 0
 }
 
@@ -191,27 +191,28 @@ Kind :: enum {
 }
 
 // The directories that hold the most, largest first.
-rank :: proc(t: ^scan.Tree, totals: []u64, top: []Sized) -> int {
+rank :: proc(t: ^scan.Tree, roll: ^survey.Rollup, top: []Sized) -> int {
 	count := 0
-	// Bounded by the totals rather than the tree: a reader may hand out more slots
-	// while this runs, and those have not been charged yet.
-	for i in 0 ..< u32(len(totals)) {
+	// Bounded by what the rollup has seen rather than the tree: a reader may hand out
+	// more slots while this runs, and those have not been charged yet.
+	for i in 0 ..< roll.seen {
 		f := scan.node_flags(scan.node(t, i))
 		if .Used not_in f || .Directory not_in f {
 			continue
 		}
-		if totals[i] == 0 {
+		bytes := survey.total(roll, i)
+		if bytes == 0 {
 			continue
 		}
-		top_n(top, &count, Sized{bytes = totals[i], record = i})
+		top_n(top, &count, Sized{bytes = bytes, record = i})
 	}
 	return count
 }
 
-print_largest :: proc(t: ^scan.Tree, totals: []u64, kind: Kind) {
+print_largest :: proc(t: ^scan.Tree, roll: ^survey.Rollup, kind: Kind) {
 	top: [TOP_N]Sized
 	count := 0
-	for i in 0 ..< u32(len(totals)) {
+	for i in 0 ..< roll.seen {
 		n := scan.node(t, i)
 		flags := scan.node_flags(n)
 		if .Used not_in flags {
@@ -228,7 +229,7 @@ print_largest :: proc(t: ^scan.Tree, totals: []u64, kind: Kind) {
 			if .Directory not_in flags {
 				continue
 			}
-			bytes = totals[i]
+			bytes = survey.total(roll, i)
 		}
 		if bytes == 0 {
 			continue

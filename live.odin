@@ -112,8 +112,8 @@ run_live :: proc(f: ^survey.Fill) -> int {
 		missed,
 	)
 
-	print_largest(f.tree, b.roll.totals[:], .files)
-	print_largest(f.tree, b.roll.totals[:], .directories)
+	print_largest(f.tree, &b.roll, .files)
+	print_largest(f.tree, &b.roll, .directories)
 
 	return 0
 }
