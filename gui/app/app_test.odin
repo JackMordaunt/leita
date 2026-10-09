@@ -214,7 +214,12 @@ a_rescan_starts_over_at_the_top :: proc(t: ^testing.T) {
 	testing.expect(t, settle(&r, "264.0 KiB in 2 items"), "photos is open")
 	first := r.m.generation
 
-	// Scanning again renumbers the tree, so the view goes back to the top.
+	// Scanning again renumbers the tree, so the view goes back to the top. The
+	// listing can be answered before the scan ends, and Rescan replaces Stop only
+	// once it has; the toolbar then lays out over a few frames, and the click
+	// waits for it.
+	testing.expect(t, settle(&r, "Rescan"), "the scan finished")
+	ui.probe_advance(&r.p, 10, 1.0 / 60)
 	testing.expect(t, ui.probe_click(&r.p, "Rescan"))
 	hand_on(&r)
 	testing.expect(t, settle(&r, "268.0 KiB in 2 items"), "the top is listed again")
@@ -1410,7 +1415,10 @@ a_rescan_is_compared_with_the_scan_before :: proc(t: ^testing.T) {
 	write(t, fmt.tprintf("%s/a/more.bin", root), 2 << 20)
 	testing.expect(t, os.remove(fmt.tprintf("%s/b/two.bin", root)) == nil)
 	write(t, fmt.tprintf("%s/c/new.bin", root), 3 << 19)
-	// The legend's new line lays out over a few frames; the click waits for it.
+	// Progress is answered apart from history, so Rescan may not have replaced
+	// Stop yet; and the legend's new line lays out over a few frames. The click
+	// waits for both.
+	testing.expect(t, settle(&r, "Rescan"), "the scan finished")
 	ui.probe_advance(&r.p, 10, 1.0 / 60)
 	first := r.m.generation
 	testing.expect(t, ui.probe_click(&r.p, "Rescan"))
