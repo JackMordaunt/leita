@@ -2,7 +2,7 @@
 #
 #   just build      debug build with AddressSanitizer   -> build/debug/estoile
 #   just release    optimised build                     -> build/release/estoile
-#   just test       run every imported package's tests under ASan -> build/test/
+#   just test       run every imported package's tests, and pdf's, under ASan -> build/test/
 #   just check      type-check both modes without producing a binary
 #   just clean      remove build/
 #   just deps       fetch the jm submodule and the native libraries the window links
@@ -44,10 +44,12 @@ release:
     mkdir -p build/release
     {{odin}} build . -o:speed {{flags}} -out:build/release/{{bin}}{{exe}}
 
-# Run the tests of every package the binary imports under ASan -> build/test/
+# Run the tests of every package the binary imports, and of pdf, which it does
+# not import yet, under ASan -> build/test/
 test:
     mkdir -p build/test
     {{odin}} test . -all-packages -debug {{san}} {{flags}} -out:build/test/{{bin}}{{exe}}
+    {{odin}} test pdf -debug {{san}} {{flags}} -out:build/test/pdf{{exe}}
 
 # Type-check both modes without producing a binary.
 check:
