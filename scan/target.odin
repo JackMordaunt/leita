@@ -46,6 +46,11 @@ top :: proc(t: Target) -> string {
 	return t.mount
 }
 
+// SYNTHETIC_ENV names the day of a made-up disk to scan in place of whatever is
+// asked for, so a demo or a screenshot shows no one's real files. Unset or empty,
+// every target is real.
+SYNTHETIC_ENV :: "SONAR_SYNTHETIC"
+
 // The full path of what will be scanned: the top, and the subtree below it.
 location :: proc(t: Target, allocator := context.allocator) -> string {
 	if t.root == "" {
