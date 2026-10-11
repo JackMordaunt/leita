@@ -11,7 +11,7 @@
 
 <p align="center">See what is filling any drive the moment you open it, then hand the answer on as a report.</p>
 
-<p align="center"><b>Free for personal use</b> · source published · no telemetry · Linux, Windows and macOS</p>
+<p align="center"><b>Free to scan and clean up</b> · reports with a licence · source published · no telemetry · Linux, Windows and macOS</p>
 
 <p align="center">
   <a href="branding/demo.mp4"><img src="branding/demo-poster.png" style="border-radius: 12px; box-shadow: 0 22px 70px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(0, 0, 0, 0.12);" alt="leita scanning a disk: the sunburst, treemap and icicle views fill in as the scan runs, in the light theme and then the dark" width="900"></a>
@@ -37,11 +37,16 @@ off on a new disk, **HTML** to share, **CSV** for a spreadsheet, **JSON** for
 your own tools. Each report lists the largest folders and files, how full
 the disk is, and what can be cleaned up.
 
+Reports come with a licence. Try them free for the first 30 days.
+
 ## See what changed
 
 leita remembers every scan. Scan the same place again and it shows what grew
 and what shrank since last time, so the folder that filled up overnight
 stands out on its own.
+
+Comparing scans comes with a licence too, with the same 30-day trial. leita
+keeps every scan either way, so your history is all there when you add one.
 
 ## Free up space, safely
 
@@ -56,8 +61,9 @@ the answer.
 
 ## Private by design
 
-- **No telemetry.** leita never sends anything anywhere. The source is
-  published, so you can check.
+- **No telemetry.** leita sends nothing about you or your disks. The one
+  exception is adding a licence key: leita sends the key once to fetch your
+  licence, and nothing after. The source is published, so you can check.
 - **Nothing to set up.** One small app, no account, no runtime to install.
 - **Your data stays with you.** Scans and the deletion log stay on your
   machine.
@@ -68,7 +74,7 @@ Open **Leita** and pick a drive or folder. To scan a whole drive, run it as
 an administrator.
 
 Prefer the terminal? The `leita` command does the same, and writes reports
-too:
+too, under a licence or during the trial:
 
 ```sh
 leita D: --report usage.pdf
@@ -78,12 +84,17 @@ leita D: --report usage.pdf
 
 ## Licensing
 
-**Personal use is free, with every feature included.** That covers your own
-computer, your own studies, and unpaid hobby or open-source work.
+**Scanning, the charts and Reclaim are free for personal use.** That covers
+your own computer, your own studies, and unpaid hobby or open-source work.
 
-**Organisations need a commercial licence.** This applies to businesses,
-sole traders, schools, charities and government. You can evaluate leita for
-30 days before you buy. The full terms are in [LICENSE.md](LICENSE.md).
+**Reports and change tracking need a licence.** Both work for 30 days from
+the first time you run leita, so you can try them first. To add a licence,
+click the key in the toolbar and paste the licence key from your receipt.
+
+**Organisations need a commercial licence for any use.** This applies to
+businesses, sole traders, schools, charities and government. You can
+evaluate leita for 30 days before you buy. The full terms are in
+[LICENSE.md](LICENSE.md).
 
 ## Build from source
 
