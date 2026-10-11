@@ -240,6 +240,7 @@ Licence_Result :: struct {
 	tier:     string, // as the window shows it
 	order:    string,
 	issued:   string, // YYYY-MM-DD
+	activating: bool, // a licence key is out being exchanged for its licence
 	// The last licence offered (command.Add_Licence): offered moves on with each,
 	// and problem says why it was not taken, "" when it was.
 	offered:  u32,

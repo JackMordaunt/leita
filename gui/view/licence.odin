@@ -11,11 +11,11 @@ import "../query"
 
 /*
 The licence. The toolbar's key opens a dialog that says whose licence leita
-runs under, or that it runs free for personal use with a link to buy one. A
-licence is pasted into its field, or opened from a file; the host checks it and
-the dialog shows the licence it now runs under, or why it would not take it.
-Nothing is sent anywhere: Buy opens the shop in the browser, and the licence
-comes back from there by hand.
+runs under, or that it runs free for personal use with a link to buy one. The
+key from the shop's receipt is pasted into its field, or a licence itself, or a
+licence is opened from a file; the host exchanges a key for its licence, checks
+the licence, and the dialog shows the licence it now runs under, or why it would
+not take it. The key is the one thing leita sends, once, and the dialog says so.
 */
 
 // BUY_URL is where Buy a licence goes, unless LEITA_BUY_URL names another, as
@@ -64,7 +64,13 @@ licence_dialog :: proc(gtx: ^ui.Ctx, m: ^Model) {
 	close, add := false, false
 	buttons := [2]primer.Dialog_Button {
 		{content = "Close", clicked = &close},
-		{content = "Add licence", type = .Primary, clicked = &add, disabled = pasted == ""},
+		{
+			content = "Adding…" if r.activating else "Add licence",
+			type = .Primary,
+			clicked = &add,
+			loading = r.activating,
+			disabled = pasted == "" || r.activating,
+		},
 	}
 	if primer.dialog(gtx, &m.licence_open, "Licence", footer = buttons[:], width = .Medium) {
 		ui.column(gtx, gap = 16, align = .Fill)
@@ -102,18 +108,24 @@ licence_dialog :: proc(gtx: ^ui.Ctx, m: ^Model) {
 		if primer.form_control(
 			gtx,
 			"Replace the licence" if r.licensed else "Add a licence",
-			caption = "Paste the line from your purchase page, beginning leita1.",
+			caption = "The licence key from your receipt, or a licence beginning leita1.",
 			validation = problem,
 		) {
 			primer.text_input(
 				gtx,
 				&m.licence_text,
-				placeholder = "leita1.…",
+				placeholder = "Licence key",
 				block = true,
 				validation = .Error if problem != "" else .None,
 				name = "Licence to add",
 			)
 		}
+		primer.text(
+			gtx,
+			"leita sends the key once, to mordaunt.dev, to fetch your licence. It sends nothing else, then or later.",
+			.Small,
+			color = primer.color(.Fg_Color_Muted),
+		)
 		if ui.row(gtx) {
 			if primer.button(gtx, "Open licence file…", leading = .File) {
 				ui.pick_file(gtx, LICENCE_PICK)
@@ -123,12 +135,13 @@ licence_dialog :: proc(gtx: ^ui.Ctx, m: ^Model) {
 	if close {
 		m.licence_open = false
 	}
-	if add && pasted != "" && len(pasted) <= command.MAX_PATH {
+	if add && pasted != "" && !r.activating && len(pasted) <= command.MAX_PATH {
 		send_licence(gtx, m, r, pasted, file = false)
 	}
 }
 
-// send_licence offers text, a licence or the path of a file holding one.
+// send_licence offers text: a licence key, a licence, or the path of a file
+// holding one.
 @(private)
 send_licence :: proc(gtx: ^ui.Ctx, m: ^Model, r: ^query.Licence_Result, text: string, file: bool) {
 	m.licence_waiting = r.offered

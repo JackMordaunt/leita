@@ -128,8 +128,9 @@ Reveal :: struct {
 }
 
 // Add_Licence offers a licence to use from now on, in place of any before it:
-// the licence itself as pasted, or when file is set the path of a file holding
-// one. The host checks it and says how it went in query.Licence.
+// the licence itself as pasted, the licence key the shop's receipt gives, which
+// the host exchanges for its licence, or when file is set the path of a file
+// holding one. The host checks it and says how it went in query.Licence.
 Add_Licence :: struct {
 	text: Text,
 	file: bool,

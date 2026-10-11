@@ -41,6 +41,7 @@ import "core:sync"
 import "core:thread"
 import "core:time"
 
+import "jm:http"
 import "jm:stream"
 import "jm:ui"
 
@@ -86,6 +87,7 @@ Desk_In :: union {
 	Need_Event,
 	command.Command,
 	Tick,
+	Activated,
 }
 
 // Scan is one run of a reader and everything derived from it. It is heap
@@ -142,13 +144,20 @@ Desk :: struct {
 	licence_key:     []byte, // into licence_built, or the caller's
 	licence_built:   [32]byte,
 	licence_offered: u32,
-	licence_problem: string,
+	licence_problem: string,	// Exchanging a key for its licence: the client, started on the first key,
+	// where it sends to, the port its answer comes back through, and whether one
+	// is under way.
+	client:          ^http.Client,
+	activate_url:    string,
+	activations:     ^stream.Port(Activated),
+	activating:      bool,
 }
 
 Host :: struct {
 	p:         ^stream.Pipeline,
 	cmd_port:  stream.Port(command.Command),
 	need_port: stream.Port(Need_Event),
+	act_port:  stream.Port(Activated),
 	inbox:     ui.Inbox,
 	desk:      Desk,
 	pool:      ^thread.Thread,
@@ -165,7 +174,8 @@ wake is called, from the desk thread, whenever an answer has been put in the inb
 a frame loop runs a frame on it. kept is the history store's path, "" for none;
 reports the folder reports are exported to, "" for the user's Documents. The
 licence is kept beside the history store and checked against licence_key, nil
-for the key leita was built with.
+for the key leita was built with. A licence key is exchanged for its licence at
+activate_url, "" for LEITA_ACTIVATE_URL or else ACTIVATE_URL.
 */
 init :: proc(
 	h: ^Host,
@@ -174,6 +184,7 @@ init :: proc(
 	kept := "",
 	reports := "",
 	licence_key: []byte = nil,
+	activate_url := "",
 ) {
 	allocator := context.allocator
 	ui.inbox_init(&h.inbox, allocator)
@@ -184,7 +195,12 @@ init :: proc(
 		reports = strings.clone(reports, allocator) if reports != "" else files.reports_folder(allocator),
 	}
 	history_open(&h.desk, kept)
-	licence_open(&h.desk, licence.path_beside(kept, context.temp_allocator), licence_key)
+	licence_open(
+		&h.desk,
+		licence.path_beside(kept, context.temp_allocator),
+		licence_key,
+		activate_url,
+	)
 
 	p := stream.make_pipeline(allocator, cap = 64)
 	h.p = p
@@ -196,12 +212,16 @@ init :: proc(
 	needs: stream.Stream(Need_Event)
 	needs, h.need_port = stream.port(p, Need_Event, name = "needs")
 	clock := stream.interval(p, TICK, name = "clock")
+	activations: stream.Stream(Activated)
+	activations, h.act_port = stream.port(p, Activated, name = "activations")
+	h.desk.activations = &h.act_port
 
 	desk_in := stream.merge(
 		[]stream.Stream(Desk_In) {
 			stream.transform(needs, need_in),
 			stream.transform(commands, command_in),
 			stream.transform(clock, tick_in),
+			stream.transform(activations, activated_in),
 		},
 		name = "desk in",
 	)
@@ -224,6 +244,7 @@ data_host :: proc(h: ^Host) -> ui.Data_Host {
 // stop ends the threads in the order they depend on each other, calls off the
 // scan and frees everything.
 stop :: proc(h: ^Host) {
+	licence_stop(&h.desk)
 	stream.stop(h.p)
 	thread.join(h.pool)
 	thread.destroy(h.pool)
@@ -338,6 +359,10 @@ tick_in :: proc(_: time.Duration) -> Desk_In {
 	return Tick{}
 }
 
+activated_in :: proc(a: Activated) -> Desk_In {
+	return a
+}
+
 // desk_step is the desk: one need, command or tick at a time, on the desk thread.
 desk_step :: proc(d: ^Desk, v: Desk_In) {
 	v := v
@@ -386,6 +411,9 @@ desk_step :: proc(d: ^Desk, v: Desk_In) {
 			}
 			answer_all(d)
 		}
+	case Activated:
+		take_activation(d, &e)
+		answer_all(d)
 	case Tick:
 		if advance(d) {
 			answer_all(d)

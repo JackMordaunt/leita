@@ -1,6 +1,8 @@
 //review:ignore history-coupled-file the chart tree this tests lives in gui/view/chart_tree.odin; view.odin needs nothing
 package leita_app
 
+import "base:runtime"
+
 import "core:crypto"
 import "core:crypto/ed25519"
 import "core:encoding/base64"
@@ -17,6 +19,7 @@ import "core:testing"
 import "core:time"
 
 import "jm:debug"
+import "jm:http/loopback"
 import "jm:sqlite3"
 import "jm:stream"
 
@@ -49,8 +52,22 @@ Rig :: struct {
 }
 
 @(private = "file")
-rig_open :: proc(r: ^Rig, path: string, kept := "", reports := "", licence_key: []byte = nil) {
-	init(&r.h, path, kept = kept, reports = reports, licence_key = licence_key)
+rig_open :: proc(
+	r: ^Rig,
+	path: string,
+	kept := "",
+	reports := "",
+	licence_key: []byte = nil,
+	activate_url := "",
+) {
+	init(
+		&r.h,
+		path,
+		kept = kept,
+		reports = reports,
+		licence_key = licence_key,
+		activate_url = activate_url,
+	)
 	r.data = data_host(&r.h)
 	view.model_init(&r.m, path)
 	ui.subscriptions_init(&r.needs)
@@ -2033,10 +2050,67 @@ an_export_compares_with_the_scan_before :: proc(t: ^testing.T) {
 	testing.expect(t, grown["bytes_before"].(json.Null) == nil, "the added file is new")
 }
 
-// The key opens the licence dialog: free for personal use, with Buy. A licence
-// that is not one is refused and says why; one opened from a file signed with
-// the key leita checks against is taken, kept beside the history store, and
-// read back when leita next starts.
+/*
+Signer stands in for Librium: a key pair made for the test, and the licence it
+signs for the terms TERMS give, as the server mints one.
+*/
+@(private = "file")
+Signer :: struct {
+	priv: ed25519.Private_Key,
+	pub:  [ed25519.PUBLIC_KEY_SIZE]byte,
+	line: string, // in the heap allocator, for the server's threads
+}
+
+@(private = "file")
+TERMS :: `{"licensee": "Acme Ltd", "tier": "team", "order": "ord_7", "issued": "2026-10-11"}`
+
+@(private = "file")
+signer_make :: proc(t: ^testing.T) -> (s: Signer) {
+	context.random_generator = crypto.random_generator()
+	testing.expect(t, ed25519.private_key_generate(&s.priv))
+	ed25519.private_key_public_bytes(&s.priv, s.pub[:])
+	signed := strings.concatenate(
+		{
+			licence.PREFIX,
+			base64.encode(transmute([]byte)string(TERMS), allocator = context.temp_allocator),
+		},
+		context.temp_allocator,
+	)
+	sig: [ed25519.SIGNATURE_SIZE]byte
+	ed25519.sign(&s.priv, transmute([]byte)signed, sig[:])
+	s.line = fmt.aprintf(
+		"%s.%s",
+		signed,
+		base64.encode(sig[:], allocator = context.temp_allocator),
+		allocator = runtime.heap_allocator(),
+	)
+	return
+}
+
+// open_licence opens the licence dialog from the toolbar's key, named as it
+// is while leita is unlicensed or licensed.
+@(private = "file")
+open_licence :: proc(t: ^testing.T, r: ^Rig, name := "Licence: free for personal use") {
+	ui.probe_advance(&r.p, 10, 1.0 / 60)
+	testing.expect(t, ui.probe_click(&r.p, name), "the toolbar offers the licence")
+	ui.probe_advance(&r.p, 20, 1.0 / 60)
+}
+
+// offer pastes text into the licence dialog's field and adds it.
+@(private = "file")
+offer :: proc(t: ^testing.T, r: ^Rig, text: string) {
+	ui.text_set(&r.m.licence_text, "")
+	testing.expect(t, ui.probe_click(&r.p, "Licence to add"))
+	ui.probe_type(&r.p, text)
+	ui.probe_frame(&r.p)
+	testing.expect(t, ui.probe_click_top(&r.p, "Add licence"))
+	hand_on(r)
+}
+
+// The key opens the licence dialog: free for personal use, with Buy. What is
+// neither a key nor a licence is refused and says why; a licence opened from a
+// file signed with the key leita checks against is taken, kept beside the
+// history store, and read back when leita next starts.
 @(test)
 a_licence_is_checked_kept_and_read_back :: proc(t: ^testing.T) {
 	root := fixture(t, "licence")
@@ -2045,62 +2119,39 @@ a_licence_is_checked_kept_and_read_back :: proc(t: ^testing.T) {
 	os.remove_all(data)
 	defer os.remove_all(data)
 	kept := fmt.tprintf("%s/history.db", data)
-
-	// A key pair standing in for Librium's, and a licence signed with it.
-	context.random_generator = crypto.random_generator()
-	priv: ed25519.Private_Key
-	testing.expect(t, ed25519.private_key_generate(&priv))
-	pub: [ed25519.PUBLIC_KEY_SIZE]byte
-	ed25519.private_key_public_bytes(&priv, pub[:])
-	terms := `{"licensee": "Acme Ltd", "tier": "team", "order": "ord_7", "issued": "2026-10-11"}`
-	signed := strings.concatenate(
-		{
-			licence.PREFIX,
-			base64.encode(transmute([]byte)terms, allocator = context.temp_allocator),
-		},
-		context.temp_allocator,
-	)
-	sig: [ed25519.SIGNATURE_SIZE]byte
-	ed25519.sign(&priv, transmute([]byte)signed, sig[:])
+	s := signer_make(t)
+	defer delete(s.line, runtime.heap_allocator())
 	file := fmt.tprintf("%s.licence", root)
 	defer os.remove(file)
-	testing.expect(
-		t,
-		os.write_entire_file(
-			file,
-			fmt.tprintf(
-				"%s.%s\n",
-				signed,
-				base64.encode(sig[:], allocator = context.temp_allocator),
-			),
-		) ==
-		nil,
-	)
+	testing.expect(t, os.write_entire_file(file, fmt.tprintf("%s\n", s.line)) == nil)
 
 	{
 		r: Rig
-		rig_open(&r, root, kept = kept, licence_key = pub[:])
+		rig_open(&r, root, kept = kept, licence_key = s.pub[:])
 		defer rig_close(&r)
 		testing.expect(t, settle(&r, "Done"))
-		ui.probe_advance(&r.p, 10, 1.0 / 60)
-		testing.expect(t, ui.probe_click(&r.p, "Licence: free for personal use"))
-		ui.probe_advance(&r.p, 20, 1.0 / 60)
+		open_licence(t, &r)
 		testing.expect(t, ui.probe_click(&r.p, "Buy a licence"))
 		ui.probe_frame(&r.p)
 		testing.expect_value(t, ui.probe_opened_url(&r.p), view.BUY_URL)
 
-		testing.expect(t, ui.probe_click(&r.p, "Licence to add"))
-		ui.probe_type(&r.p, "not a licence")
-		ui.probe_frame(&r.p)
-		testing.expect(t, ui.probe_click_top(&r.p, "Add licence"))
-		hand_on(&r)
+		offer(t, &r, "not a licence")
+		testing.expect(
+			t,
+			settle(
+				&r,
+				"That is not a licence key: paste the key from your receipt, or a licence beginning leita1.",
+			),
+			"what is neither a key nor a licence says why",
+		)
+		offer(t, &r, "leita1.e30=.AAAA")
 		testing.expect(
 			t,
 			settle(
 				&r,
 				"The licence is not a leita licence; paste the whole line, from leita1. to its end.",
 			),
-			"a paste that is not a licence says why",
+			"a broken licence says why",
 		)
 
 		testing.expect(t, ui.probe_click(&r.p, "Open licence file…"))
@@ -2115,11 +2166,111 @@ a_licence_is_checked_kept_and_read_back :: proc(t: ^testing.T) {
 
 	// leita starts again and runs under the licence kept.
 	r: Rig
-	rig_open(&r, root, kept = kept, licence_key = pub[:])
+	rig_open(&r, root, kept = kept, licence_key = s.pub[:])
 	defer rig_close(&r)
 	testing.expect(t, settle(&r, "Done"))
-	ui.probe_advance(&r.p, 10, 1.0 / 60)
-	testing.expect(t, ui.probe_click(&r.p, "Licence"))
-	ui.probe_advance(&r.p, 20, 1.0 / 60)
+	open_licence(t, &r, "Licence")
 	testing.expect(t, settle(&r, "Licensed to Acme Ltd"), "the licence kept is read back")
+}
+
+// answer_activate answers /activate as the licence server does: the licence for the one
+// key it sold, and a refusal for any other.
+@(private = "file")
+answer_activate :: proc(conn: ^loopback.Conn, req: loopback.Request) {
+	s := (^Signer)(conn.server.user)
+	switch {
+	case req.method == "POST" &&
+	     req.path == "/activate" &&
+	     strings.contains(req.body, `"key":"LEITA-SOLD"`):
+		loopback.send(
+			conn,
+			fmt.tprintf(
+				"HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n%s\n",
+				len(s.line) + 1,
+				s.line,
+			),
+		)
+	case req.path == "/activate":
+		refusal := "This licence key is not one the shop sold.\nmore detail"
+		loopback.send(
+			conn,
+			fmt.tprintf(
+				"HTTP/1.1 404 Not Found\r\nContent-Length: %d\r\n\r\n%s",
+				len(refusal),
+				refusal,
+			),
+		)
+	case:
+		loopback.send(conn, "HTTP/1.1 500 Oops\r\nContent-Length: 0\r\n\r\n")
+	}
+}
+
+// A licence key is exchanged once for its licence: one the shop did not sell
+// is refused with the shop's reason, a server that fails or cannot be reached
+// says so, and the key it sold brings back the licence, which is taken.
+@(test)
+a_licence_key_is_exchanged_for_its_licence :: proc(t: ^testing.T) {
+	root := fixture(t, "licence_key")
+	defer os.remove_all(root)
+	data := fmt.tprintf("%s-data", root)
+	os.remove_all(data)
+	defer os.remove_all(data)
+	s := signer_make(t)
+	defer delete(s.line, runtime.heap_allocator())
+	srv, up := loopback.start(answer_activate, &s, runtime.heap_allocator())
+	if !testing.expect(t, up, "the shop's server started") {
+		return
+	}
+	defer loopback.stop(srv)
+
+	{
+		// Assumes nothing listens on port 9, discard, of the loopback, as on a
+		// machine running no discard service.
+		r: Rig
+		rig_open(
+			&r,
+			root,
+			kept = fmt.tprintf("%s/history.db", data),
+			licence_key = s.pub[:],
+			activate_url = "http://127.0.0.1:9/activate",
+		)
+		defer rig_close(&r)
+		testing.expect(t, settle(&r, "Done"))
+		open_licence(t, &r)
+		offer(t, &r, "LEITA-SOLD")
+		testing.expect(
+			t,
+			settle(
+				&r,
+				"leita could not reach the licence server. Check the connection, or open the licence file from your receipt instead.",
+			),
+			"an unreachable server says so",
+		)
+	}
+
+	r: Rig
+	rig_open(
+		&r,
+		root,
+		kept = fmt.tprintf("%s/history.db", data),
+		licence_key = s.pub[:],
+		activate_url = loopback.url(srv, "/activate"),
+	)
+	defer rig_close(&r)
+	testing.expect(t, settle(&r, "Done"))
+	open_licence(t, &r)
+	offer(t, &r, "LEITA-UNSOLD")
+	testing.expect(
+		t,
+		settle(&r, "This licence key is not one the shop sold."),
+		"the shop's reason, its first line",
+	)
+	testing.expect(t, !r.h.desk.licensed)
+
+	offer(t, &r, "LEITA-SOLD")
+	testing.expect(t, settle(&r, "Licensed to Acme Ltd"), "the key brings back its licence")
+	kept, read_err := os.read_entire_file(fmt.tprintf("%s/licence", data), context.temp_allocator)
+	testing.expect(t, read_err == nil, "which is kept")
+	testing.expect_value(t, strings.trim_space(string(kept)), s.line)
+	testing.expect_value(t, ui.text_string(&r.m.licence_text), "")
 }
