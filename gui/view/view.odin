@@ -11,6 +11,7 @@ reorders while the reader is still inside it.
 package leita_view
 
 import "core:fmt"
+import "core:os"
 import "core:strings"
 
 import "jm:ui"
@@ -163,6 +164,14 @@ Model :: struct {
 	export_picking:   bool,
 	export_sent:      Maybe(u32),
 	saved_toasts:     map[int]u32,
+	// The licence dialog (licence.odin): whether it is open, the licence pasted,
+	// the offer count when one was sent until the host answers, whether it has
+	// answered since the dialog opened, and where Buy goes ("" for BUY_URL).
+	licence_open:     bool,
+	licence_text:     ui.Text_State,
+	licence_waiting:  Maybe(u32),
+	licence_answered: bool,
+	buy_url:          string,
 }
 
 model_init :: proc(m: ^Model, path: string) {
@@ -170,11 +179,15 @@ model_init :: proc(m: ^Model, path: string) {
 	m.dir = query.ROOT
 	m.toasts.allocator = context.allocator
 	m.export_format = .Pdf
+	// The shop's sandbox, for a build that is tried against it.
+	m.buy_url = os.get_env("LEITA_BUY_URL", context.allocator)
 }
 
 model_destroy :: proc(m: ^Model) {
 	ui.text_destroy(&m.path)
 	ui.text_destroy(&m.rename)
+	ui.text_destroy(&m.licence_text)
+	delete(m.buy_url)
 	delete(m.back)
 	delete(m.forward)
 	delete(m.target.name)
@@ -246,6 +259,7 @@ view :: proc(gtx: ^ui.Ctx, user: rawptr) {
 	dialogs(gtx, m)
 	reclaim_dialogs(gtx, m)
 	export_dialog(gtx, m, prog)
+	licence_dialog(gtx, m)
 }
 
 // --- the side column ----------------------------------------------------------
@@ -368,6 +382,7 @@ toolbar :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result) {
 			ui.command(gtx, command.Command(command.Scan{path = command.text_make(prog.target)}))
 		}
 	}
+	licence_button(gtx, m)
 	if primer.icon_button(
 		gtx,
 		m.dark ? .Sun : .Moon,

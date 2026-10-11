@@ -230,3 +230,18 @@ Reclaim_Result :: struct {
 
 // RECLAIM_RECENT_DAYS is how recently touched a candidate is left unchosen.
 RECLAIM_RECENT_DAYS :: 7
+
+// Licence is the licence leita runs under, and how the last one offered went.
+Licence :: struct {}
+
+Licence_Result :: struct {
+	licensed: bool, // a licence is in use; the rest says whose
+	licensee: string,
+	tier:     string, // as the window shows it
+	order:    string,
+	issued:   string, // YYYY-MM-DD
+	// The last licence offered (command.Add_Licence): offered moves on with each,
+	// and problem says why it was not taken, "" when it was.
+	offered:  u32,
+	problem:  string,
+}

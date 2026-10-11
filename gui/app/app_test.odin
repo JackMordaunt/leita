@@ -1,6 +1,9 @@
 //review:ignore history-coupled-file the chart tree this tests lives in gui/view/chart_tree.odin; view.odin needs nothing
 package leita_app
 
+import "core:crypto"
+import "core:crypto/ed25519"
+import "core:encoding/base64"
 import "core:encoding/json"
 import "core:fmt"
 import "core:log"
@@ -23,6 +26,7 @@ import "jm:ui/ops"
 import "jm:ui/primer"
 import "jm:ui/render"
 
+import "../../licence"
 import "../command"
 import "../query"
 import "../view"
@@ -45,8 +49,8 @@ Rig :: struct {
 }
 
 @(private = "file")
-rig_open :: proc(r: ^Rig, path: string, kept := "", reports := "") {
-	init(&r.h, path, kept = kept, reports = reports)
+rig_open :: proc(r: ^Rig, path: string, kept := "", reports := "", licence_key: []byte = nil) {
+	init(&r.h, path, kept = kept, reports = reports, licence_key = licence_key)
 	r.data = data_host(&r.h)
 	view.model_init(&r.m, path)
 	ui.subscriptions_init(&r.needs)
@@ -2027,4 +2031,95 @@ an_export_compares_with_the_scan_before :: proc(t: ^testing.T) {
 	grown := top["largest_files"].(json.Array)[0].(json.Object)
 	testing.expect_value(t, grown["path"].(json.String), fmt.tprintf("%s/added.bin", root))
 	testing.expect(t, grown["bytes_before"].(json.Null) == nil, "the added file is new")
+}
+
+// The key opens the licence dialog: free for personal use, with Buy. A licence
+// that is not one is refused and says why; one opened from a file signed with
+// the key leita checks against is taken, kept beside the history store, and
+// read back when leita next starts.
+@(test)
+a_licence_is_checked_kept_and_read_back :: proc(t: ^testing.T) {
+	root := fixture(t, "licence")
+	defer os.remove_all(root)
+	data := fmt.tprintf("%s-data", root)
+	os.remove_all(data)
+	defer os.remove_all(data)
+	kept := fmt.tprintf("%s/history.db", data)
+
+	// A key pair standing in for Librium's, and a licence signed with it.
+	context.random_generator = crypto.random_generator()
+	priv: ed25519.Private_Key
+	testing.expect(t, ed25519.private_key_generate(&priv))
+	pub: [ed25519.PUBLIC_KEY_SIZE]byte
+	ed25519.private_key_public_bytes(&priv, pub[:])
+	terms := `{"licensee": "Acme Ltd", "tier": "team", "order": "ord_7", "issued": "2026-10-11"}`
+	signed := strings.concatenate(
+		{
+			licence.PREFIX,
+			base64.encode(transmute([]byte)terms, allocator = context.temp_allocator),
+		},
+		context.temp_allocator,
+	)
+	sig: [ed25519.SIGNATURE_SIZE]byte
+	ed25519.sign(&priv, transmute([]byte)signed, sig[:])
+	file := fmt.tprintf("%s.licence", root)
+	defer os.remove(file)
+	testing.expect(
+		t,
+		os.write_entire_file(
+			file,
+			fmt.tprintf(
+				"%s.%s\n",
+				signed,
+				base64.encode(sig[:], allocator = context.temp_allocator),
+			),
+		) ==
+		nil,
+	)
+
+	{
+		r: Rig
+		rig_open(&r, root, kept = kept, licence_key = pub[:])
+		defer rig_close(&r)
+		testing.expect(t, settle(&r, "Done"))
+		ui.probe_advance(&r.p, 10, 1.0 / 60)
+		testing.expect(t, ui.probe_click(&r.p, "Licence: free for personal use"))
+		ui.probe_advance(&r.p, 20, 1.0 / 60)
+		testing.expect(t, ui.probe_click(&r.p, "Buy a licence"))
+		ui.probe_frame(&r.p)
+		testing.expect_value(t, ui.probe_opened_url(&r.p), view.BUY_URL)
+
+		testing.expect(t, ui.probe_click(&r.p, "Licence to add"))
+		ui.probe_type(&r.p, "not a licence")
+		ui.probe_frame(&r.p)
+		testing.expect(t, ui.probe_click_top(&r.p, "Add licence"))
+		hand_on(&r)
+		testing.expect(
+			t,
+			settle(
+				&r,
+				"The licence is not a leita licence; paste the whole line, from leita1. to its end.",
+			),
+			"a paste that is not a licence says why",
+		)
+
+		testing.expect(t, ui.probe_click(&r.p, "Open licence file…"))
+		ui.probe_frame(&r.p)
+		testing.expect(t, ui.probe_pick(&r.p, file))
+		ui.probe_frame(&r.p)
+		hand_on(&r)
+		testing.expect(t, settle(&r, "Licensed to Acme Ltd"), "the licence from the file is taken")
+		testing.expect(t, settle(&r, "Team, up to 50 people · order ord_7 · issued 2026-10-11"))
+		testing.expect(t, os.exists(fmt.tprintf("%s/licence", data)), "and kept")
+	}
+
+	// leita starts again and runs under the licence kept.
+	r: Rig
+	rig_open(&r, root, kept = kept, licence_key = pub[:])
+	defer rig_close(&r)
+	testing.expect(t, settle(&r, "Done"))
+	ui.probe_advance(&r.p, 10, 1.0 / 60)
+	testing.expect(t, ui.probe_click(&r.p, "Licence"))
+	ui.probe_advance(&r.p, 20, 1.0 / 60)
+	testing.expect(t, settle(&r, "Licensed to Acme Ltd"), "the licence kept is read back")
 }

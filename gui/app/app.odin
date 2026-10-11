@@ -45,6 +45,7 @@ import "jm:stream"
 import "jm:ui"
 
 import "../../history"
+import "../../licence"
 import "../../ntfs"
 import "../../reclaim"
 import "../../scan"
@@ -68,6 +69,7 @@ Query :: union {
 	query.Rings,
 	query.Reclaim,
 	query.History,
+	query.Licence,
 }
 
 // Need_Event is a need appearing or going, as the main thread hands it on.
@@ -111,27 +113,36 @@ Scan :: struct {
 // Desk is the stage pinned to the desk thread: the current scan and every live
 // need, so each tick can answer them all again.
 Desk :: struct {
-	inbox:       ^ui.Inbox,
-	wake:        proc(),
-	generation:  u32,
-	scan:        ^Scan,
-	live:        map[ui.Need_Key]Query,
-	notice:      query.Notice, // its text owned
+	inbox:           ^ui.Inbox,
+	wake:            proc(),
+	generation:      u32,
+	scan:            ^Scan,
+	live:            map[ui.Need_Key]Query,
+	notice:          query.Notice, // its text owned
 	// What Reclaim last offered, by node: Clean deletes only these.
-	reclaimable: map[u32]reclaim.Category,
+	reclaimable:     map[u32]reclaim.Category,
 	// The scans kept (history.odin), nil when none are; the snapshot this scan
 	// was kept as, the one it is compared with, and what each node held in that.
-	history:     ^history.Store,
-	snapshot:    i64,
-	compared:    query.Snapshot,
-	was:         map[u32]u64,
+	history:         ^history.Store,
+	snapshot:        i64,
+	compared:        query.Snapshot,
+	was:             map[u32]u64,
 	// Where reports are exported to when the window names no file, and where
 	// its save dialog opens: files.reports_folder unless init was given one, ""
 	// for neither; and each one saved, by the notice that said so (export.odin).
-	reports:     string,
-	saved:       map[u32]string,
+	reports:         string,
+	saved:           map[u32]string,
 	// A report is being written, for Progress to say so while the desk is busy.
-	exporting:   bool,
+	exporting:       bool,
+	// The licence in use (licence.odin), where it is kept, the key it is checked
+	// against, and how the last one the window offered went.
+	licence:         licence.Licence,
+	licensed:        bool,
+	licence_path:    string,
+	licence_key:     []byte, // into licence_built, or the caller's
+	licence_built:   [32]byte,
+	licence_offered: u32,
+	licence_problem: string,
 }
 
 Host :: struct {
@@ -152,9 +163,18 @@ Build the pipeline and start the threads, then scan path if it is not empty.
 
 wake is called, from the desk thread, whenever an answer has been put in the inbox:
 a frame loop runs a frame on it. kept is the history store's path, "" for none;
-reports the folder reports are exported to, "" for the user's Documents.
+reports the folder reports are exported to, "" for the user's Documents. The
+licence is kept beside the history store and checked against licence_key, nil
+for the key leita was built with.
 */
-init :: proc(h: ^Host, path: string, wake: proc() = nil, kept := "", reports := "") {
+init :: proc(
+	h: ^Host,
+	path: string,
+	wake: proc() = nil,
+	kept := "",
+	reports := "",
+	licence_key: []byte = nil,
+) {
 	allocator := context.allocator
 	ui.inbox_init(&h.inbox, allocator)
 	h.desk = {
@@ -164,6 +184,7 @@ init :: proc(h: ^Host, path: string, wake: proc() = nil, kept := "", reports := 
 		reports = strings.clone(reports, allocator) if reports != "" else files.reports_folder(allocator),
 	}
 	history_open(&h.desk, kept)
+	licence_open(&h.desk, licence.path_beside(kept, context.temp_allocator), licence_key)
 
 	p := stream.make_pipeline(allocator, cap = 64)
 	h.p = p
@@ -221,6 +242,7 @@ stop :: proc(h: ^Host) {
 	}
 	delete(h.desk.saved)
 	history_close(&h.desk)
+	licence_close(&h.desk)
 	ui.inbox_destroy(&h.inbox)
 }
 
@@ -242,6 +264,8 @@ on_need :: proc(user: rawptr, need: ui.Need, added: bool) {
 		q, _ = ui.need_as(need, query.Rings)
 	case ui.need_is(need, query.History):
 		q, _ = ui.need_as(need, query.History)
+	case ui.need_is(need, query.Licence):
+		q = query.Licence{}
 	case:
 		return
 	}
@@ -352,6 +376,9 @@ desk_step :: proc(d: ^Desk, v: Desk_In) {
 			answer_all(d)
 		case command.Reveal:
 			reveal(d, c)
+		case command.Add_Licence:
+			add_licence(d, &c)
+			answer_all(d)
 		case command.Locate, command.Trash, command.Rename, command.Clean, command.Empty_Trash:
 			act(d, &e)
 			if d.scan != nil {
@@ -525,6 +552,8 @@ answer :: proc(d: ^Desk, key: ui.Need_Key, q: Query) {
 		put(d, key, rings(d, q))
 	case query.History:
 		put(d, key, history_answer(d, q))
+	case query.Licence:
+		put(d, key, licence_answer(d))
 	}
 }
 

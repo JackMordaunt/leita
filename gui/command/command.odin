@@ -38,6 +38,7 @@ Command :: union {
 	Baseline,
 	Export,
 	Reveal,
+	Add_Licence,
 }
 
 // Scan reads what is at path, calling off any scan still running.
@@ -124,4 +125,12 @@ Export :: struct {
 // Reveal shows the file a notice said was saved in the system's file manager.
 Reveal :: struct {
 	notice: u32,
+}
+
+// Add_Licence offers a licence to use from now on, in place of any before it:
+// the licence itself as pasted, or when file is set the path of a file holding
+// one. The host checks it and says how it went in query.Licence.
+Add_Licence :: struct {
+	text: Text,
+	file: bool,
 }
