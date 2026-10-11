@@ -73,6 +73,10 @@ colour_switch :: proc(gtx: ^ui.Ctx, m: ^Model, compact := false) {
 		{label = "Change", icon = .Diff},
 	}
 	#assert(len(colourings) == len(Colouring))
+	// The trial can end while leita is coloured by change.
+	if m.colour == .Change && !unlocked(gtx) {
+		m.colour = .Folder
+	}
 	at := int(m.colour)
 	if primer.segmented_control(
 		gtx,
@@ -82,7 +86,11 @@ colour_switch :: proc(gtx: ^ui.Ctx, m: ^Model, compact := false) {
 		size = .Small,
 		hide_labels = compact,
 	) {
-		m.colour = Colouring(at)
+		if Colouring(at) == .Change && !unlocked(gtx) {
+			licence_show(m, CHANGE_LOCKED)
+		} else {
+			m.colour = Colouring(at)
+		}
 	}
 }
 

@@ -63,6 +63,9 @@ licence_open :: proc(d: ^Desk, path: string, key: []byte, activate_url: string) 
 		url = os.get_env("LEITA_ACTIVATE_URL", context.temp_allocator)
 	}
 	d.activate_url = strings.clone(url if url != "" else ACTIVATE_URL)
+	d.first_use = licence.first_use(
+		licence.path_beside(path, context.temp_allocator, "first-use") if path != "" else "",
+	)
 	if key != nil {
 		d.licence_key = key
 	} else if built, ok := licence.public_key(); ok {
@@ -250,6 +253,8 @@ licence_answer :: proc(d: ^Desk) -> query.Licence_Result {
 		licensed   = d.licensed,
 		activating = d.activating,
 		offered    = d.licence_offered,
+		unlocked   = licence.unlocked(d.licensed, d.first_use),
+		trial_left = max(0, licence.TRIAL_DAYS - int(time.since(d.first_use) / (24 * time.Hour))),
 		problem    = d.licence_problem,
 	}
 	if d.licensed {

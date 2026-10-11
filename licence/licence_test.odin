@@ -7,6 +7,7 @@ import "core:os"
 import "core:path/filepath"
 import "core:strings"
 import "core:testing"
+import "core:time"
 
 // Signer is a key pair made for a test, standing in for Librium's.
 Signer :: struct {
@@ -143,4 +144,20 @@ a_saved_licence_reads_back :: proc(t: ^testing.T) {
 	_, gone := read(path_beside(kept, context.temp_allocator)[:len(path) - 1])
 	testing.expect_value(t, gone, Error.Unreadable)
 	testing.expect_value(t, path_beside(""), "")
+}
+
+@(test)
+first_use_is_remembered_from_the_first_time_it_is_asked :: proc(t: ^testing.T) {
+	dir, derr := os.make_directory_temp("", "leita-first-*", context.temp_allocator)
+	testing.expect(t, derr == nil)
+	defer os.remove_all(dir)
+	path, _ := filepath.join({dir, "data", "first-use"}, context.temp_allocator)
+
+	first := first_use(path)
+	testing.expect(t, os.exists(path), "it is written the first time")
+	testing.expect_value(t, time.to_unix_seconds(first_use(path)), time.to_unix_seconds(first))
+
+	testing.expect(t, os.write_entire_file(path, "1000\n") == nil)
+	testing.expect_value(t, time.to_unix_seconds(first_use(path)), 1000)
+	testing.expect(t, time.since(first_use("")) < time.Minute, "nowhere to keep it is now")
 }

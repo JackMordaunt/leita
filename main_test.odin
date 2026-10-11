@@ -121,6 +121,23 @@ a_report_it_cannot_write_is_refused :: proc(t: ^testing.T) {
 	}
 }
 
+// Once the trial is over without a licence, a report is refused before anything
+// is read; the scan alone is still free.
+@(test)
+a_report_after_the_trial_needs_a_licence :: proc(t: ^testing.T) {
+	// A real directory, so only the lock can stop the report.
+	tmp, _ := os.temp_directory(context.temp_allocator)
+	root := fmt.tprintf("%s/leita_locked_cli", tmp)
+	os.remove_all(root)
+	testing.expect(t, os.make_directory(root) == nil)
+	defer os.remove_all(root)
+	out := fmt.tprintf("%s.json", root)
+	os.remove(out)
+	defer os.remove(out)
+	testing.expect_value(t, scan_and_say({target = root, report = out}, locked = true), 1)
+	testing.expect(t, !os.exists(out), "nothing is written")
+}
+
 // A directory under the temp folder for one test, empty, and its history store
 // beside it rather than in it, so the store is not part of what is scanned.
 @(private)

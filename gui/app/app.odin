@@ -144,13 +144,14 @@ Desk :: struct {
 	licence_key:     []byte, // into licence_built, or the caller's
 	licence_built:   [32]byte,
 	licence_offered: u32,
-	licence_problem: string,	// Exchanging a key for its licence: the client, started on the first key,
+	licence_problem: string, // Exchanging a key for its licence: the client, started on the first key,
 	// where it sends to, the port its answer comes back through, and whether one
 	// is under way.
 	client:          ^http.Client,
 	activate_url:    string,
 	activations:     ^stream.Port(Activated),
-	activating:      bool,
+	activating:      bool, // When leita first ran here, the start of the evaluation (licence.first_use).
+	first_use:       time.Time,
 }
 
 Host :: struct {

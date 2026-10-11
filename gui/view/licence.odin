@@ -33,10 +33,26 @@ licence_button :: proc(gtx: ^ui.Ctx, m: ^Model) {
 		"Licence" if licensed else "Licence: free for personal use",
 		.Invisible,
 	) {
-		m.licence_open = true
-		m.licence_waiting = nil
-		m.licence_answered = false
+		licence_show(m)
 	}
+}
+
+// licence_show opens the licence dialog, saying why first when a paid feature
+// sent the person there.
+@(private)
+licence_show :: proc(m: ^Model, why := "") {
+	m.licence_open = true
+	m.licence_why = why
+	m.licence_waiting = nil
+	m.licence_answered = false
+}
+
+// unlocked is whether the paid features work, as the host last said: under a
+// licence, or in the trial. Before it says, they do.
+@(private)
+unlocked :: proc(gtx: ^ui.Ctx) -> bool {
+	r, _ := ui.need(gtx, query.Licence{}, query.Licence_Result)
+	return r == nil || r.unlocked
 }
 
 // licence_dialog is the licence: whose it is, and a field to give leita another.
@@ -74,6 +90,9 @@ licence_dialog :: proc(gtx: ^ui.Ctx, m: ^Model) {
 	}
 	if primer.dialog(gtx, &m.licence_open, "Licence", footer = buttons[:], width = .Medium) {
 		ui.column(gtx, gap = 16, align = .Fill)
+		if m.licence_why != "" && !r.unlocked {
+			primer.inline_message(gtx, m.licence_why, .Warning)
+		}
 		if r.licensed {
 			primer.heading(
 				gtx,
@@ -96,8 +115,21 @@ licence_dialog :: proc(gtx: ^ui.Ctx, m: ^Model) {
 		} else {
 			primer.text(
 				gtx,
-				"leita is free for personal use. An organisation needs a licence once its 30-day evaluation ends.",
+				"Scanning, the charts and Reclaim are free for personal use. Reports and change tracking need a licence. An organisation needs one for any use once its 30-day evaluation ends.",
 			)
+			if r.trial_left > 0 {
+				primer.text(
+					gtx,
+					fmt.aprintf(
+						"You can try reports and change tracking for %d more %s.",
+						r.trial_left,
+						"day" if r.trial_left == 1 else "days",
+						allocator = gtx.allocator,
+					),
+					.Small,
+					color = primer.color(.Fg_Color_Muted),
+				)
+			}
 			if ui.row(gtx) {
 				if primer.button(gtx, "Buy a licence", .Primary, trailing = .Link_External) {
 					ui.open_url(gtx, m.buy_url if m.buy_url != "" else BUY_URL)
@@ -150,6 +182,41 @@ send_licence :: proc(gtx: ^ui.Ctx, m: ^Model, r: ^query.Licence_Result, text: st
 		command.Command(command.Add_Licence{text = command.text_make(text), file = file}),
 	)
 }
+
+/*
+trial_banner says, once the trial is over and leita runs under no licence, that
+reports and change tracking now need one, and that the rest stays free.
+Dismissed, it stays away until leita next starts.
+*/
+@(private)
+trial_banner :: proc(gtx: ^ui.Ctx, m: ^Model) {
+	r, _ := ui.need(gtx, query.Licence{}, query.Licence_Result)
+	if r == nil || r.unlocked || m.trial_seen {
+		return
+	}
+	switch primer.banner(
+		gtx,
+		"Your 30-day trial of reports and change tracking has ended",
+		"Scanning, the charts and Reclaim stay free. A licence brings back reports and what changed since the last scan.",
+		.Upsell,
+		primary = "Buy a licence",
+		secondary = "Add a licence",
+		dismissible = true,
+	) {
+	case .Primary:
+		ui.open_url(gtx, m.buy_url if m.buy_url != "" else BUY_URL)
+	case .Secondary:
+		licence_show(m)
+	case .Dismiss:
+		m.trial_seen = true
+	case .None:
+	}
+}
+
+// REPORTS_LOCKED and CHANGE_LOCKED say why Export and colouring by change open
+// the licence dialog once the trial is over.
+REPORTS_LOCKED :: "Exporting reports needs a licence now the 30-day trial has ended."
+CHANGE_LOCKED  :: "Seeing what changed since the last scan needs a licence now the 30-day trial has ended. leita still keeps every scan, so it is all there once you add one."
 
 // LICENCE_PICK is the area the file dialog answers, as EXPORT_PICK is.
 @(private)

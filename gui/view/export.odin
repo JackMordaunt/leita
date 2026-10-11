@@ -42,7 +42,11 @@ export_button :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result) {
 		loading = busy,
 		state = state,
 	) {
-		m.export_open = true
+		if unlocked(gtx) {
+			m.export_open = true
+		} else {
+			licence_show(m, REPORTS_LOCKED)
+		}
 	}
 }
 

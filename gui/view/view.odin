@@ -171,6 +171,8 @@ Model :: struct {
 	licence_text:     ui.Text_State,
 	licence_waiting:  Maybe(u32),
 	licence_answered: bool,
+	licence_why:      string, // the paid feature that opened it, "" for none; static //review:ignore odin-destroy-incomplete always a constant, never allocated
+	trial_seen:       bool, // the trial banner was dismissed, until leita next starts
 	buy_url:          string,
 }
 
@@ -420,6 +422,7 @@ status :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result) {
 		primer.text(gtx, counters(gtx, prog), color = primer.color(.Fg_Color_Muted))
 	}
 	notice(gtx, m, prog.notice)
+	trial_banner(gtx, m)
 	if prog.state == .Failed && prog.problem != "" {
 		primer.banner(gtx, "The scan failed", prog.problem, .Critical)
 	}

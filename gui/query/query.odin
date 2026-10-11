@@ -235,14 +235,16 @@ RECLAIM_RECENT_DAYS :: 7
 Licence :: struct {}
 
 Licence_Result :: struct {
-	licensed: bool, // a licence is in use; the rest says whose
-	licensee: string,
-	tier:     string, // as the window shows it
-	order:    string,
-	issued:   string, // YYYY-MM-DD
+	licensed:   bool, // a licence is in use; the rest says whose
+	licensee:   string,
+	tier:       string, // as the window shows it
+	order:      string,
+	issued:     string, // YYYY-MM-DD
 	activating: bool, // a licence key is out being exchanged for its licence
+	unlocked:   bool, // the paid features work: licensed, or in the trial
+	trial_left: int, // whole days of the trial left, 0 once it is over
 	// The last licence offered (command.Add_Licence): offered moves on with each,
 	// and problem says why it was not taken, "" when it was.
-	offered:  u32,
-	problem:  string,
+	offered:    u32,
+	problem:    string,
 }

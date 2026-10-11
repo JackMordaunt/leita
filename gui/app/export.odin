@@ -5,6 +5,7 @@ import "core:strings"
 import "core:time"
 
 import "../../history"
+import "../../licence"
 import "../../report"
 import "../../synth"
 import "../command"
@@ -35,6 +36,10 @@ export :: proc(d: ^Desk, c: command.Export) {
 		tell(d, true, "Could not export a report: the scan is not finished")
 		return
 	}
+	if !licence.unlocked(d.licensed, d.first_use) {
+		tell(d, true, "Exporting reports needs a licence now the 30-day trial has ended")
+		return
+	}
 	chosen := command.text_of(&c.path)
 	folder := d.reports
 	if chosen == "" && folder == "" {
@@ -58,6 +63,9 @@ export :: proc(d: ^Desk, c: command.Export) {
 	opt := report.Options {
 		reclaim = c.reclaim,
 		home    = synth.HOME if s.engine == .Synthetic else "",
+	}
+	if d.licensed {
+		opt.licensee = d.licence.licensee
 	}
 	if d.compared.id != 0 && d.history != nil {
 		if then, err := history.load(d.history, d.compared.id, context.temp_allocator);

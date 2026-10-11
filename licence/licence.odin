@@ -23,9 +23,12 @@ import "core:crypto/ed25519"
 import "core:encoding/base64"
 import "core:encoding/hex"
 import "core:encoding/json"
+import "core:fmt"
 import "core:os"
 import "core:path/filepath"
+import "core:strconv"
 import "core:strings"
+import "core:time"
 
 // PREFIX begins every licence of this format, and names the format's version.
 PREFIX :: "leita1."
@@ -197,14 +200,51 @@ destroy :: proc(l: ^Licence, allocator := context.allocator) {
 	l^ = {}
 }
 
-// path_beside is where the licence in use is kept: a file named licence in the
+// path_beside is where the licence in use is kept: a file named name in the
 // folder that holds the history store at kept. "" when kept is.
-path_beside :: proc(kept: string, allocator := context.allocator) -> string {
+path_beside :: proc(kept: string, allocator := context.allocator, name := "licence") -> string {
 	if kept == "" {
 		return ""
 	}
-	path, _ := filepath.join({filepath.dir(kept), "licence"}, allocator)
+	path, _ := filepath.join({filepath.dir(kept), name}, allocator)
 	return path
+}
+
+// TRIAL_DAYS is how long the paid features, reports and change tracking, work
+// without a licence from the day leita first ran. It matches the evaluation
+// LICENSE.md §4 gives an organisation: to run the Software "for up to 30 days"
+// before it must buy a Commercial Licence.
+TRIAL_DAYS :: 30
+
+// unlocked is whether the paid features work: under a licence, or in the trial
+// that began at first.
+unlocked :: proc(licensed: bool, first: time.Time) -> bool {
+	return licensed || time.since(first) < TRIAL_DAYS * 24 * time.Hour
+}
+
+/*
+first_use is when leita first ran on this machine, as the file at path
+remembers it, writing now there the first time it is asked. It is the start of
+the trial the paid features have. Now when path is "" or cannot be read or
+written, so a machine with nowhere to keep it is never told its time is up.
+*/
+first_use :: proc(path: string) -> time.Time {
+	now := time.now()
+	if path == "" {
+		return now
+	}
+	if data, err := os.read_entire_file(path, context.temp_allocator); err == nil {
+		if secs, ok := strconv.parse_i64(strings.trim_space(string(data))); ok {
+			return time.unix(secs, 0)
+		}
+		return now
+	}
+	if dir := filepath.dir(path); !os.exists(dir) {
+		os.make_directory_all(dir)
+	}
+	// Unwritten, it is asked again next time, and is now again then.
+	_ = os.write_entire_file(path, fmt.tprintf("%d\n", time.to_unix_seconds(now)))
+	return now
 }
 
 // read is the text of the file at path, in the temp allocator.
@@ -232,4 +272,22 @@ save :: proc(path, text: string) -> Error {
 		return .Unwritable
 	}
 	return .None
+}
+
+// licensee_kept is whose licence is kept at path, checked against the key leita
+// was built with: "" when there is none that checks. In the temp allocator.
+licensee_kept :: proc(path: string) -> string {
+	key, ok := public_key()
+	if !ok || path == "" {
+		return ""
+	}
+	text, err := read(path)
+	if err != .None {
+		return ""
+	}
+	l, cerr := check(text, key[:], context.temp_allocator)
+	if cerr != .None {
+		return ""
+	}
+	return l.licensee
 }

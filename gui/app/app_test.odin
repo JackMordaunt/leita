@@ -2274,3 +2274,103 @@ a_licence_key_is_exchanged_for_its_licence :: proc(t: ^testing.T) {
 	testing.expect_value(t, strings.trim_space(string(kept)), s.line)
 	testing.expect_value(t, ui.text_string(&r.m.licence_text), "")
 }
+
+// For thirty days from when leita first ran here, reports and change tracking
+// work without a licence. After that an unlicensed copy says the trial is over;
+// Export and colouring by change open the licence dialog saying why, and the
+// host writes no report; under a licence both work again.
+@(test)
+reports_and_change_tracking_need_a_licence_after_the_trial :: proc(t: ^testing.T) {
+	root := fixture(t, "trial")
+	defer os.remove_all(root)
+	data := fmt.tprintf("%s-data", root)
+	os.remove_all(data)
+	defer os.remove_all(data)
+	testing.expect(t, os.make_directory(data) == nil)
+	kept := fmt.tprintf("%s/history.db", data)
+	s := signer_make(t)
+	defer delete(s.line, runtime.heap_allocator())
+	ENDED :: "Your 30-day trial of reports and change tracking has ended"
+
+	{
+		// The first run starts the trial: both work, and nothing is said.
+		r: Rig
+		rig_open(&r, root, kept = kept, licence_key = s.pub[:])
+		defer rig_close(&r)
+		testing.expect(t, settle(&r, "Done"))
+		ui.probe_advance(&r.p, 10, 1.0 / 60)
+		testing.expect(t, !ui.probe_tagged(&r.p, ENDED))
+		testing.expect(t, os.exists(fmt.tprintf("%s/first-use", data)))
+		testing.expect(t, ui.probe_click(&r.p, "Change"))
+		ui.probe_advance(&r.p, 10, 1.0 / 60)
+		testing.expect_value(t, r.m.colour, view.Colouring.Change)
+		testing.expect(t, ui.probe_click(&r.p, "Export"))
+		ui.probe_advance(&r.p, 20, 1.0 / 60)
+		testing.expect(t, ui.probe_tagged(&r.p, "Export report"), "the export dialog opens")
+	}
+
+	month := time.to_unix_seconds(time.now()) - 31 * 24 * 60 * 60
+	testing.expect(
+		t,
+		os.write_entire_file(fmt.tprintf("%s/first-use", data), fmt.tprintf("%d\n", month)) == nil,
+	)
+	{
+		r: Rig
+		rig_open(&r, root, kept = kept, licence_key = s.pub[:])
+		defer rig_close(&r)
+		testing.expect(t, settle(&r, "Done"))
+		testing.expect(t, settle(&r, ENDED), "a month on, it says the trial is over")
+		testing.expect(t, ui.probe_click(&r.p, "Dismiss banner"))
+		ui.probe_advance(&r.p, 10, 1.0 / 60)
+		testing.expect(t, !ui.probe_tagged(&r.p, ENDED), "dismissed, it goes")
+
+		testing.expect(t, ui.probe_click(&r.p, "Export"))
+		ui.probe_advance(&r.p, 20, 1.0 / 60)
+		testing.expect(t, ui.probe_tagged(&r.p, view.REPORTS_LOCKED), "Export says why")
+		testing.expect(t, !ui.probe_tagged(&r.p, "Export report"))
+		r.m.licence_open = false
+		ui.probe_advance(&r.p, 20, 1.0 / 60)
+
+		testing.expect(t, ui.probe_click(&r.p, "Change"))
+		ui.probe_advance(&r.p, 20, 1.0 / 60)
+		testing.expect(
+			t,
+			ui.probe_tagged(&r.p, view.CHANGE_LOCKED),
+			"colouring by change says why",
+		)
+		testing.expect_value(t, r.m.colour, view.Colouring.Folder)
+
+		// Whatever the window sends, the host writes no report.
+		reports := fmt.tprintf("%s-reports", root)
+		defer os.remove_all(reports)
+		stream.port_send(
+			r.h.cmd_port,
+			command.Command(
+				command.Export {
+					generation = r.m.generation,
+					format = .Json,
+					path = command.text_make(fmt.tprintf("%s.json", reports)),
+				},
+			),
+		)
+		testing.expect(
+			t,
+			settle(&r, "Exporting reports needs a licence now the 30-day trial has ended"),
+		)
+		testing.expect(t, !os.exists(fmt.tprintf("%s.json", reports)))
+	}
+
+	testing.expect(t, licence.save(fmt.tprintf("%s/licence", data), s.line) == .None)
+	r: Rig
+	rig_open(&r, root, kept = kept, licence_key = s.pub[:])
+	defer rig_close(&r)
+	testing.expect(t, settle(&r, "Done"))
+	ui.probe_advance(&r.p, 10, 1.0 / 60)
+	testing.expect(t, !ui.probe_tagged(&r.p, ENDED), "a licensed copy says nothing")
+	testing.expect(t, ui.probe_click(&r.p, "Change"))
+	ui.probe_advance(&r.p, 10, 1.0 / 60)
+	testing.expect_value(t, r.m.colour, view.Colouring.Change)
+	testing.expect(t, ui.probe_click(&r.p, "Export"))
+	ui.probe_advance(&r.p, 20, 1.0 / 60)
+	testing.expect(t, ui.probe_tagged(&r.p, "Export report"), "under a licence, Export works")
+}

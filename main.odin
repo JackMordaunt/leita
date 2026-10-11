@@ -19,6 +19,7 @@ import "core:time"
 import "history"
 import "human"
 @(require) import "jm:debug"
+import "licence"
 import "ntfs"
 import "report"
 import "scan"
@@ -87,10 +88,16 @@ run :: proc() -> int {
 		return 0
 	}
 
-	// Each finished scan is kept where the window keeps its own, to compare the next with.
+	// Each finished scan is kept where the window keeps its own, to compare the
+	// next with, and the licence beside it, whether or not this run keeps its scan.
+	data := history.default_path(context.temp_allocator)
+	licensee := licence.licensee_kept(licence.path_beside(data, context.temp_allocator))
+	first := licence.first_use(licence.path_beside(data, context.temp_allocator, "first-use"))
 	return scan_and_say(
 		opt,
-		"" if opt.no_history else history.default_path(context.temp_allocator),
+		"" if opt.no_history else data,
+		licensee,
+		!licence.unlocked(licensee != "", first),
 	)
 }
 
@@ -98,13 +105,20 @@ run :: proc() -> int {
 scan_and_say scans what opt names and says what it found: a summary on the
 terminal, a report as well or instead when one is asked for. kept is the history
 store the scan is compared with and kept in, "" for none; --no-history makes it
-none whatever it is.
+none whatever it is. licensee is whose licence leita runs under, "" for none,
+and locked says the trial is over without one, so no report is written.
 */
-scan_and_say :: proc(opt: Options, kept := "") -> int {
+scan_and_say :: proc(opt: Options, kept := "", licensee := "", locked := false) -> int {
 	// Checked before anything is read, so a mistake costs nothing.
 	format, format_err := report_format(opt)
 	if format_err != "" {
 		fmt.eprintfln("error: %s", format_err)
+		return 1
+	}
+	if opt.report != "" && locked {
+		fmt.eprintln(
+			"error: reports need a licence now the 30-day trial has ended; add one in Leita, the window, under the key in its toolbar",
+		)
 		return 1
 	}
 	if opt.report != "" && opt.live {
@@ -268,7 +282,7 @@ scan_and_say :: proc(opt: Options, kept := "") -> int {
 		&t,
 		&roll,
 		facts,
-		{top = opt.top, reclaim = opt.reclaim, previous = k.previous},
+		{top = opt.top, reclaim = opt.reclaim, previous = k.previous, licensee = licensee},
 	)
 	defer report.destroy(&r)
 	return write_report(&r, opt.report, format, paper)

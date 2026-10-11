@@ -26,6 +26,8 @@ write_json :: proc(sb: ^strings.Builder, r: ^Report) {
 	json_time(sb, r.generated)
 	strings.write_string(sb, ",\n  \"generator\": {\"name\": \"leita\", \"version\": ")
 	json_string(sb, r.version)
+	strings.write_string(sb, ", \"licensee\": ")
+	json_string_or_null(sb, r.licensee)
 	strings.write_string(sb, "},\n")
 
 	strings.write_string(sb, "  \"target\": {")

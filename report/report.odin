@@ -36,6 +36,9 @@ DEFAULT_TOP :: 50
 Report :: struct {
 	generated:           time.Time, // when the report was built
 	version:             string, // the leita that built it
+	// Whose licence the leita that built it runs under, "" for none: every
+	// format says so where it says what built it.
+	licensee:            string,
 	target:              string, // the path scanned, its top
 	volume:              string, // the device behind it, "" when unknown
 	filesystem:          scan.Filesystem,
@@ -127,6 +130,7 @@ Options :: struct {
 	reclaim:  bool,
 	home:     string,
 	previous: Maybe(Snapshot),
+	licensee: string, // whose licence leita runs under, "" for none
 }
 
 // Snapshot is an earlier scan as history keeps it: when it was taken, and what
@@ -168,6 +172,7 @@ build :: proc(
 	r.allocator = allocator
 	r.generated = time.now()
 	r.version = strings.clone(version.VERSION, allocator)
+	r.licensee = strings.clone(opt.licensee, allocator)
 	r.volume = strings.clone(facts.target.volume, allocator)
 	r.filesystem = facts.target.fs
 	r.engine = facts.engine
@@ -293,6 +298,7 @@ destroy :: proc(r: ^Report) {
 		delete(groups, r.allocator)
 	}
 	delete(r.version, r.allocator)
+	delete(r.licensee, r.allocator)
 	delete(r.target, r.allocator)
 	delete(r.volume, r.allocator)
 	r^ = {}
