@@ -11,7 +11,7 @@ import "../reclaim"
 
 // SCHEMA names what write_json writes; SCHEMA.md describes it. A change a reader
 // of the last one would misread takes a new number.
-SCHEMA :: "estoile.report/1"
+SCHEMA :: "leita.report/1"
 
 /*
 write_json writes r as one JSON object (SCHEMA.md): sizes as integer bytes,
@@ -24,7 +24,7 @@ write_json :: proc(sb: ^strings.Builder, r: ^Report) {
 	fmt.sbprintf(sb, "  \"schema\": %q,\n", SCHEMA)
 	strings.write_string(sb, "  \"generated\": ")
 	json_time(sb, r.generated)
-	strings.write_string(sb, ",\n  \"generator\": {\"name\": \"estoile\", \"version\": ")
+	strings.write_string(sb, ",\n  \"generator\": {\"name\": \"leita\", \"version\": ")
 	json_string(sb, r.version)
 	strings.write_string(sb, "},\n")
 

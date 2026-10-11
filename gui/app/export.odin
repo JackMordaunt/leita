@@ -1,4 +1,4 @@
-package estoile_app
+package leita_app
 
 import "core:os"
 import "core:strings"

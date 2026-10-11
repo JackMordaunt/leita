@@ -97,6 +97,6 @@ the_space_of_a_mounted_directory_is_its_filesystems :: proc(t: ^testing.T) {
 	testing.expect(t, total > 0, "a filesystem has a size")
 	testing.expect(t, free <= total, "no more is free than there is")
 
-	_, _, missing := space("/nonexistent/estoile")
+	_, _, missing := space("/nonexistent/leita")
 	testing.expect(t, !missing, "a path that is not there has no filesystem")
 }

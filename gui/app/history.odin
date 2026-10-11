@@ -1,4 +1,4 @@
-package estoile_app
+package leita_app
 
 import "core:fmt"
 import "core:sync"
@@ -25,7 +25,7 @@ history_open :: proc(d: ^Desk, path: string) {
 	}
 	st := new(history.Store)
 	if err := history.open(st, path); err != nil {
-		fmt.eprintln("estoile: scans will not be kept:", path, err)
+		fmt.eprintln("leita: scans will not be kept:", path, err)
 		free(st)
 		return
 	}
@@ -59,7 +59,7 @@ keep :: proc(d: ^Desk) {
 		sync.atomic_load(&s.tree.nodes_done),
 	)
 	if err != nil {
-		fmt.eprintln("estoile: could not keep the scan:", err)
+		fmt.eprintln("leita: could not keep the scan:", err)
 		return
 	}
 	d.snapshot = id
@@ -92,7 +92,7 @@ compare :: proc(d: ^Desk, id: i64) {
 	}
 	then, err := history.load(d.history, id, context.temp_allocator)
 	if err != nil {
-		fmt.eprintln("estoile: could not read the snapshot:", err)
+		fmt.eprintln("leita: could not read the snapshot:", err)
 		d.compared = {}
 		return
 	}

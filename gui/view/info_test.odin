@@ -1,4 +1,4 @@
-package estoile_view
+package leita_view
 
 import "core:strings"
 import "core:testing"
@@ -26,7 +26,7 @@ cut_frame :: proc(gtx: ^ui.Ctx, user: rawptr) {
 @(test)
 a_long_path_is_cut_in_the_middle :: proc(t: ^testing.T) {
 	c := Cut_Case {
-		path  = "/home/jfm/Source/Personal/estoile/gui/view/sunburst.odin",
+		path  = "/home/jfm/Source/Personal/leita/gui/view/sunburst.odin",
 		width = 200,
 	}
 	fonts := []ops.Font_Ref {

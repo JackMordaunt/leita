@@ -11,7 +11,7 @@ import "../reclaim"
 /*
 write_html writes r as one page that needs nothing else: its style inline, no
 script, no font or image fetched, which its Content-Security-Policy also forbids,
-since estoile promises not to touch the network and a report is opened anywhere.
+since leita promises not to touch the network and a report is opened anywhere.
 It follows the reader's light or dark setting and prints on white. Every path is
 readable text, escaped.
 */
@@ -246,7 +246,7 @@ HTML_HEAD :: `<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
 <meta name="color-scheme" content="light dark">
-<meta name="generator" content="estoile">
+<meta name="generator" content="leita">
 `
 
 @(private)

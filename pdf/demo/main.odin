@@ -49,7 +49,7 @@ main :: proc() {
 		&doc,
 		{
 			title = "Disk report: /home/jfm",
-			producer = "estoile pdf demo",
+			producer = "leita pdf demo",
 			created = time.unix(1791547200, 0),
 		},
 	)
@@ -83,8 +83,8 @@ main :: proc() {
 				10,
 				muted,
 			)
-			pdf.add_link(&doc, right - 120, 74, 120, 12, "https://mordaunt.dev/code/estoile")
-			pdf.draw_text(&doc, right, 84, "mordaunt.dev/code/estoile", sans, 10, bar, .Right)
+			pdf.add_link(&doc, right - 120, 74, 120, 12, "https://mordaunt.dev/code/leita")
+			pdf.draw_text(&doc, right, 84, "mordaunt.dev/code/leita", sans, 10, bar, .Right)
 			pdf.draw_text(&doc, left, 120, "Name", sans, 9, muted)
 			pdf.draw_text(&doc, size_col, 120, "Size", sans, 9, muted, .Right)
 			pdf.stroke_line(&doc, left, 126, right, 126, ink, 0.75)

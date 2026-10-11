@@ -1,5 +1,5 @@
 #+build darwin
-package estoile_files
+package leita_files
 
 import "base:intrinsics"
 

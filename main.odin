@@ -1,9 +1,9 @@
 /*
-estoile: find out what is using the disk.
+leita: find out what is using the disk.
 
 Usage:
-	estoile [drive-or-image] [flags]     -h lists the flags
-	estoile ~/src --report usage.html    the same, written up as a report too
+	leita [drive-or-image] [flags]     -h lists the flags
+	leita ~/src --report usage.html    the same, written up as a report too
 
 Reads the volume's MFT directly and prints the largest files and directories. Reading
 a live volume needs an elevated prompt.
@@ -29,7 +29,7 @@ import "walk"
 // Largest N files/folders to print.
 TOP_N :: 20
 
-PROGRAM :: "estoile"
+PROGRAM :: "leita"
 
 /*
 What the command line can set.
@@ -54,7 +54,7 @@ Options :: struct {
 	top:          int `usage:"Largest directories and files a report lists, 50 unless set."`,
 	reclaim:      bool `usage:"Include in the report what can be deleted and made again."`,
 	no_history:   bool `usage:"Neither compare with earlier scans of this place nor keep this one."`,
-	version:      bool `usage:"Print which estoile this is and stop."`,
+	version:      bool `usage:"Print which leita this is and stop."`,
 }
 
 main :: proc() {
@@ -152,7 +152,7 @@ scan_and_say :: proc(opt: Options, kept := "") -> int {
 
 	if !quiet {
 		fmt.printfln(
-			"estoile: %s on %s (%v, %v media, %v engine, %v io)",
+			"leita: %s on %s (%v, %v media, %v engine, %v io)",
 			scan.location(target, context.temp_allocator),
 			target.volume,
 			target.fs,

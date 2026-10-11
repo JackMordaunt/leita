@@ -1,10 +1,10 @@
 #+build linux
-package estoile_history
+package leita_history
 
 import "core:os"
 import "core:path/filepath"
 
-// default_path is where the store lives: estoile's folder under XDG_DATA_HOME, or
+// default_path is where the store lives: leita's folder under XDG_DATA_HOME, or
 // ~/.local/share when that is unset, as the XDG base directory spec has it. ""
 // when there is no home to put it in.
 default_path :: proc(allocator := context.allocator) -> string {
@@ -16,6 +16,6 @@ default_path :: proc(allocator := context.allocator) -> string {
 		}
 		data, _ = filepath.join({home, ".local", "share"}, context.temp_allocator)
 	}
-	path, _ := filepath.join({data, "estoile", "history.db"}, allocator)
+	path, _ := filepath.join({data, "leita", "history.db"}, allocator)
 	return path
 }

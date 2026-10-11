@@ -1,5 +1,5 @@
 /*
-Package files is what estoile's window does to what it found, through the platform:
+Package files is what leita's window does to what it found, through the platform:
 show an entry in the system's file manager, move it to the Trash, rename it. Each
 acts on a path and reports an Error; deciding whether to ask is the caller's.
 
@@ -8,7 +8,7 @@ in the user's home; the file manager is asked over D-Bus through the freedesktop
 FileManager1 interface, with xdg-open on the folder as the fallback. On macOS both go
 through the Finder: NSFileManager's Trash, and open -R to show an entry.
 */
-package estoile_files
+package leita_files
 
 import "base:runtime"
 
@@ -211,7 +211,7 @@ open_error :: proc(err: os.Error) -> Error {
 
 /*
 report_stem is what a report of target made at now is called, less its
-extension: estoile-report-<target's last name>-<local date and minute>. The name is
+extension: leita-report-<target's last name>-<local date and minute>. The name is
 kept to letters, digits, dots, dashes and underscores, anything else a dash: none
 of those is reserved in a name on Linux, macOS or Windows, and the prefix keeps
 it from being one of the names Windows reserves (CON, NUL). A target with no last
@@ -239,12 +239,7 @@ report_stem :: proc(target: string, now: time.Time) -> string {
 		name = "root"
 	}
 	return strings.concatenate(
-		{
-			"estoile-report-",
-			name,
-			"-",
-			timefmt.local(now, "%Y-%m-%d-%H%M", context.temp_allocator),
-		},
+		{"leita-report-", name, "-", timefmt.local(now, "%Y-%m-%d-%H%M", context.temp_allocator)},
 		context.temp_allocator,
 	)
 }

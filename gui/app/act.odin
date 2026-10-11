@@ -1,4 +1,4 @@
-package estoile_app
+package leita_app
 
 import "core:fmt"
 import "core:os"
@@ -140,7 +140,7 @@ audit :: proc(d: ^Desk, done: []history.Action) {
 		return
 	}
 	if err := history.record(d.history, done); err != nil {
-		fmt.eprintln("estoile: could not keep the audit trail:", err)
+		fmt.eprintln("leita: could not keep the audit trail:", err)
 	}
 }
 

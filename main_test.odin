@@ -16,10 +16,10 @@ import "version"
 
 // --version names the build and where it runs.
 @(test)
-the_version_says_which_estoile_this_is :: proc(t: ^testing.T) {
+the_version_says_which_leita_this_is :: proc(t: ^testing.T) {
 	line := version_line()
 	want := fmt.tprintf(
-		"estoile %s (%s/%s, built ",
+		"leita %s (%s/%s, built ",
 		version.VERSION,
 		ODIN_OS_STRING,
 		ODIN_ARCH_STRING,
@@ -40,7 +40,7 @@ back, counting what the directory holds:
 a_report_of_a_directory_reads_back :: proc(t: ^testing.T) {
 	dir, dir_err := os.temp_directory(context.temp_allocator)
 	testing.expect(t, dir_err == nil, "no temp directory")
-	root := fmt.tprintf("%s/estoile_report_cli", dir)
+	root := fmt.tprintf("%s/leita_report_cli", dir)
 	os.remove_all(root)
 	defer os.remove_all(root)
 	testing.expect(t, os.make_directory(root) == nil, "could not make the root")
@@ -66,7 +66,7 @@ a_report_of_a_directory_reads_back :: proc(t: ^testing.T) {
 	if !is_object {
 		return
 	}
-	testing.expect_value(t, top["schema"].(json.String), "estoile.report/1")
+	testing.expect_value(t, top["schema"].(json.String), "leita.report/1")
 	totals := top["totals"].(json.Object)
 	testing.expect_value(t, totals["files"].(json.Integer), 3)
 	testing.expect_value(t, totals["directories"].(json.Integer), 1)
@@ -87,7 +87,7 @@ a_report_of_a_directory_reads_back :: proc(t: ^testing.T) {
 a_pdf_report_is_written_on_its_paper :: proc(t: ^testing.T) {
 	dir, dir_err := os.temp_directory(context.temp_allocator)
 	testing.expect(t, dir_err == nil, "no temp directory")
-	root := fmt.tprintf("%s/estoile_report_pdf", dir)
+	root := fmt.tprintf("%s/leita_report_pdf", dir)
 	os.remove_all(root)
 	defer os.remove_all(root)
 	testing.expect(t, os.make_directory(root) == nil, "could not make the root")
@@ -168,7 +168,7 @@ snapshot_count :: proc(t: ^testing.T, path: string) -> i64 {
 // what changed since.
 @(test)
 a_second_scan_reports_what_changed :: proc(t: ^testing.T) {
-	root, store := fresh(t, "estoile_history_cli")
+	root, store := fresh(t, "leita_history_cli")
 	defer os.remove_all(root)
 	defer os.remove_all(filepath.dir(store))
 	big := fmt.tprintf("%s/big.bin", root)
@@ -205,7 +205,7 @@ a_second_scan_reports_what_changed :: proc(t: ^testing.T) {
 // --no-history neither reads the store nor writes it.
 @(test)
 no_history_leaves_the_store_alone :: proc(t: ^testing.T) {
-	root, store := fresh(t, "estoile_no_history_cli")
+	root, store := fresh(t, "leita_no_history_cli")
 	defer os.remove_all(root)
 	write_zeros(t, fmt.tprintf("%s/a.bin", root), 1 << 20)
 
@@ -217,7 +217,7 @@ no_history_leaves_the_store_alone :: proc(t: ^testing.T) {
 // the scan unkept, not failed.
 @(test)
 a_busy_store_leaves_the_scan_unkept :: proc(t: ^testing.T) {
-	root, store := fresh(t, "estoile_busy_history_cli")
+	root, store := fresh(t, "leita_busy_history_cli")
 	defer os.remove_all(root)
 	defer os.remove_all(filepath.dir(store))
 	write_zeros(t, fmt.tprintf("%s/a.bin", root), 1 << 20)
@@ -237,7 +237,7 @@ a_busy_store_leaves_the_scan_unkept :: proc(t: ^testing.T) {
 // the command line keeps its own.
 @(test)
 a_store_written_briefly_elsewhere_is_waited_for :: proc(t: ^testing.T) {
-	root, store := fresh(t, "estoile_wait_history_cli")
+	root, store := fresh(t, "leita_wait_history_cli")
 	defer os.remove_all(root)
 	defer os.remove_all(filepath.dir(store))
 	write_zeros(t, fmt.tprintf("%s/a.bin", root), 1 << 20)

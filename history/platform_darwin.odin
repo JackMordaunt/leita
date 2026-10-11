@@ -1,10 +1,10 @@
 #+build darwin
-package estoile_history
+package leita_history
 
 import "core:os"
 import "core:path/filepath"
 
-// default_path is where the store lives: estoile's folder under
+// default_path is where the store lives: leita's folder under
 // ~/Library/Application Support, where macOS keeps what an application makes for
 // itself. "" when there is no home to put it in.
 default_path :: proc(allocator := context.allocator) -> string {
@@ -13,7 +13,7 @@ default_path :: proc(allocator := context.allocator) -> string {
 		return ""
 	}
 	path, _ := filepath.join(
-		{home, "Library", "Application Support", "estoile", "history.db"},
+		{home, "Library", "Application Support", "leita", "history.db"},
 		allocator,
 	)
 	return path

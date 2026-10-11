@@ -1,4 +1,4 @@
-package estoile_history
+package leita_history
 
 import "core:testing"
 

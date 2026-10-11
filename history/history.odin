@@ -1,5 +1,5 @@
 /*
-Package history is what estoile remembers of the scans it has finished: for each,
+Package history is what leita remembers of the scans it has finished: for each,
 when it was taken, its totals, and the size of every entry under its top that held
 at least KEPT_MIN, so a later scan of the same place can say what grew and what
 shrank since. It lives in one SQLite file in the user's data folder (default_path).
@@ -12,14 +12,14 @@ directory kept is all the way down to its entries kept.
 
 The store keeps the KEPT newest snapshots of each place and forgets older ones.
 
-It also keeps the audit trail: every change estoile made on disk at the person's
+It also keeps the audit trail: every change leita made on disk at the person's
 request, or tried to and could not, with when, what and why not. That is never
 forgotten; the snapshots' pruning leaves it be.
 
 A Store is not thread-safe: one thread uses it. The window and the command line
 may each have the one file open at once.
 */
-package estoile_history
+package leita_history
 
 import "core:os"
 import "core:path/filepath"
@@ -53,7 +53,7 @@ Snapshot :: struct {
 	items: u64,
 }
 
-// Action is one change estoile made on disk, or tried to: taken in Unix seconds,
+// Action is one change leita made on disk, or tried to: taken in Unix seconds,
 // the path it was made to, and what that path held. detail is the new name of a
 // rename, or why a failed action failed.
 Action :: struct {

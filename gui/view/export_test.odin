@@ -1,4 +1,4 @@
-package estoile_view
+package leita_view
 
 import "core:strings"
 import "core:testing"
@@ -81,7 +81,7 @@ export_asks_for_a_format_and_sends_it :: proc(t: ^testing.T) {
 	testing.expect_value(t, q.start, "/home/me/Documents")
 	testing.expectf(
 		t,
-		strings.has_prefix(q.name, "estoile-report-data-") && strings.has_suffix(q.name, ".json"),
+		strings.has_prefix(q.name, "leita-report-data-") && strings.has_suffix(q.name, ".json"),
 		"%s is named for the target and the format",
 		q.name,
 	)

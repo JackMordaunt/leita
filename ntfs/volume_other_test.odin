@@ -17,7 +17,7 @@ image :: proc(t: ^testing.T, size: int) -> (path: string, content: []byte) {
 	}
 	dir, dir_err := os.temp_directory(context.temp_allocator)
 	testing.expect(t, dir_err == nil, "no temp directory")
-	path = fmt.tprintf("%s/estoile_volume_%d.img", dir, size)
+	path = fmt.tprintf("%s/leita_volume_%d.img", dir, size)
 	testing.expect(t, os.write_entire_file(path, content) == nil, "could not write the image")
 	return
 }
@@ -95,7 +95,7 @@ test_volume_clone_reads_independently :: proc(t: ^testing.T) {
 
 @(test)
 test_volume_open_missing_path :: proc(t: ^testing.T) {
-	v, err := volume_open("/nonexistent/estoile/volume.img")
+	v, err := volume_open("/nonexistent/leita/volume.img")
 	testing.expect_value(t, err, Error.Open_Failed)
 	testing.expect(t, v.file == nil, "a failed open returned a handle")
 }

@@ -1,5 +1,5 @@
 /*
-Package view is estoile's window, drawn in Primer: a frame of plain data that needs
+Package view is leita's window, drawn in Primer: a frame of plain data that needs
 what it shows and sends what the user asks for. It imports the contract (query,
 command) and jm:ui, and nothing of the scan, so a test drives it with a ui.Probe
 and shapes of its own making.
@@ -8,7 +8,7 @@ Nothing here waits. Every need is answered as soon as the host has anything, and
 again each time the scan moves on, so a directory's listing appears, grows and
 reorders while the reader is still inside it.
 */
-package estoile_view
+package leita_view
 
 import "core:fmt"
 import "core:strings"
@@ -352,7 +352,7 @@ side :: proc(gtx: ^ui.Ctx, m: ^Model) {
 toolbar :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result) {
 	ui.row(gtx, gap = 8, align = .Center)
 	logo(gtx)
-	title(gtx, "estoile")
+	title(gtx, "leita")
 	ui.spacer(gtx, 8)
 	ui.flexible(gtx, 1)
 	location(gtx, m, prog)
@@ -755,7 +755,7 @@ name_button :: proc(
 // and a half.
 LOGO :: 34
 
-// logo is estoile's mark in the scheme's ink, its one lit cell in sea.
+// logo is leita's mark, the found cell, in the scheme's ink, its find in sea.
 @(private)
 logo :: proc(gtx: ^ui.Ctx, loc := #caller_location) {
 	p := ui.widget_open(gtx, loc = loc)

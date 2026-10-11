@@ -1,7 +1,7 @@
-# estoile Contributor Licence Agreement, Version 1.0
+# leita Contributor Licence Agreement, Version 1.0
 
 This agreement is between you and Librium LLC, a Wyoming limited liability
-company ("Librium"), which produces estoile and licenses it under the estoile
+company ("Librium"), which produces leita and licenses it under the leita
 Licence (`LICENSE.md`). It sets out the terms on which Librium may use what
 you contribute. Read it before you sign. You sign once; it then covers each
 Contribution you Submit while it is in force.
@@ -13,15 +13,15 @@ of an employer or other entity, You means that entity, as section 7 explains.
 
 **Contribution** means any original work of authorship, including any change
 or addition to an existing work, that You Submit to Librium for inclusion in
-estoile. A Contribution covers only the material You Submit. It does not cover
+leita. A Contribution covers only the material You Submit. It does not cover
 anything You have not yet created or Submitted.
 
 **Submit** means to send to Librium or its representatives in any form, by
 electronic, verbal or written means, including pull requests, patches, issue
-comments and email, for the purpose of discussing or improving estoile. It does
+comments and email, for the purpose of discussing or improving leita. It does
 not include material You mark in writing as "Not a Contribution".
 
-**estoile Licence** means the licence under which Librium publishes estoile,
+**leita Licence** means the licence under which Librium publishes leita,
 version 1.0 and any later version.
 
 ## 2. Copyright licence
@@ -40,7 +40,7 @@ purposes:
   perform it; and
 - (e) sublicense any of these rights to others.
 
-Librium may exercise these rights under the estoile Licence, under paid
+Librium may exercise these rights under the leita Licence, under paid
 Commercial Licences, and under open-source licences.
 
 The licence does not cover types of use that are unknown when You Submit the
@@ -48,23 +48,23 @@ Contribution.
 
 ## 3. Patent licence
 
-You grant Librium, and everyone who receives estoile from Librium, a licence
+You grant Librium, and everyone who receives leita from Librium, a licence
 under any patent claims You own or control that the Contribution necessarily
 infringes. The infringement may be by the Contribution alone or by its
-combination with estoile as it stood when You Submitted it. The licence lets
+combination with leita as it stood when You Submitted it. The licence lets
 them make, have made, use, sell, offer to sell, import and otherwise
-transfer the Contribution and estoile. It is worldwide, non-exclusive,
+transfer the Contribution and leita. It is worldwide, non-exclusive,
 royalty-free and irrevocable, except as follows.
 
-If anyone sues alleging that the Contribution or estoile infringes a patent,
+If anyone sues alleging that the Contribution or leita infringes a patent,
 the patent licence under this section ends for that person from the date the
 suit is filed. That includes a cross-claim or counterclaim.
 
 ## 4. Librium's promise to You
 
 As long as Librium distributes the Contribution, Librium will also make it
-available under the estoile Licence in force when You Submitted it, or a later
-version of the estoile Licence. A later version must grant individuals at
+available under the leita Licence in force when You Submitted it, or a later
+version of the leita Licence. A later version must grant individuals at
 least the same free Personal Use rights.
 
 Librium will keep a record of Your authorship in the project's history, and

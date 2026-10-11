@@ -205,7 +205,7 @@ cell_name :: proc(row: ^Row, s: string) {
 	cell_quoted(row, "'" if defused else "", text)
 }
 
-// cell_text writes text estoile chose, quoted only if it must be.
+// cell_text writes text leita chose, quoted only if it must be.
 @(private)
 cell_text :: proc(row: ^Row, s: string) {
 	if strings.index_any(s, ",\"\r\n") < 0 {

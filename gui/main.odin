@@ -1,8 +1,8 @@
 /*
-Estoile: see what is using the disk, as the scan finds it.
+Leita: see what is using the disk, as the scan finds it.
 
-	Estoile                  scan the home directory
-	Estoile PATH             scan a directory, drive or image
+	Leita                  scan the home directory
+	Leita PATH             scan a directory, drive or image
 
 The window is jm:ui in Primer. Its pieces are gui's packages:
 
@@ -56,7 +56,7 @@ main :: proc() {
 
 	shell.run(
 		{
-			title = "estoile " + version.VERSION,
+			title = "leita " + version.VERSION,
 			width = 1280,
 			height = 820,
 			min_width = 640,

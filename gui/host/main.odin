@@ -1,10 +1,10 @@
 /*
-Estoile-host: the window half of Estoile under hot reload. It owns the window
+Leita-host: the window half of Leita under hot reload. It owns the window
 and the application, the scan and the pipeline answering the view, and runs the
 view in a subprocess it respawns whenever the pointer file names a new build of
 gui/child. Editing the view reloads it in place; the scan keeps running.
 
-	Estoile-host build/hot/view.watch [PATH]
+	Leita-host build/hot/view.watch [PATH]
 
 `just hot` builds this, keeps the pointer file fresh, and runs it.
 */
@@ -47,7 +47,7 @@ main :: proc() {
 	app.init(h, path, shell.wake, kept)
 	shell.run_host(
 		{
-			title = "estoile " + version.VERSION,
+			title = "leita " + version.VERSION,
 			width = 1280,
 			height = 820,
 			min_width = 640,

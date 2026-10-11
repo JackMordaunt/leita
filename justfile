@@ -1,7 +1,7 @@
 # Standard recipes: build (debug), release, clean, test, install.
 #
-#   just build      debug build with AddressSanitizer   -> build/debug/estoile
-#   just release    optimised build                     -> build/release/estoile
+#   just build      debug build with AddressSanitizer   -> build/debug/leita
+#   just release    optimised build                     -> build/release/leita
 #   just test       run every imported package's tests under ASan -> build/test/
 #   just check      type-check both modes without producing a binary
 #   just clean      remove build/
@@ -23,28 +23,28 @@
 odin  := env("ODIN", "odin")
 root  := justfile_directory()
 jm    := env("JM", root / "jm")
-# Which estoile a build is, the one place either binary learns it: the tag
+# Which leita a build is, the one place either binary learns it: the tag
 # described, or a bare commit as git describe names one, g and its hash, so Odin
-# never reads it as a number; dev without git. ESTOILE_VERSION=<v> sets it instead.
-version := env("ESTOILE_VERSION", `git describe --tags --dirty 2>/dev/null || { h=$(git describe --always --dirty 2>/dev/null) && echo "g$h"; } || echo dev`)
-flags := "-vet -strict-style -collection:jm=" + jm + " -define:ESTOILE_VERSION=" + version
+# never reads it as a number; dev without git. LEITA_VERSION=<v> sets it instead.
+version := env("LEITA_VERSION", `git describe --tags --dirty 2>/dev/null || { h=$(git describe --always --dirty 2>/dev/null) && echo "g$h"; } || echo dev`)
+flags := "-vet -strict-style -collection:jm=" + jm + " -define:LEITA_VERSION=" + version
 san   := env("SAN", "-sanitize:address")
 exe   := if os() == "windows" { ".exe" } else { "" }
-bin   := "estoile"
-# The window is Estoile and builds into app/ beside the CLI: macOS and Windows
-# fold case by default, so estoile and Estoile in one directory are one file.
-gui   := "Estoile"
+bin   := "leita"
+# The window is Leita and builds into app/ beside the CLI: macOS and Windows
+# fold case by default, so leita and Leita in one directory are one file.
+gui   := "Leita"
 
 # `just` alone lists the recipes.
 default:
     @just --list --unsorted
 
-# Debug build with AddressSanitizer -> build/debug/estoile
+# Debug build with AddressSanitizer -> build/debug/leita
 build: sqlite
     mkdir -p build/debug
     {{odin}} build . -debug {{san}} {{flags}} -out:build/debug/{{bin}}{{exe}}
 
-# Optimised build -> build/release/estoile
+# Optimised build -> build/release/leita
 release: sqlite
     mkdir -p build/release
     {{odin}} build . -o:speed {{flags}} -out:build/release/{{bin}}{{exe}}
@@ -86,7 +86,7 @@ deps: sqlite
 gui *args: gui-build
     build/debug/app/{{gui}}{{exe}} {{args}}
 
-# Debug build of the window -> build/debug/app/Estoile
+# Debug build of the window -> build/debug/app/Leita
 gui-build: deps
     mkdir -p build/debug/app
     {{odin}} build gui -debug {{san}} {{flags}} -out:build/debug/app/{{gui}}{{exe}}
@@ -133,7 +133,7 @@ hot *args: deps
     while [ ! -f build/hot/view.watch ]; do sleep 0.2; done
     build/debug/app/{{gui}}-host{{exe}} build/hot/view.watch {{args}}
 
-# Optimised build of the window -> build/release/app/Estoile
+# Optimised build of the window -> build/release/app/Leita
 gui-release: deps
     mkdir -p build/release/app
     {{odin}} build gui -o:speed {{flags}} -out:build/release/app/{{gui}}{{exe}}
@@ -176,3 +176,4 @@ install: release
     [[ -n $dest ]] || { echo "install: no writable directory on PATH" >&2; exit 1; }
     install -m 755 build/release/{{bin}}{{exe}} "$dest/{{bin}}"
     echo "installed $dest/{{bin}}"
+

@@ -1,4 +1,4 @@
-package estoile_files
+package leita_files
 
 import "core:fmt"
 import "core:os"
@@ -58,7 +58,7 @@ a_background_job_frees_its_path_with_the_callers_allocator :: proc(t: ^testing.T
 @(test)
 delete_tree_is_careful_with_links_and_read_only_trees :: proc(t: ^testing.T) {
 	base, _ := os.temp_directory(context.temp_allocator)
-	root := strings.concatenate({base, "/estoile_files_delete"}, context.temp_allocator)
+	root := strings.concatenate({base, "/leita_files_delete"}, context.temp_allocator)
 	outside := strings.concatenate({root, "-outside"}, context.temp_allocator)
 	os.remove_all(root)
 	os.remove_all(outside)
@@ -143,7 +143,7 @@ delete_tree_is_careful_with_links_and_read_only_trees :: proc(t: ^testing.T) {
 @(test)
 a_new_file_never_replaces_one :: proc(t: ^testing.T) {
 	tmp, _ := os.temp_directory(context.temp_allocator)
-	dir := strings.concatenate({tmp, "/estoile_files_create_new"}, context.temp_allocator)
+	dir := strings.concatenate({tmp, "/leita_files_create_new"}, context.temp_allocator)
 	os.remove_all(dir)
 	testing.expect(t, os.make_directory(dir) == nil)
 	defer os.remove_all(dir)
@@ -185,7 +185,7 @@ a_report_is_named_for_its_target :: proc(t: ^testing.T) {
 		testing.expect_value(
 			t,
 			report_stem(c[0], now),
-			fmt.tprintf("estoile-report-%s-%s", c[1], minute),
+			fmt.tprintf("leita-report-%s-%s", c[1], minute),
 		)
 	}
 }

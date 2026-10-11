@@ -1,5 +1,5 @@
 /*
-Package app is estoile's host: the pipeline that joins the window to a scan, and the
+Package app is leita's host: the pipeline that joins the window to a scan, and the
 threads it runs on. It takes a frame loop's needs and commands through data_host
 and answers through the inbox; it never imports the view, so app_test.odin drives
 it with a ui.Probe and no window.
@@ -29,7 +29,7 @@ reader has settled since the last and answers every live need again, so a
 directory's listing fills in and reorders as the scan reaches into it. Once a scan
 is over the clock still ticks, but nothing moves, so nothing is sent.
 */
-package estoile_app
+package leita_app
 
 import "base:runtime"
 

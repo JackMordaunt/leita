@@ -1,5 +1,5 @@
 #+build linux
-package estoile_files
+package leita_files
 
 import "base:runtime"
 

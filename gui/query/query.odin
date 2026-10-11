@@ -1,17 +1,17 @@
 /*
-Package query is what estoile's window may read: each query is a pair, the params a
+Package query is what leita's window may read: each query is a pair, the params a
 need asks with and the result it is answered with, named Name and Name_Result. The
 view needs these; the host answers them from the scan, again every time the scan
 has moved on, for as long as the need is live. It imports nothing.
 
 Every type here is plain data: it crosses a pipe or a wire as cbor, under its
-"estoile_query.Name" kind, and ui.need keys a query by its bytes.
+"leita_query.Name" kind, and ui.need keys a query by its bytes.
 
 A node is an index into one scan's tree, meaningful only within the scan that
 numbered it, so every query that names one also names the scan's generation. A
 query for a generation that is gone is answered empty rather than wrongly.
 */
-package estoile_query
+package leita_query
 
 // ROOT names the top of whatever was scanned, before the view knows its index.
 ROOT :: max(u32)

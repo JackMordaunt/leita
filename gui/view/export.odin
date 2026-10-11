@@ -1,4 +1,4 @@
-package estoile_view
+package leita_view
 
 import "core:strings"
 import "core:time"
@@ -165,7 +165,7 @@ send_export :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result, path:
 // EXPORT_PICK is the area the save dialog answers: no widget's, so a constant
 // rather than a claimed id.
 @(private)
-EXPORT_PICK :: ops.Area_Id(0x6573_746f_696c_6570) // "estoilep"
+EXPORT_PICK :: ops.Area_Id(0x6c65_6974_6170_696b) // "leitapik"
 
 // FORMAT_FILTERS are what the save dialog offers for each format.
 @(private)

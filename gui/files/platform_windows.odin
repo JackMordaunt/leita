@@ -1,5 +1,5 @@
 #+build windows
-package estoile_files
+package leita_files
 
 import "core:strings"
 import win32 "core:sys/windows"

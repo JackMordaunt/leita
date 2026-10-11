@@ -35,7 +35,7 @@ DEFAULT_TOP :: 50
 
 Report :: struct {
 	generated:           time.Time, // when the report was built
-	version:             string, // the estoile that built it
+	version:             string, // the leita that built it
 	target:              string, // the path scanned, its top
 	volume:              string, // the device behind it, "" when unknown
 	filesystem:          scan.Filesystem,

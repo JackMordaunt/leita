@@ -1,4 +1,4 @@
-package estoile_view
+package leita_view
 
 import "jm:ui"
 import "jm:ui/design"

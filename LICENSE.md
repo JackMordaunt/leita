@@ -1,4 +1,4 @@
-# estoile Licence, Version 1.0
+# leita Licence, Version 1.0
 
 Copyright 2026 Librium LLC. All rights reserved except as granted below.
 
@@ -12,7 +12,7 @@ Polar Software, Inc.), which sells copies and Keys as reseller. The Reseller's
 terms govern payment, tax, refunds and any statutory right of withdrawal. This
 licence governs your right to use the Software.
 
-**Software** means estoile: its source code, the binaries built from it, and
+**Software** means leita: its source code, the binaries built from it, and
 its documentation, in every version the Licensor makes available under this
 licence.
 
@@ -114,7 +114,7 @@ sections 50A to 50C and 50BA of the Copyright, Designs and Patents Act 1988.
 
 ## 7. Contributions
 
-Contributions are accepted only under the estoile Contributor Licence
+Contributions are accepted only under the leita Contributor Licence
 Agreement, signed electronically before merge.
 
 If you send a contribution without signing it, you grant Librium LLC a
@@ -134,7 +134,7 @@ against these uses.
 
 ## 8. Trademarks
 
-This licence grants no right to use the name "estoile" as a mark, or the
+This licence grants no right to use the name "leita" as a mark, or the
 Licensor's logos, except to state truthfully where the Software came from.
 
 ## 9. Third-party components

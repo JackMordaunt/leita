@@ -22,7 +22,7 @@ makes following symlinks worth a decision rather than a default.
 fixture :: proc(t: ^testing.T, name: string) -> string {
 	dir, dir_err := os.temp_directory(context.temp_allocator)
 	testing.expect(t, dir_err == nil, "no temp directory")
-	root := fmt.tprintf("%s/estoile_walk_%s", dir, name)
+	root := fmt.tprintf("%s/leita_walk_%s", dir, name)
 	os.remove_all(root)
 
 	write :: proc(t: ^testing.T, path: string, size: int) {

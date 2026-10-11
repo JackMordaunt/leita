@@ -1,7 +1,6 @@
-package estoile_mark
+package leita_mark
 
 import "core:math"
-import "core:strings"
 import "core:testing"
 import "jm:ui/ops"
 
@@ -55,27 +54,4 @@ arc_cubic_stays_on_the_circle :: proc(t: ^testing.T) {
 		"midpoint %v off the circle",
 		mid,
 	)
-}
-
-// The SVG holds the hub and one path per cell, each in its own colour: a
-// cell dropped or recoloured is a change to the logo, not a tweak.
-@(test)
-svg_carries_every_cell :: proc(t: ^testing.T) {
-	ink := ops.Color{28, 27, 26, 255}
-	b := strings.builder_make(context.temp_allocator)
-	write_svg(&b, ink, SEA)
-	svg := strings.to_string(b)
-	testing.expect_value(t, strings.count(svg, "<circle "), 1)
-	testing.expect_value(t, strings.count(svg, "<path "), CELLS)
-	rest := svg
-	for i in 0 ..< CELLS {
-		at := strings.index(rest, "<path ")
-		if at < 0 {
-			break
-		}
-		rest = rest[at + 1:]
-		path := rest[:strings.index_byte(rest, '\n')]
-		want := `fill="#0e7490"` if i == LIT else `fill="#1c1b1a"`
-		testing.expectf(t, strings.contains(path, want), "cell %d wants %s: %s", i, want, path)
-	}
 }

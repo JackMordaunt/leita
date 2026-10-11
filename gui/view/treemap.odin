@@ -1,4 +1,4 @@
-package estoile_view
+package leita_view
 
 import "core:fmt"
 import "core:math"

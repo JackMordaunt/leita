@@ -1,5 +1,5 @@
 /*
-Estoile-child: the view half of Estoile under hot reload, the process the host
+Leita-child: the view half of Leita under hot reload, the process the host
 respawns on every build. It holds only the view and its model; the frames' needs
 and commands go to the host over the pipe, where the scan answers them.
 */
