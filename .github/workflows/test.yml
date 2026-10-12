@@ -63,16 +63,6 @@ jobs:
       - name: keep line endings as committed (windows)
         if: runner.os == 'Windows'
         run: git config --global core.autocrlf false
-      # os.symlink needs SeCreateSymbolicLinkPrivilege, which an elevated
-      # token does not carry by default; Developer Mode grants it without
-      # elevation, the well-known fix for CreateSymbolicLinkW failing on a
-      # GitHub-hosted Windows runner. walk's own symlink tests need this.
-      - name: enable symlinks (windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          New-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock" `
-            -Name "AllowDevelopmentWithoutDevLicense" -Value 1 -PropertyType DWORD -Force
       # jm is a submodule, over https so the runner needs no key for it.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
