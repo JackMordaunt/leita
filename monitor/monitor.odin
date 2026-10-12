@@ -26,8 +26,10 @@ import "../gui/msg"
 import "../history"
 import "../human"
 import "../licence"
+import "../report"
 import "../settings"
 import "../version"
+import "../webhook"
 
 // Paths are the files a run reads and writes.
 Paths :: struct {
@@ -76,6 +78,10 @@ Options :: struct {
 	notify:  alert.Runner,
 	user:    rawptr, // notify's own
 	desktop: alert.System,
+	// How a webhook's delivery is posted (webhook.post), nil for not at all,
+	// and the poster's own.
+	post:    webhook.Poster,
+	posted:  rawptr,
 }
 
 // EXIT_FAILED is what a run exits with when a place could not be scanned or
@@ -118,13 +124,16 @@ run :: proc(opt: Options, w: io.Writer) -> int {
 	}
 	now := time.to_unix_seconds(opt.now)
 	words := words_of(&st)
+	english := new(msg.Strings, context.temp_allocator)
+	msg.init(english, .English)
+	hooks, _ := settings.hooks(&st, context.temp_allocator)
 	code := 0
 	for watch in watches {
 		last, has_last := settings.last_run(&st, watch.place, context.temp_allocator)
 		if !opt.all && !due(watch.every, last.started if has_last else 0, now) {
 			continue
 		}
-		r, alerts := scan_one(opt, watch)
+		r, alerts, summaries := scan_one(opt, watch, len(hooks) > 0)
 		// What was wrong last run is not news; what is wrong now and was not
 		// is raised, once, until it goes and comes back.
 		before := alert.conditions_of(last.firing) if has_last else {}
@@ -155,22 +164,74 @@ run :: proc(opt: Options, w: io.Writer) -> int {
 				how_read(r),
 			)
 		}
+		raised := make([dynamic]alert.Alert, context.temp_allocator)
 		for a in alerts {
 			if a.kind not_in before {
-				raise(&st, opt, words, w, watch.place, a, r)
+				append(&raised, a)
 			}
 		}
 		if r.problem != "" && .Scan_Failed not_in before {
-			raise(&st, opt, words, w, watch.place, {kind = .Scan_Failed}, r)
+			append(&raised, alert.Alert{kind = .Scan_Failed})
+		}
+		for a in raised {
+			raise(&st, opt, words, w, watch.place, a, r)
+			if len(hooks) == 0 {
+				continue
+			}
+			e := webhook.Event {
+				event   = alert.CONDITION_KEYS[a.kind],
+				raised  = opt.now,
+				host    = webhook.host_name(),
+				place   = watch.place,
+				text    = alert.say(english, a, watch.place, r.problem),
+				measure = a,
+				problem = r.problem,
+			}
+			if problem := webhook.tell(&st, e, summaries.with_paths, summaries.without_paths, now);
+			   problem != "" {
+				fmt.wprintfln(w, "error: %s", problem)
+			}
+		}
+	}
+	if opt.post != nil && len(hooks) > 0 {
+		tally, problem := webhook.deliver(&st, now, opt.post, opt.posted)
+		if problem != "" {
+			fmt.wprintfln(w, "error: webhooks: %s", problem)
+		}
+		if tally != {} {
+			fmt.wprintfln(
+				w,
+				"webhooks: %d delivered, %d to try again, %d dropped",
+				tally.taken,
+				tally.later,
+				tally.dropped,
+			)
 		}
 	}
 	return code
 }
 
-// scan_one scans the watched place and keeps the scan in history, and says how
-// it went and what its limits find wrong, in the temp allocator.
+// Summaries are a scan as a webhook's event carries it, in the report schema:
+// with folder paths, and without, for a webhook not allowed them.
+Summaries :: struct {
+	with_paths, without_paths: string,
+}
+
+/*
+scan_one scans the watched place and keeps the scan in history, and says how
+it went and what its limits find wrong, and, when want_summaries, the scan as
+a webhook carries it, in the temp allocator.
+*/
 @(private)
-scan_one :: proc(opt: Options, watch: settings.Watch) -> (r: settings.Run, alerts: []alert.Alert) {
+scan_one :: proc(
+	opt: Options,
+	watch: settings.Watch,
+	want_summaries: bool,
+) -> (
+	r: settings.Run,
+	alerts: []alert.Alert,
+	summaries: Summaries,
+) {
 	r.place = watch.place
 	r.started = time.to_unix_seconds(opt.now)
 	s, problem := survey_place(
@@ -193,6 +254,22 @@ scan_one :: proc(opt: Options, watch: settings.Watch) -> (r: settings.Run, alert
 	snapshots, r.problem = keep(opt.paths.history, s)
 	if r.problem == "" {
 		alerts = alert.check(rules_of(watch.limits), snapshots)
+	}
+	if want_summaries && r.problem == "" && len(alerts) > 0 {
+		facts := report.Facts {
+			target   = s.fill.target,
+			engine   = s.engine,
+			started  = s.started,
+			duration = s.duration,
+			space    = s.space,
+		}
+		limits := report.Options {
+			warn_used = watch.limits.warn_used,
+			fail_used = watch.limits.fail_used,
+			min_free  = watch.limits.min_free,
+		}
+		summary := report.build(&s.tree, &s.roll, facts, limits, context.temp_allocator)
+		summaries = {webhook.summary(&summary, true), webhook.summary(&summary, false)}
 	}
 	return
 }

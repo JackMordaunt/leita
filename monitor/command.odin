@@ -17,6 +17,7 @@ import "../human"
 import "../licence"
 import "../schedule"
 import "../settings"
+import "../webhook"
 
 /*
 The monitor's command line, which both binaries answer as their first argument
@@ -46,6 +47,15 @@ A limit crossed raises an alert, once, as a desktop notification and in list.
   remove PATH        stop watching PATH
   on                 turn monitoring on: hand it to the system's scheduler
   off                turn monitoring off: remove it from the scheduler
+  webhook add URL [--paths]
+                     send each new alert, with a summary of the scan, to URL
+                     (https), signed with a secret this prints; --paths lets
+                     it carry the folder paths inside a place
+  webhook remove URL stop sending to URL
+  webhook list       the webhooks, their secrets and how delivery went
+  webhook test [URL] send a test to URL, or to every webhook, now
+
+Nothing is sent anywhere unless you add a webhook.
 `
 
 // Context is what the command line works with: where its files are, the
@@ -60,6 +70,10 @@ Context :: struct {
 	notify:   alert.Runner,
 	user:     rawptr, // notify's own
 	desktop:  alert.System,
+	// How a webhook's delivery is posted, nil for not at all, and the
+	// poster's own.
+	post:     webhook.Poster,
+	posted:   rawptr,
 }
 
 // LOCKED says why a paid command was refused.
@@ -91,6 +105,8 @@ dispatch :: proc(c: Context, args: []string, w: io.Writer) -> int {
 				notify = c.notify,
 				user = c.user,
 				desktop = c.desktop,
+				post = c.post,
+				posted = c.posted,
 			},
 			w,
 		)
@@ -170,6 +186,8 @@ dispatch :: proc(c: Context, args: []string, w: io.Writer) -> int {
 		return switch_on(c, w)
 	case "off":
 		return switch_off(c, w)
+	case "webhook":
+		return dispatch_webhook(c, rest, w)
 	case "-h", "--help", "help":
 		fmt.wprint(w, USAGE)
 		return 0
@@ -439,6 +457,7 @@ run_command_line :: proc(args: []string) -> int {
 		now      = time.now(),
 		notify   = show,
 		desktop  = alert.SYSTEM,
+		post     = webhook.post,
 	}
 	return dispatch(c, args, os.to_writer(os.stdout))
 }
@@ -452,3 +471,183 @@ show :: proc(argv: []string, _: rawptr) -> bool {
 // NOTIFY_TIMEOUT is how long a notification's command may take: one that hangs
 // must not hold up the scans after it.
 NOTIFY_TIMEOUT :: 20 * time.Second
+
+// dispatch_webhook carries out leita monitor webhook ..., saying how it went on
+// w, and returns the exit code.
+@(private)
+dispatch_webhook :: proc(c: Context, args: []string, w: io.Writer) -> int {
+	verb := args[0] if len(args) > 0 else "list"
+	rest := args[1:] if len(args) > 0 else nil
+	st: settings.Store
+	if !open_settings(c, &st, w) {
+		return EXIT_FAILED
+	}
+	defer settings.close(&st)
+	now := time.to_unix_seconds(c.now)
+	switch verb {
+	case "add":
+		Hook_Flags :: struct {
+			url:   string `args:"pos=0,required" usage:"Where to send each alert: an https URL."`,
+			paths: bool `usage:"Let it carry the folder paths inside a place."`,
+		}
+		f: Hook_Flags
+		if code, ok := parse(&f, rest); !ok {
+			return code
+		}
+		if !c.unlocked {
+			fmt.wprintln(w, LOCKED)
+			return EXIT_FAILED
+		}
+		switch webhook.check_url(f.url) {
+		case .None:
+		case .Not_Https:
+			fmt.wprintfln(w, "error: %s is not https; plain http is only for this machine", f.url)
+			return EXIT_FAILED
+		case .No_Host:
+			fmt.wprintfln(w, "error: %s names no server", f.url)
+			return EXIT_FAILED
+		}
+		if _, err := settings.hook_add(
+			&st,
+			f.url,
+			webhook.make_secret(context.temp_allocator),
+			f.paths,
+			now,
+		); err != nil {
+			fmt.wprintfln(w, "error: cannot keep the webhook: %s", history.describe(err))
+			return EXIT_FAILED
+		}
+		fmt.wprintfln(
+			w,
+			"sending each new alert to %s%s",
+			f.url,
+			", folder paths included" if f.paths else "",
+		)
+		print_secret(&st, f.url, w)
+		return 0
+	case "remove":
+		Remove_Hook :: struct {
+			url: string `args:"pos=0,required" usage:"The webhook to stop sending to."`,
+		}
+		f: Remove_Hook
+		if code, ok := parse(&f, rest); !ok {
+			return code
+		}
+		found, err := settings.hook_remove(&st, f.url)
+		switch {
+		case err != nil:
+			fmt.wprintfln(w, "error: cannot remove the webhook: %s", history.describe(err))
+			return EXIT_FAILED
+		case !found:
+			fmt.wprintfln(w, "error: no webhook to %s", f.url)
+			return EXIT_FAILED
+		}
+		fmt.wprintfln(w, "no longer sending to %s", f.url)
+		return 0
+	case "list":
+		hooks, err := settings.hooks(&st, context.temp_allocator)
+		if err != nil {
+			fmt.wprintfln(w, "error: cannot read the webhooks: %s", history.describe(err))
+			return EXIT_FAILED
+		}
+		if len(hooks) == 0 {
+			fmt.wprintln(w, "no webhook; nothing is sent anywhere")
+		}
+		for h in hooks {
+			fmt.wprintfln(w, "%s%s", h.url, "  (folder paths included)" if h.paths else "")
+			fmt.wprintfln(w, "  secret %s", h.secret)
+			switch {
+			case h.last_problem != "":
+				fmt.wprintfln(w, "  last try failed: %s", h.last_problem)
+			case h.last_sent > 0:
+				fmt.wprintfln(w, "  last delivered %s", when_(h.last_sent))
+			case:
+				fmt.wprintln(w, "  nothing delivered yet")
+			}
+			if n := settings.waiting(&st, h.id); n > 0 {
+				fmt.wprintfln(w, "  %d waiting to be taken", n)
+			}
+		}
+		return 0
+	case "test":
+		Test_Hook :: struct {
+			url: string `args:"pos=0" usage:"The webhook to test; every one unless given."`,
+		}
+		f: Test_Hook
+		if code, ok := parse(&f, rest); !ok {
+			return code
+		}
+		if !c.unlocked {
+			fmt.wprintln(w, LOCKED)
+			return EXIT_FAILED
+		}
+		return test_hooks(c, &st, f.url, now, w)
+	}
+	fmt.wprintf(w, "error: no webhook command %q\n\n%s", verb, USAGE)
+	return EXIT_FAILED
+}
+
+// print_secret says the secret of the webhook to url, for its server to check
+// each request with.
+@(private)
+print_secret :: proc(st: ^settings.Store, url: string, w: io.Writer) {
+	hooks, _ := settings.hooks(st, context.temp_allocator)
+	for h in hooks {
+		if h.url == url {
+			fmt.wprintfln(
+				w,
+				"its secret, for checking X-Leita-Signature on each request: %s",
+				h.secret,
+			)
+		}
+	}
+}
+
+// test_hooks sends a test to the webhook to url, or to every one for "", now,
+// and says how each went on w.
+@(private)
+test_hooks :: proc(c: Context, st: ^settings.Store, url: string, now: i64, w: io.Writer) -> int {
+	hooks, _ := settings.hooks(st, context.temp_allocator)
+	tested := 0
+	for h in hooks {
+		if url != "" && h.url != url {
+			continue
+		}
+		tested += 1
+		if problem := webhook.queue_test(st, h.id, now); problem != "" {
+			fmt.wprintfln(w, "error: %s", problem)
+			return EXIT_FAILED
+		}
+		if c.post == nil {
+			continue
+		}
+		tally, problem := webhook.deliver(st, now, c.post, c.posted, h.id)
+		switch {
+		case problem != "":
+			fmt.wprintfln(w, "error: %s", problem)
+			return EXIT_FAILED
+		case tally.taken > 0:
+			fmt.wprintfln(w, "%s took the test", h.url)
+		case:
+			heard, _ := settings.hooks(st, context.temp_allocator)
+			why := ""
+			for g in heard {
+				if g.id == h.id {
+					why = g.last_problem
+				}
+			}
+			fmt.wprintfln(
+				w,
+				"%s did not take the test: %s%s",
+				h.url,
+				why,
+				"; it is tried again on later runs" if tally.later > 0 else "",
+			)
+		}
+	}
+	if tested == 0 {
+		fmt.wprintln(w, "error: no webhook to test; leita monitor webhook add URL adds one")
+		return EXIT_FAILED
+	}
+	return 0
+}

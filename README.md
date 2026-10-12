@@ -78,8 +78,32 @@ the scan it first appears, and again only after it has cleared:
 leita monitor add D: --warn-used 80 --fail-used 95 --min-free 20GiB --full-within 14 --growth
 ```
 
-Scheduled scans and their alerts come with a licence, with the same 30-day
-trial.
+To hear of alerts on your own server, add a webhook in Monitoring, or from the
+terminal. Each new alert is posted as JSON, over https, with a summary of the
+scan in the report schema ([report/SCHEMA.md](report/SCHEMA.md)); the folder
+paths inside a place stay out unless you pass `--paths`. A delivery the server
+cannot take waits and is tried again, with backoff, on later runs.
+
+```sh
+leita monitor webhook add https://hooks.example.com/leita
+leita monitor webhook test
+```
+
+Each request carries `X-Leita-Timestamp`, the Unix seconds it was signed at,
+and `X-Leita-Signature`: `sha256=` and the hex HMAC-SHA256 of the timestamp, a
+full stop and the body, keyed with the secret `webhook add` prints. A server
+checks it like this, and refuses a timestamp far from now:
+
+```python
+import hmac, hashlib
+expected = "sha256=" + hmac.new(secret.encode(), f"{timestamp}.{body}".encode(), hashlib.sha256).hexdigest()
+ok = hmac.compare_digest(expected, signature)
+```
+
+The body's members are described in [webhook/event.odin](webhook/event.odin).
+
+Scheduled scans, their alerts and webhooks come with a licence, with the same
+30-day trial.
 
 ## Free up space, safely
 
@@ -94,12 +118,14 @@ the answer.
 
 ## Private by design
 
-- **No telemetry.** leita sends nothing about you or your disks. The one
-  exception is adding a licence key: leita sends the key once to fetch your
-  licence, and nothing after. The source is published, so you can check.
+- **No telemetry.** leita never sends anything unless you tell it where. It
+  sends a licence key once, when you add one, to fetch your licence; and it
+  sends alerts to the webhooks you add, and nowhere else. The source is
+  published, so you can check.
 - **Nothing to set up.** One small app, no account, no runtime to install.
 - **Your data stays with you.** Scans and the deletion log stay on your
-  machine.
+  machine. A webhook carries the folder paths inside a place only if you
+  allow it.
 
 ## Get started
 
