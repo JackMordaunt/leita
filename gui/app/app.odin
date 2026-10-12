@@ -110,6 +110,7 @@ Desk_In :: union {
 	Finished_Pass,
 	Open_Failure,
 	Recorder_Change,
+	Test_Done,
 }
 
 // Scan is one run of a reader and everything derived from it. It is heap
@@ -243,6 +244,8 @@ Desk :: struct {
 	recordings:          ^stream.Port(Recorder_Change), // recorder_linux.odin's set_recording
 	recording:           ^sync.Wait_Group, // the change it is running, if any
 	scratch:             ^search.Scratch,
+	tested:              ^stream.Port(Test_Done), // webhook.odin's test_webhook
+	testing_wg:          ^sync.Wait_Group, // the tests test_webhook is sending
 	monitoring:          Monitoring, // monitor.odin
 }
 
@@ -257,6 +260,8 @@ Host :: struct {
 	opening:       sync.Wait_Group,
 	recordings:    stream.Port(Recorder_Change),
 	recording:     sync.Wait_Group,
+	tested:        stream.Port(Test_Done),
+	testing:       sync.Wait_Group,
 	thumbs:        Thumbs, // thumbs.odin
 	workers:       ^stream.Workers,
 	inbox:         ui.Inbox,
@@ -315,6 +320,8 @@ init :: proc(
 		opening       = &h.opening,
 		recordings    = &h.recordings,
 		recording     = &h.recording,
+		tested        = &h.tested,
+		testing_wg    = &h.testing,
 		scratch       = new(search.Scratch, allocator),
 	}
 	if len(update_key) == 32 {
@@ -358,6 +365,8 @@ init :: proc(
 	open_failures, h.open_failures = stream.port(p, Open_Failure, cap = 16, name = "open failures")
 	recordings: stream.Stream(Recorder_Change)
 	recordings, h.recordings = stream.port(p, Recorder_Change, cap = 4, name = "recorder changes")
+	tested: stream.Stream(Test_Done)
+	tested, h.tested = stream.port(p, Test_Done, cap = 4, name = "tested")
 	thumbs_init(h, thumbs)
 
 	desk_in := stream.merge(
@@ -370,6 +379,7 @@ init :: proc(
 			stream.transform(searched, finished_in),
 			stream.transform(open_failures, open_failure_in),
 			stream.transform(recordings, recorder_change_in),
+			stream.transform(tested, test_done_in),
 		},
 		name = "desk in",
 	)
@@ -413,10 +423,12 @@ stop :: proc(h: ^Host) {
 	stream.port_close(h.searched)
 	stream.port_close(h.open_failures)
 	stream.port_close(h.recordings)
+	stream.port_close(h.tested)
 	// An entry still being opened says a failure through the port, which
 	// refuses it now but lives until the pipeline goes.
 	sync.wait_group_wait(&h.opening)
 	sync.wait_group_wait(&h.recording)
+	sync.wait_group_wait(&h.testing)
 	stream.workers_stop(h.workers)
 	find_stop(&h.desk)
 	thumbs_destroy(h)
@@ -650,6 +662,15 @@ desk_step :: proc(d: ^Desk, v: Desk_In) {
 		case command.Dismiss_Update:
 			remember_dismiss(d, command.text_of(&c.version))
 			answer_all(d)
+		case command.Add_Webhook:
+			add_webhook(d, &c)
+			answer_all(d)
+		case command.Remove_Webhook:
+			remove_webhook(d, &c)
+			answer_all(d)
+		case command.Test_Webhook:
+			test_webhook(d, &c)
+			answer_all(d)
 		case command.Locate,
 		     command.Open,
 		     command.Trash,
@@ -678,6 +699,9 @@ desk_step :: proc(d: ^Desk, v: Desk_In) {
 		answer_all(d)
 	case Finished_Pass:
 		take_pass(d, e.pass)
+	case Test_Done:
+		d.monitoring.testing = false
+		answer_all(d)
 	case Open_Failure:
 		tell(d, true, .Open_Failed, command.text_of(&e.name))
 		answer_all(d)

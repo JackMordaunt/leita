@@ -61,6 +61,7 @@ Monitoring :: struct {
 	// worker (set_recording).
 	elevate:   string,
 	toggling:  bool,
+	testing:   bool, // a test is out to a webhook (webhook.odin)
 }
 
 // What the system said of the recorder of changes when last asked.
@@ -190,7 +191,7 @@ monitor_settle :: proc(d: ^Desk, problem: string) {
 
 // unlocked is whether Pro runs: the paid-through grant for this build, or the
 // 30-day evaluation. The zero licence is no grant.
-@(private = "file")
+@(private)
 unlocked :: proc(d: ^Desk) -> bool {
 	grant := licence.Licence{}
 	if d.licensed {
@@ -352,5 +353,7 @@ monitor_answer :: proc(d: ^Desk) -> query.Monitor_Result {
 		}
 	}
 	r.alerts = alerts[:]
+	r.webhooks = hooks_answer(d)
+	r.testing = mo.testing
 	return r
 }

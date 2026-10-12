@@ -269,6 +269,7 @@ Model :: struct {
 	monitor_want:     Maybe(bool),
 	recorder_want:    Maybe(bool),
 	monitor_answered: bool,
+	monitor_part:     Monitor_Part, // where the last change was asked from
 	// The alerts editor (monitor.odin): whether it is open, under which place,
 	// its fields, and whether they last failed to read.
 	limits_open:      bool,
@@ -279,6 +280,9 @@ Model :: struct {
 	limit_days:       ui.Text_State,
 	limit_growth:     bool,
 	limits_bad:       bool,
+	// The webhook field and whether the one typed may carry folder paths.
+	hook_text:        ui.Text_State,
+	hook_paths:       bool,
 }
 
 // model_init readies m to show path in locale, English unless the caller says.
@@ -305,6 +309,7 @@ model_destroy :: proc(m: ^Model) {
 	ui.text_destroy(&m.limit_fail)
 	ui.text_destroy(&m.limit_free)
 	ui.text_destroy(&m.limit_days)
+	ui.text_destroy(&m.hook_text)
 	delete(m.limits_place)
 	delete(m.search_held)
 	delete(m.buy_url)

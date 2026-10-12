@@ -36,6 +36,9 @@ monitor_open :: proc(s: ^Monitor_Rig) {
 	)
 	ui.probe_deliver(&s.h.p, query.Licence{}, query.Licence_Result{unlocked = true})
 	monitor_answer(s, {on = false, scheduler = "systemd"})
+	// The dialog is taller than the window now that it carries webhooks, so it
+	// scrolls; let it settle, so a click lands where the last frame drew.
+	ui.probe_advance(&s.h.p, 30, 1.0 / 60)
 }
 
 // monitor_answer is the host answering the Monitoring dialog with r, laid out.

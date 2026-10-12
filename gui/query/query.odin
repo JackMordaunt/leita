@@ -540,4 +540,19 @@ Monitor_Result :: struct {
 	recorder_shown:   bool,
 	recorder_on:      bool,
 	recorder_running: bool,
+	webhooks:         []Hook, // in the order they were added
+	testing:          bool, // a test is being sent to a webhook
+}
+
+// Hook is a webhook alerts are sent to: the secret its requests are signed
+// with, whether it may carry folder paths, when it last took a delivery (0 for
+// never), why its last try failed ("" when it did not), and how many
+// deliveries wait for it.
+Hook :: struct {
+	url:       string,
+	secret:    string,
+	paths:     bool,
+	last_sent: i64, // Unix seconds
+	problem:   string,
+	waiting:   int,
 }
