@@ -51,7 +51,7 @@ open :: proc(st: ^Store, path: string) -> sqlite3.Error {
 		}
 	}
 	db := sqlite3.open(path, {wal = true, busy_timeout = BUSY_WAIT}, context.allocator) or_return
-	for schema in ([]string{SCHEMA, MONITOR_SCHEMA}) {
+	for schema in ([]string{SCHEMA, MONITOR_SCHEMA, WEBHOOK_SCHEMA}) {
 		if err := sqlite3.exec(db, schema); err != nil {
 			sqlite3.close(&db)
 			return err
