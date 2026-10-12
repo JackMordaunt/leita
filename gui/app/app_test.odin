@@ -2865,6 +2865,53 @@ monitoring_watches_a_place_and_hands_it_to_the_scheduler :: proc(t: ^testing.T) 
 	testing.expect(t, render.headless_png(&r.hl, "build/test/monitoring_dark.png"))
 	r.m.dark = false
 
+	// A webhook takes https only, but http to this machine; Send test reaches
+	// it, signed, and the dialog says it was delivered.
+	hook_server: Hook_Server
+	hook_server.bodies = make([dynamic]string, runtime.heap_allocator())
+	defer {
+		for b in hook_server.bodies {
+			delete(b, runtime.heap_allocator())
+		}
+		delete(hook_server.bodies)
+	}
+	srv, started := loopback.start(hook_take, &hook_server, runtime.heap_allocator())
+	testing.expect(t, started)
+	defer loopback.stop(srv)
+	ui.text_set(&r.m.hook_text, "http://example.com/leita")
+	// The dialog is taller than the window: its webhooks are scrolled to.
+	testing.expect(t, ui.probe_scroll(&r.p, "Recent alerts", 2000))
+	ui.probe_advance(&r.p, 20, 1.0 / 60)
+	testing.expect(t, ui.probe_click_top(&r.p, "Add webhook"))
+	hand_on(&r)
+	testing.expect(t, settle(&r, "A webhook must use https; plain http is only for this machine."))
+	hook_url := loopback.url(srv, "/leita")
+	ui.text_set(&r.m.hook_text, hook_url)
+	testing.expect(t, ui.probe_click_top(&r.p, "Add webhook"))
+	hand_on(&r)
+	testing.expect(t, settle(&r, "Nothing delivered yet"))
+	testing.expect(t, ui.probe_scroll(&r.p, "Webhooks", 2000))
+	ui.probe_advance(&r.p, 20, 1.0 / 60)
+	testing.expect(t, ui.probe_click_top(&r.p, "Send test"))
+	hand_on(&r)
+	testing.expect(t, settle_prefix(&r, "Last delivered"), "the test was delivered")
+	{
+		sync.guard(&hook_server.mutex)
+		testing.expect_value(t, len(hook_server.bodies), 1)
+		if len(hook_server.bodies) == 1 {
+			testing.expect(
+				t,
+				strings.contains(hook_server.bodies[0], `"event": "test"`),
+				hook_server.bodies[0],
+			)
+		}
+	}
+	ui.probe_advance(&r.p, 20, 1.0 / 60)
+	testing.expect(t, render.headless_png(&r.hl, "build/test/monitoring_webhooks.png"))
+	testing.expect(t, ui.probe_click(&r.p, fmt.tprintf("Remove %s", hook_url)))
+	hand_on(&r)
+	testing.expect(t, settle(&r, "No webhook yet."))
+
 	testing.expect(t, ui.probe_click(&r.p, fmt.tprintf("Stop watching %s", root)))
 	hand_on(&r)
 	testing.expect(t, settle(&r, "No place is watched yet."))
@@ -2875,4 +2922,41 @@ monitoring_watches_a_place_and_hands_it_to_the_scheduler :: proc(t: ^testing.T) 
 		settle(&r, "Run every hour by the systemd user timer leita-monitor.timer.", false),
 	)
 	testing.expect(t, !os.exists(timer), "turning it off takes the timer away")
+}
+
+// Hook_Server is a webhook's server on this machine, keeping each body it was sent.
+@(private = "file")
+Hook_Server :: struct {
+	mutex:  sync.Mutex,
+	bodies: [dynamic]string,
+}
+
+@(private = "file")
+hook_take :: proc(conn: ^loopback.Conn, req: loopback.Request) {
+	h := (^Hook_Server)(conn.server.user)
+	{
+		sync.guard(&h.mutex)
+		append(&h.bodies, strings.clone(req.body, runtime.heap_allocator()))
+	}
+	loopback.send(conn, "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")
+}
+
+// settle_prefix is settle for a tag that begins with prefix.
+@(private = "file")
+settle_prefix :: proc(r: ^Rig, prefix: string) -> bool {
+	deadline := time.tick_now()._nsec + i64(30 * time.Second)
+	for time.tick_now()._nsec < deadline {
+		for t in ui.probe_current(&r.p).tags {
+			if strings.has_prefix(t.name, prefix) {
+				return true
+			}
+		}
+		if ui.inbox_pending(&r.h.inbox) {
+			ui.inbox_drain(&r.h.inbox, &r.p.layout)
+			ui.probe_frame(&r.p)
+			hand_on(r)
+		}
+		time.sleep(time.Millisecond)
+	}
+	return false
 }

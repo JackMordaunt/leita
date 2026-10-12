@@ -104,6 +104,7 @@ Desk_In :: union {
 	Activated,
 	Finished_Pass,
 	Open_Failure,
+	Test_Done,
 }
 
 // Scan is one run of a reader and everything derived from it. It is heap
@@ -180,6 +181,8 @@ Desk :: struct {
 	searched:        ^stream.Port(Finished_Pass),
 	open_failures:   ^stream.Port(Open_Failure), // act.odin's open_entry
 	opening:         ^sync.Wait_Group, // the entries open_entry is opening
+	tested:          ^stream.Port(Test_Done), // webhook.odin's test_webhook
+	testing_wg:      ^sync.Wait_Group, // the tests test_webhook is sending
 	scratch:         ^search.Scratch,
 	monitoring:      Monitoring, // monitor.odin
 }
@@ -192,6 +195,8 @@ Host :: struct {
 	searched:      stream.Port(Finished_Pass),
 	open_failures: stream.Port(Open_Failure),
 	opening:       sync.Wait_Group,
+	tested:        stream.Port(Test_Done),
+	testing:       sync.Wait_Group,
 	thumbs:        Thumbs, // thumbs.odin
 	workers:       ^stream.Workers,
 	inbox:         ui.Inbox,
@@ -242,6 +247,8 @@ init :: proc(
 		searched      = &h.searched,
 		open_failures = &h.open_failures,
 		opening       = &h.opening,
+		tested        = &h.tested,
+		testing_wg    = &h.testing,
 		scratch       = new(search.Scratch, allocator),
 	}
 	msg.init(h.desk.words, .English)
@@ -272,6 +279,8 @@ init :: proc(
 	searched, h.searched = stream.port(p, Finished_Pass, cap = 256, name = "searched")
 	open_failures: stream.Stream(Open_Failure)
 	open_failures, h.open_failures = stream.port(p, Open_Failure, cap = 16, name = "open failures")
+	tested: stream.Stream(Test_Done)
+	tested, h.tested = stream.port(p, Test_Done, cap = 4, name = "tested")
 	thumbs_init(h, thumbs)
 
 	desk_in := stream.merge(
@@ -282,6 +291,7 @@ init :: proc(
 			stream.transform(activations, activated_in),
 			stream.transform(searched, finished_in),
 			stream.transform(open_failures, open_failure_in),
+			stream.transform(tested, test_done_in),
 		},
 		name = "desk in",
 	)
@@ -318,9 +328,11 @@ stop :: proc(h: ^Host) {
 	find_halt(&h.desk)
 	stream.port_close(h.searched)
 	stream.port_close(h.open_failures)
+	stream.port_close(h.tested)
 	// An entry still being opened says a failure through the port, which
 	// refuses it now but lives until the pipeline goes.
 	sync.wait_group_wait(&h.opening)
+	sync.wait_group_wait(&h.testing)
 	stream.workers_stop(h.workers)
 	find_stop(&h.desk)
 	thumbs_destroy(h)
@@ -517,6 +529,15 @@ desk_step :: proc(d: ^Desk, v: Desk_In) {
 		case command.Unwatch:
 			unwatch(d, &c)
 			answer_all(d)
+		case command.Add_Webhook:
+			add_webhook(d, &c)
+			answer_all(d)
+		case command.Remove_Webhook:
+			remove_webhook(d, &c)
+			answer_all(d)
+		case command.Test_Webhook:
+			test_webhook(d, &c)
+			answer_all(d)
 		case command.Locate,
 		     command.Open,
 		     command.Trash,
@@ -542,6 +563,9 @@ desk_step :: proc(d: ^Desk, v: Desk_In) {
 		answer_all(d)
 	case Finished_Pass:
 		take_pass(d, e.pass)
+	case Test_Done:
+		d.monitoring.testing = false
+		answer_all(d)
 	case Open_Failure:
 		tell(d, true, .Open_Failed, command.text_of(&e.name))
 		answer_all(d)

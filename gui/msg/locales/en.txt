@@ -244,7 +244,7 @@ licence_caption = The licence key from your receipt, or a licence beginning leit
 licence_key = Licence key
 licence_to_add = Licence to add
 # {0} the product's name
-licence_privacy = {0} sends the key once, to mordaunt.dev, to fetch your licence. It sends nothing else, then or later.
+licence_privacy = {0} sends the key once, to mordaunt.dev, to fetch your licence. It sends nothing else unless you tell it where, by adding a webhook under Monitoring.
 open_licence_file = Open licence file…
 trial_ended_title = Your 30-day trial of reports and change tracking has ended
 trial_ended_body = Scanning, the charts and Reclaim stay free. A licence brings back reports and what changed since the last scan.
@@ -382,3 +382,25 @@ save = Save
 recent_alerts = Recent alerts
 alerts_none = No alerts yet.
 alerting = Alert
+
+# Webhooks: the person's own servers alerts are sent to. {0} of webhooks_explain is the product's name; of webhook_waiting a count; of the rest a URL, a date, or why a delivery failed.
+webhooks = Webhooks
+webhooks_explain = {0} sends each new alert, with a summary of the scan, to the servers you add here, over https, and to nowhere else. Folder paths inside a place stay out unless you allow them. Each request carries X-Leita-Timestamp and X-Leita-Signature: sha256= and the HMAC-SHA256, keyed with the webhook's secret, of the timestamp, a full stop and the body.
+webhooks_none = No webhook yet.
+webhook_url = Webhook URL
+webhook_url_placeholder = https://example.com/leita
+webhook_paths = Include folder paths
+add_webhook = Add webhook
+webhook_not_https = A webhook must use https; plain http is only for this machine.
+send_test = Send test
+send_test_to = Send a test to {0}
+remove_webhook = Remove {0}
+copy_secret = Copy secret
+copy_secret_of = Copy the secret of {0}
+webhook_last_sent = Last delivered {0}
+webhook_never = Nothing delivered yet
+webhook_failed = Last try failed: {0}
+webhook_waiting.one = {0} delivery waiting to be taken
+webhook_waiting = {0} deliveries waiting to be taken
+webhook_sends_paths = Sends folder paths
+webhook_testing = Sending…

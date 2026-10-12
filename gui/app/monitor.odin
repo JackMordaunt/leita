@@ -36,6 +36,7 @@ Monitoring :: struct {
 	problem:   string,
 	note:      string,
 	answered:  time.Tick, // when a Monitor need was last answered on a tick
+	testing:   bool, // a test is out to a webhook (webhook.odin)
 }
 
 // MONITOR_FRESH is how often a live Monitor need is answered again on the
@@ -108,7 +109,6 @@ monitor_close :: proc(d: ^Desk) {
 
 // monitor_settle ends a change, with why it was refused, "" when it was made,
 // and a note for the person, "" for none.
-@(private = "file")
 monitor_settle :: proc(d: ^Desk, problem: string, note := "") {
 	mo := &d.monitoring
 	delete(mo.problem)
@@ -267,5 +267,7 @@ monitor_answer :: proc(d: ^Desk) -> query.Monitor_Result {
 		}
 	}
 	r.alerts = alerts[:]
+	r.webhooks = hooks_answer(d)
+	r.testing = mo.testing
 	return r
 }

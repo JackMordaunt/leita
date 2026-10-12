@@ -45,6 +45,9 @@ Command :: union {
 	Monitoring,
 	Watch,
 	Unwatch,
+	Add_Webhook,
+	Remove_Webhook,
+	Test_Webhook,
 }
 
 // Scan reads what is at path, calling off any scan still running.
@@ -184,4 +187,21 @@ Watch :: struct {
 // Unwatch stops the monitor scanning the place at path.
 Unwatch :: struct {
 	path: Text,
+}
+
+// Add_Webhook sends each new alert to url from now on, with folder paths when
+// paths is set.
+Add_Webhook :: struct {
+	url:   Text,
+	paths: bool,
+}
+
+// Remove_Webhook stops sending to url.
+Remove_Webhook :: struct {
+	url: Text,
+}
+
+// Test_Webhook sends a test to url, now.
+Test_Webhook :: struct {
+	url: Text,
 }

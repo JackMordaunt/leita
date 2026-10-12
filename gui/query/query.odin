@@ -376,4 +376,19 @@ Monitor_Result :: struct {
 	note:      string,
 	watched:   []Watched_Place, // in the order they were added
 	alerts:    []Raised_Alert, // of every place, newest first, at most MONITOR_ALERTS_LIMIT
+	webhooks:  []Hook, // in the order they were added
+	testing:   bool, // a test is being sent to a webhook
+}
+
+// Hook is a webhook alerts are sent to: the secret its requests are signed
+// with, whether it may carry folder paths, when it last took a delivery (0 for
+// never), why its last try failed ("" when it did not), and how many
+// deliveries wait for it.
+Hook :: struct {
+	url:       string,
+	secret:    string,
+	paths:     bool,
+	last_sent: i64, // Unix seconds
+	problem:   string,
+	waiting:   int,
 }

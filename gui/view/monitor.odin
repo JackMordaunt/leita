@@ -57,13 +57,22 @@ monitor_dialog :: proc(gtx: ^ui.Ctx, m: ^Model) {
 		m.monitor_answered = true
 		if r.problem == "" {
 			ui.text_set(&m.watch_text, "")
+			ui.text_set(&m.hook_text, "")
+			m.hook_paths = false
 		}
 	}
 	locked := !unlocked(gtx)
 	waiting := m.monitor_sent != nil
 	close := false
 	buttons := [1]primer.Dialog_Button{{content = tr(.Close), clicked = &close}}
-	if primer.dialog(gtx, &m.monitor_open, tr(.Monitoring), footer = buttons[:], width = .XLarge) {
+	if primer.dialog(
+		gtx,
+		&m.monitor_open,
+		tr(.Monitoring),
+		footer = buttons[:],
+		width = .XLarge,
+		height = .Large,
+	) {
 		ui.column(gtx, gap = 16, align = .Fill)
 		if locked {
 			primer.inline_message(gtx, tr(.Monitoring_Locked), .Warning)
@@ -88,7 +97,7 @@ monitor_dialog :: proc(gtx: ^ui.Ctx, m: ^Model) {
 				label_off = tr(.Off),
 				state = .Disabled if waiting || (locked && !r.on) else .Live,
 			) {
-				send_monitor(gtx, m, r, command.Monitoring{on = on})
+				send_monitor(gtx, m, r, command.Monitoring{on = on}, .Switch)
 			}
 		}
 		if r.on {
@@ -99,9 +108,7 @@ monitor_dialog :: proc(gtx: ^ui.Ctx, m: ^Model) {
 				color = primer.color(.Fg_Color_Muted),
 			)
 		}
-		if m.monitor_answered && r.problem != "" {
-			primer.inline_message(gtx, r.problem, .Critical)
-		}
+		problem_here(gtx, m, r, .Switch)
 		if r.note != "" {
 			primer.inline_message(gtx, r.note, .Warning)
 		}
@@ -116,7 +123,9 @@ monitor_dialog :: proc(gtx: ^ui.Ctx, m: ^Model) {
 			}
 		}
 		watch_field(gtx, m, r, locked)
+		problem_here(gtx, m, r, .Places)
 		recent_alerts(gtx, r)
+		webhooks(gtx, m, r, locked)
 	}
 	if close {
 		m.monitor_open = false
@@ -230,11 +239,26 @@ watch_field :: proc(gtx: ^ui.Ctx, m: ^Model, r: ^query.Monitor_Result, locked: b
 	}
 }
 
-// send_monitor sends a change to monitoring, and waits for the host to say how
-// it went.
+// Monitor_Part is a part of the dialog a change was asked from, where the host's
+// answer, should it refuse, is shown.
+Monitor_Part :: enum u8 {
+	Places,
+	Switch,
+	Webhooks,
+}
+
+// send_monitor sends a change to monitoring, asked from part, and waits for the
+// host to say how it went.
 @(private)
-send_monitor :: proc(gtx: ^ui.Ctx, m: ^Model, r: ^query.Monitor_Result, c: command.Command) {
+send_monitor :: proc(
+	gtx: ^ui.Ctx,
+	m: ^Model,
+	r: ^query.Monitor_Result,
+	c: command.Command,
+	part := Monitor_Part.Places,
+) {
 	m.monitor_sent = r.changed
+	m.monitor_part = part
 	ui.command(gtx, c)
 }
 
@@ -374,5 +398,137 @@ recent_alerts :: proc(gtx: ^ui.Ctx, r: ^query.Monitor_Result) {
 			ui.flexible(gtx, 1)
 			primer.text(gtx, a.text, .Small)
 		}
+	}
+}
+
+/*
+webhooks is the person's own servers each new alert goes to: each with whether
+it may carry folder paths, a test, its secret to copy, a button to remove it,
+and how its last delivery went; then a field to add another. It says what is
+sent, where, and how a server checks it, so the person knows what leaves the
+machine before they add one.
+*/
+@(private)
+webhooks :: proc(gtx: ^ui.Ctx, m: ^Model, r: ^query.Monitor_Result, locked: bool) {
+	primer.heading(gtx, tr(.Webhooks), level = 2, variant = .Small)
+	primer.text(
+		gtx,
+		trf(gtx, .Webhooks_Explain, version.NAME),
+		.Small,
+		color = primer.color(.Fg_Color_Muted),
+	)
+	if len(r.webhooks) == 0 {
+		primer.text(gtx, tr(.Webhooks_None), color = primer.color(.Fg_Color_Muted))
+	}
+	for h, i in r.webhooks {
+		s := ui.scope_open(gtx, u64(i + 1))
+		defer ui.scope_close(&s)
+		if ui.column(gtx, gap = 4, align = .Fill) {
+			if ui.row(gtx, gap = 8, align = .Center) {
+				ui.flexible(gtx, 1)
+				primer.truncate(gtx, h.url, title = h.url, max_width = ui.INF, weight = .Semibold)
+				if h.paths {
+					primer.label(gtx, tr(.Webhook_Sends_Paths), .Attention)
+				}
+				if primer.button(
+					gtx,
+					tr(.Webhook_Testing) if r.testing else tr(.Send_Test),
+					size = .Small,
+					leading = .Paper_Airplane,
+					loading = r.testing,
+					state = .Disabled if locked || r.testing else .Live,
+					name = trf(gtx, .Send_Test_To, h.url),
+				) {
+					ui.command(
+						gtx,
+						command.Command(command.Test_Webhook{url = command.text_make(h.url)}),
+					)
+				}
+				if primer.icon_button(
+					gtx,
+					.Copy,
+					trf(gtx, .Copy_Secret_Of, h.url),
+					.Invisible,
+					size = .Small,
+				) {
+					ui.clipboard_write(gtx, h.secret)
+				}
+				if primer.icon_button(
+					gtx,
+					.Trash,
+					trf(gtx, .Remove_Webhook, h.url),
+					.Invisible,
+					size = .Small,
+				) {
+					send_monitor(
+						gtx,
+						m,
+						r,
+						command.Remove_Webhook{url = command.text_make(h.url)},
+						.Webhooks,
+					)
+				}
+			}
+			primer.text(gtx, hook_status(gtx, h), .Small, color = primer.color(.Fg_Color_Muted))
+		}
+	}
+	if ui.row(gtx, gap = 8, align = .Center) {
+		ui.flexible(gtx, 1)
+		typed := strings.trim_space(ui.text_string(&m.hook_text))
+		edit := primer.text_input(
+			gtx,
+			&m.hook_text,
+			placeholder = tr(.Webhook_Url_Placeholder),
+			block = true,
+			name = tr(.Webhook_Url),
+			state = .Disabled if locked else .Live,
+		)
+		primer.checkbox(gtx, &m.hook_paths, tr(.Webhook_Paths))
+		add := primer.button(
+			gtx,
+			tr(.Add_Webhook),
+			leading = .Webhook,
+			state = .Disabled if locked || typed == "" else .Live,
+		)
+		if (add || edit.submitted) && !locked && typed != "" && len(typed) <= command.MAX_PATH {
+			send_monitor(
+				gtx,
+				m,
+				r,
+				command.Add_Webhook{url = command.text_make(typed), paths = m.hook_paths},
+				.Webhooks,
+			)
+		}
+	}
+	problem_here(gtx, m, r, .Webhooks)
+}
+
+// hook_status says how a webhook's last delivery went, and what waits for it.
+@(private)
+hook_status :: proc(gtx: ^ui.Ctx, h: query.Hook) -> string {
+	said: string
+	switch {
+	case h.problem != "":
+		said = trf(gtx, .Webhook_Failed, h.problem)
+	case h.last_sent > 0:
+		said = trf(gtx, .Webhook_Last_Sent, taken_text(h.last_sent, gtx.allocator))
+	case:
+		said = tr(.Webhook_Never)
+	}
+	if h.waiting > 0 {
+		said = strings.concatenate(
+			{said, " · ", trf(gtx, .Webhook_Waiting, h.waiting)},
+			gtx.allocator,
+		)
+	}
+	return said
+}
+
+// problem_here shows why the host refused the last change, under the part of
+// the dialog it was asked from.
+@(private)
+problem_here :: proc(gtx: ^ui.Ctx, m: ^Model, r: ^query.Monitor_Result, part: Monitor_Part) {
+	if m.monitor_answered && r.problem != "" && m.monitor_part == part {
+		primer.inline_message(gtx, r.problem, .Critical)
 	}
 }
