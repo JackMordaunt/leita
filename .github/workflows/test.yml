@@ -91,12 +91,14 @@ jobs:
       # test outright if it finds none; Ubuntu ships none of them, so
       # fonts-liberation is installed and symlinked where pdf/system.odin
       # looks, the same fix jm's own test.yml uses. cmake and ninja build
-      # Blend2D and, on Linux only, SDL3 from source below.
+      # Blend2D and, on Linux only, SDL3 from source below. libcurl4-openssl-dev
+      # is jm:http's link dependency, pulled in by gui/app through
+      # jm:http/loopback even though loopback itself never opens a socket.
       - name: packages (linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends cmake ninja-build fonts-liberation
+          sudo apt-get install -y --no-install-recommends cmake ninja-build fonts-liberation libcurl4-openssl-dev
           sudo mkdir -p /usr/share/fonts/liberation
           sudo ln -sf /usr/share/fonts/truetype/liberation/*.ttf /usr/share/fonts/liberation/
 

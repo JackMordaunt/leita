@@ -410,6 +410,19 @@ A small scan, built by hand:
 	5  /r/film.mkv              5 GiB
 	6  /r/notes.txt             0 bytes
 */
+// A path built by hand below must join "/r" to a child the same way scan
+// does, or the comparison reads a mix of slashes scan never produced. "/r"
+// is a stand-in root, not a real drive letter, so on Windows that join
+// still inserts a backslash rather than skip it.
+@(private = "file")
+R_FILM :: "/r" + scan.SEPARATOR + "film.mkv"
+@(private = "file")
+R_PROJ :: "/r" + scan.SEPARATOR + "proj"
+@(private = "file")
+R_PROJ_NODE_MODULES :: R_PROJ + scan.SEPARATOR + "node_modules"
+@(private = "file")
+R_PROJ_NODE_MODULES_XJS :: R_PROJ_NODE_MODULES + scan.SEPARATOR + "x.js"
+
 @(private = "file")
 small_tree :: proc(t: ^testing.T, tree: ^scan.Tree, roll: ^survey.Rollup) {
 	testing.expect(t, scan.tree_init(tree) == nil)
@@ -477,13 +490,13 @@ build_describes_the_scan :: proc(t: ^testing.T) {
 
 	// Only as many as asked for, largest first; an empty file is not ranked.
 	testing.expect_value(t, len(r.largest_files), 2)
-	testing.expect_value(t, r.largest_files[0].path, "/r/film.mkv")
+	testing.expect_value(t, r.largest_files[0].path, R_FILM)
 	testing.expect_value(t, r.largest_files[0].kind, kinds.Kind.Multimedia)
-	testing.expect_value(t, r.largest_files[1].path, "/r/proj/node_modules/x.js")
+	testing.expect_value(t, r.largest_files[1].path, R_PROJ_NODE_MODULES_XJS)
 	testing.expect_value(t, r.largest_files[1].kind, kinds.Kind.Cache)
 
 	testing.expect_value(t, len(r.largest_directories), 2)
-	testing.expect_value(t, r.largest_directories[0].path, "/r/proj")
+	testing.expect_value(t, r.largest_directories[0].path, R_PROJ)
 	testing.expect_value(t, r.largest_directories[0].bytes, 110)
 	testing.expect_value(t, r.largest_directories[0].was.? or_else 0, 50)
 	testing.expect_value(t, r.largest_directories[1].kind, kinds.Kind.Cache)
@@ -497,7 +510,7 @@ build_describes_the_scan :: proc(t: ^testing.T) {
 	testing.expect_value(t, len(groups), 1)
 	if len(groups) == 1 {
 		testing.expect_value(t, groups[0].category, reclaim.Category.Dependencies)
-		testing.expect_value(t, groups[0].items[0].path, "/r/proj/node_modules")
+		testing.expect_value(t, groups[0].items[0].path, R_PROJ_NODE_MODULES)
 		testing.expect_value(t, groups[0].bytes, 100)
 	}
 }
@@ -557,7 +570,7 @@ every_format_frees_what_build_made_at_its_size :: proc(t: ^testing.T) {
 		// A PDF's text is compressed; the others name the largest directory.
 		text := strings.to_string(sb)
 		wrote :=
-			strings.has_prefix(text, "%PDF-") if format == .Pdf else strings.contains(text, "/r/proj")
+			strings.has_prefix(text, "%PDF-") if format == .Pdf else strings.contains(text, R_PROJ)
 		testing.expectf(t, err != .None || wrote, "a %v report was written", format)
 		strings.builder_destroy(&sb)
 		destroy(&r)

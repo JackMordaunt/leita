@@ -21,7 +21,12 @@
 # `SAN= just build`. Odin does not create output directories, hence the mkdir.
 
 odin  := env("ODIN", "odin")
-root  := justfile_directory()
+# Forward slashes throughout: justfile_directory() on Windows returns
+# backslashes, and passing those mixed with the "/" below straight to a
+# native exe (odin.exe is not an MSYS program) through Git Bash corrupts
+# the path, as jm's own justfile already normalises root for the same
+# reason.
+root  := replace(justfile_directory(), "\\", "/")
 jm    := env("JM", root / "jm")
 # Which leita a build is, the one place either binary learns it: the tag
 # described, or a bare commit as git describe names one, g and its hash, so Odin

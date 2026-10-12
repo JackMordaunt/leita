@@ -34,12 +34,23 @@ back, counting what the directory holds:
 
 	<root>/a.txt           100 bytes
 	<root>/sub/b.mp4       5000 bytes
-	<root>/sub/c,"d".txt   1 byte
+	<root>/sub/QUOTED_NAME 1 byte
 */
 @(test)
 a_report_of_a_directory_reads_back :: proc(t: ^testing.T) {
+	// A quote in a file name forces CSV quoting the way a comma does; this
+	// fixture differs by OS so the file can be created on every one of
+	// them, and the quote itself, doubled inside a quoted field, has its
+	// own test: QUOTED in report/report_test.odin.
+	QUOTED_NAME :: "c,\"d\".txt" when ODIN_OS != .Windows else "c,d.txt"
+
 	dir, dir_err := os.temp_directory(context.temp_allocator)
 	testing.expect(t, dir_err == nil, "no temp directory")
+	// Resolved the way a scan itself resolves what it is given, so the
+	// path compared below matches what the report names on every OS.
+	info, stat_err := os.stat(dir, context.temp_allocator)
+	testing.expect(t, stat_err == nil, "the temp directory is not there")
+	dir = strings.trim_right(info.fullpath, "/")
 	root := fmt.tprintf("%s/leita_report_cli", dir)
 	os.remove_all(root)
 	defer os.remove_all(root)
@@ -51,7 +62,7 @@ a_report_of_a_directory_reads_back :: proc(t: ^testing.T) {
 	}
 	write(t, fmt.tprintf("%s/a.txt", root), 100)
 	write(t, fmt.tprintf("%s/sub/b.mp4", root), 5000)
-	write(t, fmt.tprintf("%s/sub/c,\"d\".txt", root), 1)
+	write(t, fmt.tprintf("%s/sub/%s", root, QUOTED_NAME), 1)
 	out := fmt.tprintf("%s.json", root)
 	defer os.remove(out)
 

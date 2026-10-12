@@ -335,8 +335,7 @@ grow :: proc(t: ^Tree, needed: u32) -> bool {
 
 // Paths are written for the machine showing them rather than for the filesystem they
 // came from, so an NTFS volume read from unix still prints something the shell there
-// would take back.
-@(private)
+// would take back. Exported so a test building a path by hand joins it the same way.
 SEPARATOR :: `\` when ODIN_OS == .Windows else "/"
 
 /*
