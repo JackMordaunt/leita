@@ -419,9 +419,13 @@ R_FILM :: "/r" + scan.SEPARATOR + "film.mkv"
 @(private = "file")
 R_PROJ :: "/r" + scan.SEPARATOR + "proj"
 @(private = "file")
-R_PROJ_NODE_MODULES :: R_PROJ + scan.SEPARATOR + "node_modules"
+R_PROJ_NODE_MODULES_XJS :: R_PROJ + scan.SEPARATOR + "node_modules" + scan.SEPARATOR + "x.js"
+// Reclaim's own candidate path, unlike the tree paths above: reclaim.odin
+// joins a child onto a path with a literal '/' (visit, reclaim.odin), and
+// reclaim_test.odin's own fixtures and expected paths are "/home/ann/..."
+// throughout, on every OS, so this one is not built from scan.SEPARATOR.
 @(private = "file")
-R_PROJ_NODE_MODULES_XJS :: R_PROJ_NODE_MODULES + scan.SEPARATOR + "x.js"
+RECLAIM_NODE_MODULES :: "/r/proj/node_modules"
 
 @(private = "file")
 small_tree :: proc(t: ^testing.T, tree: ^scan.Tree, roll: ^survey.Rollup) {
@@ -510,7 +514,7 @@ build_describes_the_scan :: proc(t: ^testing.T) {
 	testing.expect_value(t, len(groups), 1)
 	if len(groups) == 1 {
 		testing.expect_value(t, groups[0].category, reclaim.Category.Dependencies)
-		testing.expect_value(t, groups[0].items[0].path, R_PROJ_NODE_MODULES)
+		testing.expect_value(t, groups[0].items[0].path, RECLAIM_NODE_MODULES)
 		testing.expect_value(t, groups[0].bytes, 100)
 	}
 }
@@ -570,7 +574,7 @@ every_format_frees_what_build_made_at_its_size :: proc(t: ^testing.T) {
 		// A PDF's text is compressed; the others name the largest directory.
 		text := strings.to_string(sb)
 		wrote :=
-			strings.has_prefix(text, "%PDF-") if format == .Pdf else strings.contains(text, R_PROJ)
+			strings.has_prefix(text, "%PDF-") if format == .Pdf else strings.contains(text, "proj")
 		testing.expectf(t, err != .None || wrote, "a %v report was written", format)
 		strings.builder_destroy(&sb)
 		destroy(&r)

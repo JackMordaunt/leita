@@ -23,14 +23,6 @@ import "core:mem"
 import "core:slice"
 import "core:strings"
 
-// A candidate's path is joined the way the caller's own paths are, not
-// through package scan, which this package is deliberately tested without:
-// "the package knows the scan only through a Source". HOME_PLACES and
-// SYSTEM below are Unix paths regardless, so what they match against stays
-// untouched.
-@(private)
-SEPARATOR :: `\` when ODIN_OS == .Windows else "/"
-
 Category :: enum u8 {
 	Dependencies, // installed packages a manifest names
 	Build_Output, // what a build made
@@ -198,8 +190,8 @@ find :: proc(
 		found     = make([dynamic]Candidate, allocator),
 		allocator = allocator,
 	}
-	// The path is kept without a trailing separator, so the root is "".
-	strings.write_string(&f.path, strings.trim_right(top_path, SEPARATOR))
+	// The path is kept without a trailing slash, so the root is "".
+	strings.write_string(&f.path, strings.trim_right(top_path, "/"))
 	if !under_system(strings.to_string(f.path)) {
 		visit(&f, top)
 	}
@@ -223,7 +215,7 @@ visit :: proc(f: ^Finder, dir: u32) {
 			continue
 		}
 		mark := len(f.path.buf)
-		strings.write_string(&f.path, SEPARATOR)
+		strings.write_byte(&f.path, '/')
 		strings.write_string(&f.path, name)
 		path := strings.to_string(f.path)
 		category, matched := each, every
