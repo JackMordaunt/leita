@@ -132,8 +132,32 @@ the scan it first appears, and again only after it has cleared:
 leita monitor add D: --warn-used 80 --fail-used 95 --min-free 20GB --full-within 14 --growth
 ```
 
-Scheduled scans and their alerts need Pro, with the same 30-day evaluation.
-Turning them off, and removing a place, does not.
+To hear of alerts on your own server, add a webhook in Monitoring, or from the
+terminal. Each new alert is posted as JSON, over https, with a summary of the
+scan in the report schema ([report/SCHEMA.md](report/SCHEMA.md)); the folder
+paths inside a place stay out unless you pass `--paths`. A delivery the server
+cannot take waits and is tried again, with backoff, on later runs.
+
+```sh
+leita monitor webhook add https://hooks.example.com/leita
+leita monitor webhook test
+```
+
+Each request carries `X-Leita-Timestamp`, the Unix seconds it was signed at,
+and `X-Leita-Signature`: `sha256=` and the hex HMAC-SHA256 of the timestamp, a
+full stop and the body, keyed with the secret `webhook add` prints. A server
+checks it like this, and refuses a timestamp far from now:
+
+```python
+import hmac, hashlib
+expected = "sha256=" + hmac.new(secret.encode(), f"{timestamp}.{body}".encode(), hashlib.sha256).hexdigest()
+ok = hmac.compare_digest(expected, signature)
+```
+
+The body's members are described in [webhook/event.odin](webhook/event.odin).
+
+Scheduled scans, their alerts and webhooks need Pro, with the same 30-day
+evaluation. Turning them off, and removing a place or a webhook, does not.
 
 ## Free up space, safely
 
@@ -160,8 +184,8 @@ writes it for a program.
 
 ## Private by design
 
-- **No telemetry.** leita sends nothing about you or your disks. It reaches
-  the network in three cases. Adding a licence key in the window sends one POST to
+- **No telemetry.** leita sends nothing about you or your disks, and nothing
+  anywhere unless you tell it where. It reaches the network in four cases. Adding a licence key in the window sends one POST to
   `https://mordaunt.dev/leita/activate`; the body holds the key and nothing
   else. When a licence kept on this machine no longer verifies, and the key
   from the receipt was kept beside it, leita sends that key once more, to the
@@ -174,13 +198,16 @@ writes it for a program.
   ask for the update, the new program. A signature that does not verify is
   not installed. These requests carry the User-Agent `leita/<version>` and
   nothing from your machine. `leita licence add` keeps a licence you already have and
-  sends nothing. The source is published, so you can check.
+  sends nothing. Last, each webhook you add receives the alerts you chose it
+  for, and a test when you ask, at the address you gave and nowhere else. The
+  source is published, so you can check.
 - **No account.** On Linux the release needs glibc 2.39 or newer and
-  libstdc++. The window carries SDL3. libcurl is opened only for that POST
-  and for update checks and downloads, and leita runs without it. Windows's zip carries `SDL3.dll` and
+  libstdc++. The window carries SDL3. libcurl is opened only for that POST,
+  for webhooks and for update checks and downloads, and leita runs without it. Windows's zip carries `SDL3.dll` and
   `accesskit.dll` beside the window.
 - **Your data stays with you.** Scans, settings and the deletion record stay
-  on your machine.
+  on your machine. A webhook carries the folder paths inside a place only if
+  you allow it.
 
 ## Get started
 

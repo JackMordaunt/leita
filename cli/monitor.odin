@@ -21,6 +21,7 @@ import "../monitor"
 import "../schedule"
 import "../settings"
 import "../term"
+import "../webhook"
 
 /*
 The monitor's command line, which both binaries answer as their first argument
@@ -46,12 +47,24 @@ Watch
 Run
   leita monitor on          turn monitoring on: hand it to the system's scheduler
   leita monitor off         turn monitoring off: remove it from the scheduler
+Webhooks
+  leita monitor webhook add URL [--paths]
+                            send each new alert, with a summary of the scan, to URL
+                            (https), signed with a secret this prints; --paths lets
+                            it carry the folder paths inside a place
+  leita monitor webhook remove URL
+                            stop sending to URL
+  leita monitor webhook list
+                            the webhooks, their secrets and how delivery went
+  leita monitor webhook test [URL]
+                            send a test to URL, or to every webhook, now
   leita monitor run [--all] scan each watched place that is due, then exit; what the
                             scheduler runs every hour, and the default command
 
 Monitoring runs only while turned on, through the system's scheduler; nothing stays
 running. Each scan is kept, so change tracking has a steady record, and a limit
 crossed raises an alert, once, as a desktop notification and in list.
+Nothing is sent anywhere unless you add a webhook.
 `
 
 // Context is what the command line works with: where its files are, the
@@ -69,6 +82,10 @@ Monitor_Context :: struct {
 	notify:   alert.Runner,
 	user:     rawptr, // notify's own
 	desktop:  alert.System,
+	// How a webhook's delivery is posted, nil for not at all, and the
+	// poster's own.
+	post:     webhook.Poster,
+	posted:   rawptr,
 }
 
 // LOCKED says why a Pro command was refused. Listing, turning monitoring off
@@ -101,6 +118,8 @@ monitor_dispatch :: proc(c: Monitor_Context, args: []string, w: io.Writer) -> in
 				notify = c.notify,
 				user = c.user,
 				desktop = c.desktop,
+				post = c.post,
+				posted = c.posted,
 			},
 			w,
 		)
@@ -185,6 +204,8 @@ monitor_dispatch :: proc(c: Monitor_Context, args: []string, w: io.Writer) -> in
 		return monitor_switch_on(c, w)
 	case "off":
 		return monitor_switch_off(c, w)
+	case "webhook":
+		return monitor_webhook(c, rest, w)
 	case "-h", "--help", "help":
 		monitor_print_usage(c, w)
 		return 0
@@ -569,6 +590,7 @@ monitor_run_command_line :: proc(args: []string) -> int {
 		now      = now,
 		notify   = monitor_show,
 		desktop  = alert.SYSTEM,
+		post     = webhook.post,
 	}
 	return monitor_dispatch(c, args, os.to_writer(os.stdout))
 }
@@ -576,7 +598,9 @@ monitor_run_command_line :: proc(args: []string) -> int {
 // show runs a notification's command for real, and says whether it ran.
 @(private)
 monitor_show :: proc(argv: []string, _: rawptr) -> bool {
-	return sh.exec(kstat.resolve_command(argv), {timeout = MONITOR_NOTIFY_TIMEOUT}, context.temp_allocator).ok
+	return(
+		sh.exec(kstat.resolve_command(argv), {timeout = MONITOR_NOTIFY_TIMEOUT}, context.temp_allocator).ok \
+	)
 }
 
 // NOTIFY_TIMEOUT is how long a notification's command may take: one that hangs

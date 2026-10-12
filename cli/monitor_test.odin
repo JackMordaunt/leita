@@ -1,18 +1,24 @@
 package leita_cli
 
+import "base:runtime"
+
 import "core:fmt"
 import "core:os"
 import "core:path/filepath"
 import "core:slice"
 import "core:strings"
+import "core:sync"
 import "core:testing"
 import "core:time"
+
+import "jm:http/loopback"
 
 import "../history"
 import "../monitor"
 import "../scan"
 import "../schedule"
 import "../settings"
+import "../webhook"
 
 // A test's machine: a data folder of its own, a place to watch in it, and a
 // scheduler that records what it is asked rather than doing it.
@@ -317,7 +323,7 @@ monitor_a_run_scans_what_is_due_and_keeps_it_in_history :: proc(t: ^testing.T) {
 		testing.expect(
 			t,
 			runs[0].why == "extent charges require a fresh walk" ||
-				runs[0].why == "clone charges require a fresh walk",
+			runs[0].why == "clone charges require a fresh walk",
 			out,
 		)
 		testing.expect(t, strings.contains(out, fmt.tprintf("read whole: %s", runs[0].why)), out)
@@ -475,4 +481,96 @@ monitor_limits_are_checked_as_they_are_given :: proc(t: ^testing.T) {
 		),
 		out,
 	)
+}
+
+// Monitor_Hook_Server is a webhook's server on this machine, keeping each body it was
+// sent, and taking every one.
+@(private = "file")
+Monitor_Hook_Server :: struct {
+	mutex:  sync.Mutex,
+	bodies: [dynamic]string,
+}
+
+@(private = "file")
+monitor_hook_receive :: proc(conn: ^loopback.Conn, req: loopback.Request) {
+	s := (^Monitor_Hook_Server)(conn.server.user)
+	{
+		sync.guard(&s.mutex)
+		append(&s.bodies, strings.clone(req.body, runtime.heap_allocator()))
+	}
+	loopback.send(conn, "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")
+}
+
+// A webhook is added with a secret, tested, and sent each new alert with the
+// scan's summary: the place named, the folder paths inside it only once they
+// are allowed. Nothing goes anywhere before one is added.
+@(test)
+a_monitor_webhook_hears_each_new_alert_and_a_test :: proc(t: ^testing.T) {
+	b: Monitor_Bench
+	monitor_bench_open(t, &b)
+	defer os.remove_all(b.dir)
+	server: Monitor_Hook_Server
+	server.bodies = make([dynamic]string, runtime.heap_allocator())
+	defer {
+		for body in server.bodies {
+			delete(body, runtime.heap_allocator())
+		}
+		delete(server.bodies)
+	}
+	srv, ok := loopback.start(monitor_hook_receive, &server, runtime.heap_allocator())
+	testing.expect(t, ok)
+	defer loopback.stop(srv)
+	b.c.post = webhook.post
+	url := loopback.url(srv, "/leita")
+
+	_, _ = monitor_run_monitor(&b, "add", b.place, "--warn-used", "1")
+	_, _ = monitor_run_monitor(&b, "on")
+	_, out := monitor_run_monitor(&b, "run")
+	testing.expect(t, !strings.contains(out, "webhooks:"), out)
+	testing.expect_value(t, len(server.bodies), 0) // nothing is sent before a webhook is added
+
+	code: int
+	code, out = monitor_run_monitor(&b, "webhook", "add", "http://example.com/leita")
+	testing.expect_value(t, code, monitor.EXIT_FAILED)
+	testing.expect(t, strings.contains(out, "not https"), out)
+	code, out = monitor_run_monitor(&b, "webhook", "add", url)
+	testing.expect_value(t, code, 0)
+	testing.expect(t, strings.contains(out, "its secret, for checking X-Leita-Signature"), out)
+
+	code, out = monitor_run_monitor(&b, "webhook", "test")
+	testing.expect_value(t, code, 0)
+	testing.expect(t, strings.contains(out, "took the test"), out)
+	testing.expect_value(t, len(server.bodies), 1)
+
+	// The alert fired last run, before the webhook: clear it, and raise it again.
+	_, _ = monitor_run_monitor(&b, "add", b.place)
+	_, _ = monitor_run_monitor(&b, "run", "--all")
+	_, _ = monitor_run_monitor(&b, "add", b.place, "--warn-used", "1")
+	_, out = monitor_run_monitor(&b, "run", "--all")
+	testing.expect(t, strings.contains(out, "webhooks: 1 delivered"), out)
+	testing.expect_value(t, len(server.bodies), 2)
+	if len(server.bodies) == 2 {
+		body := server.bodies[1]
+		testing.expect(t, strings.contains(body, `"event": "warn_used"`), body)
+		testing.expect(t, strings.contains(body, `"schema": "leita.report/1"`), body)
+		testing.expect(t, strings.contains(body, `"largest_directories": []`), body)
+		testing.expect(t, !strings.contains(body, "big.raw"), "no path inside the place")
+	}
+
+	_, _ = monitor_run_monitor(&b, "webhook", "add", url, "--paths")
+	_, _ = monitor_run_monitor(&b, "add", b.place)
+	_, _ = monitor_run_monitor(&b, "run", "--all")
+	_, _ = monitor_run_monitor(&b, "add", b.place, "--warn-used", "1")
+	_, _ = monitor_run_monitor(&b, "run", "--all")
+	testing.expect_value(t, len(server.bodies), 3)
+	if len(server.bodies) == 3 {
+		testing.expect(t, strings.contains(server.bodies[2], "big.raw"), "paths, once allowed")
+	}
+
+	_, out = monitor_run_monitor(&b, "webhook", "list")
+	testing.expect(t, strings.contains(out, "last delivered"), out)
+	code, _ = monitor_run_monitor(&b, "webhook", "remove", url)
+	testing.expect_value(t, code, 0)
+	_, out = monitor_run_monitor(&b, "webhook", "list")
+	testing.expect(t, strings.contains(out, "nothing is sent anywhere"), out)
 }
