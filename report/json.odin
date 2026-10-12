@@ -198,12 +198,13 @@ json_u64_or_null :: proc(sb: ^strings.Builder, v: Maybe(u64)) {
 	}
 }
 
-@(private)
+// json_time writes t as the report schema writes a time, ISO 8601 in UTC, or
+// null for none: what another JSON beside a report writes them as too.
 json_time :: proc(sb: ^strings.Builder, t: time.Time) {
 	json_string_or_null(sb, iso(t))
 }
 
-@(private)
+// json_string_or_null writes s as a JSON string, or null for "".
 json_string_or_null :: proc(sb: ^strings.Builder, s: string) {
 	if s == "" {
 		strings.write_string(sb, "null")
@@ -215,7 +216,6 @@ json_string_or_null :: proc(sb: ^strings.Builder, s: string) {
 // json_string writes s as a JSON string: a quote, a backslash and every C0
 // control escaped, and each byte that is not UTF-8 as U+FFFD, since RFC 8259
 // section 8.1 has JSON exchanged between systems be UTF-8.
-@(private)
 json_string :: proc(sb: ^strings.Builder, s: string) {
 	strings.write_byte(sb, '"')
 	for i := 0; i < len(s); {
