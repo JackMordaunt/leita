@@ -174,6 +174,10 @@ a_task_repeats_hourly_catches_up_once_and_never_stacks :: proc(t: ^testing.T) {
 	for w in want {
 		testing.expectf(t, strings.contains(f.task, w), "missing %q in\n%s", w, f.task)
 	}
+	// Task Scheduler takes <Command> as a bare path, so no quote is part of it;
+	// the quoting stays inside <Arguments>.
+	testing.expect_value(t, xml_text(f.task, "Command"), "conhost.exe")
+	testing.expect(t, !strings.contains(xml_text(f.task, "Command"), "&quot;"))
 	testing.expect(
 		t,
 		strings.has_prefix(f.commands[0], `schtasks /Create /XML `) &&
