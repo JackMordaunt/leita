@@ -2,6 +2,7 @@ package leita_cli
 
 import "core:encoding/json"
 import "core:fmt"
+import "core:log"
 import "core:os"
 import "core:path/filepath"
 import "core:reflect"
@@ -14,6 +15,7 @@ import "jm:sqlite3"
 
 import "../changes"
 import "../history"
+import "../human"
 import "../scan"
 import "../term"
 import "../version"
@@ -574,7 +576,7 @@ a_store_written_briefly_elsewhere_is_waited_for :: proc(t: ^testing.T) {
 // HOSTILE is a name that tries a terminal and what reads its output: an OSC 52
 // write to the clipboard, a CSI colour, a line break, a right-to-left override,
 // markup and, first, a formula. HOSTILE_SHOWN is what the terminal is given.
-HOSTILE :: "=\x1b]52;c;ZXZpbA==\x07\x1b[31m\nname\u202e<img src=x>"
+HOSTILE       :: "=\x1b]52;c;ZXZpbA==\x07\x1b[31m\nname\u202e<img src=x>"
 HOSTILE_SHOWN :: "=\u241b]52;c;ZXZpbA==\u2407\u241b[31m\u240aname\uFFFD<img src=x>"
 
 // say_line is a line of standard error, and a name in it is shown without its controls.
@@ -597,24 +599,53 @@ the_summary_shows_a_hostile_name_without_its_controls :: proc(t: ^testing.T) {
 	}
 	root, _ := fresh(t, "leita_hostile_cli")
 	defer os.remove_all(root)
-	dir := fmt.tprintf("%s/%s", root, HOSTILE)
-	testing.expect(t, os.make_directory(dir) == nil, "could not make the hostile directory")
-	write_zeros(t, fmt.tprintf("%s/%s", dir, HOSTILE), 1 << 20)
+	testing.expect(
+		t,
+		os.make_directory(fmt.tprintf("%s/%s", root, HOSTILE)) == nil,
+		"could not make the hostile directory",
+	)
+	// What the filesystem stored is what the scan prints, which is not always the
+	// name given (a filesystem may normalise it), so the expectations are made from it.
+	entries, read_err := os.read_all_directory_by_path(root, context.temp_allocator)
+	if !testing.expect(
+		t,
+		read_err == nil && len(entries) == 1,
+		"the hostile directory is not listed",
+	) {
+		return
+	}
+	stored := entries[0].name
+	if stored != HOSTILE {
+		log.infof("this filesystem stored the hostile name as %q", stored)
+	}
+	dir := fmt.tprintf("%s/%s", root, stored)
+	write_zeros(t, fmt.tprintf("%s/%s", dir, stored), 1 << 20)
+	// The scan names the directory by its resolved path, which can differ from the
+	// temp directory's own spelling when that is reached through a symbolic link.
+	info, stat_err := os.stat(dir, context.temp_allocator)
+	if !testing.expect(t, stat_err == nil, "the hostile directory is not there") {
+		return
+	}
+	shown_dir := human.shown(info.fullpath)
+	shown_name := human.shown(stored)
 
 	out, code := capture_stdout(t, {target = dir, no_history = true})
 	defer delete(out)
 	testing.expect_value(t, code, 0)
-	testing.expect(t, !strings.contains_any(out, "\x1b\x07"), "the summary carries an escape or a bell")
+	testing.expect(
+		t,
+		!strings.contains_any(out, "\x1b\x07"),
+		"the summary carries an escape or a bell",
+	)
 	testing.expect(t, !strings.contains(out, "\u202e"), "the summary carries a bidi override")
 	// The directory heads the summary and begins the file's path, which ends in
 	// the file's own name: three times the name, each on the line it began.
-	shown := fmt.tprintf("%s/%s", root, HOSTILE_SHOWN)
-	testing.expect_value(t, strings.count(out, HOSTILE_SHOWN), 3)
-	testing.expect_value(t, strings.count(out, shown), 2)
+	testing.expect_value(t, strings.count(out, shown_name), 3)
+	testing.expect_value(t, strings.count(out, shown_dir), 2)
 	testing.expect(t, strings.contains(out, "<img src=x>"), "the name was not kept")
 	for line in strings.split_lines(out, context.temp_allocator) {
-		if strings.contains(line, "name") {
-			testing.expect(t, strings.contains(line, HOSTILE_SHOWN), line)
+		if strings.contains(line, "<img") {
+			testing.expect(t, strings.contains(line, shown_name), line)
 		}
 	}
 }
