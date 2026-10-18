@@ -432,7 +432,6 @@ a_path_longer_than_a_command_carries_is_refused :: proc(t: ^testing.T) {
 	testing.expect(t, scan_command.path.cut, "the command was cut")
 	first := r.m.generation
 	stream.port_send(r.h.cmd_port, command.Command(scan_command))
-	hand_on(&r)
 	// The first scan's failure is still said, so the second is waited for by its
 	// number: until then the desk may be swapping in the scan the test reads.
 	testing.expect(t, await_rescan(&r, first), "the command scans again")
