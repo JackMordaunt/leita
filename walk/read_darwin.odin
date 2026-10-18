@@ -6,6 +6,8 @@ import "core:encoding/endian"
 import "core:mem"
 import "core:sys/posix"
 
+import "../scan"
+
 foreign import libc "system:System"
 
 /*
@@ -34,20 +36,40 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 		mark_unread(w, d.index, denied_errno(posix.errno()))
 		return 0, 0, false
 	}
-	defer posix.close(fd)
+	defer {posix.close(fd)}
 
 	request := Attr_List {
 		bitmapcount = ATTR_BIT_MAP_COUNT,
 		dirattr     = ATTR_DIR_MOUNTSTATUS,
-		fileattr    = ATTR_FILE_LINKCOUNT | ATTR_FILE_ALLOCSIZE,
+		fileattr    = ATTR_FILE_LINKCOUNT | ATTR_FILE_ALLOCSIZE | ATTR_FILE_DATALENGTH | ATTR_FILE_DATAALLOCSIZE,
+		forkattr    = ATTR_CMNEXT_PRIVATESIZE | ATTR_CMNEXT_CLONEID | ATTR_CMNEXT_REALDEVID,
 	}
 	request.commonattr = ATTR_CMN_RETURNED_ATTRS | ATTR_CMN_ERROR | ATTR_CMN_NAME
 	request.commonattr |= ATTR_CMN_DEVID | ATTR_CMN_OBJTYPE | ATTR_CMN_FILEID
 	// The same size the Linux reader gives getdents, for the same reason: most
 	// directories come back in one call.
 	buf: [32 * mem.Kilobyte]u8
+	options := u64(FSOPT_ATTR_CMN_EXTENDED)
+	first := true
 	for {
-		count := getattrlistbulk(c.int(fd), &request, raw_data(buf[:]), len(buf), 0)
+		count := getattrlistbulk(c.int(fd), &request, raw_data(buf[:]), len(buf), options)
+		// Unsupported extended requests get one plain retry on
+		// a new descriptor, never a replay after any entries have been read.
+		if count < 0 &&
+		   first &&
+		   options != 0 &&
+		   (posix.errno() == .EINVAL || posix.errno() == .ENOTSUP) {
+			posix.close(fd)
+			fd = posix.open(cpath, {.DIRECTORY, .CLOEXEC})
+			if fd < 0 {
+				mark_unread(w, d.index, denied_errno(posix.errno()))
+				return nodes, bytes, false
+			}
+			request.forkattr = 0
+			options = 0
+			continue
+		}
+		first = false
 		if count < 0 {
 			mark_unread(w, d.index, denied_errno(posix.errno()))
 			return nodes, bytes, false
@@ -59,9 +81,13 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 		for _ in 0 ..< count {
 			e, length, parsed := parse_entry(buf[at:])
 			if !parsed {
+				mark_unread(w, d.index, false)
 				return nodes, bytes, false
 			}
 			at += length
+			if e.darwin.failed {
+				mark_unread(w, d.index, false)
+			}
 			index, descend, charged, recorded := record(w, d.index, e)
 			if !recorded {
 				return nodes, bytes, false
@@ -115,7 +141,7 @@ parse_entry :: proc(buf: []u8) -> (e: Entry, length: int, ok: bool) {
 	// An entry the kernel could not describe still names itself; it is recorded
 	// with what was returned, as the Linux reader records one statx refused.
 	if returned.commonattr & ATTR_CMN_ERROR != 0 {
-		take_u32(&r) or_return
+		e.darwin.failed = (take_u32(&r) or_return) != 0
 	}
 	if returned.commonattr & ATTR_CMN_NAME == 0 {
 		return {}, 0, false
@@ -145,10 +171,51 @@ parse_entry :: proc(buf: []u8) -> (e: Entry, length: int, ok: bool) {
 		if returned.commonattr & (ATTR_CMN_DEVID | ATTR_CMN_FILEID) ==
 		   ATTR_CMN_DEVID | ATTR_CMN_FILEID {
 			e.links = links
+			e.darwin.account.links = links
+			e.darwin.account.known += {.Links}
 		}
 	}
 	if returned.fileattr & ATTR_FILE_ALLOCSIZE != 0 {
-		e.disk = u64(max(i64(take_u64(&r) or_return), 0))
+		v := i64(take_u64(&r) or_return)
+		if v >= 0 {
+			e.disk = u64(v)
+			e.darwin.account.allocated = u64(v)
+			e.darwin.account.known += {.Allocated}
+		}
+	}
+	if returned.fileattr & ATTR_FILE_DATALENGTH != 0 {
+		v := i64(take_u64(&r) or_return)
+		if v >= 0 {
+			e.darwin.account.logical = u64(v)
+			e.darwin.account.known += {.Logical}
+		}
+	}
+	if returned.fileattr & ATTR_FILE_DATAALLOCSIZE != 0 {
+		v := i64(take_u64(&r) or_return)
+		if v >= 0 {
+			e.darwin.data_allocated = u64(v)
+			e.darwin.data_known = true
+		}
+	}
+	// Extended common attributes follow the file attributes, in bit order,
+	// at four-byte alignment. Read only bits the kernel actually returned.
+	if returned.forkattr & ATTR_CMNEXT_PRIVATESIZE != 0 {
+		v := i64(take_u64(&r) or_return)
+		if v >= 0 {
+			e.darwin.account.exclusive = u64(v)
+			e.darwin.account.known += {.Exclusive}
+		}
+	}
+	if returned.forkattr & ATTR_CMNEXT_REALDEVID != 0 {
+		e.darwin.device = u64(take_u32(&r) or_return)
+		e.darwin.device_known = true
+	}
+	if returned.forkattr & ATTR_CMNEXT_CLONEID != 0 {
+		e.darwin.clone = take_u64(&r) or_return
+	}
+	if e.darwin.failed {
+		e.darwin.account = {}
+		e.darwin.data_known = false
 	}
 	return e, length, true
 }
@@ -184,6 +251,9 @@ take_name :: proc(r: ^Entry_Reader) -> (name: string, ok: bool) {
 	length := int(take_u32(r) or_return)
 	start := from + int(offset)
 	if offset < 0 || length < 1 || start + length > len(r.buf) {
+		return "", false
+	}
+	if r.buf[start + length - 1] != 0 {
 		return "", false
 	}
 	return string(r.buf[start:][:length - 1]), true
@@ -262,4 +332,72 @@ VLNK :: 5
 @(private = "file", default_calling_convention = "c")
 foreign libc {
 	getattrlistbulk :: proc(fd: c.int, al: ^Attr_List, buf: rawptr, n: uint, opt: u64) -> c.int ---
+}
+
+// Extended-attribute bits from Apple's xnu bsd/sys/attr.h:
+// https://github.com/apple-oss-distributions/xnu/blob/main/bsd/sys/attr.h
+// The returned types are described in getattrlist(2). REALDEVID scopes clone
+// keys to the device reported for each filesystem object.
+@(private)
+ATTR_FILE_DATALENGTH :: 0x00000200
+@(private)
+ATTR_FILE_DATAALLOCSIZE :: 0x00000400
+@(private)
+ATTR_CMNEXT_PRIVATESIZE :: 0x00000008
+@(private)
+ATTR_CMNEXT_REALDEVID :: 0x00000040
+@(private)
+ATTR_CMNEXT_CLONEID :: 0x00000100
+@(private)
+FSOPT_ATTR_CMN_EXTENDED :: 0x00000020
+
+@(private)
+Darwin_Measurement :: struct {
+	account:                          scan.Account,
+	data_allocated, device, clone:    u64,
+	data_known, device_known, failed: bool,
+}
+
+@(private)
+charge_darwin :: proc(w: ^Worker, e: ^Entry) -> bool {
+	m := &e.darwin
+	if e.directory ||
+	   e.symlink ||
+	   e.extra ||
+	   !m.data_known ||
+	   !m.device_known ||
+	   .Allocated not_in m.account.known ||
+	   .Logical not_in m.account.known {
+		return true
+	}
+	charge, shared, ok := charge_clone(
+		w.clones,
+		{m.device, m.clone},
+		{m.data_allocated, m.account.logical},
+		e.disk,
+	)
+	if !ok {
+		w.err = .Out_Of_Memory
+		return false
+	}
+	e.disk = charge
+	e.shared = shared
+	if shared {
+		scan.mark_scan_order(w.writer.tree)
+	}
+	return true
+}
+
+@(private)
+record_darwin_account :: proc(w: ^Worker, index: u32, e: Entry) -> bool {
+	if e.directory || e.symlink || e.darwin.account.known == {} {
+		return true
+	}
+	// Private allocation is a measurement, not a promise of free volume bytes.
+	// No conversion to Reclaim, even when snapshot enumeration found none.
+	if !scan.account_set(w.writer.tree, index, e.darwin.account) {
+		w.err = .Out_Of_Memory
+		return false
+	}
+	return true
 }

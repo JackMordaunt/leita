@@ -64,6 +64,10 @@ update_rereads_fixture :: proc(root: string) -> bool {
 	when ODIN_OS == .Linux {
 		return btrfs_update_needs_read(root, false)
 	}
+	when ODIN_OS == .Darwin {
+		st, ok := scan.stat_fs(root)
+		return !ok || string(cstring(&st.fstypename[0])) == "apfs"
+	}
 	return false
 }
 

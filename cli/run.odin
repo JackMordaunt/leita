@@ -421,6 +421,9 @@ scan_and_say :: proc(opt: Options, kept := "", licensee := "", locked := false) 
 	}
 	say_unread(&t)
 	say_gaps(&t)
+	if !quiet && scan.has_snapshot_volume(&t) {
+		say_retention(&t)
+	}
 
 	// The same charging the live scan does, run once over a tree nobody is still
 	// filling. A node left uncharged here has an ancestor that never resolved, and
@@ -499,6 +502,29 @@ scan_and_say :: proc(opt: Options, kept := "", licensee := "", locked := false) 
 		return code
 	}
 	return exit_code(th.verdict)
+}
+
+// APFS snapshot names are volume facts. Their presence cannot be converted to
+// bytes held by a particular file, and purgeable space has no measured number.
+say_retention :: proc(t: ^scan.Tree) {
+	r := scan.retention_of(t)
+	names := scan.snapshot_names_of(t)
+	switch r.snapshots {
+	case .None:
+		label("snapshots", "none on this APFS volume")
+	case .Present:
+		label("snapshots", "%d on this APFS volume", len(names))
+	case .Unchecked:
+		label("snapshots", "list incomplete or unavailable")
+	}
+	for name in names {
+		label("snapshot", "%s", human.shown(name))
+	}
+	if r.purgeable_known {
+		label("purgeable", "%s", human.bytes(r.purgeable))
+	} else {
+		label("purgeable", "unknown")
+	}
 }
 
 // say_how_read says whether a scan with a baseline read its place whole or only
