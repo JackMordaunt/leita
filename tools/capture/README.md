@@ -66,12 +66,30 @@ Videos encode original PNGs at 30 fps with libx264, the slow preset, CRF 18,
 yuv420p and faststart. Encoding settings are recorded in each storyboard.
 
 All five clean stills (Sunburst, Treemap, Icicle, Change and Reclaim) are taken
-separately after the scan finishes, against a day-0 history baseline. They have
-no pointer or video cue. Use each `sunburst.png` as its theme's poster.
+separately after the scan finishes. The Change still uses a separate day-0
+comparison baseline whose generated System/Library/AssetsV2 folder is 12 GiB
+larger; its day-7 scan is the ordinary synthetic disk. This gives the actual
+app a sizeable blue shrink, orange growth and grey unchanged folders. The
+other stills and movies keep their existing fixture. All stills have no pointer
+or video cue. Use each `sunburst.png` as its theme's poster.
 `--frames 60` remains accepted for compatibility: any positive value enables the
 fixed 30 fps choreography; `--frames 0` skips videos. `--fixture-only` runs only
 the validated filesystem scenario. Timelines are never stretched to match an
 old duration; use the frame count and seconds in the manifest.
+
+To refresh only the two Change stills without touching the movies or other
+captures, build the driver and run:
+
+```sh
+python3 tools/capture/suite.py /path/to/new-compare-output \
+  --compare-only --jm-revision "$(git -C jm rev-parse HEAD)"
+```
+
+The command writes `light/change.png` and `dark/change.png` at native 2560×1640,
+plus `compare/{light,dark}/{before,after,validation}.json`. It uses isolated
+history per theme and validates `/System` shrank, `/Users` grew and `/Library`
+stayed unchanged from actual exported reports. `manifest.json` hashes every
+capture and records the source and binary used.
 
 The app lays out at 1280×820 with density 2. The driver scales the flattened
 vector/glyph draws and clips at rasterisation to write 2560×1640 PNGs. It does
