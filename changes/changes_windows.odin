@@ -1,6 +1,7 @@
 #+build windows
 package changes
 
+import "core:slice"
 import "core:strings"
 import win "core:sys/windows"
 
@@ -246,7 +247,7 @@ query :: proc(volume: win.HANDLE) -> (j: Journal, ok: bool) {
 /*
 Read the journal from `start` to where it ended when queried, collecting the file id
 of every directory holding a file a counted record names. `wrapped` when the records
-from `start` are gone.
+from `start` are gone; not ok when a page holds a record usn_page cannot trust.
 */
 @(private = "file")
 read_parents :: proc(
@@ -265,7 +266,7 @@ read_parents :: proc(
 		max_major   = 3,
 	}
 	buf: [64 * 1024 / size_of(u64)]u64
-	bytes := ([^]u8)(&buf[0])
+	page := slice.to_bytes(buf[:])
 	for request.start < j.next {
 		got: win.DWORD
 		if !win.DeviceIoControl(
@@ -287,31 +288,12 @@ read_parents :: proc(
 			}
 			return false, false
 		}
-		if got < size_of(i64) {
+		if int(got) > len(page) {
 			return false, false
 		}
-		after := (^i64)(bytes)^
-		at := u32(size_of(i64))
-		for at + 8 <= got {
-			length := (^u32)(bytes[at:])^
-			major := (^u16)(bytes[at + 4:])^
-			if length < 8 || at + length > got {
-				break
-			}
-			id: [16]u8
-			switch major {
-			case 2:
-				// USN_RECORD_V2: the parent's 64-bit reference at 16.
-				copy(id[:8], bytes[at + 16:][:8])
-			case 3:
-				// USN_RECORD_V3: the parent's 128-bit id at 24.
-				copy(id[:], bytes[at + 24:][:16])
-			case:
-				at += length
-				continue
-			}
-			parents[id] = {}
-			at += length
+		after, parsed := usn_page(page[:got], parents)
+		if !parsed {
+			return false, false
 		}
 		if after <= request.start {
 			break
