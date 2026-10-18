@@ -126,7 +126,28 @@ Tree :: struct {
 	// The name each file with more than one was charged under, as the walk found
 	// them; empty for a reader that keeps no file ids. Freed with the tree.
 	linked:     [dynamic]Link,
+	// Per-node measurements, keyed by the same index as `blocks`. A block exists
+	// only after some node in it was given a fact. Freed with the tree.
+	// Made on the first account, so a tree that never gets one stays the size it
+	// was: the two tables are 128 KiB, and a command or a test holds several
+	// trees on a 1 MiB Windows stack.
+	facts:      ^Fact_Tables,
+	// Volume retention, published once (note_retention). retention_state is
+	// 0, claimed, or published. Fields are read only after published, so a
+	// reader never mixes two notes. Not a per-file held byte, and not a
+	// snapshot name: that field belongs to the Darwin acquisition card.
+	snapshots:       u8,
+	retention_state: u8,
+	purgeable:       u64,
+	purgeable_known: b32,
+	// Some charge in this tree is a scan-order first payer. freed_of does not
+	// treat that charge as exclusive or as a frees quantity.
+	scan_order: b32,
 }
+
+// Commands, tests and windows hold several trees on a 1 MiB Windows stack. A
+// table that grows this struct overflows it there first, as the deep fold test did.
+#assert(size_of(Tree) <= 80 * 1024, "scan.Tree is held by value on a 1 MiB stack; allocate the new table")
 
 // Where a file's data lives, the same for every name it has. `upper` is the high half
 // of a 128-bit file id, which the Windows reader takes from FILE_ID_EXTD_DIR_INFO's
@@ -195,6 +216,17 @@ tree_destroy :: proc(t: ^Tree) {
 	for i in 0 ..< t.committed >> BLOCK_SHIFT {
 		free(t.blocks[i], t.allocator)
 	}
+	if t.facts != nil {
+		for i in 0 ..< MAX_BLOCKS {
+			if t.facts.accounts[i] != nil {
+				free(t.facts.accounts[i], t.allocator)
+			}
+			if t.facts.rares[i] != nil {
+				free(t.facts.rares[i], t.allocator)
+			}
+		}
+		free(t.facts, t.allocator)
+	}
 	for &a in t.arenas {
 		if a.arena.curr_block != nil {
 			virtual.arena_destroy(&a.arena)
@@ -240,7 +272,11 @@ node :: proc(t: ^Tree, i: u32) -> ^Node {
 	if i >> BLOCK_SHIFT >= MAX_BLOCKS {
 		return nil
 	}
-	return &t.blocks[i >> BLOCK_SHIFT][i & (BLOCK_NODES - 1)]
+	b := t.blocks[i >> BLOCK_SHIFT]
+	if b == nil {
+		return nil
+	}
+	return &b[i & (BLOCK_NODES - 1)]
 }
 
 /*
@@ -482,6 +518,16 @@ unread :: proc(t: ^Tree) -> (count: u64, denied: bool) {
 // Whether some btrfs sizes in the tree are logical: read as root, they would be less.
 is_logical :: proc(t: ^Tree) -> bool {
 	return bool(sync.atomic_load(&t.logical))
+}
+
+// Say that some charge in this tree is a scan-order first payer, not exclusive.
+mark_scan_order :: proc(t: ^Tree) {
+	sync.atomic_store(&t.scan_order, true)
+}
+
+// Whether some charge in this tree is a scan-order first payer.
+is_scan_order :: proc(t: ^Tree) -> bool {
+	return bool(sync.atomic_load(&t.scan_order))
 }
 
 progress :: proc(t: ^Tree, nodes, bytes: u64) {
