@@ -10,14 +10,17 @@ import "core:time"
 import "jm:ui"
 import "jm:ui/render"
 
-Stream_Clock :: struct {
+Stream_Clock  :: struct {
 	enabled:         bool,
 	total:           time.Duration,
 	allowed, parked: i64,
 	elapsed:         i64,
 	nodes:           u64,
 }
+STREAM_FRAMES :: 840
 stream_clock: Stream_Clock
+current_model: ^view.Model
+folder_node: u32
 //review:ignore noun-for-type observed is a variable holding the latest progress record, not a type declaration.
 observed: struct {
 	nodes, bytes: u64,
@@ -27,6 +30,16 @@ observed: struct {
 
 capture_view :: proc(gtx: ^ui.Ctx, user: rawptr) {
 	view.view(gtx, user)
+	current_model = (^view.Model)(user)
+	if stream_clock.enabled {
+		if r, _ := ui.need(
+			gtx,
+			query.Rings{generation = current_model.generation, dir = current_model.dir},
+			query.Rings_Result,
+		); r != nil {
+			for a in r.arcs {if a.depth == 1 && a.directory && a.name == "Users" {folder_node = a.node}}
+		}
+	}
 	if p, _ := ui.need(gtx, query.Progress{}, query.Progress_Result); p != nil {
 		observed = {p.nodes, p.bytes, p.state, p.seconds}
 	}
@@ -62,18 +75,21 @@ stream_gate :: proc(tree: ^scan.Tree, elapsed: time.Duration) {
 // the real host's progress and layout answers; zero-dt pumping waits for them
 // without advancing animations or dropping any of their 30 fps movie frames.
 stream_frame :: proc(m: ^Movie, h: ^render.Headless) {
-	sync.atomic_store(&stream_clock.elapsed, i64(min(m.frame, 600)) * i64(time.Second) / 30)
+	sync.atomic_store(
+		&stream_clock.elapsed,
+		i64(min(m.frame, STREAM_FRAMES)) * i64(time.Second) / 30,
+	)
 	if m.frame % 3 != 0 {return}
-	target := i64(stream_clock.total) * i64(min(m.frame, 600)) / 600
+	target := i64(stream_clock.total) * i64(min(m.frame, STREAM_FRAMES)) / STREAM_FRAMES
 	sync.atomic_store(&stream_clock.allowed, target)
 	deadline := time.tick_now()._nsec + i64(30 * time.Second)
-	for sync.atomic_load(&stream_clock.parked) <= target && m.frame < 600 {
+	for sync.atomic_load(&stream_clock.parked) <= target && m.frame < STREAM_FRAMES {
 		if time.tick_now()._nsec >= deadline {fail("synthetic clock did not advance")}
 		time.sleep(time.Millisecond)
 	}
 	nodes := sync.atomic_load(&stream_clock.nodes)
 	ui.probe_set_dt(&h.p, 0)
-	for observed.nodes < nodes || (m.frame >= 600 && observed.state != .Done) {
+	for observed.nodes < nodes || (m.frame >= STREAM_FRAMES && observed.state != .Done) {
 		ui.probe_frame(&h.p)
 		if time.tick_now()._nsec >= deadline {fail("synthetic view did not receive progress")}
 		time.sleep(time.Millisecond)

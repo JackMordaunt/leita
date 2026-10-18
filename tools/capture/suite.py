@@ -151,8 +151,8 @@ def fixture(binary, out, fixture_root, theme, frames):
 
 def encode(frames, output):
     run(['ffmpeg', '-nostdin', '-v', 'error', '-framerate', '30', '-pattern_type', 'glob',
-         '-i', frames / '*.png', '-c:v', 'libx264', '-preset', 'fast',
-         '-crf', '20', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', output])
+         '-i', frames / '*.png', '-c:v', 'libx264', '-preset', 'slow',
+         '-crf', '18', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', output])
 
 
 def synthetic(binary, out, frames):
@@ -167,10 +167,14 @@ def synthetic(binary, out, frames):
         steps = []
         if frames:
             (base / 'frames').mkdir()
-            steps += ['-stream', '-movie', base / 'frames' / 'frame-', '-hold', '150',
-                      '-tap', 'Treemap', '-glide', '1100', '100', '21', '-hold', '150',
-                      '-tap', 'Icicle', '-glide', '1100', '100', '21', '-hold', '218',
-                      '-await', 'Done', '-end-movie']
+            steps += ['-stream', '-movie', base / 'frames' / 'frame-', '-hold', '45']
+            for index, mode in enumerate(('Sunburst', 'Treemap', 'Icicle')):
+                if index:
+                    steps += ['-tap', mode, '-glide', '1100', '100', '21', '-hold', '30']
+                steps += ['-chart', 'Users', '-glide', '1100', '100', '21', '-hold', '60',
+                          '-at', '/Users', '-tap', '/', '-glide', '1100', '100', '21',
+                          '-hold', '15', '-at', '/']
+            steps += ['-await', 'Done', '-end-movie']
         steps += ['-await', 'Done', '-advance', '60']
         for name, mode, colour in [('sunburst', 'Sunburst', 'Folder'),
                                   ('treemap', 'Treemap', 'Folder'), ('icicle', 'Icicle', 'Folder'),
@@ -191,12 +195,15 @@ def storyboard(base):
     events = []
     count = 0
     progress = []
+    navigation = []
     for line in (base / 'capture.log').read_text().splitlines():
         fields = line.split('\t')
         if fields[0] == 'ACTION':
             events.append(dict(frame=int(fields[1]), seconds=int(fields[1]) / 30,
                                action=fields[2], target=[float(fields[3]), float(fields[4])],
                                travel_frames=21, hover_frames=6, press_frames=5, release_frames=18))
+        elif fields[0] == 'NAVIGATION':
+            navigation.append(dict(frame=int(fields[1]), view=fields[2], node=int(fields[3]), path=fields[4], state=fields[5]))
         elif fields[0] == 'CUE':
             events.append(dict(frame=int(fields[1]), seconds=int(fields[1]) / 30, cue=fields[2]))
         elif fields[0] == 'PROGRESS':
@@ -204,13 +211,18 @@ def storyboard(base):
         elif fields[0] == 'FRAMES':
             count = int(fields[1])
     assert count == len(list((base / 'frames').glob('*.png')))
-    result = dict(fps=30, frames=count, seconds=count / 30, events=events,
+    result = dict(fps=30, encoding=dict(codec='libx264', preset='slow', crf=18, pixel_format='yuv420p'), frames=count, seconds=count / 30, events=events,
                   pointer='macOS-style black arrow, thin white outline and subtle shadow',
                   source='continuous real app frames with dispatched pointer Move, Press and Release events')
     if progress:
         result['progress'] = progress
-        assert all(abs(p['scan_seconds'] - min(p['frame'] / 30, 20)) < .11 for p in progress), 'scan display clock differs from movie clock'
-        for name, start, end in [('Sunburst', 0, 147), ('Treemap', 204, 369), ('Icicle', 423, 597)]:
+        result['navigation'] = navigation
+        assert [(n['view'], n['path']) for n in navigation] == [(view, path) for view in ('Sunburst', 'Treemap', 'Icicle') for path in ('/Users', '/')], 'chart navigation differs'
+        assert all(n['state'] == 'Scanning' for n in navigation if n['path'] == '/Users')
+        assert all(n['node'] != 0 for n in navigation if n['path'] == '/Users')
+        assert all(n['node'] == 0 for n in navigation if n['path'] == '/')
+        assert all(abs(p['scan_seconds'] - min(p['frame'] / 30, 28)) < .11 for p in progress), 'scan display clock differs from movie clock'
+        for name, start, end in [('Sunburst', 0, 258), ('Treemap', 315, 576), ('Icicle', 633, 837)]:
             samples = [p for p in progress if start <= p['frame'] <= end]
             assert len({p['nodes'] for p in samples}) > 10, f'{name} did not visibly scan'
             assert all(p['state'] == 'Scanning' for p in samples), f'{name} finished prematurely'

@@ -40,17 +40,25 @@ their original destinations are generic paths alongside the generated fixture.
 The fixture is generated example data, although its report accurately identifies
 it as a real filesystem scan, not Leita's synthetic engine.
 
-The 22 s hero records a running day-7 synthetic scan. Sunburst fills first; the
-pointer selects Treemap and then Icicle while the walker continues, followed by
-2 s at completion. An optional synthetic directory-boundary clock releases the
-same real batches every three video frames in both themes. The host still folds
-the tree and sends its own progress/layout answers; the clock changes pacing,
-not entries or view data. Its optional elapsed clock also supplies the in-app
-synthetic scan counter, so PNG encoding time does not speed that counter up.
-Normal scans keep their wall clock. This is a controlled demonstration, not a measurement
-of elapsed scan time. Each view must show more than 10 distinct increasing
-progress counts while Scanning or capture fails. `storyboard.json` records every
-action, exact target, timing and sampled progress. Theme storyboards must match.
+The 29.93 s hero records a running day-7 synthetic scan. In each of Sunburst,
+Treemap and Icicle the pointer clicks the Users folder inside the chart, pauses
+on its contents, then clicks the root breadcrumb. The scan completes at 28 s;
+the final root view holds for another 1.93 s. Each navigation asserts that the
+actual selected node and breadcrumb agree, and records the view, path and node.
+No navigation changes the model directly.
+
+An optional synthetic directory-boundary clock releases the same real batches
+every three video frames in both themes. The host still folds the tree and sends
+its own progress/layout answers; the clock changes pacing, not entries or view
+data. Its elapsed clock supplies the in-app synthetic scan counter so PNG encoding
+time does not speed that counter up. Normal scans keep their wall clock. This is
+a controlled demonstration, not a measurement of elapsed scan time. Every view
+must show more than 10 distinct increasing progress counts while Scanning, and
+all three nested visits must still be Scanning. `storyboard.json` records actions,
+targets, timing, progress and navigation. Theme storyboards must match.
+
+Videos encode original PNGs at 30 fps with libx264, the slow preset, CRF 18,
+yuv420p and faststart. Encoding settings are recorded in each storyboard.
 
 All five clean stills (Sunburst, Treemap, Icicle, Change and Reclaim) are taken
 separately after the scan finishes, against a day-0 history baseline. They have
@@ -90,6 +98,8 @@ The first three arguments are target, explicit isolated state directory, and
 - `-signal PATH`, `-await-file PATH`: synchronize an external fixture mutation.
 - `-frames PREFIX COUNT`: consecutive clean 30 fps PNGs named `PREFIX00000.png`, etc.
 - `-movie PREFIX`, `-end-movie`: start/stop continuous frames with a macOS-style black arrow and thin white outline.
+- `-chart Users`: click the Users directory in the visible chart.
+- `-at PATH`: assert the selected directory and breadcrumb, then log navigation.
 - `-tap TAG`: travel 21 frames, hover 6, press 5, then release and settle 18 frames.
 - `-glide X Y FRAMES`, `-hold FRAMES`: move with eased endpoints or pause.
 - `-cue TEXT`: show an explicit external-action caption; an empty string clears it.

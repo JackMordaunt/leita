@@ -121,6 +121,10 @@ movie_tap :: proc(m: ^Movie, h: ^render.Headless, name: string) {
 	if !ok {fail(fmt.tprintf("no %q to demonstrate", name))}
 	box := ops.transform_rect(hit.transform, ops.shape_bounds(&h.p.scene, hit.shape))
 	target := ops.Point{box.x + box.w / 2, box.y + box.h / 2}
+	movie_press(m, h, name, target)
+}
+
+movie_press :: proc(m: ^Movie, h: ^render.Headless, name: string, target: ops.Point) {
 	fmt.printfln("ACTION\t%d\t%s\t%.3f\t%.3f", m.frame, name, target.x, target.y)
 	movie_move(m, h, target, 21)
 	movie_hold(m, h, 6)
@@ -138,7 +142,12 @@ movie_step :: proc(m: ^Movie, h: ^render.Headless, args: []string, i: ^int) -> b
 		m.active = false
 		return true
 	}
-	if flag == "-movie" || flag == "-tap" || flag == "-hold" || flag == "-cue" {
+	if flag == "-movie" ||
+	   flag == "-tap" ||
+	   flag == "-hold" ||
+	   flag == "-cue" ||
+	   flag == "-chart" ||
+	   flag == "-at" {
 		if i^ + 1 >= len(args) {fail("movie step needs an argument")}
 		i^ += 1
 		value := args[i^]
@@ -146,6 +155,10 @@ movie_step :: proc(m: ^Movie, h: ^render.Headless, args: []string, i: ^int) -> b
 		case "-movie":
 			m.prefix, m.frame, m.active = value, 0, true
 			ui.router_push(&h.p.router, {kind = .Move, pos = m.at})
+		case "-chart":
+			movie_press(m, h, fmt.tprintf("chart %s", value), chart_target(h, value))
+		case "-at":
+			assert_location(m, value)
 		case "-tap":
 			movie_tap(m, h, value)
 		case "-hold":
