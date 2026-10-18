@@ -403,6 +403,7 @@ blocks :: proc(
 	small := primer.text_style(.Small)
 	font := primer.font_for(gtx, small.weight)
 	here := r.crumbs[len(r.crumbs) - 1].name
+	outlined := make([dynamic]Box, gtx.allocator)
 	for b in boxes {
 		if b.rect.w < 1 || b.rect.h < 1 {
 			continue
@@ -442,6 +443,20 @@ blocks :: proc(
 				b.rect,
 			)
 		}
+		if b.arc < 0 ? r.incomplete : r.arcs[b.arc].incomplete {
+			append(&outlined, b)
+			tag_incomplete(gtx, &p, u64(len(outlined)), name, b.rect)
+		}
+	}
+	// Over every box, not as each is drawn: the next box's rim would cover half of
+	// it. Inside the box, so no neighbour's does.
+	for b in outlined {
+		mark_incomplete(gtx, ops.Rect{b.rect.x + 1, b.rect.y + 1, b.rect.w - 2, b.rect.h - 2})
+	}
+	// A treemap has no bar for the directory at the centre: its frame is the chart's.
+	if r.incomplete && k.framed {
+		mark_incomplete(gtx, ops.Rect{1, 1, size.x - 2, size.y - 2})
+		tag_incomplete(gtx, &p, 0, safe(gtx, base_name(here)), room)
 	}
 
 	design.paint_focus_visible_ring(gtx, c, room, design.corners_all(0), primer.focus_outline(-2))

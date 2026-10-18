@@ -1,5 +1,6 @@
 package leita_view
 
+import "core:strings"
 import "core:testing"
 
 import "jm:ui"
@@ -98,4 +99,125 @@ a_failed_scan_shows_its_banner_in_the_charts_place :: proc(t: ^testing.T) {
 	deliver(&s, {generation = 1, state = .Failed, target = "/top", problem = "no such directory"})
 	testing.expect(t, ui.probe_tagged(p, "no such directory"), "the banner says why")
 	testing.expect_value(t, ui.probe_bounds(p, "Sunburst").h, 0)
+}
+
+// partial_rings is /top with two folders, docs and cache, the second left short
+// by the walk, as the host answers for a tree that did not finish.
+@(private = "file")
+partial_rings :: proc(incomplete: bool) -> query.Rings_Result {
+	arcs := make([]query.Arc, 2, context.temp_allocator)
+	arcs[0] = {
+		node      = 2,
+		name      = "docs",
+		bytes     = 60,
+		directory = true,
+		depth     = 1,
+		sweep     = 0.6,
+		up        = -1,
+		was       = -1,
+	}
+	arcs[1] = {
+		node       = 3,
+		name       = "cache",
+		bytes      = 40,
+		directory  = true,
+		depth      = 1,
+		start      = 0.6,
+		sweep      = 0.4,
+		up         = -1,
+		was        = -1,
+		incomplete = true,
+	}
+	crumbs := make([]query.Crumb, 1, context.temp_allocator)
+	crumbs[0] = {1, "/top"}
+	return {
+		generation = 1,
+		dir = 1,
+		crumbs = crumbs,
+		bytes = 100,
+		was = -1,
+		arcs = arcs,
+		incomplete = incomplete,
+	}
+}
+
+@(private = "file")
+deliver_rings :: proc(s: ^Status_Rig, r: query.Rings_Result) {
+	ui.probe_deliver(&s.h.p, query.Rings{generation = 1, dir = query.ROOT}, r)
+	ui.probe_advance(&s.h.p, 60, 1.0 / 60)
+}
+
+// A scan that failed after it read something keeps the chart it grew, and says
+// why in the status instead of a banner in the chart's place.
+@(test)
+a_failed_scan_that_grew_keeps_its_chart :: proc(t: ^testing.T) {
+	s: Status_Rig
+	status_open(&s)
+	defer status_close(&s)
+	p := &s.h.p
+	deliver(
+		&s,
+		{
+			generation = 1,
+			state = .Failed,
+			target = "/top",
+			problem = "out of memory",
+			nodes = 40,
+			bytes = 100,
+		},
+	)
+	deliver_rings(&s, partial_rings(true))
+	testing.expect(t, ui.probe_bounds(p, "Sunburst").h > 0, "the chart's switch is drawn")
+	testing.expect(t, ui.probe_bounds(p, "Sunburst chart").w > 0, "and the chart")
+	testing.expect(
+		t,
+		ui.probe_tagged(p, "The scan failed, so the chart is incomplete: out of memory"),
+		"the status says why",
+	)
+	testing.expect(t, !ui.probe_tagged(p, "The scan failed"), "and no banner stands in its place")
+}
+
+// A stopped scan's chart is marked as short: the hub, and the directory the walk
+// left, are outlined and tagged; one that finished carries none; and the chart's
+// tree and the status say so.
+@(test)
+a_stopped_scans_chart_is_marked_incomplete :: proc(t: ^testing.T) {
+	s: Status_Rig
+	status_open(&s)
+	defer status_close(&s)
+	p := &s.h.p
+
+	deliver(&s, {generation = 1, state = .Stopped, target = "/top", nodes = 40, bytes = 100})
+	deliver_rings(&s, partial_rings(true))
+	testing.expect(t, ui.probe_tagged(p, "incomplete cache"), "the folder the walk left")
+	testing.expect(t, ui.probe_tagged(p, "incomplete top"), "the hub")
+	testing.expect(t, !ui.probe_tagged(p, "incomplete docs"), "and not the one it read")
+	said := ui.probe_semantics(p, context.temp_allocator)
+	testing.expect(
+		t,
+		strings.contains(said, `tree item "cache, 40 B, 40.0% of top, incomplete"`),
+		said,
+	)
+	testing.expect(t, strings.contains(said, "of top, 100 B, 2 items, incomplete"), said)
+	testing.expect(
+		t,
+		ui.probe_tagged(
+			p,
+			"The scan was stopped, so the chart is incomplete. Outlined folders were not read in full.",
+		),
+		"the status says so",
+	)
+
+	s.m.mode = .Treemap
+	ui.probe_advance(p, 60, 1.0 / 60)
+	testing.expect(t, ui.probe_tagged(p, "incomplete cache"), "the folder's box")
+	testing.expect(t, ui.probe_tagged(p, "incomplete top"), "and the frame")
+
+	// A finished scan with nothing short has no mark.
+	deliver(&s, {generation = 1, state = .Done, target = "/top", nodes = 40, bytes = 100})
+	clean := partial_rings(false)
+	clean.arcs[1].incomplete = false
+	deliver_rings(&s, clean)
+	testing.expect(t, !ui.probe_tagged(p, "incomplete cache"), "nothing is outlined")
+	testing.expect(t, !ui.probe_tagged(p, "incomplete top"), "the frame is not")
 }

@@ -126,6 +126,10 @@ Scan :: struct {
 	baseline:              string, // the fill's, owned: where the place's tree is kept
 	roll:                  survey.Rollup,
 	reader:                ^thread.Thread,
+	// The directories the walk left incomplete, built once the scan is over, and
+	// whether it has been (incomplete).
+	incomplete_dirs:       map[u32]struct{},
+	incomplete_built:      bool,
 	// The filesystem the target is on, as of the last measure.
 	disk_total, disk_free: u64,
 }
@@ -678,6 +682,7 @@ scan_end :: proc(d: ^Desk) {
 	delete(s.path)
 	delete(s.problem)
 	delete(s.baseline)
+	delete(s.incomplete_dirs)
 	free(s)
 }
 
@@ -882,6 +887,7 @@ sorted_children :: proc(d: ^Desk, dir: u32) -> []query.Entry {
 				bytes = directory ? survey.total(&s.roll, c) : n.disk,
 				directory = directory,
 				was = was_of(d, c),
+				incomplete = directory && incomplete(s, c),
 			},
 		)
 	}
@@ -892,6 +898,59 @@ sorted_children :: proc(d: ^Desk, dir: u32) -> []query.Entry {
 		return a.name < b.name
 	})
 	return entries[:]
+}
+
+/*
+incomplete says whether the walk left directory node short of what is in it, so
+its total is less than it holds: it, or a directory under it, could not be opened
+or listed, or the scan was stopped or failed and one under it has no entries
+yet. A directory cut off in the middle of its listing is not told, and an empty
+one in a scan cut short is, as nothing separates it from one never reached.
+Nothing is incomplete while the scan runs, as every directory is still to come.
+*/
+incomplete :: proc(s: ^Scan, node: u32) -> bool {
+	if s.state == .Scanning {
+		return false
+	}
+	if !s.incomplete_built {
+		build_incomplete(s)
+	}
+	return node in s.incomplete_dirs
+}
+
+// build_incomplete works out which directories of the finished scan s are
+// incomplete: each one that was not read, and every directory above it.
+@(private = "file")
+build_incomplete :: proc(s: ^Scan) {
+	s.incomplete_built = true
+	cut := s.state == .Stopped || s.state == .Failed
+	if unread, _ := scan.unread(&s.tree); !cut && unread == 0 {
+		return
+	}
+	for i in 0 ..< s.roll.seen {
+		flags := scan.node_flags(scan.node(&s.tree, i))
+		if .Used not_in flags || .Directory not_in flags || .Mount in flags || .Reparse in flags {
+			continue
+		}
+		if .Unread not_in flags {
+			it := survey.children(&s.roll, i)
+			if _, has := survey.next_child(&it); !cut || has {
+				continue
+			}
+		}
+		at := i
+		for {
+			if at in s.incomplete_dirs {
+				break
+			}
+			s.incomplete_dirs[at] = {}
+			up := scan.node(&s.tree, at).parent
+			if up == at || up >= s.roll.seen {
+				break
+			}
+			at = up
+		}
+	}
 }
 
 rings :: proc(d: ^Desk, q: query.Rings) -> query.Rings_Result {
@@ -920,6 +979,7 @@ rings :: proc(d: ^Desk, q: query.Rings) -> query.Rings_Result {
 	r.was = was_of(d, dir)
 	r.compared = d.compared.id != 0
 	r.crumbs = crumbs(s, dir, top)
+	r.incomplete = s.state == .Stopped || s.state == .Failed || incomplete(s, dir)
 	arcs := make([dynamic]query.Arc, context.temp_allocator)
 	if r.bytes > 0 {
 		lay_ring(d, &arcs, dir, r.bytes, 1, 0, 0, 1)
@@ -967,6 +1027,7 @@ lay_ring :: proc(
 				sweep = w,
 				up = up,
 				was = e.was,
+				incomplete = e.incomplete,
 			},
 		)
 		if e.directory && depth < query.RING_DEPTH {

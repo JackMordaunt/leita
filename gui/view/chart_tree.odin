@@ -177,6 +177,9 @@ describe_chart :: proc(
 	t.chosen = chosen_id(&t, lit)
 
 	title := trf(gtx, .Chart_Title, count[0], chart, t.here, human.bytes(r.bytes))
+	if r.incomplete {
+		title = strings.concatenate({title, ", ", tr(.Incomplete)}, gtx.allocator)
+	}
 	ui.semantics(gtx, p, {role = .Tree, label = title})
 
 	// Every item's words go in one buffer, so a layer of fifty makes one string
@@ -270,6 +273,10 @@ say_layer :: proc(t: ^Teller, slot: int, under: ops.Area_Id, level: u8) {
 		if note := colour_note(t.gtx, t.m, r, at); note != "" {
 			strings.write_string(&t.words, ", ")
 			strings.write_string(&t.words, note)
+		}
+		if a.incomplete {
+			strings.write_string(&t.words, ", ")
+			strings.write_string(&t.words, tr(.Incomplete))
 		}
 		append(&t.items, Chart_Item{id, under, t.rects[at], level, states, len(t.words.buf)})
 		if open {

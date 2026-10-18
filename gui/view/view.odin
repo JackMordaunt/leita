@@ -379,9 +379,10 @@ view :: proc(gtx: ^ui.Ctx, user: rawptr) {
 	if prog == nil || prog.generation == 0 {
 		return
 	}
-	if prog.state == .Failed && prog.problem != "" {
+	if chart_lost(prog) && prog.problem != "" {
 		// In the chart's place, not above it: a banner in the status column would
-		// move the chart, and a failed scan has none to show.
+		// move the chart, and a scan that failed before it read anything has none to
+		// show. One that grew a tree keeps its chart, and says why in the status.
 		if ui.inset(gtx, {right = PAD}) {
 			primer.banner(gtx, tr(.Scan_Failed), safe(gtx, prog.problem), .Critical)
 		}
@@ -404,6 +405,13 @@ view :: proc(gtx: ^ui.Ctx, user: rawptr) {
 	record_dialog(gtx, m)
 	notices_dialog(gtx, m)
 	monitor_dialog(gtx, m)
+}
+
+// chart_lost is whether the scan failed with nothing read, so there is no chart to
+// keep.
+@(private)
+chart_lost :: proc(prog: ^query.Progress_Result) -> bool {
+	return prog.state == .Failed && prog.nodes == 0
 }
 
 // chart_row is the chart beside its side panel, the grip between them.
@@ -563,7 +571,7 @@ primer.slot two lines of body text high holds, on the first, how the scan is
 going and what it has found, and on the second the one message that matters
 most, if any. Messages do not stack: the second line shows the first of them
 and says how many more there are, which its tooltip lists. The banner a failed
-scan shows stands in the chart's place (view), and the trial banner, which the
+scan that read nothing shows stands in the chart's place (view), and the trial banner, which the
 licence answer brings at startup, keeps its place in flow under the slot.
 */
 @(private)
@@ -627,13 +635,15 @@ Status_Message :: struct {
 	text:    string,
 	detail:  string,
 	warning: bool,
+	danger:  bool, // a warning that is an error
 }
 
 // status_messages is what the second line could say, the most pressing first:
-// folders the scan could not open, and on macOS, where a refusal is commonly
-// a folder the system guards under the home directory, how to let the window
-// in; that a raw read would be far faster; then why the scan read its place
-// whole. A failed scan's problem is the banner's (view), not the line's.
+// that the scan failed or was stopped and the chart is short for it; folders
+// the scan could not open, and on macOS, where a refusal is commonly a folder
+// the system guards under the home directory, how to let the window in; that a
+// raw read would be far faster; then why the scan read its place whole. The
+// problem of a scan that failed with nothing read is the banner's (view).
 @(private)
 status_messages :: proc(
 	gtx: ^ui.Ctx,
@@ -641,21 +651,35 @@ status_messages :: proc(
 	prog: ^query.Progress_Result,
 ) -> []Status_Message {
 	msgs := make([dynamic]Status_Message, gtx.allocator)
+	switch {
+	case prog.state == .Failed && !chart_lost(prog):
+		why := trf(gtx, .Scan_Failed_Why, safe(gtx, prog.problem))
+		append(&msgs, Status_Message{text = why, detail = why, warning = true, danger = true})
+	case prog.state == .Stopped:
+		append(&msgs, Status_Message{text = tr(.Stopped_Incomplete), warning = true})
+	}
 	if m.path_long {
-		append(&msgs, Status_Message{tr(.Path_Too_Long), "", true})
+		append(&msgs, Status_Message{text = tr(.Path_Too_Long), warning = true})
 	}
 	if prog.unread > 0 {
 		detail := ""
 		if ODIN_OS == .Darwin && prog.denied {
 			detail = trf(gtx, .Unread_Hint, version.PRODUCT)
 		}
-		append(&msgs, Status_Message{trf(gtx, .Unread_Folders, int(prog.unread)), detail, true})
+		append(
+			&msgs,
+			Status_Message {
+				text = trf(gtx, .Unread_Folders, int(prog.unread)),
+				detail = detail,
+				warning = true,
+			},
+		)
 	}
 	if prog.slow {
-		append(&msgs, Status_Message{tr(.Slow_Hint), "", true})
+		append(&msgs, Status_Message{text = tr(.Slow_Hint), warning = true})
 	}
 	if prog.kept && !prog.updated && prog.why != "" {
-		append(&msgs, Status_Message{trf(gtx, .Read_Whole, prog.why), "", false})
+		append(&msgs, Status_Message{text = trf(gtx, .Read_Whole, prog.why)})
 	}
 	return msgs[:]
 }
@@ -685,7 +709,7 @@ message_line :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result) {
 	top := msgs[0]
 	role: tok.Role = .Fg_Color_Muted
 	if top.warning {
-		role = .Fg_Color_Attention
+		role = .Fg_Color_Danger if top.danger else .Fg_Color_Attention
 	}
 	fg := primer.color(role)
 	if top.warning {

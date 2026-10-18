@@ -3287,3 +3287,43 @@ monitoring_warns_of_running_only_while_logged_in_from_the_start :: proc(t: ^test
 	testing.expect(t, settle(&r, "Not scanned yet"), "the place scanned is watched")
 	testing.expect(t, ui.probe_tagged(&r.p, note), "the warning stays as a place is watched")
 }
+
+// A folder the walk could not open holds nothing to draw, so the folders above
+// it are outlined instead: their totals are short of what is there. The one read
+// in full is not.
+@(test)
+the_folders_above_one_the_walk_could_not_open_are_outlined_on_the_chart :: proc(t: ^testing.T) {
+	if ODIN_OS == .Windows {
+		return // a folder is not shut by its mode there
+	}
+	root := fixture(t, "locked")
+	locked := fmt.tprintf("%s/locked", root)
+	testing.expect(t, os.make_directory(locked) == nil, "could not make locked")
+	testing.expect(
+		t,
+		os.write_entire_file(fmt.tprintf("%s/secret.dat", locked), []byte{1, 2, 3}) == nil,
+	)
+	testing.expect(t, os.chmod(locked, {}) == nil, "could not shut locked")
+	defer os.remove_all(root)
+	defer os.chmod(locked, {.Read_User, .Write_User, .Execute_User})
+	if dir, err := os.open(locked); err == nil {
+		os.close(dir)
+		return // the user it runs as is let in whatever the mode says
+	}
+
+	r: Rig
+	rig_open(&r, root)
+	defer rig_close(&r)
+	testing.expect(t, settle(&r, "Done"))
+	testing.expect(t, settle(&r, "arc photos"), "photos, which the fixture holds, is drawn")
+	testing.expect(
+		t,
+		settle(&r, fmt.tprintf("incomplete %s", filepath.base(root))),
+		"the chart is marked short",
+	)
+	testing.expect(
+		t,
+		!ui.probe_tagged(&r.p, "incomplete photos"),
+		"the folder read in full is not",
+	)
+}

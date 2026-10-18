@@ -299,6 +299,9 @@ info :: proc(gtx: ^ui.Ctx, m: ^Model, drawn, laid: ^query.Rings_Result, u: Hit, 
 		if note := colour_note(gtx, m, laid, at); note != "" {
 			kind = strings.concatenate({" · ", note}, gtx.allocator)
 		}
+		if a.incomplete {
+			kind = strings.concatenate({kind, " · ", tr(.Incomplete)}, gtx.allocator)
+		}
 		detail = strings.concatenate(
 			{
 				trf(
@@ -324,6 +327,9 @@ info :: proc(gtx: ^ui.Ctx, m: ^Model, drawn, laid: ^query.Rings_Result, u: Hit, 
 			strings.concatenate({" · ", tr(.Click_To_Go_Up)}, gtx.allocator) if up else "",
 			allocator = gtx.allocator,
 		)
+		if drawn.incomplete {
+			detail = strings.concatenate({detail, " · ", tr(.Incomplete)}, gtx.allocator)
+		}
 		// The bar says where the centre is; the line stays, empty, so the block
 		// keeps its height.
 		path = ""
@@ -489,6 +495,7 @@ sunburst :: proc(
 	bg := primer.color(.Bg_Color_Default)
 	// Each arc's box, for its item in the chart's semantics.
 	boxes := make([]Box, len(r.arcs), gtx.allocator)
+	outlined := make([dynamic]ops.Path_Ref, gtx.allocator)
 	for a, i in r.arcs {
 		fill := fill_of(m, r, i, i == hovered, false)
 		r0 := b.hub + b.ring * f32(a.depth - 1)
@@ -506,11 +513,29 @@ sunburst :: proc(
 				fmt.aprintf("arc %s", safe(gtx, a.name), allocator = gtx.allocator),
 			)
 		}
+		if a.incomplete {
+			append(&outlined, shape)
+			tag_incomplete(gtx, &p, u64(i), safe(gtx, a.name), boxes[i].rect)
+		}
+	}
+	// Over every arc, not as each is drawn: the next arc's rim would cover half of it.
+	for shape in outlined {
+		mark_incomplete(gtx, shape)
 	}
 	hub := ui.circle(b.center, b.hub - 1)
 	ops.fill(gtx.scene, hub, primer.color(.Bg_Color_Muted))
 	ops.stroke(gtx.scene, hub, primer.color(.Border_Color_Default), {width = 1})
 	ops.tag(gtx.scene, p.id, "hub")
+	if r.incomplete {
+		mark_incomplete(gtx, hub)
+		tag_incomplete(
+			gtx,
+			&p,
+			u64(len(r.arcs)),
+			safe(gtx, base_name(r.crumbs[len(r.crumbs) - 1].name)),
+			ops.Rect{b.center.x - b.hub, b.center.y - b.hub, 2 * b.hub, 2 * b.hub},
+		)
+	}
 
 	design.paint_focus_visible_ring(
 		gtx,

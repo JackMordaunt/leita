@@ -37,6 +37,9 @@ done = Done
 stopped = Stopped
 failed = Failed
 scan_failed = The scan failed
+scan_failed_why = The scan failed, so the chart is incomplete: {0}
+stopped_incomplete = The scan was stopped, so the chart is incomplete. Outlined folders were not read in full.
+incomplete = incomplete
 slow_hint = Reading this volume's own table would be far faster, given permission to open the device.
 # {0} folders the scan could not open, so left out; the hint follows it on macOS, {0} the product
 unread_folders.one = {0} folder could not be read.
