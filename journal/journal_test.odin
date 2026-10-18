@@ -188,6 +188,30 @@ test_a_break_in_the_log_is_not_covered :: proc(t: ^testing.T) {
 	testing.expect(t, why != "", "a log that is not there covered the window")
 }
 
+/*
+An Overflow, which write_log appends after the records a full volume did not take,
+breaks every window across it, and only those: a window that begins after it is
+covered again, and names what changed then.
+*/
+@(test)
+test_an_overflow_breaks_only_the_windows_across_it :: proc(t: ^testing.T) {
+	records := joined(
+		beats(T0, T0 + 20 * SEC),
+		{{.Changed, T0 + 21 * SEC, 1}, {.Overflow, T0 + 21 * SEC, 0}},
+		beats(T0 + 30 * SEC, T0 + 50 * SEC),
+		{{.Changed, T0 + 51 * SEC, 2}},
+	)
+	path := log_file(t, "after_overflow", "/mnt/e", records)
+	defer os.remove(path)
+	across, why := window(path, T0 + 5 * SEC, T0 + 55 * SEC)
+	defer window_destroy(&across)
+	testing.expect_value(t, why, "the recorder fell behind and lost changes")
+	after, why2 := window(path, T0 + 35 * SEC, T0 + 55 * SEC)
+	defer window_destroy(&after)
+	testing.expectf(t, why2 == "", "a window after the overflow was not covered: %s", why2)
+	testing.expect(t, 2 in after.hashes && 1 not_in after.hashes, "the wrong changes were named")
+}
+
 // Records after the window belong to the next one; a record cut short at the end,
 // as a write stopped in the middle leaves, is not read.
 @(test)

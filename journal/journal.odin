@@ -24,7 +24,8 @@ epoch), hash u64.
 - Heartbeat: every HEARTBEAT, once all events read so far are recorded.
 - Changed: hash is FNV-1a 64 of the directory's canonical absolute path, as
   readlink of /proc/self/fd gives it. The log is world-readable and holds no names.
-- Overflow: the kernel's queue overflowed, and events were lost.
+- Overflow: the kernel's queue overflowed, and events were lost; or the log took
+  only part of a write, as a full volume does, and records were.
 - Stop: the recorder stopped, or the filesystem went away.
 - Slept: the machine was suspended; time is when the recorder woke, and hash is the
   time of its last look at the clock before, an i64 as a u64. The wall clock

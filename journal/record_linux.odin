@@ -131,7 +131,7 @@ kept open: while the recorder held it open, `umount /mnt/e` failed with "target 
 busy" (EBUSY) on Linux 7.0.14 (2026-10-13), so a recorded disk could not be ejected.
 flush opens it only for as long as it resolves handles.
 */
-@(private = "file")
+@(private)
 Recorded_Filesystem :: struct {
 	mount_id: int,
 	device:   string,
@@ -141,11 +141,18 @@ Recorded_Filesystem :: struct {
 	log:      ^os.File,
 	path:     string,
 	buf:      [dynamic]byte, // records to append at the next write
+	end:      i64, // where the log's last whole record ends
+	broken:   bool, // a write lost records and its Overflow too: see write_log
 }
 
-@(private = "file")
+// Log_Writer appends data to a log, as os.write does; a test gives one that fails.
+@(private)
+Log_Writer :: #type proc(f: ^os.File, data: []byte) -> (n: int, err: os.Error)
+
+@(private)
 Recorder :: struct {
 	cfg:       Config,
+	write:     Log_Writer,
 	fan:       linux.Fd,
 	mountinfo: linux.Fd,
 	own:       u64, // the log folder's hash: its own writes are not recorded
@@ -175,6 +182,7 @@ run :: proc(cfg: Config) -> (problem: string) {
 
 	r := Recorder {
 		cfg    = cfg,
+		write  = os.write,
 		events = make([]byte, 256 * 1024),
 	}
 	defer recorder_destroy(&r)
@@ -211,7 +219,7 @@ run :: proc(cfg: Config) -> (problem: string) {
 	sync_mounts(&r)
 	loop(&r)
 	for &fs in r.recorded {
-		stop_recording(&fs)
+		stop_recording(&r, &fs)
 	}
 	write_status(&r)
 	return ""
@@ -261,7 +269,7 @@ loop :: proc(r: ^Recorder) {
 	flush(r)
 }
 
-@(private = "file")
+@(private)
 recorder_destroy :: proc(r: ^Recorder) {
 	for &fs in r.recorded {
 		forget(&fs)
@@ -281,7 +289,7 @@ recorder_destroy :: proc(r: ^Recorder) {
 	}
 }
 
-@(private = "file")
+@(private)
 forget :: proc(fs: ^Recorded_Filesystem) {
 	if fs.log != nil {
 		os.close(fs.log)
@@ -381,7 +389,7 @@ flush :: proc(r: ^Recorder) {
 			dropped = true
 			continue
 		}
-		write_log(fs)
+		write_log(r, fs)
 	}
 	for key in r.pending {
 		delete(key)
@@ -466,23 +474,31 @@ open_point :: proc(point: string) -> (dir: linux.Fd, fsid: [2]i32, err: linux.Er
 @(private = "file")
 drop :: proc(r: ^Recorder, i: int) {
 	fs := &r.recorded[i]
-	stop_recording(fs)
+	stop_recording(r, fs)
 	verdicts_forget(&r.verdicts, fs.device)
 	forget(fs)
 	ordered_remove(&r.recorded, i)
 }
 
-// mark_all appends a record of kind, carrying hash, to every log, and writes it.
-@(private = "file")
+/*
+mark_all appends a record of kind, carrying hash, to every log, and writes it. A
+broken log is begun again with a Start instead, which breaks every window across it
+as the record would have.
+*/
+@(private)
 mark_all :: proc(r: ^Recorder, kind: Kind, hash := u64(0)) {
 	now := time.to_unix_nanoseconds(time.now())
 	for &fs in r.recorded {
+		if fs.broken {
+			restart_log(r, &fs, now)
+			continue
+		}
 		append_record(&fs, {kind, now, hash})
-		write_log(&fs)
+		write_log(r, &fs)
 	}
 }
 
-@(private = "file")
+@(private)
 append_record :: proc(fs: ^Recorded_Filesystem, rec: Record) {
 	// record_put writes RECORD_SIZE bytes and does not check the length. This
 	// buffer is that long, so the write stays inside it.
@@ -491,13 +507,77 @@ append_record :: proc(fs: ^Recorded_Filesystem, rec: Record) {
 	append(&fs.buf, ..buf[:])
 }
 
-@(private = "file")
-write_log :: proc(fs: ^Recorded_Filesystem) {
+/*
+write_log appends fs's buffered records to its log. A log that takes only part of
+them, as a full volume does, is cut back to its last whole record, and an Overflow
+follows the records not written, so no window across the loss is covered. When even
+that cannot be written the log is broken: what it would have held is let go, and
+nothing more is written until a Start begins it again (mark_all). Until then no
+heartbeat follows its last record, and cover soon says the recorder is not running.
+*/
+@(private)
+write_log :: proc(r: ^Recorder, fs: ^Recorded_Filesystem) {
+	if fs.broken {
+		clear(&fs.buf)
+		return
+	}
 	if len(fs.buf) == 0 || fs.log == nil {
 		return
 	}
-	os.write(fs.log, fs.buf[:])
+	if put_records(r, fs) {
+		return
+	}
+	append_record(fs, {.Overflow, time.to_unix_nanoseconds(time.now()), 0})
+	if !fs.broken && put_records(r, fs) {
+		return
+	}
+	fs.broken = true
 	clear(&fs.buf)
+}
+
+/*
+put_records writes fs's buffer to its log and says whether all of it went. What was
+written is taken off the buffer and the rest kept. Part of a record written is cut
+off the log, since every record appended after it would be read askew; the log is
+broken when it cannot be cut.
+*/
+@(private = "file")
+put_records :: proc(r: ^Recorder, fs: ^Recorded_Filesystem) -> bool {
+	n, err := r.write(fs.log, fs.buf[:])
+	done := clamp(n, 0, len(fs.buf)) / RECORD_SIZE * RECORD_SIZE
+	fs.end += i64(done)
+	remove_range(&fs.buf, 0, done)
+	if err == nil && len(fs.buf) == 0 {
+		return true
+	}
+	if os.truncate(fs.log, fs.end) != nil {
+		fs.broken = true
+	}
+	return false
+}
+
+/*
+restart_log begins fs's broken log again with a Start at now, once it can be cut
+back to its last whole record. What was lost while it was broken is in no window a
+scan trusts: each across the Start is refused.
+*/
+@(private = "file")
+restart_log :: proc(r: ^Recorder, fs: ^Recorded_Filesystem, now: i64) {
+	if fs.log == nil || os.truncate(fs.log, fs.end) != nil {
+		return
+	}
+	fs.broken = false
+	clear(&fs.buf)
+	append_record(fs, {.Start, now, generation()})
+	write_log(r, fs)
+}
+
+// generation is a random hash for a Start, which tells one run's log from the next.
+@(private = "file")
+generation :: proc() -> u64 {
+	gen: [8]byte
+	linux.getrandom(gen[:], {})
+	return transmute(u64)gen
 }
 
 /*
@@ -669,10 +749,8 @@ start_recording :: proc(r: ^Recorder, m: Mount) -> (fs: Recorded_Filesystem, pro
 		forget(&fs)
 		return {}, "its log cannot be written"
 	}
-	gen: [8]byte
-	linux.getrandom(gen[:], {})
-	append_record(&fs, {.Start, time.to_unix_nanoseconds(time.now()), transmute(u64)gen})
-	write_log(&fs)
+	append_record(&fs, {.Start, time.to_unix_nanoseconds(time.now()), generation()})
+	write_log(r, &fs)
 	return fs, ""
 }
 
@@ -680,7 +758,7 @@ start_recording :: proc(r: ^Recorder, m: Mount) -> (fs: Recorded_Filesystem, pro
 ensure_header makes sure fs's log begins with a header for its mount point: written
 anew when there is none, or when it names another.
 */
-@(private = "file")
+@(private)
 ensure_header :: proc(fs: ^Recorded_Filesystem) -> bool {
 	if f, head, _, ok := open_log(fs.path); ok {
 		os.close(f)
@@ -698,8 +776,12 @@ ensure_header :: proc(fs: ^Recorded_Filesystem) -> bool {
 	)
 }
 
-// compact_log drops fs's records older than RETENTION, then opens its log to append.
-@(private = "file")
+/*
+compact_log drops fs's records older than RETENTION, then opens its log to append,
+cut back to its last whole record: one torn by a write the machine stopped in the
+middle of would leave every record appended after it read askew.
+*/
+@(private)
 compact_log :: proc(fs: ^Recorded_Filesystem) {
 	if fs.log != nil {
 		os.close(fs.log)
@@ -707,14 +789,28 @@ compact_log :: proc(fs: ^Recorded_Filesystem) {
 	}
 	before := time.to_unix_nanoseconds(time.now()) - i64(RETENTION)
 	compact(fs.path, before)
-	fs.log, _ = os.open(fs.path, {.Write, .Append}, Permissions_Log)
+	f, head, count, ok := open_log(fs.path)
+	if !ok {
+		return
+	}
+	os.close(f)
+	fs.end = head.at + count * RECORD_SIZE
+	log, err := os.open(fs.path, {.Write, .Append}, Permissions_Log)
+	if err != nil {
+		return
+	}
+	if os.truncate(log, fs.end) != nil {
+		os.close(log)
+		return
+	}
+	fs.log = log
 }
 
 // stop_recording appends a Stop to fs's log: what happens next is not seen.
 @(private = "file")
-stop_recording :: proc(fs: ^Recorded_Filesystem) {
+stop_recording :: proc(r: ^Recorder, fs: ^Recorded_Filesystem) {
 	append_record(fs, {.Stop, time.to_unix_nanoseconds(time.now()), 0})
-	write_log(fs)
+	write_log(r, fs)
 }
 
 // STATUS is the file in the log folder that says what is recorded and what not.
