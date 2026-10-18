@@ -72,9 +72,10 @@ runs:
     # the Liberation Sans it carries where none is there; Ubuntu ships none
     # of them, so fonts-liberation is installed and symlinked where
     # pdf/system.odin looks, as jm's own test.yml does, and both paths are
-    # tested. btrfs-progs
-    # makes and reads the image test.yml's btrfs-test runs on. cmake and
-    # ninja build Blend2D and SDL3 from source. The -dev packages after them
+    # tested. btrfs-progs makes and reads the image test.yml's btrfs-test
+    # runs on. hyperfine times the walk fsbench-ci checks; time is the
+    # fallback when hyperfine is absent. cmake and ninja build Blend2D and
+    # SDL3 from source. The -dev packages after them
     # are the headers SDL3 needs to build its X11, Wayland, input and sound
     # backends, which it opens at run time, so the window that links it
     # statically starts on a desktop with either display server (the list
@@ -87,7 +88,7 @@ runs:
       shell: bash
       run: |
         sudo apt-get update -qq
-        sudo apt-get install -y --no-install-recommends cmake ninja-build pkg-config fonts-liberation btrfs-progs \
+        sudo apt-get install -y --no-install-recommends cmake ninja-build pkg-config fonts-liberation btrfs-progs hyperfine time \
           libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev \
           libxkbcommon-dev libdrm-dev libgbm-dev libegl-dev libgl-dev libgles-dev libwayland-dev libdecor-0-dev \
           libdbus-1-dev libibus-1.0-dev libudev-dev libpipewire-0.3-dev libpulse-dev libasound2-dev

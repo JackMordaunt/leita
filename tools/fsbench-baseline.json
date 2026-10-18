@@ -1,0 +1,11 @@
+{
+  "comment": "Tolerance is 20% because a GitHub runner varies against the machine that wrote these medians. A run fails when its median exceeds the baseline times (1 + tolerance).",
+  "tolerance": 0.2,
+  "files": 200000,
+  "seed": 20261014,
+  "filesystems": {
+    "tmpfs": {
+      "median_ms": 25.6
+    }
+  }
+}

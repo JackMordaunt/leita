@@ -12,6 +12,7 @@
 #   just btrfs-test [--sudo]  the btrfs and walk tests on a throw-away btrfs image,
 #                             as root too with --sudo where sudo asks no password
 #   just mount-test [--sudo]  the delete test that mounts, in a namespace of its own
+#   just fsbench-ci [--update] the walk on a seeded tmpfs, against the baseline
 #   just install              put the release command line on PATH as leita and le
 #   just check                type-check both modes without producing a binary
 #   just check-licence [key licence]
@@ -567,9 +568,32 @@ mft-bench folder: sqlite
 
 # leita against fd on one seeded tree: the host filesystem, then throw-away
 # ext4 and btrfs images, then tmpfs. Loop images sit on this disk, so they
-# are not a raw drive. Warm cache only. `just fsbench "--files 20000"`
-# shortens the seed. vfat is opt-in (`--only vfat`); its desktop mount syncs
-# every created file.
+# are not a raw drive. Warm cache only. "scan ~ under 500 ms warm" is fast
+# enough; walk perf cards stop once a warm scan holds that.
+# `just fsbench "--files 20000"` shortens the seed. vfat is opt-in
+# (`--only vfat`); its desktop mount syncs every created file.
 fsbench args="": (cli "release")
     python3 tools/fsbench {{args}}
+
+# The walk on one seeded tmpfs, against tools/fsbench-baseline.json, so a
+# slower walk fails CI. A user namespace when the kernel allows it, otherwise
+# passwordless sudo; no loop device. The release command line, a warmup, then
+# the runs: hyperfine when it is installed, otherwise /usr/bin/time. The median
+# is printed in milliseconds. It fails when the median exceeds the baseline
+# times (1 + tolerance). The tolerance is 20% because a GitHub runner varies
+# against the machine that wrote the medians. `--update` rewrites the median.
+#
+# A release build needs a licence key. The test key stands in when
+# LEITA_LICENCE_KEY is unset; the key does not change the walk.
+#
+# Check the walk: just fsbench-ci
+# Rewrite the baseline: just fsbench-ci --update
+fsbench-ci *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ -z "${LEITA_LICENCE_KEY:-}" ]; then
+        export LEITA_LICENCE_KEY="$(just --justfile "{{justfile()}}" --evaluate test_licence_key)"
+    fi
+    just --justfile "{{justfile()}}" cli release
+    python3 tools/fsbench --ci {{args}}
 

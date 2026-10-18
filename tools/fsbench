@@ -18,6 +18,16 @@ may not have it.
     tools/fsbench
     tools/fsbench --files 20000
     tools/fsbench --only host,ext4
+
+--ci times leita alone on a tmpfs of the same seed and checks
+tools/fsbench-baseline.json. The median may exceed the committed number by
+the file's tolerance and no further: 20% when the file is new, because a
+GitHub runner varies against the machine that wrote the medians. --update
+rewrites this filesystem's median. hyperfine times the runs when it is
+installed; otherwise /usr/bin/time.
+
+    tools/fsbench --ci
+    tools/fsbench --ci --update
 """
 
 from __future__ import annotations
@@ -27,6 +37,7 @@ import json
 import os
 import platform
 import shutil
+import statistics
 import subprocess
 import sys
 import time
@@ -37,6 +48,16 @@ SEED = 20261014
 EXTS = ("go", "rs", "c", "h", "py", "md", "json", "txt")
 REPO = Path(__file__).resolve().parent.parent
 WORK = REPO / "build" / "fsbench"
+BASELINE = REPO / "tools" / "fsbench-baseline.json"
+# A new baseline starts here. A check reads the file, so the committed
+# tolerance is what CI enforces. The file's comment says why it is this wide.
+TOLERANCE = 0.20
+TOLERANCE_COMMENT = (
+    f"Tolerance is {TOLERANCE:.0%} because a GitHub runner varies against the "
+    "machine that wrote these medians. A run fails when its median exceeds the "
+    "baseline times (1 + tolerance)."
+)
+CI_FILESYSTEM = "tmpfs"
 # vfat stays opt-in: a desktop mount uses `flush`, one sync per created file.
 DEFAULT = ("host", "ext4", "btrfs", "tmpfs")
 KINDS = DEFAULT + ("vfat", "xfs")
@@ -462,6 +483,287 @@ def selected(text: str) -> list[str]:
     return kinds
 
 
+def mount_fstype(path: Path) -> str:
+    """The filesystem mounted on path itself, or "" when path is not a mount."""
+    found = subprocess.run(
+        ["findmnt", "--mountpoint", str(path), "-no", "FSTYPE"],
+        capture_output=True,
+        text=True,
+    )
+    if found.returncode != 0 or not found.stdout.strip():
+        return ""
+    return found.stdout.strip().splitlines()[0]
+
+
+def umount(path: Path, prefix: list[str]) -> str:
+    """Unmount path. Return the error text, or "" when it came down."""
+    done = subprocess.run(
+        prefix + ["umount", str(path)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if done.returncode != 0:
+        return done.stderr.strip() or "umount failed"
+    return ""
+
+
+def sudo_ready() -> bool:
+    return which("sudo") is not None and subprocess.run(
+        ["sudo", "-n", "true"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    ).returncode == 0
+
+
+def unshare_can_mount() -> bool:
+    """Whether a user namespace can mount a tmpfs. No sudo, and nothing stays up."""
+    if not which("unshare"):
+        return False
+    probe = WORK / "ci-probe"
+    probe.mkdir(parents=True, exist_ok=True)
+    script = f"mount -t tmpfs -o size=1M tmpfs {quote(str(probe))} && umount {quote(str(probe))}"
+    done = subprocess.run(
+        ["unshare", "--user", "--map-root-user", "--mount", "--propagation", "private", "bash", "-c", script],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return done.returncode == 0
+
+
+def judgement(kind: str, median_ms: float, baseline_ms: float, tolerance: float) -> tuple[bool, str]:
+    """Whether median_ms is within baseline_ms * (1 + tolerance), and the line to print.
+
+    Both numbers are in the line, and so is the delta. The comparison uses the
+    same rounded milliseconds the line shows.
+    """
+    median_ms = round(float(median_ms), 1)
+    baseline_ms = round(float(baseline_ms), 1)
+    limit = round(baseline_ms * (1.0 + float(tolerance)), 1)
+    delta = round(median_ms - baseline_ms, 1)
+    if median_ms > limit:
+        line = (
+            f"fsbench: {kind} median {fmt(median_ms)} ms exceeds "
+            f"baseline {fmt(baseline_ms)} ms by {fmt(delta)} ms "
+            f"(limit {fmt(limit)} ms, tolerance {tolerance:.0%})"
+        )
+        return False, line
+    line = (
+        f"fsbench: {kind} median {fmt(median_ms)} ms "
+        f"(baseline {fmt(baseline_ms)} ms, delta {delta:+.1f} ms, limit {fmt(limit)} ms)"
+    )
+    return True, line
+
+
+def fresh_baseline(files: int, seed: int) -> dict:
+    return {
+        "comment": TOLERANCE_COMMENT,
+        "tolerance": TOLERANCE,
+        "files": files,
+        "seed": seed,
+        "filesystems": {},
+    }
+
+
+def read_baseline(path: Path) -> dict:
+    if not path.is_file():
+        sys.exit(f"fsbench: no baseline at {path}; run: just fsbench-ci --update")
+    try:
+        data = json.loads(path.read_text())
+    except json.JSONDecodeError as err:
+        sys.exit(f"fsbench: {path} is not JSON: {err}")
+    if not isinstance(data, dict):
+        sys.exit(f"fsbench: {path} must be a JSON object")
+    for key in ("tolerance", "files", "seed", "filesystems"):
+        if key not in data:
+            sys.exit(f"fsbench: {path} has no {key}")
+    if not isinstance(data["filesystems"], dict):
+        sys.exit(f"fsbench: {path} filesystems must be an object")
+    try:
+        tolerance = float(data["tolerance"])
+    except (TypeError, ValueError):
+        sys.exit(f"fsbench: {path} tolerance is not a number")
+    if tolerance < 0:
+        sys.exit(f"fsbench: {path} tolerance is negative")
+    return data
+
+
+def write_baseline(path: Path, kind: str, median_ms: float, files: int, seed: int) -> None:
+    """Record kind's median. Another filesystem's median stays unless the tree changed."""
+    data = fresh_baseline(files, seed)
+    if path.is_file():
+        try:
+            old = json.loads(path.read_text())
+        except json.JSONDecodeError:
+            old = None
+            say(f"fsbench: {path} is not JSON; writing a new baseline")
+        if isinstance(old, dict) and old.get("files") == files and old.get("seed") == seed:
+            data["filesystems"] = dict(old.get("filesystems") or {})
+            if "tolerance" in old:
+                data["tolerance"] = old["tolerance"]
+            if old.get("comment"):
+                data["comment"] = old["comment"]
+        elif isinstance(old, dict) and old.get("filesystems"):
+            say("fsbench: file count or seed changed; dropping other filesystem medians")
+    data["filesystems"][kind] = {"median_ms": round(float(median_ms), 1)}
+    text = json.dumps(data, indent=2) + "\n"
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(text)
+    os.replace(tmp, path)
+
+
+def conclude(kind: str, median_ms: float, files: int, seed: int, path: Path, update: bool) -> int:
+    """Print the median. Rewrite the baseline, or exit 1 when it has regressed."""
+    shown = round(float(median_ms), 1)
+    if update:
+        write_baseline(path, kind, shown, files, seed)
+        say(f"fsbench: {kind} median {fmt(shown)} ms")
+        say(f"fsbench: wrote {path}")
+        return 0
+    data = read_baseline(path)
+    if int(data["files"]) != files or int(data["seed"]) != seed:
+        sys.exit(
+            f"fsbench: baseline is {data['files']} files, seed {data['seed']}; "
+            f"this run is {files} files, seed {seed}. Run: just fsbench-ci --update"
+        )
+    entry = data["filesystems"].get(kind)
+    if not isinstance(entry, dict) or "median_ms" not in entry:
+        sys.exit(f"fsbench: baseline has no {kind} median; run: just fsbench-ci --update")
+    ok, line = judgement(kind, shown, float(entry["median_ms"]), float(data["tolerance"]))
+    say(line)
+    return 0 if ok else 1
+
+
+def time_hyperfine(cmd: list[str], runs: int, warmup: int) -> float:
+    if any(any(ch.isspace() for ch in part) for part in cmd):
+        sys.exit("fsbench: a timed path contains whitespace; hyperfine --shell=none cannot quote it")
+    export = WORK / "ci.json"
+    argv = [
+        "hyperfine",
+        "--shell", "none",
+        "--warmup", str(warmup),
+        "--runs", str(runs),
+        "--export-json", str(export),
+        "--style", "basic",
+        " ".join(cmd),
+    ]
+    run(argv)
+    data = json.loads(export.read_text())
+    results = data.get("results") or []
+    if len(results) != 1:
+        sys.exit(f"fsbench: hyperfine wrote {len(results)} results")
+    result = results[0]
+    codes = result.get("exit_codes") or []
+    if any(code != 0 for code in codes):
+        sys.exit(f"fsbench: leita exited {codes}")
+    times = result.get("times") or []
+    if len(times) != runs:
+        sys.exit(f"fsbench: hyperfine kept {len(times)} samples, wanted {runs}")
+    return statistics.median(times) * 1000.0
+
+
+def time_gnu(cmd: list[str], runs: int, warmup: int) -> float:
+    timer = "/usr/bin/time"
+    if not os.path.isfile(timer) or not os.access(timer, os.X_OK):
+        sys.exit("fsbench: neither hyperfine nor /usr/bin/time is available")
+    for _ in range(max(0, warmup)):
+        run(cmd, quiet=True)
+    times_path = WORK / "ci-times"
+    times_path.unlink(missing_ok=True)
+    for _ in range(runs):
+        done = subprocess.run(
+            [timer, "-f", "%e", "-o", str(times_path), "-a", "--", *cmd],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if done.returncode != 0:
+            sys.stderr.write(done.stderr)
+            sys.exit(f"fsbench: leita exited {done.returncode}")
+    samples = [float(line) for line in times_path.read_text().splitlines() if line.strip()]
+    if len(samples) != runs:
+        sys.exit(f"fsbench: /usr/bin/time wrote {len(samples)} samples, wanted {runs}")
+    return statistics.median(samples) * 1000.0
+
+
+def time_leita(tree: Path, leita: str, runs: int, warmup: int) -> float:
+    if runs < 1:
+        sys.exit("fsbench: --runs must be at least 1")
+    cmd = [leita, "--no-history", "--whole", str(tree)]
+    if which("hyperfine"):
+        say(f"fsbench: hyperfine, warmup {warmup}, runs {runs}")
+        return time_hyperfine(cmd, runs, warmup)
+    say(f"fsbench: /usr/bin/time, warmup {warmup}, runs {runs}")
+    return time_gnu(cmd, runs, warmup)
+
+
+def run_seeded(mnt: Path, args: argparse.Namespace, leita: str, prefix: list[str], strict_umount: bool) -> int:
+    error = ""
+    try:
+        generate(mnt / "tree", args.files)
+        median = time_leita(mnt / "tree", leita, args.runs, args.warmup)
+    finally:
+        error = umount(mnt, prefix)
+        if error:
+            say(f"fsbench: umount {mnt} failed: {error}")
+    code = conclude(CI_FILESYSTEM, median, args.files, SEED, Path(args.baseline), args.update)
+    if error and strict_umount:
+        sys.exit(f"fsbench: {error}")
+    return code
+
+
+def mount_tmpfs(mnt: Path, prefix: list[str], options: str) -> None:
+    if mount_fstype(mnt) == "tmpfs":
+        error = umount(mnt, prefix)
+        if error:
+            sys.exit(f"fsbench: {mnt} is already a tmpfs and umount failed: {error}")
+    run(prefix + ["mount", "-t", "tmpfs", "-o", options, "tmpfs", str(mnt)])
+    if mount_fstype(mnt) != "tmpfs":
+        sys.exit(f"fsbench: {mnt} is not a tmpfs")
+
+
+def ci_sudo(args: argparse.Namespace, leita: str) -> int:
+    say("fsbench: tmpfs, sudo")
+    mnt = WORK / "ci-mnt"
+    mnt.mkdir(parents=True, exist_ok=True)
+    mount_tmpfs(mnt, ["sudo", "-n"], f"size=4G,mode=755,uid={os.getuid()},gid={os.getgid()}")
+    return run_seeded(mnt, args, leita, ["sudo", "-n"], True)
+
+
+def ci_inner(args: argparse.Namespace) -> None:
+    leita = leita_bin(args.leita)
+    say("fsbench: tmpfs, user namespace")
+    mnt = WORK / "ci-mnt"
+    mnt.mkdir(parents=True, exist_ok=True)
+    mount_tmpfs(mnt, [], "size=4G,mode=755")
+    sys.exit(run_seeded(mnt, args, leita, [], False))
+
+
+def ci_outer(args: argparse.Namespace) -> None:
+    if not which("findmnt"):
+        sys.exit("fsbench: findmnt is not on PATH")
+    leita = leita_bin(args.leita)
+    WORK.mkdir(parents=True, exist_ok=True)
+    if unshare_can_mount():
+        argv = [
+            "unshare", "--user", "--map-root-user", "--mount", "--propagation", "private",
+            sys.executable, str(Path(__file__).resolve()),
+            "--ci-inner",
+            "--files", str(args.files),
+            "--runs", str(args.runs),
+            "--warmup", str(args.warmup),
+            "--baseline", str(args.baseline),
+            "--leita", leita,
+        ]
+        if args.update:
+            argv.append("--update")
+        try:
+            os.execvp(argv[0], argv)
+        except OSError as err:
+            sys.exit(f"fsbench: unshare failed: {err}")
+    if sudo_ready():
+        sys.exit(ci_sudo(args, leita))
+    sys.exit("fsbench: tmpfs needs a user namespace (unshare --user --mount) or passwordless sudo")
+
+
 def main() -> None:
     if platform.system() != "Linux":
         sys.exit("fsbench measures Linux filesystems. This machine is not Linux.")
@@ -472,9 +774,21 @@ def main() -> None:
     parser.add_argument("--leita", default="")
     parser.add_argument("--only", default="", help="comma list: host,ext4,btrfs,vfat,tmpfs")
     parser.add_argument("--keep", action="store_true", help="leave images mounted")
+    parser.add_argument("--ci", action="store_true", help="time leita on a seeded tmpfs and check the baseline")
+    parser.add_argument("--ci-inner", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--update", action="store_true", help="with --ci, rewrite the baseline median")
+    parser.add_argument("--baseline", type=Path, default=BASELINE, help="baseline JSON (default: tools/fsbench-baseline.json)")
     args = parser.parse_args()
     if args.files < 100:
         sys.exit("fsbench: --files must be at least 100")
+    if args.update and not (args.ci or args.ci_inner):
+        sys.exit("fsbench: --update belongs to --ci; run: just fsbench-ci --update")
+    if args.ci_inner:
+        ci_inner(args)
+        return
+    if args.ci:
+        ci_outer(args)
+        return
     for tool in ("hyperfine", "truncate", "findmnt"):
         if not which(tool):
             sys.exit(f"fsbench: {tool} is not on PATH")

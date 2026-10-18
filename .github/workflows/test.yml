@@ -69,6 +69,14 @@ jobs:
         if: runner.os == 'Linux'
         timeout-minutes: 10
         run: just btrfs-test --sudo
+      # Warm walk of a seeded tmpfs against the committed baseline. A median
+      # past the tolerance fails the job. Ubuntu only; tools/fsbench --ci
+      # mounts the tmpfs. The command line, the seed and a few runs stay
+      # under a minute.
+      - name: fsbench (ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        timeout-minutes: 2
+        run: just fsbench-ci
       - name: gui-test
         timeout-minutes: 20
         run: |
