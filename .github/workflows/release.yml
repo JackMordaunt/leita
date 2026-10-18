@@ -453,7 +453,9 @@ jobs:
             [ -f "/c/leita-setup-test/$f" ] || { echo "::error::the installer left no $f"; exit 1; }
           done
           /c/leita-setup-test/leita.exe --version
-          shortcut="$PROGRAMDATA/Microsoft/Windows/Start Menu/Programs/Leita.lnk"
+          # Git Bash spells Windows's environment names as Windows does, so
+          # it is ProgramData here, not PROGRAMDATA, which set -u refuses.
+          shortcut="${ProgramData:-/c/ProgramData}/Microsoft/Windows/Start Menu/Programs/Leita.lnk"
           [ -f "$shortcut" ] || { echo "::error::the installer left no Start menu shortcut"; exit 1; }
           grep -qiF 'leita-setup-test' <<<"$(machine_path)" \
             || { echo "::error::the PATH task did not add the install folder"; exit 1; }
