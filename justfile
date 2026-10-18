@@ -255,6 +255,7 @@ test: sqlite
     # the longer budget. test.yml stays as it is and still runs this recipe.
     {{odin}} test btrfs/fuzz -debug {{san}} {{flags}} {{curl_open}} -out:build/test/fuzz-btrfs{{exe}}
     {{odin}} test history/fuzz -debug {{san}} {{flags}} {{curl_open}} -out:build/test/fuzz-history{{exe}}
+    {{odin}} test scan/fuzz -debug {{san}} {{flags}} {{curl_open}} -out:build/test/fuzz-scan{{exe}}
     {{odin}} test ntfs/fuzz -debug {{san}} {{flags}} {{curl_open}} -out:build/test/fuzz-ntfs{{exe}}
     {{odin}} test search/fuzz -debug {{san}} {{flags}} {{curl_open}} -out:build/test/fuzz-search{{exe}}
 
