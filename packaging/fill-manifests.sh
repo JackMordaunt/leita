@@ -122,4 +122,25 @@ fill_winget() {
   done
 }
 
+fill_homebrew() {
+  local file_dmg sum_dmg sum_cli sum_amd64 sum_arm64
+  file_dmg=$(pick_one \
+    "leita-v${version}-darwin-universal.dmg" \
+    "leita-v${version}-darwin-universal-unsigned.dmg")
+  sum_dmg=$(require_sum "$file_dmg")
+  sum_cli=$(require_sum "leita-v${version}-darwin-universal-cli.tar.zst")
+  sum_amd64=$(require_sum "leita-v${version}-linux-amd64.tar.zst")
+  sum_arm64=$(require_sum "leita-v${version}-linux-arm64.tar.zst")
+  subst "${here}/homebrew/Casks/leita.rb" "${OUT}/homebrew/Casks/leita.rb" \
+    __FILE_DMG__ "$file_dmg" \
+    __SUM_DMG__ "$sum_dmg" \
+    __VERSION__ "$version"
+  subst "${here}/homebrew/Formula/leita.rb" "${OUT}/homebrew/Formula/leita.rb" \
+    __SUM_DARWIN_CLI__ "$sum_cli" \
+    __SUM_LINUX_AMD64__ "$sum_amd64" \
+    __SUM_LINUX_ARM64__ "$sum_arm64" \
+    __VERSION__ "$version"
+}
+
 fill_winget
+fill_homebrew

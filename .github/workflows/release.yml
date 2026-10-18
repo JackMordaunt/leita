@@ -37,6 +37,13 @@
 #                                        notarised and stapled;
 #                                        -unsigned.dmg instead when the
 #                                        signing secrets are not set
+#   leita-v1.2.0-darwin-universal-cli.tar.zst
+#                                        the universal command line and the
+#                                        notices, packed in assemble: a
+#                                        Homebrew formula needs an archive
+#                                        with a sha256, and the bare
+#                                        leita-darwin-universal stays the
+#                                        name jm:selfupdate fetches
 #   leita-<os>-<arch>[.exe]              each binary alone under a name no
 #   leita-window-<os>-<arch>[.exe]       release changes, which is what
 #                                        jm:selfupdate fetches from
@@ -809,6 +816,22 @@ jobs:
         env:
           LEITA_VERSION: ${{ needs.plan.outputs.version }}
         run: tools/sbom > "assets/leita-$LEITA_VERSION.cdx.json"
+      # A formula needs an archive whose sha256 is in sha256sums.txt. The
+      # universal CLI is published bare, under the name jm:selfupdate
+      # fetches, so it is packed here with the notices. This is after
+      # mkpatch, which treats a leita-<version>-* name as an archive and
+      # would not compress it, and before the sums, which have to cover it.
+      - name: darwin cli archive
+        run: |
+          set -euo pipefail
+          command -v zstd >/dev/null || sudo apt-get install -y --no-install-recommends zstd
+          stage=$(mktemp -d)
+          cp assets/leita-darwin-universal "$stage/leita"
+          chmod 0755 "$stage/leita"
+          cp LICENSE.md THIRD_PARTY.md "$stage/"
+          tar -C "$stage" --owner=0 --group=0 --numeric-owner -cf - leita LICENSE.md THIRD_PARTY.md \
+            | zstd -q -19 -T0 -o "assets/leita-$VERSION-darwin-universal-cli.tar.zst"
+          rm -rf "$stage"
       - name: sha256sums
         working-directory: assets
         run: |
@@ -867,7 +890,7 @@ jobs:
 
   # After the release exists, so a manifest's download URL resolves. A
   # pre-release is published as a draft, and a draft's files are not there
-  # for winget to fetch, so this job stays on the tag a person can install.
+  # for a package repository to fetch, so this job stays on the tag a person can install.
   # It fills the channel templates from sha256sums.txt (the sums over the
   # bytes just published) and uploads them. A channel whose secret is set
   # also publishes; without the secret the artifact is the submission.
@@ -942,3 +965,52 @@ jobs:
           if (-not $ver -or -not $url) { throw 'the filled installer manifest has no version or url' }
           & $tool update Librium.Leita --version $ver --urls $url --submit --token $env:WINGET_TOKEN
           if ($LASTEXITCODE -ne 0) { throw "wingetcreate update exited $LASTEXITCODE" }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: homebrew-${{ needs.plan.outputs.version }}
+          path: manifests-out/homebrew
+          if-no-files-found: error
+      # Pushes the filled formula and cask onto main of
+      # jackmordaunt/homebrew-tap (Formula/leita.rb and Casks/leita.rb; the
+      # tap's icnsify formula stays at the repository root, where GoReleaser
+      # put it). HOMEBREW_TAP_TOKEN is a GitHub token that can push there.
+      # Without it the artifact is the submission and the tap is left as it is.
+      - name: homebrew tap
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -z "${HOMEBREW_TAP_TOKEN:-}" ]; then
+            echo "::notice::HOMEBREW_TAP_TOKEN is unset: the formula and cask are the artifact, and the tap is left as it is"
+            exit 0
+          fi
+          export GIT_TERMINAL_PROMPT=0
+          # The runner's credential manager would otherwise prompt, or store
+          # the token. This helper answers git and nothing else, and the
+          # token stays in the environment: a command line or an extraheader
+          # would keep it in the log.
+          export GCM_INTERACTIVE=Never
+          cred=$(mktemp)
+          trap 'rm -f "$cred"' EXIT
+          cat > "$cred" << 'EOF'
+          #!/bin/sh
+          printf 'username=x-access-token\n'
+          printf 'password=%s\n' "$HOMEBREW_TAP_TOKEN"
+          EOF
+          chmod 700 "$cred"
+          dir=$(mktemp -d)
+          git -c credential.helper= -c "credential.helper=!$cred" \
+            clone --depth 1 https://github.com/jackmordaunt/homebrew-tap.git "$dir"
+          mkdir -p "$dir/Formula" "$dir/Casks"
+          cp manifests-out/homebrew/Formula/leita.rb "$dir/Formula/leita.rb"
+          cp manifests-out/homebrew/Casks/leita.rb "$dir/Casks/leita.rb"
+          git -C "$dir" add Formula/leita.rb Casks/leita.rb
+          if git -C "$dir" diff --cached --quiet; then
+            echo "the tap already has this formula and cask"
+            exit 0
+          fi
+          git -C "$dir" -c user.name='Jack Mordaunt' -c user.email='jackmordaunt.dev@gmail.com' \
+            commit -m "leita: publish v${VERSION#v}"
+          git -C "$dir" -c credential.helper= -c "credential.helper=!$cred" \
+            push origin HEAD:main
