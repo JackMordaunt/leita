@@ -1,0 +1,222 @@
+#!/usr/bin/env bash
+# tools/sbom writes a CycloneDX 1.5 document for this checkout.
+#
+# LEITA_VERSION is the version a release build embeds, the same string the
+# assemble job passes. The Odin pin is ODIN_PIN, or else the odin-pin
+# default of .github/actions/setup: test.yml names no pin of its own and
+# runs that action, and the action's header says how to move the pin. jm
+# is the commit the gitlink records, so the submodule need not be checked
+# out. Every other component is read from notices.ALL in
+# gui/notices/notices.odin, the list the window's About shows.
+#
+# Odin and jm are that list too. Their versions here are the pin and the
+# commit; they are not written a second time.
+#
+#   LEITA_VERSION=v1.2.0 tools/sbom > leita-v1.2.0.cdx.json
+
+set -euo pipefail
+
+root=$(cd "$(dirname "$0")/.." && pwd)
+cd "$root"
+
+version=${LEITA_VERSION:-}
+if [ -z "$version" ]; then
+	echo "sbom: LEITA_VERSION is unset" >&2
+	exit 1
+fi
+
+pin=${ODIN_PIN:-}
+if [ -z "$pin" ]; then
+	pin=$(awk '
+		$1 == "odin-pin:" { found = 1; next }
+		found && $1 == "default:" { print $2; exit }
+	' .github/actions/setup/action.yml)
+fi
+if [ -z "$pin" ]; then
+	echo "sbom: no Odin pin: set ODIN_PIN, or keep odin-pin's default in .github/actions/setup/action.yml" >&2
+	exit 1
+fi
+
+jm=$(git rev-parse HEAD:jm)
+case "$jm" in
+	*" "*) echo "sbom: jm gitlink is not one commit: $jm" >&2; exit 1 ;;
+esac
+
+# notices_all prints one component per line, fields separated by ASCII
+# 0x1C: name, version, licence, url. A tab will not do. bash read treats a
+# tab as IFS whitespace and collapses an empty version, so the licence
+# would be read as the version. It reads only the ALL list. A
+# double-quoted string is a field; the first four of a component are
+# those, and a later one is the #load path. A raw string (SQLite's notice)
+# and a // comment are skipped, so a quote inside a notice cannot become
+# a field.
+notices_all() {
+	awk '
+		BEGIN { in_all = 0; depth = 0; in_str = 0; in_raw = 0; nfield = 0 }
+		function emit() {
+			if (nfield >= 3) print name "\034" ver "\034" lic "\034" url
+			name = ver = lic = url = ""
+			nfield = 0
+		}
+		function take(s) {
+			if (nfield >= 4) return
+			if (nfield == 0) name = s
+			else if (nfield == 1) ver = s
+			else if (nfield == 2) lic = s
+			else url = s
+			nfield++
+		}
+		/^ALL :=/ { in_all = 1 }
+		in_all == 0 { next }
+		{
+			line = $0
+			i = 1
+			while (i <= length(line)) {
+				c = substr(line, i, 1)
+				if (in_raw) {
+					if (c == "`") in_raw = 0
+					i++
+					continue
+				}
+				if (in_str) {
+					if (c == "\\") { i += 2; continue }
+					if (c == "\"") { in_str = 0; take(buf); buf = "" }
+					else buf = buf c
+					i++
+					continue
+				}
+				if (c == "/" && substr(line, i, 2) == "//") break
+				if (c == "`") { in_raw = 1; i++; continue }
+				if (c == "\"") { in_str = 1; buf = ""; i++; continue }
+				if (c == "{") {
+					depth++
+					if (depth == 2) { name = ver = lic = url = ""; nfield = 0 }
+				} else if (c == "}") {
+					if (depth == 2) emit()
+					depth--
+					if (depth == 0) exit
+				}
+				i++
+			}
+		}
+	' gui/notices/notices.odin
+}
+
+json_escape() {
+	local s=$1
+	s=${s//\\/\\\\}
+	s=${s//\"/\\\"}
+	s=${s//$'\n'/\\n}
+	s=${s//$'\r'/\\r}
+	s=${s//$'\t'/\\t}
+	printf '%s' "$s"
+}
+
+# licence_json is one CycloneDX license choice. An expression stays an
+# expression. A single SPDX id this tree uses is an id. Anything else,
+# such as "Public domain", is a name: it is not an id.
+licence_json() {
+	local lic=$1 esc
+	esc=$(json_escape "$lic")
+	case "$lic" in
+	*" OR "* | *" AND "* | *" WITH "*)
+		printf '{\n        "expression": "%s"\n      }' "$esc"
+		;;
+	MIT | BSD-3-Clause | Zlib | curl | Apache-2.0 | Unlicense)
+		printf '{\n        "license": {\n          "id": "%s"\n        }\n      }' "$esc"
+		;;
+	*)
+		printf '{\n        "license": {\n          "name": "%s"\n        }\n      }' "$esc"
+		;;
+	esac
+}
+
+slug() {
+	local s
+	s=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr ' ,' '--')
+	while [[ $s == *--* ]]; do s=${s//--/-}; done
+	s=${s#-}
+	s=${s%-}
+	printf '%s' "$s"
+}
+
+mapfile -t rows < <(notices_all)
+if [ ${#rows[@]} -eq 0 ]; then
+	echo "sbom: parsed no components from notices.ALL" >&2
+	exit 1
+fi
+
+declare -A seen=()
+refs=()
+blocks=()
+for row in "${rows[@]}"; do
+	IFS=$'\034' read -r name ver lic url <<<"$row"
+	case "$name" in
+	Odin) ver=$pin ;;
+	jm) ver=$jm ;;
+	esac
+	ref=$(slug "$name")
+	if [ -n "${seen[$ref]:-}" ]; then
+		echo "sbom: two components share the ref $ref" >&2
+		exit 1
+	fi
+	seen[$ref]=1
+	refs+=("$ref")
+	block=$(
+		printf '    {\n      "type": "library",\n      "bom-ref": "%s",\n      "name": "%s"' \
+			"$(json_escape "$ref")" "$(json_escape "$name")"
+		if [ -n "$ver" ]; then
+			printf ',\n      "version": "%s"' "$(json_escape "$ver")"
+		fi
+		printf ',\n      "licenses": [\n      %s\n      ]' "$(licence_json "$lic")"
+		if [ -n "$url" ]; then
+			printf ',\n      "externalReferences": [\n        {\n          "type": "website",\n          "url": "%s"\n        }\n      ]' \
+				"$(json_escape "$url")"
+		fi
+		printf '\n    }'
+	)
+	blocks+=("$block")
+done
+
+when=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+{
+	printf '{\n'
+	printf '  "bomFormat": "CycloneDX",\n'
+	printf '  "specVersion": "1.5",\n'
+	printf '  "version": 1,\n'
+	printf '  "metadata": {\n'
+	printf '    "timestamp": "%s",\n' "$when"
+	printf '    "tools": {\n'
+	printf '      "components": [\n'
+	printf '        {\n          "type": "application",\n          "name": "tools/sbom",\n          "version": "1"\n        }\n'
+	printf '      ]\n'
+	printf '    },\n'
+	printf '    "component": {\n'
+	printf '      "type": "application",\n'
+	printf '      "bom-ref": "leita",\n'
+	printf '      "name": "leita",\n'
+	printf '      "version": "%s",\n' "$(json_escape "$version")"
+	printf '      "licenses": [\n'
+	printf '        {\n          "license": {\n            "name": "leita Licence, Version 1.0"\n          }\n        }\n'
+	printf '      ]\n'
+	printf '    }\n'
+	printf '  },\n'
+	printf '  "components": [\n'
+	for i in "${!blocks[@]}"; do
+		printf '%s' "${blocks[$i]}"
+		if [ "$i" -lt $((${#blocks[@]} - 1)) ]; then printf ','; fi
+		printf '\n'
+	done
+	printf '  ],\n'
+	printf '  "dependencies": [\n'
+	printf '    {\n      "ref": "leita",\n      "dependsOn": [\n'
+	for i in "${!refs[@]}"; do
+		printf '        "%s"' "${refs[$i]}"
+		if [ "$i" -lt $((${#refs[@]} - 1)) ]; then printf ','; fi
+		printf '\n'
+	done
+	printf '      ]\n    }\n'
+	printf '  ]\n'
+	printf '}\n'
+}

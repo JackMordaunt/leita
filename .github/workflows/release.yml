@@ -46,6 +46,9 @@
 #                                        zstd-compressed form and a patch to
 #                                        it from each of the last PATCH_FROM
 #                                        releases
+#   leita-<version>.cdx.json             CycloneDX 1.5 for this build: leita,
+#                                        the Odin pin, jm's commit, and the
+#                                        notices' components
 #   sha256sums.txt, version.txt          over all of the above, the file a
 #                                        signature will cover
 #
@@ -545,6 +548,13 @@ jobs:
       # any other. Drafts are not listed, since nobody runs one.
       PATCH_FROM: "3"
     steps:
+      # The SBOM is written from this checkout: the notices, the Odin pin
+      # in the setup action, and jm's gitlink. The submodule's files are
+      # not read, so it is not checked out. Downloading mkpatch into tools/
+      # afterwards only adds that binary.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: dist-*
@@ -587,13 +597,22 @@ jobs:
             for tag in "${tags[@]}"; do if [ -f "old/$tag/$name" ]; then olds+=(-old "old/$tag/$name"); fi; done
             tools/mkpatch -new "assets/$name" -out assets "${olds[@]}"
           done
+      # After the patches. mkpatch treats every leita-* name that is not an
+      # archive (leita-<version>-*) as a binary to compress, and
+      # leita-<version>.cdx.json is not an archive. The assemble job has no
+      # Odin; tools/sbom reads the notices and the pin from the checkout.
+      - name: sbom
+        env:
+          LEITA_VERSION: ${{ needs.plan.outputs.version }}
+        run: tools/sbom > "assets/leita-$LEITA_VERSION.cdx.json"
       - name: sha256sums
         working-directory: assets
         run: |
           set -euo pipefail
-          # leita-* is the binaries, the archives and their compressed forms.
-          # THIRD_PARTY.md is the loose copy beside the single binaries;
-          # without it here the signature would not cover that file.
+          # leita-* is the binaries, the archives, their compressed forms
+          # and the SBOM. THIRD_PARTY.md is the loose copy beside the
+          # single binaries; without it here the signature would not cover
+          # that file.
           sha256sum leita-* THIRD_PARTY.md > sha256sums.txt
           echo "$VERSION" > version.txt
           cat sha256sums.txt
