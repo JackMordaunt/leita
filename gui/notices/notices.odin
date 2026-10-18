@@ -8,14 +8,15 @@ them with nothing else installed.
 The list follows jm's THIRD_PARTY.md, narrowed to what the window imports:
 jm itself, Odin's core and SDL3, Blend2D and asmjit to draw, the odin-blend2d
 binding, kb_text_shape to shape text, AccessKit for screen readers, SQLite for
-the history, libcurl for the one licence request, Primer's tokens, behaviours
+the history, libcurl for the one licence request and the update download, zstd
+for the patches an update applies, Primer's tokens, behaviours
 and Octicons, and the Liberation Sans pdf carries for reports. Windows builds link the libcurl.lib Odin bundles,
 which carries mbedTLS and zlib (jm/http/http.odin, THIRD_PARTY.md), and list
 them too.
 
 Where each text came from: jm/LICENSE; odin root's LICENSE and
 vendor/sdl3/LICENSE.txt; jm's `just blend2d` checkouts' LICENSE.md;
-jm/ui/blend2d/LICENSE; jm/ui/kb/vendor/LICENSE; the accesskit-c 0.23.1 release
+jm/ui/blend2d/LICENSE; jm/ui/kb/vendor/LICENSE; jm/zstd/vendor/LICENSE; the accesskit-c 0.23.1 release
 archive's LICENSE-MIT and LICENSE.chromium; curl's COPYING; pdf/fonts/LICENSE,
 from the liberation-fonts-ttf-2.1.5 release; the LICENSE of
 each package under jm/tools/primer/upstream/npm; madler/zlib's and
@@ -128,6 +129,7 @@ ALL := [?]Notice {
 
 SQLite is in the public domain: https://sqlite.org/copyright.html`,
 	},
+	{"zstd", "1.5.7", "BSD-3-Clause", "https://facebook.github.io/zstd", #load("text/zstd.txt", string)},
 }
 
 // WINDOWS is what the libcurl.lib Odin bundles carries, linked on Windows in

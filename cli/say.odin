@@ -1,6 +1,8 @@
 package leita_cli
 
 import "core:fmt"
+import "core:io"
+import "core:os"
 import "core:strings"
 
 import "../human"
@@ -55,8 +57,13 @@ head_line :: proc(target: scan.Target, engine: scan.Engine, io: ntfs.IO_Mode) ->
 // label writes one line of the summary: name in bold, padded to LABEL, then
 // what it says.
 label :: proc(name: string, format: string, args: ..any) {
+	label_to(os.to_writer(os.stdout), name, format, ..args)
+}
+
+// label_to is label on w, as leita licence and leita update write theirs.
+label_to :: proc(w: io.Writer, name: string, format: string, args: ..any) {
 	pad := strings.repeat(" ", max(LABEL - len(name), 0) + 1, context.temp_allocator)
-	fmt.printfln("%s%s%s", bold(name), pad, human.shown(fmt.tprintf(format, ..args)))
+	fmt.wprintfln(w, "%s%s%s", bold(name), pad, human.shown(fmt.tprintf(format, ..args)))
 }
 
 // say_heading opens a list: its name in bold, the count dim beside it.

@@ -65,11 +65,12 @@ flags := check_flags + minos
 # its minimum, and an older Mac refuses to start it.
 minos := if os() == "macos" { " -minimum-os-version:11.0" } else { "" }
 san   := env("SAN", "-sanitize:address")
-# Linux opens libcurl when a licence key is first sent, not at start-up
-# (jm:http/libcurl): Ubuntu's desktop may carry only the GnuTLS build, or none,
-# and the window must start either way. macOS links its own; Windows ships
-# libcurl inside vendor:curl. Only what imports jm:http, the window, takes it;
-# odin warns of a define nothing reads.
+# Linux opens libcurl when a licence key is first sent or an update asked for,
+# not at start-up (jm:http/libcurl): Ubuntu's desktop may carry only the GnuTLS
+# build, or none, and the window and the command line must start either way; a
+# system without it is told so by the one request that needs it. macOS links
+# its own; Windows ships libcurl inside vendor:curl. Both binaries import
+# jm:http, the window for the licence and both for leita update.
 curl_open := if os() == "linux" { " -define:JM_HTTP_DLOPEN=true" } else { "" }
 # What just hot builds the host and the view with, instead of -debug {{san}}:
 # the loop is for editing the view, and every edit waits on a child build, so
@@ -138,7 +139,7 @@ cli mode="debug": sqlite
     *) echo "cli: the mode is debug or release, not {{mode}}" >&2; exit 1 ;;
     esac
     mkdir -p build/{{mode}}
-    {{odin}} build . $opt {{flags}} -out:build/{{mode}}/{{bin}}{{exe}}
+    {{odin}} build . $opt {{flags}} {{curl_open}} -out:build/{{mode}}/{{bin}}{{exe}}
 
 # The window, debug with AddressSanitizer or release optimised.
 #
@@ -304,15 +305,17 @@ check:
     {{odin}} check . -debug {{check_flags}}
     {{odin}} check gui/notices -no-entry-point {{check_flags}}
 
-# The jm submodule, when JM does not name another checkout, and SQLite, which
-# keeps both binaries' scans: all the command line links that is not Odin. Built
-# by jm's own recipe, once.
+# The jm submodule, when JM does not name another checkout, SQLite, which keeps
+# both binaries' scans, and zstd, which decodes the patches leita update applies:
+# all the command line links that is not Odin or the system's libcurl. Built by
+# jm's own recipes, once.
 sqlite:
     #!/usr/bin/env bash
     set -euo pipefail
     if [ "{{jm}}" = "{{root}}/jm" ] && [ ! -e jm/.git ]; then git submodule update --init jm; fi
     cd "{{jm}}"
     ls sqlite3/lib/sqlite3.* >/dev/null 2>&1 || just sqlite
+    ls zstd/lib/zstd.* >/dev/null 2>&1 || just zstd
 
 # What sqlite fetches, and the libraries jm:ui links: Blend2D to draw,
 # kb_text_shape to shape text, AccessKit for screen readers, and on macOS and

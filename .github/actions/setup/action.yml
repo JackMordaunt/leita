@@ -81,8 +81,9 @@ runs:
     # statically starts on a desktop with either display server (the list
     # in SDL's docs/README-linux.md, less what a window that plays no sound
     # and shows no text of SDL's own leaves unused). No libcurl headers:
-    # Linux opens libcurl at run time (the justfile's curl_open), and the
-    # runner has it for the activation tests.
+    # Linux opens libcurl at run time (the justfile's curl_open), in the
+    # command line too, and the runner has it for the activation and update
+    # tests.
     - name: packages (linux)
       if: runner.os == 'Linux'
       shell: bash
@@ -95,7 +96,7 @@ runs:
         sudo mkdir -p /usr/share/fonts/liberation
         sudo ln -sf /usr/share/fonts/truetype/liberation/*.ttf /usr/share/fonts/liberation/
 
-    # sqlite3, ui/blend2d and ui/kb are rebuilt only when the jm submodule
+    # sqlite3, zstd, ui/blend2d and ui/kb are rebuilt only when the jm submodule
     # moves or the pinned Blend2D/asmjit revisions change; ui/accesskit's
     # and ui/shell's keys cover their own pinned releases instead, read
     # the same way below.
@@ -116,13 +117,14 @@ runs:
       with:
         path: |
           jm/sqlite3/lib
+          jm/zstd/lib
           jm/ui/blend2d/lib
           jm/ui/kb/lib
           jm/ui/accesskit/lib
           jm/ui/shell/lib
-        key: jmlibs-${{ steps.jm.outputs.sha }}-${{ steps.rev.outputs.blend2d }}-${{ steps.rev.outputs.asmjit }}-${{ steps.rev.outputs.accesskit }}-${{ steps.rev.outputs.sdl3 }}-${{ runner.os }}-${{ runner.arch }}-v3
+        key: jmlibs-${{ steps.jm.outputs.sha }}-${{ steps.rev.outputs.blend2d }}-${{ steps.rev.outputs.asmjit }}-${{ steps.rev.outputs.accesskit }}-${{ steps.rev.outputs.sdl3 }}-${{ runner.os }}-${{ runner.arch }}-v4
 
-    # Unix: jm's own [unix] recipes, bash throughout, build sqlite3 and
+    # Unix: jm's own [unix] recipes, bash throughout, build sqlite3, zstd and
     # Blend2D (CMake's default Unix Makefiles generator, no ninja needed)
     # and kb_text_shape with the platform's cc, and on macOS the static
     # SDL3 the window links; on Linux, where jm's sdl3 does nothing, leita's
@@ -132,9 +134,9 @@ runs:
       if: runner.os != 'Windows' && steps.libs-cache.outputs.cache-hit != 'true'
       shell: bash
       run: |
-        (cd jm && just sqlite blend2d kb sdl3)
+        (cd jm && just sqlite zstd blend2d kb sdl3)
         if [ "$RUNNER_OS" = Linux ]; then just sdl3-static; fi
-    # Windows: sqlite3 and kb_text_shape built directly with cl, and
+    # Windows: sqlite3, zstd and kb_text_shape built directly with cl, and
     # Blend2D fetched at the pinned revisions and built with CMake +
     # Ninja + clang-cl (MSVC's own cl hits an internal error on Blend2D's
     # AVX2 deflate decoder), exactly as jm's own test.yml does, bypassing
@@ -161,6 +163,9 @@ runs:
         # unquoted for the same reason.
         cl -nologo -O2 -c jm/sqlite3/vendor/sqlite3.c -Fojm/sqlite3/lib/sqlite3.obj $sqlite_defines
         lib -nologo -OUT:jm/sqlite3/lib/sqlite3.lib jm/sqlite3/lib/sqlite3.obj
+        mkdir -p jm/zstd/lib
+        cl -nologo -O2 -c jm/zstd/vendor/zstd.c -Fojm/zstd/lib/zstd.obj
+        lib -nologo -OUT:jm/zstd/lib/zstd.lib jm/zstd/lib/zstd.obj
         cl -nologo -std:c11 -O2 -c jm/ui/kb/vendor/kb_text_shape.c -Fojm/ui/kb/lib/kb_text_shape.obj
         lib -nologo -OUT:jm/ui/kb/lib/kb_text_shape.lib jm/ui/kb/lib/kb_text_shape.obj
         git -c advice.detachedHead=false clone -q https://github.com/blend2d/blend2d "$RUNNER_TEMP/blend2d"

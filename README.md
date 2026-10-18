@@ -147,15 +147,19 @@ writes it for a program.
 
 ## Private by design
 
-- **No telemetry.** leita sends nothing about you or your disks. The one
-  exception is adding a licence key in the window: one POST to
-  `https://mordaunt.dev/leita/activate`. The body holds the key and nothing
-  else, and the User-Agent is `leita/<version>`. Nothing is sent after that.
-  `leita licence add` keeps a licence you already have, and the command line
+- **No telemetry.** leita sends nothing about you or your disks, and checks
+  for nothing on its own. It reaches the network in two cases, each started
+  by you. Adding a licence key in the window sends one POST to
+  `https://mordaunt.dev/leita/activate`; the body holds the key and nothing
+  else. `leita update` downloads files from
+  the latest release on GitHub, `releases/latest/download`: a GET for
+  `sha256sums.txt`, `version.txt` and, if you ask for the update, the new
+  program. Both requests carry the User-Agent `leita/<version>` and nothing
+  from your machine. `leita licence add` keeps a licence you already have and
   sends nothing. The source is published, so you can check.
 - **No account.** On Linux the release needs glibc 2.39 or newer and
-  libstdc++. The window carries SDL3. libcurl is opened only for that POST,
-  and the window runs without it. Windows's zip carries `SDL3.dll` and
+  libstdc++. The window carries SDL3. libcurl is opened only for that POST
+  and for an update you ask for, and leita runs without it. Windows's zip carries `SDL3.dll` and
   `accesskit.dll` beside the window.
 - **Your data stays with you.** Scans, settings and the deletion record stay
   on your machine.
@@ -209,6 +213,24 @@ sudo mkdir -p /usr/local/bin && sudo ln -sf /Applications/Leita.app/Contents/Hel
 
 The window is `Leita.app/Contents/MacOS/Leita`, and it takes the same
 arguments: `/Applications/Leita.app/Contents/MacOS/Leita ~ --report usage.pdf`.
+
+## Updating
+
+Nothing updates leita for you, and nothing checks. When you want to know, run
+`leita update --check`: it prints this version and the latest release's, and
+exits 0 when they match, 2 when a newer one is out and 1 when it could not
+ask. `leita update` downloads the new build of the program you ran (a patch
+from your build when the release has one), checks it against the sha256 the
+release publishes, and replaces the program; run it again to use the new one.
+The old program stays beside it as `leita.old`.
+
+A copy a package manager, an AppImage or the Windows installer put there, and
+a copy inside `Leita.app`, is not replaced in place: `leita update` says
+where to download the new release instead. A macOS app is sealed by its
+signature, so it is replaced whole, by the new disk image. On Linux the
+update needs libcurl, which most desktops have. On Windows the running
+program cannot be overwritten, so the old one is renamed to `leita.exe.old`
+and the next update removes it.
 
 ## Where leita keeps things
 

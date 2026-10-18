@@ -46,6 +46,8 @@ Scan
   leita licence ...         the licence: leita licence add LICENCE keeps one, leita
                             licence remove forgets it, LEITA_LICENCE holds one for a
                             single run; leita licence -h
+  leita update [--check]    look for a newer leita, and install it when asked; it
+                            never checks on its own; leita update -h
   leita history ...         what leita deleted or changed at your request, newest
                             first; leita history [PLACE] [--since DATE] [--json]
   --live                    draw the answer as it is found rather than once at the end
@@ -151,6 +153,8 @@ run :: proc(args: []string) -> int {
 			return licence_command_line(args[1:])
 		case "history":
 			return history_command_line(args[1:])
+		case "update":
+			return update_command_line(args[1:])
 		}
 	}
 
@@ -197,14 +201,14 @@ run :: proc(args: []string) -> int {
 }
 
 // is_subcommand says whether args open with a command of its own, monitor,
-// journal, licence or history, whose command line is the rest; Leita, the
-// window, asks before it takes one argument as a path.
+// journal, licence, history or update, whose command line is the rest; Leita,
+// the window, asks before it takes one argument as a path.
 is_subcommand :: proc(args: []string) -> bool {
 	if len(args) == 0 {
 		return false
 	}
 	switch args[0] {
-	case "monitor", "journal", "licence", "history":
+	case "monitor", "journal", "licence", "history", "update":
 		return true
 	}
 	return false

@@ -21,7 +21,7 @@ nothing is kept between runs.
 
 A licence is the line beginning leita1., or the file from the receipt that
 holds it. A licence key from the receipt is exchanged for its licence by the
-window alone: the command line sends nothing anywhere.
+window alone: leita licence sends nothing anywhere.
 */
 
 LICENCE_USAGE :: `leita licence — the licence leita runs under.
@@ -102,12 +102,12 @@ licence_dispatch :: proc(c: Licence_Context, args: []string, w: io.Writer) -> in
 show_licence :: proc(c: Licence_Context, w: io.Writer) -> int {
 	l, from, err := licence.in_use(licence.path_beside(c.kept, context.temp_allocator), c.given, c.key)
 	if err == .None && from != .None {
-		licence_label(w, "licensed", "to %s", l.licensee)
-		licence_label(w, "tier", "%s", TIER_TITLES[l.tier])
-		licence_label(w, "order", "%s, issued %s", l.order, l.issued)
-		licence_label(w, "expires", "never")
+		label_to(w, "licensed", "to %s", l.licensee)
+		label_to(w, "tier", "%s", TIER_TITLES[l.tier])
+		label_to(w, "order", "%s, issued %s", l.order, l.issued)
+		label_to(w, "expires", "never")
 		if from == .Env {
-			licence_label(w, "from", "%s, for this run", licence.ENV)
+			label_to(w, "from", "%s, for this run", licence.ENV)
 		}
 		return EXIT_OK
 	}
@@ -183,11 +183,4 @@ remove_licence :: proc(c: Licence_Context, w: io.Writer) -> int {
 		fmt.wprintln(w, "removed the licence kept here")
 	}
 	return EXIT_OK
-}
-
-// licence_label writes one line of what leita licence shows, as label does.
-@(private = "file")
-licence_label :: proc(w: io.Writer, name: string, format: string, args: ..any) {
-	pad := strings.repeat(" ", max(LABEL - len(name), 0) + 1, context.temp_allocator)
-	fmt.wprintfln(w, "%s%s%s", bold(name), pad, human.shown(fmt.tprintf(format, ..args)))
 }
