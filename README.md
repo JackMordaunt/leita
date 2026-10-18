@@ -30,63 +30,71 @@ and you can start exploring while the rest arrives.
 - **Click to dig in:** open any folder to see what fills it.
 - **Any drive or folder:** your laptop, a server, an external disk or a disk image.
 
-Sizes are the space a file takes on disk, in the decimal units Finder and the
-disk's label use: 1 GB is 1,000,000,000 bytes. A compressed system app can
-look smaller in leita than in Finder's Get Info, which shows its length.
+Sizes are the space a file takes on disk, in the decimal units disks are sold
+in: 1 GB is 1,000,000,000 bytes. On a Mac, a sparse disk image or a compressed
+file is charged what it occupies, not its length.
 
 ## Reports that make the case
 
 Turn any scan into a report from **Export** in the settings menu: **PDF** for the person who signs
 off on a new disk, **HTML** to share, **CSV** for a spreadsheet, **JSON** for
-your own tools. Each report lists the largest folders and files, how full
-the disk is, and what can be cleaned up.
+your own tools. Each report lists the largest folders and files, and how full
+the disk is. It lists what can be cleaned up when you ask it to.
 
-Reports need a licence. The first 30 days are a free trial.
+Reports need a licence. The first 30 days are a free trial. A report made
+with no licence ends with: Unlicensed copy made during the 30-day trial.
+
+A PDF embeds the glyphs it draws. It takes a sans font from the machine when
+that font may be embedded, and otherwise Liberation Sans, which leita carries,
+for Latin, Greek and Cyrillic. Other scripts come from a font on the machine,
+so a PDF is not refused for want of a font.
 
 ## See what changed
 
-leita remembers every scan. Scan the same place again and it shows what grew
-and what shrank since last time, so the folder that filled up overnight
-stands out on its own.
+leita keeps the 30 newest scans of each place. A scan stores an entry only
+when it holds at least 1 MiB. Scan the same place again and leita shows what
+grew and what shrank among the entries it kept.
 
-A place leita has read before is read again only where it changed. leita keeps
-the whole tree of each place beside its history and asks the system what changed
-since: the change journal on macOS and Windows, each folder's modification time on
-Linux. A second scan of a home directory of 2.6 million entries takes under a
-second instead of thirteen, when the system still has its folders cached from the
-first. When the system cannot say, or too much has happened since, leita reads the
-place whole and tells you why. A small file written in place, in a folder nothing
-else changed, can keep its old size until the next whole read; `leita --whole`
-reads everything again whenever you want one. `--no-history` neither uses that
-tree nor keeps one.
+A place read before is read again only where it changed. leita keeps the whole
+tree of that place beside the scans, and asks the system what changed since:
+the change journal on macOS and Windows, each folder's modification time on
+Linux. When the system cannot say, or too much has happened since, leita reads
+the place whole and tells you why. A file written in place, in a folder the
+update does not read again, can keep its old size until the next whole read.
+On macOS and Linux a file of 1 MiB or more in such a folder is measured again.
+On Linux a place last read whole over 7 days ago is read whole the next time.
+`leita --whole` reads everything again. `--no-history` neither uses that tree
+nor keeps the scan.
 
-The tree takes about 40 bytes an entry on disk: 99 MB for a home directory of
-2.57 million entries. A place not scanned for 30 days has its tree deleted; its
-next scan reads it whole, as it would have anyway.
+A tree no scan has rewritten in 30 days is deleted. The next scan of that
+place reads it whole.
 
-Linux keeps no record of what changed while nothing was listening, so there leita
-asks each folder when it last changed, which misses a small file written in place.
-`sudo leita journal on`, or Record changes as they happen in the window's
-Monitoring, installs a recorder that keeps that record: a system service,
-leita-journal, running a root-owned copy of leita at
-/usr/local/libexec/leita/leita with only the two capabilities fanotify needs. It is
-off until you turn it on, and `leita journal off` removes the service, the copy and
-the logs. The logs, one a filesystem in /var/lib/leita/journal, hold a hash of the
-path of each folder that changed and when, never a name, and forget what is older
-than 30 days. `leita journal status` says which filesystems are recorded and which
-are not. btrfs subvolumes, which / and /home usually are on Fedora and openSUSE,
-are not recorded yet; a scan there asks each folder as before. A scan says which it
-used: "(recorded changes)" or "(folder times)".
+Linux keeps no record of what changed while nothing was listening, so there
+leita asks each folder when it last changed. `sudo leita journal on`, or
+Record changes as they happen in the window's Monitoring, installs a recorder:
+the system service leita-journal, running a root-owned copy of leita, with only
+the two capabilities fanotify needs. From the release archive that copy is
+`/usr/local/libexec/leita/leita`. A `.deb` or `.rpm` installs its own at
+`/usr/libexec/leita/leita`, and `leita journal on` only enables the service.
+The recorder is off until you turn it on. `leita journal off` stops it and
+removes its logs, and removes the service too unless a package installed it.
+The logs, one file a filesystem in `/var/lib/leita/journal`, hold a hash of
+each changed folder's path and when it changed, never the name, and drop what
+is older than 30 days. `leita journal status` says which filesystems are
+recorded. btrfs subvolumes are not recorded yet, and a scan there asks each
+folder as before. A scan on Linux says which it used: "(recorded changes)" or
+"(folder times)".
 
-Comparing scans needs a licence too. leita keeps every scan either way, so your
-history is all there when you add one.
+In the window, seeing what changed needs a licence once the trial has ended.
+The snapshots are kept either way.
 
 ## Scheduled scans
 
 Have leita scan the places you care about every hour, day or week while it is
 closed, so change tracking has a steady record. Open **Monitoring** (in the
-settings menu, the gear in the toolbar), add a place, and turn on **Scheduled scans**. Each scan runs
-gently, at low priority, and is kept like any other.
+settings menu, the gear in the toolbar), add a place, and turn on **Scheduled
+scans**. Each scan runs gently, at low priority, and is kept like any other
+scan.
 
 leita keeps nothing running: it hands one hourly entry to your system's own
 scheduler (a systemd user timer on Linux, a Task Scheduler task on Windows, a
@@ -115,33 +123,60 @@ Scheduled scans and their alerts need a licence, with the same 30-day trial.
 
 ## Free up space, safely
 
-Reclaim finds the space you can get back without losing anything: build
-output, downloaded packages, application caches and the Trash. On a Mac that
-includes Library/Caches, Xcode's DerivedData and device support files, the
-simulator's cache and the Trash of each external drive; it never includes
-Time Machine or iPhone backups, archives, simulators or Docker's disk. Each
-item shows how much it frees and why it is safe to delete. leita only lists
-something when it can prove what it is, and never touches system folders.
+Reclaim lists a folder only when a rule proves what it is and that it will be
+made again: build output, installed dependencies, Python caches and
+environments, downloaded packages, application caches it knows by name, and
+the Trash. On a Mac that list also has Xcode's DerivedData and device support,
+the simulator's cache at `Library/Developer/CoreSimulator/Caches`, Chrome's
+cache, caches under `Library/Caches` that are on its list, and your Trash on
+another volume, at `/Volumes/<name>/.Trashes/<your numeric user id>`.
+Nothing under a system directory is listed, and nothing inside `.git`.
 
-Every deletion is logged with what was removed, how big it was and when.
-When someone asks what was cleared off the file server last week, you have
-the answer.
+Time Machine, iPhone backups, Xcode archives, the simulators' disks, and
+Docker's or OrbStack's virtual disk are not rules. A folder inside them is
+listed only when a rule matches it.
+
+Each item shows how much it frees and why it is safe to delete.
+
+Each deletion leita makes is recorded: the path, how big it was, when, and
+whether it failed. Scans older than the newest 30 are forgotten. This record
+is kept.
 
 ## Private by design
 
 - **No telemetry.** leita sends nothing about you or your disks. The one
-  exception is adding a licence key: leita sends the key once to fetch your
-  licence, and nothing after. The source is published, so you can check.
-- **Nothing to set up.** One small app, no account, no runtime to install.
-- **Your data stays with you.** Scans and the deletion log stay on your
-  machine.
+  exception is adding a licence key in the window: one POST to
+  `https://mordaunt.dev/leita/activate`. The body holds the key and nothing
+  else, and the User-Agent is `leita/<version>`. Nothing is sent after that.
+  `leita licence add` keeps a licence you already have, and the command line
+  sends nothing. The source is published, so you can check.
+- **No account.** On Linux the release needs glibc 2.39 or newer and
+  libstdc++. The window carries SDL3. libcurl is opened only for that POST,
+  and the window runs without it. Windows's zip carries `SDL3.dll` and
+  `accesskit.dll` beside the window.
+- **Your data stays with you.** Scans, settings and the deletion record stay
+  on your machine.
 
 ## Get started
 
-Open **Leita** and pick a drive or folder. To scan a whole drive, run it as
-an administrator.
+Open **Leita** and pick a drive or folder. On Windows, running as an
+administrator lets a scan of an NTFS volume read the Master File Table, which
+is faster. Without that, leita walks the volume.
 
-On a Mac, Leita needs macOS 11 (Big Sur) or later, on Apple silicon or Intel.
+**Linux.** The release is built on Ubuntu 24.04. It needs glibc 2.39 or newer
+and libstdc++, so it runs on Ubuntu 24.04 and Fedora 40 and later. Debian 12
+has glibc 2.36 and Ubuntu 22.04 has 2.35. `<version>` below is the tag, such
+as `v1.2.0`. `<arch>` is `amd64` or `arm64`.
+
+- `leita-<version>-linux-<arch>.tar.zst` holds `leita`, the window `Leita` in
+  `app/`, `LICENSE.md` and `THIRD_PARTY.md`.
+- `leita-<version>-linux-<arch>.AppImage` is the window as one file.
+- `leita-<version>-linux-<arch>.deb` and `.rpm` install `leita` and `Leita` on
+  `PATH`, the desktop entry, and the recorder's unit. The short name `le` is
+  what `just install` adds. The packages leave it out, because a Debian
+  package named `le` already owns `/usr/bin/le`.
+
+**macOS.** Leita needs macOS 11 (Big Sur) or later, on Apple silicon or Intel.
 Open `leita-<version>-darwin-universal.dmg` from the release and drag
 **Leita** onto **Applications**, then open it from Applications. The app is
 signed and notarised by Apple, so the first launch opens it without a trip to
@@ -150,8 +185,13 @@ Downloads or another disk. To scan everything, give Leita **Full Disk
 Access** under Privacy & Security, in System Settings (System Preferences
 before macOS 13).
 
-Prefer the terminal? The `leita` command does the same, and writes reports
-too, under a licence. `le` is the same command, shorter:
+**Windows.** Run `leita-<version>-windows-amd64-setup.exe`: it installs to
+Program Files with a Start menu entry, and can add `leita.exe` to `PATH`. Or
+open `leita-<version>-windows-amd64.zip`, which holds `leita.exe`, and in
+`app/` the window `Leita.exe` with `SDL3.dll` and `accesskit.dll` beside it.
+
+Prefer the terminal? `leita` does the same, and writes reports too, under a
+licence. `just install` also puts it on `PATH` as `le`:
 
 ```sh
 leita D: --report usage.pdf
@@ -164,8 +204,46 @@ at `Leita.app/Contents/Helpers/leita`; link it onto your PATH once:
 sudo mkdir -p /usr/local/bin && sudo ln -sf /Applications/Leita.app/Contents/Helpers/leita /usr/local/bin/leita
 ```
 
-Leita, the app, takes the same arguments too:
-`/Applications/Leita.app/Contents/MacOS/Leita ~ --report usage.pdf`.
+The window is `Leita.app/Contents/MacOS/Leita`, and it takes the same
+arguments: `/Applications/Leita.app/Contents/MacOS/Leita ~ --report usage.pdf`.
+
+## Where leita keeps things
+
+Scans, settings and the licence stay in one folder on this machine.
+
+- **Linux:** `$XDG_DATA_HOME/leita` when that variable is an absolute path,
+  otherwise `~/.local/share/leita`.
+- **macOS:** `~/Library/Application Support/leita`.
+- **Windows:** `%LOCALAPPDATA%\leita`.
+
+The folder holds `history.db` (the scans and the deletion record),
+`baselines/` (the tree of each place, replaced on each scan), `settings.db`
+(the language, the theme and the watches), `licence`, `first-use` (when the
+trial began) and `monitor.lock`.
+
+The recorder's logs on Linux are `/var/lib/leita/journal`. Monitoring's
+scheduler entry is separate: `leita-monitor.service` and `leita-monitor.timer`
+under `$XDG_CONFIG_HOME/systemd/user`, or `~/.config/systemd/user` when that
+variable is unset or not absolute; the Task Scheduler task `leita\monitor` on
+Windows; and `~/Library/LaunchAgents/dev.mordaunt.leita.monitor.plist` on
+macOS, with its output in `~/Library/Logs/leita/monitor.log`.
+
+Thumbnails are `leita/thumbnails` under the user cache directory:
+`~/.cache` on Linux, or `$XDG_CACHE_HOME` when that is set; `~/Library/Caches`
+on macOS; the local application data folder on Windows. One unused for 30 days
+is removed, and the folder is kept within 256 MiB.
+
+## Language and theme
+
+The window opens in the light theme. The settings menu switches it to the dark
+theme, and the choice is kept.
+
+The language is the first leita offers from LANGUAGE, then from the first of
+LC_ALL, LC_MESSAGES and LANG that is set. On Windows it also tries the user's
+locale. With none of those, it is English. On a Mac, a window started without
+them opens in English. The settings menu can set it to English, Spanish,
+Portuguese (Brazil), French, German, Italian, Russian, Japanese, Chinese
+(Simplified) or Korean.
 
 ## Scripts and monitoring
 
@@ -180,10 +258,15 @@ leita D: --warn-used 80 --fail-used 95 --min-free 20GB
 
 | Exit code | Meaning |
 | --- | --- |
-| 0 | OK: no limit was crossed |
-| 1 | Error: a bad flag, or the drive could not be scanned |
-| 2 | Warning: `--warn-used` was crossed |
-| 3 | Failed: `--fail-used` or `--min-free` was crossed |
+| 0 | No limit was crossed |
+| 1 | A bad flag, a target that could not be scanned, or another error |
+| 2 | A `--warn-used` limit was crossed |
+| 3 | A `--fail-used` or `--min-free` limit was crossed |
+
+`leita monitor run` exits 0 when monitoring is off, or when another run holds
+the lock and this one stands aside. It exits 1 when a place could not be
+scanned or kept, or the command could not do what it was asked. Its codes are
+0 and 1. `leita journal` and `leita licence` exit 0 when done and 1 when not.
 
 A one-line summary goes to standard error (`warn: 83.4% used, at or past
 --warn-used 80%`); nothing is printed for an OK scan beyond the usual summary.
@@ -203,8 +286,9 @@ days from the first time you run leita, so you can try them first.
 
 Without the window, `leita licence add FILE` keeps the licence file from your
 receipt (or the line in it beginning `leita1.`), and `leita licence` shows whose
-it is. For a single run, as in a container, set `LEITA_LICENCE` to that line
-instead.
+it is, its tier, and that it does not expire, or how long the trial has left
+when there is none. `leita licence remove` forgets the one kept here. For a
+single run, as in a container, set `LEITA_LICENCE` to that line instead.
 
 **An organisation may evaluate leita for 30 days, then needs a licence for any
 use.** That covers businesses, sole traders, schools, charities and government.
@@ -217,11 +301,12 @@ key from your receipt. What counts as personal use, and the rest of the terms, a
 
 leita is written in [Odin](https://odin-lang.org) and builds with
 [just](https://just.systems). `just deps` fetches the jm submodule and builds
-the native libraries both binaries link, SDL3 among them on macOS; a Mac
-needs cmake for that, from Homebrew, and nothing from Homebrew at run time.
+the libraries both binaries link. On macOS and Linux that includes SDL3, built
+with cmake, and the window then needs no SDL3 installed. A Mac needs nothing
+from Homebrew to run it.
 
 ```sh
-just build release   # build/release/leita and build/release/app/Leita
+just build release   # build/release/leita and build/release/app/Leita (.exe on Windows)
 just bundle          # on a Mac, build/release/Leita.app around them, unsigned
 just install         # the release command line on PATH, as leita and as le
 just run             # a debug build of the window, opened on the home directory
