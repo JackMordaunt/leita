@@ -56,6 +56,8 @@ Update :: struct {
 	turn:   u64,
 	// How many directories the update read rather than copied, counted as it goes.
 	read:   u64,
+	// Nonempty when accounting or an unusable base required a whole walk.
+	whole:  string,
 	// base's children, built by `update` if left empty. A caller that has built it
 	// already, to find what changed in base, passes it and keeps it.
 	index:  scan.Index,
@@ -83,8 +85,10 @@ again was charged beside the copied one, and the next baseline kept the total th
 much too high. A base that kept no ids keeps its choice for a name a List job reads.
 */
 update :: proc(root: string, u: ^Update, t: ^scan.Tree, cfg := Config{}) -> Error {
+	u.whole = ""
 	when ODIN_OS == .Linux {
 		if btrfs_update_needs_read(root, cfg.follow) {
+			u.whole = "extent charges require a fresh walk"
 			return read(root, t, cfg)
 		}
 	}
@@ -93,10 +97,12 @@ update :: proc(root: string, u: ^Update, t: ^scan.Tree, cfg := Config{}) -> Erro
 			// Baselines keep the charge, not clone stream identities. Mixing
 			// copied charges with fresh clones loses the payer or doubles it.
 			// Full APFS walks preserve the once-only total until baselines carry ids.
+			u.whole = "clone charges require a fresh walk"
 			return read(root, t, cfg)
 		}
 	}
 	if u.base.root >= scan.slots(u.base) {
+		u.whole = "the baseline has no usable root"
 		return read(root, t, cfg)
 	}
 	built := u.index.first == nil
