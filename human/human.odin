@@ -1,6 +1,6 @@
 /*
 Package human writes numbers for a person to read: sizes in decimal units and
-counts with their thousands marked. The command line and the window say sizes the
+counts with their thousands marked, and names from a disk made safe to print. The command line and the window say sizes the
 same way because both say them through here.
 
 Sizes are decimal, as SI defines the prefixes and as disks are sold: 1 kB is

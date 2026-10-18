@@ -22,6 +22,8 @@ import "core:os"
 import "core:strings"
 import "core:terminal"
 
+import "../human"
+
 // Style is what one stream may carry. depth .None means plain: no escape
 // codes at all, which is what a pipe, a file and an agent get.
 Style :: struct {
@@ -150,11 +152,16 @@ Attr :: enum {
 
 Attrs :: bit_set[Attr]
 
-// paint writes text with the attributes set, then resets them. A plain style
-// writes the text alone.
+/*
+paint writes text with the attributes set, then resets them. A plain style
+writes the text alone. Either way the text is made safe first (human.shown): an
+escape sequence in a name from a disk would otherwise run in the terminal, or
+end the attributes early, so what paint writes holds no escape of text's own.
+*/
 paint :: proc(b: ^strings.Builder, s: Style, attrs: Attrs, text: string) {
-	if !styled(s) || attrs == {} || text == "" {
-		strings.write_string(b, text)
+	safe := human.shown(text)
+	if !styled(s) || attrs == {} || safe == "" {
+		strings.write_string(b, safe)
 		return
 	}
 	strings.write_string(b, "\x1b[")
@@ -176,11 +183,11 @@ paint :: proc(b: ^strings.Builder, s: Style, attrs: Attrs, text: string) {
 		}
 	}
 	strings.write_byte(b, 'm')
-	strings.write_string(b, text)
+	strings.write_string(b, safe)
 	strings.write_string(b, "\x1b[0m")
 }
 
-// painted is paint as a string, for a format argument: text itself when the
+// painted is paint as a string, for a format argument: text made safe when the
 // style is plain, else a copy with the codes around it in allocator.
 painted :: proc(
 	s: Style,
@@ -189,7 +196,7 @@ painted :: proc(
 	allocator := context.temp_allocator,
 ) -> string {
 	if !styled(s) || attrs == {} || text == "" {
-		return text
+		return human.shown(text, allocator)
 	}
 	b := strings.builder_make(allocator)
 	paint(&b, s, attrs, text)

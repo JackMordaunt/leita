@@ -43,7 +43,7 @@ Report :: struct {
 	// Whose licence the leita that built it runs under, "" for none: every
 	// format says so where it says what built it.
 	licensee:            string,
-	target:              string, // the path scanned, its top
+	target:              string, // the path scanned, its top; the display formats picture its controls
 	volume:              string, // the device behind it, "" when unknown
 	filesystem:          scan.Filesystem,
 	engine:              scan.Engine, // .Synthetic is a made-up disk, which the formats say first

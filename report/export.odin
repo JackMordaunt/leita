@@ -4,10 +4,10 @@ import "core:io"
 import "core:path/filepath"
 import "core:strings"
 import "core:time"
-import "core:unicode/utf8"
 
 import "jm:timefmt"
 
+import "../human"
 import "../kinds"
 import "../reclaim"
 import "../scan"
@@ -17,7 +17,7 @@ Format is how a report is written.
 
 CSV, HTML and PDF are for a person reading: a byte of a path that is not UTF-8 reads as
 U+FFFD, and a control character as its Unicode control picture (a newline as ␊),
-so a hostile name stays on its own row and cannot break the page. JSON is for a
+so a hostile name stays on its own row and cannot break the page (human.shown). JSON is for a
 program: a path is its exact text, and one that is not UTF-8 is also given whole,
 as base64, beside it (SCHEMA.md).
 */
@@ -185,39 +185,9 @@ licensed_by :: proc(r: ^Report) -> string {
 // named, so a reader does not take it for a copy anyone may use at work.
 UNLICENSED :: "Unlicensed copy made during the 30-day trial."
 
-/*
-readable is s as the display formats show it: a byte that is not UTF-8 as
-U+FFFD, and a C0 control or DEL as its control picture (U+2400 to U+2421), so it
-neither breaks a row nor hides. Text that needs neither comes back as it is.
-*/
+// readable is s as the display formats show it, a name made safe to print:
+// see human.shown.
 @(private)
 readable :: proc(s: string) -> string {
-	clean := true
-	for i := 0; i < len(s); {
-		r, size := utf8.decode_rune_in_string(s[i:])
-		if (r == utf8.RUNE_ERROR && size == 1) || r < 0x20 || r == 0x7f {
-			clean = false
-			break
-		}
-		i += size
-	}
-	if clean {
-		return s
-	}
-	sb := strings.builder_make(context.temp_allocator)
-	for i := 0; i < len(s); {
-		r, size := utf8.decode_rune_in_string(s[i:])
-		switch {
-		case r == utf8.RUNE_ERROR && size == 1:
-			strings.write_rune(&sb, utf8.RUNE_ERROR)
-		case r < 0x20:
-			strings.write_rune(&sb, 0x2400 + r)
-		case r == 0x7f:
-			strings.write_rune(&sb, 0x2421)
-		case:
-			strings.write_string(&sb, s[i:i + size])
-		}
-		i += size
-	}
-	return strings.to_string(sb)
+	return human.shown(s)
 }

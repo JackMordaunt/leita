@@ -3,6 +3,7 @@ package leita_cli
 import "core:fmt"
 import "core:strings"
 
+import "../human"
 import "../ntfs"
 import "../scan"
 import "../term"
@@ -21,6 +22,8 @@ style, estyle: term.Style
 // line up: "tree       106 slots".
 LABEL :: 10
 
+// bold and dim are text with that weight, on a terminal; text is made safe to
+// print either way (term.paint).
 bold :: proc(text: string) -> string {
 	return term.painted(style, {.Bold}, text)
 }
@@ -40,7 +43,7 @@ head_line :: proc(target: scan.Target, engine: scan.Engine, io: ntfs.IO_Mode) ->
 		"%s %s on %s %s",
 		dim("leita:"),
 		bold(scan.location(target, context.temp_allocator)),
-		target.volume,
+		human.shown(target.volume),
 		dim(fmt.tprintf("(%v, %v media, %v engine, %v io)", target.fs, target.media, engine, io)),
 	)
 	if engine == .Synthetic {
@@ -53,7 +56,7 @@ head_line :: proc(target: scan.Target, engine: scan.Engine, io: ntfs.IO_Mode) ->
 // what it says.
 label :: proc(name: string, format: string, args: ..any) {
 	pad := strings.repeat(" ", max(LABEL - len(name), 0) + 1, context.temp_allocator)
-	fmt.printfln("%s%s%s", bold(name), pad, fmt.tprintf(format, ..args))
+	fmt.printfln("%s%s%s", bold(name), pad, human.shown(fmt.tprintf(format, ..args)))
 }
 
 // say_heading opens a list: its name in bold, the count dim beside it.
@@ -62,15 +65,25 @@ say_heading :: proc(name: string, count: int) {
 	fmt.printfln("%s %s", bold(name), dim(fmt.tprintf("(%d)", count)))
 }
 
+// say_line is a line of standard error: prefix in bold, then what format makes of
+// args, made safe to print since it may name a file.
+say_line :: proc(prefix, format: string, args: ..any) -> string {
+	return fmt.tprintf(
+		"%s %s",
+		term.painted(estyle, {.Bold}, prefix),
+		human.shown(fmt.tprintf(format, ..args)),
+	)
+}
+
 // say_error says what went wrong on standard error, the prefix in bold.
 say_error :: proc(format: string, args: ..any) {
-	fmt.eprintfln("%s %s", term.painted(estyle, {.Bold}, "error:"), fmt.tprintf(format, ..args))
+	fmt.eprintln(say_line("error:", format, ..args))
 }
 
 // say_note says what a person should know, on standard error so a report on
 // standard output stays whole.
 say_note :: proc(format: string, args: ..any) {
-	fmt.eprintfln("%s %s", term.painted(estyle, {.Bold}, "note:"), fmt.tprintf(format, ..args))
+	fmt.eprintln(say_line("note:", format, ..args))
 }
 
 /*

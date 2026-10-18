@@ -512,7 +512,7 @@ say_threshold :: proc(th: report.Threshold) {
 	fmt.eprintfln(
 		"%s %s",
 		term.painted(estyle, {.Bold}, fmt.tprintf("%s:", report.VERDICT_KEYS[th.verdict])),
-		strings.join(th.reasons, "; ", context.temp_allocator),
+		human.shown(strings.join(th.reasons, "; ", context.temp_allocator)),
 	)
 }
 
@@ -727,7 +727,12 @@ print_largest :: proc(t: ^scan.Tree, roll: ^survey.Rollup, kind: Kind) {
 		runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
 		path := scan.path(t, s.record, context.temp_allocator)
 		if len(path) > len(root) && strings.has_prefix(path, root) {
-			path = strings.concatenate({dim(root), path[len(root):]}, context.temp_allocator)
+			path = strings.concatenate(
+				{dim(root), human.shown(path[len(root):])},
+				context.temp_allocator,
+			)
+		} else {
+			path = human.shown(path)
 		}
 		fmt.printfln("  %10s  %s", human.bytes(s.bytes), path)
 	}

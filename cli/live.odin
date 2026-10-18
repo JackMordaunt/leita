@@ -79,7 +79,7 @@ run_live :: proc(f: ^survey.Fill) -> int {
 				last.nodes,
 				last.pending,
 				human.bytes(last.rows[0].bytes),
-				scan.path(f.tree, last.rows[0].node, context.temp_allocator),
+				human.shown(scan.path(f.tree, last.rows[0].node, context.temp_allocator)),
 				time.duration_milliseconds(time.tick_since(frame_start)),
 				last.complete ? "  (final)" : "",
 			)

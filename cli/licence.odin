@@ -7,6 +7,7 @@ import "core:strings"
 import "core:time"
 
 import "../history"
+import "../human"
 import "../licence"
 import "../settings"
 import "../term"
@@ -164,7 +165,7 @@ add_licence :: proc(c: Licence_Context, offered: string, w: io.Writer) -> int {
 		say_error("%s", licence.describe(err))
 		return EXIT_ERROR
 	}
-	fmt.wprintfln(w, "added the licence: licensed to %s, %s; it does not expire", l.licensee, TIER_TITLES[l.tier])
+	fmt.wprintfln(w, "added the licence: licensed to %s, %s; it does not expire", human.shown(l.licensee), TIER_TITLES[l.tier])
 	return EXIT_OK
 }
 
@@ -188,5 +189,5 @@ remove_licence :: proc(c: Licence_Context, w: io.Writer) -> int {
 @(private = "file")
 licence_label :: proc(w: io.Writer, name: string, format: string, args: ..any) {
 	pad := strings.repeat(" ", max(LABEL - len(name), 0) + 1, context.temp_allocator)
-	fmt.wprintfln(w, "%s%s%s", bold(name), pad, fmt.tprintf(format, ..args))
+	fmt.wprintfln(w, "%s%s%s", bold(name), pad, human.shown(fmt.tprintf(format, ..args)))
 }

@@ -134,3 +134,27 @@ write_usage_stresses_the_shape :: proc(t: ^testing.T) {
 		D + "A closing note." + R + "\n",
 	)
 }
+
+// HOSTILE is a name that tries a terminal: an OSC 52 write to the clipboard,
+// a CSI colour, a line break, a right-to-left override, markup and a formula.
+HOSTILE :: "=\x1b]52;c;ZXZpbA==\x07\x1b[31m\nname\u202E<img src=x>"
+
+// Text painted holds no escape of its own, plain or styled: the codes around it
+// are the only ones, and a name cannot end them early or add to them.
+@(test)
+paint_neutralises_the_text_it_writes :: proc(t: ^testing.T) {
+	SAFE :: "=\u241B]52;c;ZXZpbA==\u2407\u241B[31m\u240Aname\uFFFD<img src=x>"
+	b := strings.builder_make(context.temp_allocator)
+	paint(&b, {}, {.Bold}, HOSTILE)
+	testing.expect_value(t, strings.to_string(b), SAFE)
+	strings.builder_reset(&b)
+	paint(&b, {depth = .Three_Bit}, {.Bold}, HOSTILE)
+	testing.expect_value(t, strings.to_string(b), "\x1b[1m" + SAFE + "\x1b[0m")
+	testing.expect_value(t, painted({}, {.Dim}, HOSTILE), SAFE)
+	testing.expect_value(t, painted({}, {}, HOSTILE), SAFE)
+	testing.expect_value(
+		t,
+		painted({depth = .Three_Bit}, {.Dim}, HOSTILE),
+		"\x1b[2m" + SAFE + "\x1b[0m",
+	)
+}

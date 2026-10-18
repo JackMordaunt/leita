@@ -1,5 +1,6 @@
 package human
 
+import "core:fmt"
 import "core:testing"
 
 @(test)
@@ -59,4 +60,26 @@ parse_bytes_reads_a_size_a_flag_was_given_in_either_family :: proc(t: ^testing.T
 		_, ok := parse_bytes(s)
 		testing.expectf(t, !ok, "%q should not parse", s)
 	}
+}
+
+// A name from a disk is shown without anything the terminal or a page would
+// obey: C0 as pictures, and C1, bidi overrides and bad bytes as U+FFFD.
+@(test)
+a_name_is_shown_without_its_controls :: proc(t: ^testing.T) {
+	testing.expect_value(t, shown("plain/ünï.txt"), "plain/ünï.txt")
+	testing.expect_value(t, shown("\x1b[31mred\x1b[0m"), "\u241B[31mred\u241B[0m")
+	testing.expect_value(t, shown("\x1b]52;c;AAAA\x07"), "\u241B]52;c;AAAA\u2407")
+	testing.expect_value(t, shown("a\nb\rc\td"), "a\u240Ab\u240Dc\u2409d")
+	testing.expect_value(t, shown("a\x7fb"), "a\u2421b")
+	// The C1 controls, a one-byte CSI among them, are U+0080 to U+009F.
+	testing.expect_value(t, shown("a\u009bb\u0080c\u009fd"), "a\uFFFDb\uFFFDc\uFFFDd")
+	testing.expect_value(t, shown("a\xffb"), "a\uFFFDb")
+	for r in ([?]rune{0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066, 0x2067, 0x2068, 0x2069}) {
+		got := shown(fmt.tprintf("a%rb", r))
+		testing.expectf(t, got == "a\uFFFDb", "U+%04X came back %q", r, got)
+	}
+	// Its neighbours are text.
+	testing.expect_value(t, shown("a b c⁥d⁪e"), "a b c⁥d⁪e")
+	// Markup and a leading = are not this package's to touch.
+	testing.expect_value(t, shown("=1+1<img src=x>"), "=1+1<img src=x>")
 }

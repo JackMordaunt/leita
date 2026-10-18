@@ -288,7 +288,11 @@ html_of_a_made_up_disk_carries_a_banner :: proc(t: ^testing.T) {
 	r := sample()
 	sb := strings.builder_make(context.temp_allocator)
 	write_html(&sb, &r)
-	testing.expect(t, !strings.contains(strings.to_string(sb), "made-up"), "a real disk had a banner")
+	testing.expect(
+		t,
+		!strings.contains(strings.to_string(sb), "made-up"),
+		"a real disk had a banner",
+	)
 
 	r.engine = .Synthetic
 	strings.builder_reset(&sb)
@@ -297,8 +301,36 @@ html_of_a_made_up_disk_carries_a_banner :: proc(t: ^testing.T) {
 	banner := "<p class=\"banner\">This report is of a made-up disk: LEITA_SYNTHETIC was set.</p>"
 	testing.expect(t, strings.contains(text, banner), "no banner")
 	title := strings.index(text, "<h1")
-	testing.expect(t, title >= 0 && strings.index(text, banner) > title, "the banner is not under the title")
-	testing.expect(t, strings.index(text, banner) < strings.index(text, "<section"), "the banner is not in the header")
+	testing.expect(
+		t,
+		title >= 0 && strings.index(text, banner) > title,
+		"the banner is not under the title",
+	)
+	testing.expect(
+		t,
+		strings.index(text, banner) < strings.index(text, "<section"),
+		"the banner is not in the header",
+	)
+}
+
+// A name that is a bidi override, a C1 control and markup comes out of the page
+// as text, with nothing in it that reorders, runs or hides.
+@(test)
+html_shows_a_hostile_name_without_its_controls :: proc(t: ^testing.T) {
+	r := sample()
+	r.target = "/data/\x1b]52;c;AAAA\x07\nfdp.\u202etxt\u009b<img src=x>=1+1"
+	sb := strings.builder_make(context.temp_allocator)
+	write_html(&sb, &r)
+	text := strings.to_string(sb)
+	testing.expect(
+		t,
+		strings.contains(
+			text,
+			"/data/\u241b]52;c;AAAA\u2407\u240afdp.\uFFFDtxt\uFFFD&lt;img src=x&gt;=1+1",
+		),
+	)
+	testing.expect(t, !strings.contains_any(text, "\x1b\x07\u202e\u009b"), "a control survived")
+	testing.expect(t, !strings.contains(text, "<img"), "a name became markup")
 }
 
 @(test)
