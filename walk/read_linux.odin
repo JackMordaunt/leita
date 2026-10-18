@@ -161,7 +161,7 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 		st: linux.Statx
 		errno := linux.Errno.NONE
 		if asked {
-			mask := linux.Statx_Mask{.TYPE, .BLOCKS, .NLINK}
+			mask := linux.Statx_Mask{.TYPE, .BLOCKS, .NLINK, .SIZE}
 			if l.type == .DIR {
 				mask = {.TYPE, .INO, .MNT_ID}
 			}
@@ -229,6 +229,16 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 						return nodes, bytes, false
 					}
 				}
+				// st_blocks is an allocation off btrfs. On btrfs, and on a tree
+				// already marked logical, it is not, so Allocated stays unset.
+				e.account = file_account({
+					logical = st.size,
+					allocated = e.disk,
+					charge = e.disk,
+					links = e.links,
+					allocated_known = !on_btrfs && !scan.is_logical(w.writer.tree),
+					links_known = true,
+				})
 			}
 		}
 		kept += 1
@@ -368,6 +378,8 @@ charge_extents :: proc(w: ^Worker, dir: linux.Fd, pool: ^^Btrfs_Pool, e: ^Entry)
 	case .None:
 		e.disk = c.disk
 		e.shared = c.shared
+		// First payer, not an exclusive size. 262 owns how the charge is chosen.
+		scan.mark_scan_order(w.writer.tree)
 	case .Not_Permitted, .Not_Btrfs, .Unsupported:
 		btrfs_search_stop(w, pool^)
 		pool^ = nil

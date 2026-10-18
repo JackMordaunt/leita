@@ -405,6 +405,7 @@ Entry :: struct {
 	mount:     bool, // a directory another volume is mounted on
 	shared:    bool, // a file charged only what it does not share (scan.Node_Flag.Shared)
 	extra:     bool, // a name of a file charged under another (`counts`)
+	account:   scan.Account, // empty known: nothing measured; record_at does not store it
 }
 
 @(private)
@@ -606,6 +607,10 @@ record_at :: proc(
 	n := scan.node(w.writer.tree, index)
 	n.parent = parent
 	n.name = name
+	if e.account.known != nil && !scan.account_set(w.writer.tree, index, e.account) {
+		w.err = .Out_Of_Memory
+		return false, 0, false
+	}
 
 	// A walker reaches a child through its parent, so the link is never in doubt.
 	flags := scan.Node_Flags{.Used, .Settled}
