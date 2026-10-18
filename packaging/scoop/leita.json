@@ -11,8 +11,7 @@
     },
     "extract_dir": "leita-v__VERSION__-windows-amd64",
     "bin": [
-        "leita.exe",
-        "app/Leita.exe"
+        "leita.exe"
     ],
     "shortcuts": [
         [
