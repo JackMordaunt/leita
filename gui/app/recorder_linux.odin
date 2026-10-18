@@ -2,8 +2,11 @@
 package leita_app
 
 import "core:strings"
+import "core:sync"
+import "core:thread"
 
 import "jm:sh"
+import "jm:stream"
 
 import "../../journal"
 import "../command"
@@ -12,28 +15,88 @@ import "../query"
 /*
 set_recording turns the recorder of changes on or off as c asks, by running this
 binary's `journal on` or `journal off` under pkexec, which asks for the
-administrator's rights it needs. The desk waits for it, as it waits for the
-scheduler when monitoring is turned on.
+administrator's rights it needs. It runs on a worker of its own, as open_entry runs
+the opener: the person may take as long as they like over the password, and the
+desk, which answers the scan and every request, must not wait on them. The
+change settles when pkexec returns (finish_recording); until then the dialog's
+switch holds what it was set to, and a second change is not started.
 */
 set_recording :: proc(d: ^Desk, c: command.Recording) {
-	argv := []string{"pkexec", d.monitoring.argv[0], "journal", "on" if c.on else "off"}
+	mo := &d.monitoring
+	if mo.toggling {
+		return
+	}
+	mo.toggling = true
+	elevate := mo.elevate if mo.elevate != "" else "pkexec"
+	run := new(Recording_Run)
+	run^ = {
+		argv   = {
+			command.text_make(elevate),
+			command.text_make(mo.argv[0]),
+			command.text_make("journal"),
+			command.text_make("on" if c.on else "off"),
+		},
+		answer = d.recordings,
+		done   = d.recording,
+	}
+	sync.wait_group_add(d.recording, 1)
+	started := thread.create_and_start_with_data(run, recording_main, context, self_cleanup = true)
+	if started == nil {
+		sync.wait_group_done(d.recording)
+		free(run)
+		mo.toggling = false
+		monitor_settle(d, say(d, .Record_Changes_Failed, "no thread to run it on"))
+	}
+}
+
+// Recording_Run is a change of the recorder on a worker.
+@(private = "file")
+Recording_Run :: struct {
+	argv:   [4]command.Text,
+	answer: ^stream.Port(Recorder_Change),
+	done:   ^sync.Wait_Group,
+}
+
+@(private = "file")
+recording_main :: proc(data: rawptr) {
+	defer release_temp()
+	run := (^Recording_Run)(data)
+	argv := make([]string, len(run.argv), context.temp_allocator)
+	for &a, i in run.argv {
+		argv[i] = command.text_of(&a)
+	}
 	r := sh.exec(argv, {}, context.temp_allocator)
-	recorder_refresh(d)
-	why := ""
+	out := Recorder_Change {
+		how    = outcome_of(r),
+		status = recorder_status(),
+	}
+	switch out.how {
+	case .Said:
+		out.text = command.text_make(strings.trim_space(r.stdout))
+	case .Failed:
+		out.text = command.text_make(sh.error(r, context.temp_allocator))
+	case .Done, .Dismissed, .Refused:
+	}
+	stream.port_send(run.answer^, out)
+	done := run.done
+	free(run)
+	sync.wait_group_done(done)
+}
+
+// outcome_of is how the change of the recorder that ran as r ended.
+@(private = "file")
+outcome_of :: proc(r: sh.Result) -> Recorder_Outcome {
 	switch {
 	case r.ok:
-		monitor_settle(d, "")
-		return
+		return .Done
 	case r.err == nil && r.code == PKEXEC_DISMISSED:
-		why = "the request for administrator rights was dismissed"
+		return .Dismissed
 	case r.err == nil && r.code == PKEXEC_REFUSED:
-		why = "administrator rights were not given"
+		return .Refused
 	case strings.trim_space(r.stdout) != "":
-		why = strings.trim_space(r.stdout)
-	case:
-		why = sh.error(r, context.temp_allocator)
+		return .Said
 	}
-	monitor_settle(d, say(d, .Record_Changes_Failed, why))
+	return .Failed
 }
 
 // pkexec's exit codes when the rights it asked for were not given (pkexec(1)).
@@ -46,8 +109,14 @@ PKEXEC_REFUSED :: 127
 // and keeps the answer for recorder_answer.
 @(private)
 recorder_refresh :: proc(d: ^Desk) {
+	d.monitoring.recorder = recorder_status()
+}
+
+// recorder_status asks the system whether the recorder is installed and running.
+@(private)
+recorder_status :: proc() -> Recorder_Status {
 	installed := journal.installed()
-	d.monitoring.recorder = {installed, installed && journal.active()}
+	return {installed, installed && journal.active()}
 }
 
 // recorder_answer says in r what recorder_refresh last found.

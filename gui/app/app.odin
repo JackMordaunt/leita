@@ -105,6 +105,7 @@ Desk_In :: union {
 	Activated,
 	Finished_Pass,
 	Open_Failure,
+	Recorder_Change,
 }
 
 // Scan is one run of a reader and everything derived from it. It is heap
@@ -188,6 +189,8 @@ Desk :: struct {
 	searched:        ^stream.Port(Finished_Pass),
 	open_failures:   ^stream.Port(Open_Failure), // act.odin's open_entry
 	opening:         ^sync.Wait_Group, // the entries open_entry is opening
+	recordings:      ^stream.Port(Recorder_Change), // recorder_linux.odin's set_recording
+	recording:       ^sync.Wait_Group, // the change it is running, if any
 	scratch:         ^search.Scratch,
 	monitoring:      Monitoring, // monitor.odin
 }
@@ -200,6 +203,8 @@ Host :: struct {
 	searched:      stream.Port(Finished_Pass),
 	open_failures: stream.Port(Open_Failure),
 	opening:       sync.Wait_Group,
+	recordings:    stream.Port(Recorder_Change),
+	recording:     sync.Wait_Group,
 	thumbs:        Thumbs, // thumbs.odin
 	workers:       ^stream.Workers,
 	inbox:         ui.Inbox,
@@ -250,6 +255,8 @@ init :: proc(
 		searched      = &h.searched,
 		open_failures = &h.open_failures,
 		opening       = &h.opening,
+		recordings    = &h.recordings,
+		recording     = &h.recording,
 		scratch       = new(search.Scratch, allocator),
 	}
 	msg.init(h.desk.words, .English)
@@ -280,6 +287,8 @@ init :: proc(
 	searched, h.searched = stream.port(p, Finished_Pass, cap = 256, name = "searched")
 	open_failures: stream.Stream(Open_Failure)
 	open_failures, h.open_failures = stream.port(p, Open_Failure, cap = 16, name = "open failures")
+	recordings: stream.Stream(Recorder_Change)
+	recordings, h.recordings = stream.port(p, Recorder_Change, cap = 4, name = "recorder changes")
 	thumbs_init(h, thumbs)
 
 	desk_in := stream.merge(
@@ -290,6 +299,7 @@ init :: proc(
 			stream.transform(activations, activated_in),
 			stream.transform(searched, finished_in),
 			stream.transform(open_failures, open_failure_in),
+			stream.transform(recordings, recorder_change_in),
 		},
 		name = "desk in",
 	)
@@ -326,9 +336,11 @@ stop :: proc(h: ^Host) {
 	find_halt(&h.desk)
 	stream.port_close(h.searched)
 	stream.port_close(h.open_failures)
+	stream.port_close(h.recordings)
 	// An entry still being opened says a failure through the port, which
 	// refuses it now but lives until the pipeline goes.
 	sync.wait_group_wait(&h.opening)
+	sync.wait_group_wait(&h.recording)
 	stream.workers_stop(h.workers)
 	find_stop(&h.desk)
 	thumbs_destroy(h)
@@ -560,6 +572,9 @@ desk_step :: proc(d: ^Desk, v: Desk_In) {
 		take_pass(d, e.pass)
 	case Open_Failure:
 		tell(d, true, .Open_Failed, command.text_of(&e.name))
+		answer_all(d)
+	case Recorder_Change:
+		finish_recording(d, &e)
 		answer_all(d)
 	case Tick:
 		if advance(d) {

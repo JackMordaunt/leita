@@ -3327,3 +3327,71 @@ the_folders_above_one_the_walk_could_not_open_are_outlined_on_the_chart :: proc(
 		"the folder read in full is not",
 	)
 }
+
+// While pkexec is out for the recorder the desk keeps answering: a scan asked
+// for meanwhile runs, and the change settles when pkexec returns. The stand-in
+// for pkexec waits two seconds, then says the request was dismissed.
+@(test)
+the_recorder_toggle_does_not_hold_the_desk_while_pkexec_asks :: proc(t: ^testing.T) {
+	if ODIN_OS != .Linux {
+		return // the recorder is Linux's
+	}
+	root := fixture(t, "recorder")
+	defer os.remove_all(root)
+	data := fmt.tprintf("%s-data", root)
+	os.remove_all(data)
+	testing.expect(t, os.make_directory(data) == nil, "could not make the data folder")
+	defer os.remove_all(data)
+	pkexec := fmt.tprintf("%s/pkexec", data)
+	testing.expect(
+		t,
+		os.write_entire_file(pkexec, transmute([]byte)string("#!/bin/sh\nsleep 2\nexit 126\n")) ==
+		nil,
+	)
+	testing.expect(t, os.chmod(pkexec, {.Read_User, .Write_User, .Execute_User}) == nil)
+
+	r: Rig
+	rig_open(
+		&r,
+		root,
+		kept = fmt.tprintf("%s/history.db", data),
+		monitor_argv = {"/usr/bin/leita"},
+	)
+	defer rig_close(&r)
+	r.h.desk.monitoring.elevate = pkexec
+	testing.expect(t, settle(&r, "Done"))
+	testing.expect(t, choose(&r, "Monitoring"), "the menu offers monitoring")
+	ui.probe_frame(&r.p)
+	hand_on(&r)
+	testing.expect(
+		t,
+		settle(&r, "Record changes as they happen"),
+		"the dialog offers the recorder",
+	)
+
+	ui.probe_advance(&r.p, 20, 1.0 / 60) // the dialog settles; a press lands where the last frame drew
+	began := time.tick_now()
+	testing.expect(t, ui.probe_click_top(&r.p, "Record changes as they happen"), "the switch")
+	hand_on(&r)
+	first := r.m.generation
+	stream.port_send(r.h.cmd_port, command.Command(command.Scan{path = command.text_make(root)}))
+	testing.expect(t, await_rescan(&r, first), "the desk starts a scan while pkexec asks")
+	asked := time.tick_since(began)
+	testing.expectf(
+		t,
+		asked < 1500 * time.Millisecond,
+		"the scan began after %v, with pkexec held",
+		asked,
+	)
+	testing.expect(t, settle(&r, "Done"), "and finishes")
+
+	testing.expect(
+		t,
+		settle(
+			&r,
+			"Could not change the recorder: the request for administrator rights was dismissed",
+		),
+		"the change settles when pkexec returns",
+	)
+	testing.expect(t, time.tick_since(began) >= 2 * time.Second, "not before it did")
+}

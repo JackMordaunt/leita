@@ -56,12 +56,61 @@ Monitoring :: struct {
 	asked:     bool,
 	answered:  time.Tick, // when a Monitor need was last answered on a tick
 	recorder:  Recorder_Status, // as last asked (recorder_refresh)
+	// The program that asks the system for the administrator's rights for the
+	// recorder ("" for pkexec), and whether a change of the recorder is out on a
+	// worker (set_recording).
+	elevate:   string,
+	toggling:  bool,
 }
 
 // What the system said of the recorder of changes when last asked.
 Recorder_Status :: struct {
 	installed: bool,
 	running:   bool,
+}
+
+// How a change of the recorder ended, as the worker that ran it found out.
+Recorder_Outcome :: enum u8 {
+	Done,
+	Dismissed, // the request for administrator rights was closed
+	Refused, // and the rights were not given
+	Said, // the program said why not, in text
+	Failed, // it did not run, or failed without a word: text is what the system said
+}
+
+// Recorder_Change is a change of the recorder, back from the worker that ran it: how it
+// went, the status the system had afterwards (it is asked there, as it forks),
+// and for Said and Failed the words.
+Recorder_Change :: struct {
+	how:    Recorder_Outcome,
+	text:   command.Text,
+	status: Recorder_Status,
+}
+
+recorder_change_in :: proc(r: Recorder_Change) -> Desk_In {
+	return r
+}
+
+// finish_recording settles the change of the recorder r says, as the desk's last
+// word on it: the switch in the dialog holds what it was set to until now.
+finish_recording :: proc(d: ^Desk, r: ^Recorder_Change) {
+	d.monitoring.toggling = false
+	d.monitoring.recorder = r.status
+	why := ""
+	switch r.how {
+	case .Done:
+	case .Dismissed:
+		why = "the request for administrator rights was dismissed"
+	case .Refused:
+		why = "administrator rights were not given"
+	case .Said, .Failed:
+		why = command.text_of(&r.text)
+	}
+	if r.how == .Done {
+		monitor_settle(d, "")
+	} else {
+		monitor_settle(d, say(d, .Record_Changes_Failed, why))
+	}
 }
 
 // MONITOR_FRESH is how often a live Monitor need is answered again on the
