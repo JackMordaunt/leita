@@ -104,8 +104,13 @@ notices_dialog :: proc(gtx: ^ui.Ctx, m: ^Model) {
 		for n, i in notices.ALL {
 			component(gtx, n, u64(i + 1))
 		}
-		for n, i in notices.WINDOWS {
-			component(gtx, n, u64(len(notices.ALL) + i + 1))
+		// WINDOWS is compiled on every OS so THIRD_PARTY.md can name what a
+		// Windows build links. The dialog lists it only on Windows, where
+		// those libraries are actually linked.
+		when ODIN_OS == .Windows {
+			for n, i in notices.WINDOWS {
+				component(gtx, n, u64(len(notices.ALL) + i + 1))
+			}
 		}
 	}
 	if close {

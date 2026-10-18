@@ -230,10 +230,12 @@ run *args:
     exec build/$mode/app/{{gui}}{{exe}} "$@"
 
 # Run the tests of every package the binary imports, pdf among them, under ASan
-# -> build/test/
+# -> build/test/. The command line does not import gui/notices, so that test is
+# run on its own: it is what keeps THIRD_PARTY.md equal to the window's list.
 test: sqlite
     mkdir -p build/test
     {{odin}} test . -all-packages -debug {{san}} {{flags}} -out:build/test/{{bin}}{{exe}}
+    {{odin}} test gui/notices -debug {{san}} {{flags}} -out:build/test/notices{{exe}}
 
 # The btrfs and walk tests on a btrfs image made, mounted and filled for them,
 # against a total worked out from the image; skipped where nothing can mount one.
@@ -277,10 +279,13 @@ mount-test *args:
     fi
     echo "mount-test: skipped: no user namespaces here; give --sudo where sudo asks no password"
 
-# Type-check both modes without producing a binary.
+# Type-check both modes without producing a binary. gui/notices is separate:
+# the command line does not import it, and its test is what renders
+# THIRD_PARTY.md.
 check:
     {{odin}} check . {{check_flags}}
     {{odin}} check . -debug {{check_flags}}
+    {{odin}} check gui/notices -no-entry-point {{check_flags}}
 
 # The jm submodule, when JM does not name another checkout, and SQLite, which
 # keeps both binaries' scans: all the command line links that is not Odin. Built

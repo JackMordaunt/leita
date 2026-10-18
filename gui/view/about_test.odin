@@ -79,6 +79,16 @@ about_opens_the_licences_of_what_leita_is_built_on :: proc(t: ^testing.T) {
 		testing.expectf(t, ui.probe_tagged(&h.p, n.name), "%s is listed", n.name)
 		testing.expectf(t, len(n.text) > 0, "%s has its notice", n.name)
 	}
+	// WINDOWS is in the binary on every OS so THIRD_PARTY.md can name it.
+	// The dialog shows it only where this build links those libraries.
+	// "zlib" also occurs in kb_text_shape's notice, so the url is the mark.
+	when ODIN_OS == .Windows {
+		testing.expect(t, ui.probe_tagged(&h.p, "Mbed TLS"))
+		testing.expect(t, ui.probe_tagged(&h.p, "https://zlib.net"))
+	} else {
+		testing.expect(t, !ui.probe_tagged(&h.p, "Mbed TLS"), "Mbed TLS stays off this build")
+		testing.expect(t, !ui.probe_tagged(&h.p, "https://zlib.net"), "zlib stays off this build")
+	}
 	testing.expect(t, ui.probe_tagged(&h.p, notices.ALL[0].text), "a notice is shown whole")
 	testing.expect(t, ui.probe_click_top(&h.p, "Close"))
 	ui.probe_advance(&h.p, 10, 1.0 / 60)

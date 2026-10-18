@@ -142,7 +142,8 @@ Licensor's logos, except to state truthfully where the Software came from.
 
 Components by other authors that are included with the Software remain under
 their own licences. Those licences govern those components, and this licence
-does not restrict anything they permit.
+does not restrict anything they permit. THIRD_PARTY.md lists the components
+and their licences, and travels with the Software.
 
 ## 10. Termination
 
