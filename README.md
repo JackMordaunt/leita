@@ -140,7 +140,9 @@ Each item shows how much it frees and why it is safe to delete.
 
 Each deletion leita makes is recorded: the path, how big it was, when, and
 whether it failed. Scans older than the newest 30 are forgotten. This record
-is kept.
+is kept. Read it in the window under History in the settings menu, or with
+`leita history`, newest first; `--since DATE` and a folder narrow it and `--json`
+writes it for a program.
 
 ## Private by design
 

@@ -186,8 +186,7 @@ licensed_by :: proc(r: ^Report) -> string {
 UNLICENSED :: "Unlicensed copy made during the 30-day trial."
 
 // readable is s as the display formats show it, a name made safe to print:
-// see human.shown.
-@(private)
+// see human.shown. Exported for the history record the CLI prints.
 readable :: proc(s: string) -> string {
 	return human.shown(s)
 }

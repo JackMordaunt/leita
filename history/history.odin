@@ -298,6 +298,63 @@ record :: proc(st: ^Store, actions: []Action) -> sqlite3.Error {
 	return sqlite3.transact(st.db, body, &actions)
 }
 
+/*
+actions is the audit trail, newest first: the actions taken at or after since, in
+Unix seconds, 0 for all of them, and at most limit of them, 0 for no limit. Its
+strings are in allocator.
+*/
+actions :: proc(
+	st: ^Store,
+	since: i64 = 0,
+	limit := 0,
+	allocator := context.temp_allocator,
+) -> (
+	out: []Action,
+	err: sqlite3.Error,
+) {
+	rows := sqlite3.query(
+		st.db,
+		`SELECT taken, kind, path, detail, bytes, failed FROM action
+			WHERE taken >= ? ORDER BY taken DESC, id DESC LIMIT ?`,
+		since,
+		i64(limit) if limit > 0 else -1,
+		allocator = allocator,
+	) or_return
+	found := make([dynamic]Action, allocator)
+	for sqlite3.next(&rows) {
+		kind := sqlite3.text(rows, 1)
+		append(
+			&found,
+			Action {
+				taken = sqlite3.integer(rows, 0),
+				kind = kind_named(kind),
+				path = sqlite3.text(rows, 2),
+				detail = sqlite3.text(rows, 3),
+				bytes = u64(sqlite3.integer(rows, 4)),
+				failed = sqlite3.boolean(rows, 5),
+			},
+		)
+		delete(kind, allocator)
+	}
+	if err = sqlite3.finish(&rows); err != nil {
+		delete(found)
+		return nil, err
+	}
+	return found[:], nil
+}
+
+// kind_named is the Action_Kind the action table keeps as name; a name this
+// leita does not know, written by a newer one, reads as a Trash.
+@(private)
+kind_named :: proc(name: string) -> Action_Kind {
+	for text, kind in ACTION_KINDS {
+		if text == name {
+			return kind
+		}
+	}
+	return .Trash
+}
+
 // list is the snapshots of top, newest first, in allocator.
 list :: proc(
 	st: ^Store,

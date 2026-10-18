@@ -118,3 +118,24 @@ items     [{"path", "bytes", "share"}], largest first
 ```
 
 The top-level `reclaim.bytes` is the sum of the groups.
+
+# leita.history/1
+
+`leita history --json` writes a JSON array of the changes leita made on disk at
+the person's request, or tried to and could not, newest first. It has the
+conventions above: times in UTC to the second, sizes as integer bytes, every
+member always present, a path that is not UTF-8 with its `path_base64`. An empty
+record is `[]`.
+
+An action:
+
+```
+taken        when it was done, or tried
+kind         "trash" (moved to the Trash), "rename", "delete" (deleted for good
+             by Reclaim) or "empty-trash" (deleted for good from the Trash)
+path         the full path acted on (and path_base64, see above)
+bytes        what the action covered: what the path held, or for a delete that
+             failed part way, what it had freed
+failed       whether it failed
+detail       why it failed; for a rename that succeeded, the new name; else null
+```
