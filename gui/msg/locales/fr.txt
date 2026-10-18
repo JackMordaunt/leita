@@ -47,6 +47,9 @@ done = Terminé
 stopped = Arrêté
 failed = Échec
 scan_failed = L’analyse a échoué
+scan_failed_why = L’analyse a échoué, le graphique est donc incomplet : {0}
+stopped_incomplete = L’analyse a été arrêtée : le graphique est incomplet. Les dossiers entourés n’ont pas été lus en entier.
+incomplete = incomplet
 slow_hint = Lire directement la table de ce volume serait bien plus rapide, avec l’autorisation d’ouvrir le périphérique.
 unread_folders.one = {0} dossier n’a pas pu être lu.
 unread_folders.many = {0} de dossiers n’ont pas pu être lus.
@@ -175,6 +178,7 @@ month_12 = déc.
 # What can be done to an entry
 actions_for = Actions pour {0}
 open = Ouvrir
+open_file = Ouvrir le fichier
 locate = Afficher
 rename = Renommer
 trash = Mettre à la Corbeille

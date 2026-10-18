@@ -47,6 +47,9 @@ done = Listo
 stopped = Detenido
 failed = Error
 scan_failed = El análisis falló
+scan_failed_why = El análisis falló, así que el gráfico está incompleto: {0}
+stopped_incomplete = El análisis se detuvo, así que el gráfico está incompleto. Las carpetas con contorno no se leyeron por completo.
+incomplete = incompleto
 slow_hint = Leer la tabla propia de este volumen sería mucho más rápido, con permiso para abrir el dispositivo.
 unread_folders.one = No se pudo leer {0} carpeta.
 unread_folders.many = No se pudieron leer {0} de carpetas.
@@ -175,6 +178,7 @@ month_12 = dic
 # What can be done to an entry
 actions_for = Acciones para {0}
 open = Abrir
+open_file = Abrir archivo
 locate = Mostrar
 rename = Renombrar
 trash = Mover a la Papelera

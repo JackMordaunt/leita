@@ -19,8 +19,8 @@ so a layer holds only its largest entries and one item summing the rest.
 
 A reader opens and closes a folder with its expand and collapse actions, which
 jm:ui offers on an expandable item and hands back as Expand and Collapse events
-to the item's id (bridge_take_actions, jm/ui/shell/a11y.odin). The chart takes no
-keys of its own yet; once it does, they open a folder through toggle_said_open.
+to the item's id (bridge_take_actions, jm/ui/shell/a11y.odin). The chart's
+keys open and close a folder the same way (toggle_said_open, chart_keys.odin).
 */
 
 // SAID_MOST is the most items a layer of a chart's tree holds before one item
@@ -121,6 +121,7 @@ describe_chart :: proc(
 	if m.said_dir != r.dir || m.said_generation != r.generation {
 		clear(&m.said_open)
 		m.said_dir, m.said_generation = r.dir, r.generation
+		m.chart_pick, m.chart_keys = 0, false
 	}
 	// A reader's expand or collapse of a folder drawn, before the layers are
 	// worked out, so this frame says the folder as it now is.
@@ -144,7 +145,7 @@ describe_chart :: proc(
 		m     = m,
 		r     = r,
 		chart = p.id,
-		here  = base_name(r.crumbs[len(r.crumbs) - 1].name),
+		here  = safe(gtx, base_name(r.crumbs[len(r.crumbs) - 1].name)),
 		first = make([]int, n + 1, gtx.allocator),
 		next  = make([]int, n, gtx.allocator),
 		rank  = make([]int, n, gtx.allocator),
@@ -176,6 +177,9 @@ describe_chart :: proc(
 	t.chosen = chosen_id(&t, lit)
 
 	title := trf(gtx, .Chart_Title, count[0], chart, t.here, human.bytes(r.bytes))
+	if r.incomplete {
+		title = strings.concatenate({title, ", ", tr(.Incomplete)}, gtx.allocator)
+	}
 	ui.semantics(gtx, p, {role = .Tree, label = title})
 
 	// Every item's words go in one buffer, so a layer of fifty makes one string
@@ -260,7 +264,7 @@ say_layer :: proc(t: ^Teller, slot: int, under: ops.Area_Id, level: u8) {
 			trf(
 				t.gtx,
 				.Chart_Item,
-				a.name,
+				safe(t.gtx, a.name),
 				human.bytes(a.bytes),
 				fmt.tprintf("%.1f", share),
 				t.here,
@@ -269,6 +273,10 @@ say_layer :: proc(t: ^Teller, slot: int, under: ops.Area_Id, level: u8) {
 		if note := colour_note(t.gtx, t.m, r, at); note != "" {
 			strings.write_string(&t.words, ", ")
 			strings.write_string(&t.words, note)
+		}
+		if a.incomplete {
+			strings.write_string(&t.words, ", ")
+			strings.write_string(&t.words, tr(.Incomplete))
 		}
 		append(&t.items, Chart_Item{id, under, t.rects[at], level, states, len(t.words.buf)})
 		if open {

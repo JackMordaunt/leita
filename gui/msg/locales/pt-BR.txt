@@ -47,6 +47,9 @@ done = Concluído
 stopped = Parado
 failed = Falhou
 scan_failed = A análise falhou
+scan_failed_why = A análise falhou, então o gráfico está incompleto: {0}
+stopped_incomplete = A análise foi interrompida, então o gráfico está incompleto. As pastas contornadas não foram lidas por completo.
+incomplete = incompleto
 slow_hint = Ler a tabela do próprio volume seria muito mais rápido, com permissão para abrir o dispositivo.
 unread_folders.one = {0} pasta não pôde ser lida.
 unread_folders.many = {0} de pastas não puderam ser lidas.
@@ -175,6 +178,7 @@ month_12 = dez
 # What can be done to an entry
 actions_for = Ações para {0}
 open = Abrir
+open_file = Abrir arquivo
 locate = Localizar
 rename = Renomear
 trash = Mover para a Lixeira

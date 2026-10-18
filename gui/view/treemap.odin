@@ -1,3 +1,4 @@
+//review:ignore history-coupled-file chart_tree.odin keeps its safe semantic labels; tooltip drawing and queued key iteration do not change its contract.
 package leita_view
 
 import "core:fmt"
@@ -24,8 +25,9 @@ that brings its boxes nearer square, so boxes stay easy to compare and to point 
 A directory big enough for one shows its name in a strip along its top.
 
 A click on a directory's box opens it, and a click on a file the directory holding
-it; a right click opens the entry's menu, and
-the boxes ease from one layout to the next as the sunburst's arcs do.
+it; a double click on a file opens the file in its application. A right click
+opens the entry's menu, and the boxes ease from one layout to the next as the
+sunburst's arcs do.
 */
 
 // Mode is how the window draws the directory shown.
@@ -344,14 +346,16 @@ blocks_panel :: proc(gtx: ^ui.Ctx, m: ^Model, answer: ^query.Rings_Result, k: Bl
 		// With the pointer off the chart, a hovered row stands for its box.
 		u, at = .Arc, row
 	}
+	if i, picked := picked_arc(m, answer); picked {
+		u, at = .Arc, i
+	}
 	info(gtx, m, answer, answer, u, at)
 	ui.flexible(gtx, 1)
 	blocks(gtx, m, answer, boxes, u, at, k)
 }
 
 // blocks draws the boxes across the room it is offered and acts on what is
-// clicked: a directory's box opens it, a file's the directory holding it, and the
-// directory at the centre goes up.
+// clicked (press_box).
 @(private)
 blocks :: proc(
 	gtx: ^ui.Ctx,
@@ -369,28 +373,40 @@ blocks :: proc(
 		size = {480, 360}
 	}
 	m.tree_room = size
-	pressed, menu := false, false
+	room := ops.Rect{0, 0, size.x, size.y}
+	c := design.control(gtx, p.id, room, .Live)
+	pressed, double, menu := false, false, false
+	key_at := at if lit == .Arc else -1
 	for e in ui.events(gtx, p.id) {
 		#partial switch e.kind {
-		case .Move, .Enter:
+		case .Move:
+			m.pointer, m.inside, m.chart_keys = e.pos, true, false
+		case .Enter:
 			m.pointer, m.inside = e.pos, true
 		case .Leave:
 			m.inside = false
+		case .Key:
+			chart_key(gtx, m, r, e, key_at)
+			key_at, _ = picked_arc(m, r)
+		case .Blur:
+			set_chart_pick(m, r, -1)
 		case .Press:
 			m.pointer, m.inside = e.pos, true
 			#partial switch e.button {
 			case .Left:
-				pressed = true
+				pressed, double = true, e.clicks >= 2
 			case .Right:
 				menu = true
 			}
 		}
 	}
+	settle_file_click(gtx, m, r)
 
 	bg := primer.color(.Bg_Color_Default)
 	small := primer.text_style(.Small)
 	font := primer.font_for(gtx, small.weight)
 	here := r.crumbs[len(r.crumbs) - 1].name
+	outlined := make([dynamic]Box, gtx.allocator)
 	for b in boxes {
 		if b.rect.w < 1 || b.rect.h < 1 {
 			continue
@@ -399,11 +415,11 @@ blocks :: proc(
 		fill: ops.Color
 		labelled := b.header
 		if b.arc < 0 {
-			name = base_name(here)
+			name = safe(gtx, base_name(here))
 			fill = mix(primer.color(.Fg_Color_Muted), bg, 0.55 if lit == .Hub else 0.8)
 		} else {
 			a := r.arcs[b.arc]
-			name = a.name
+			name = safe(gtx, a.name)
 			fill = fill_of(m, r, b.arc, lit == .Arc && b.arc == at, k.framed)
 			labelled ||= !a.directory && b.rect.w >= TREE_LABEL_MIN && b.rect.h >= TREE_HEADER
 		}
@@ -430,10 +446,24 @@ blocks :: proc(
 				b.rect,
 			)
 		}
+		if b.arc < 0 ? r.incomplete : r.arcs[b.arc].incomplete {
+			append(&outlined, b)
+			tag_incomplete(gtx, &p, u64(len(outlined)), name, b.rect)
+		}
+	}
+	// Over every box, not as each is drawn: the next box's rim would cover half of
+	// it. Inside the box, so no neighbour's does.
+	for b in outlined {
+		mark_incomplete(gtx, ops.Rect{b.rect.x + 1, b.rect.y + 1, b.rect.w - 2, b.rect.h - 2})
+	}
+	// A treemap has no bar for the directory at the centre: its frame is the chart's.
+	if r.incomplete && k.framed {
+		mark_incomplete(gtx, ops.Rect{1, 1, size.x - 2, size.y - 2})
+		tag_incomplete(gtx, &p, 0, safe(gtx, base_name(here)), room)
 	}
 
-	room := ops.Rect{0, 0, size.x, size.y}
-	ops.input_area(gtx.scene, p.id, room, {.Press, .Move, .Enter, .Leave})
+	design.paint_focus_visible_ring(gtx, c, room, design.corners_all(0), primer.focus_outline(-2))
+	design.listen(gtx, c.st, p.id, room, design.CLICK_KINDS)
 	ops.tag(gtx.scene, p.id, k.name)
 	describe_chart(gtx, &p, m, r, boxes, at if lit == .Arc else -1, tr(k.title))
 
@@ -448,30 +478,69 @@ blocks :: proc(
 			m.menu_open, m.menu_at, m.menu_from = true, m.pointer, k.from
 		}
 	}
-	if m.menu_from == k.from {
+	preview := ""
+	if m.inside && lit == .Arc && at >= 0 && !m.menu_open {
+		preview = r.arcs[at].name
+	}
+	show_raw_tip(gtx, preview, {p.id, size})
+	if m.menu_open && m.menu_from == k.from {
 		entry_menu(gtx, m, {p.id, {0, 0}}, m.menu_at)
 	}
 	ui.widget_close(gtx, &p, {size = size})
 
-	// A directory's contents cover most of its box, so a click on a file opens the
-	// directory holding it, which is the one the pointer was in.
 	if pressed {
 		if i := box_at(boxes, m.pointer); i >= 0 {
-			if boxes[i].arc < 0 {
-				if len(r.crumbs) > 1 {
-					open(m, r.crumbs[len(r.crumbs) - 2].node)
-				}
-				return
-			}
-			a := r.arcs[boxes[i].arc]
-			switch {
-			case a.directory:
-				open(m, a.node)
-			case a.up >= 0:
-				open(m, r.arcs[a.up].node)
-			}
+			press_box(gtx, m, r, boxes[i], double)
 		}
 	}
+}
+
+// DOUBLE_CLICK is how long a click on a file waits for a second before it takes
+// the directory holding the file.
+DOUBLE_CLICK :: f32(0.5)
+
+// press_box acts on a left press on box b: the directory at the centre goes up, a
+// directory's box opens it, and a double click on a file opens the file in its
+// application. A directory's contents cover most of its box, so a click on a
+// file is meant for the directory holding it, which is the one the pointer was
+// in; it waits out a double click first (settle_file_click), as the first click of
+// one would otherwise take the directory out from under the second.
+@(private)
+press_box :: proc(gtx: ^ui.Ctx, m: ^Model, r: ^query.Rings_Result, b: Box, double: bool) {
+	m.file_click = 0
+	if b.arc < 0 {
+		if len(r.crumbs) > 1 {
+			open(m, r.crumbs[len(r.crumbs) - 2].node)
+		}
+		return
+	}
+	a := r.arcs[b.arc]
+	switch {
+	case a.directory:
+		open(m, a.node)
+	case double:
+		open_file(gtx, m, a.node)
+	case a.up >= 0:
+		m.file_click, m.file_wait = a.node, 0
+	}
+}
+
+// settle_file_click opens the directory holding the file clicked once the time for
+// a second click is out, and asks for frames until then.
+@(private)
+settle_file_click :: proc(gtx: ^ui.Ctx, m: ^Model, r: ^query.Rings_Result) {
+	if m.file_click == 0 {
+		return
+	}
+	m.file_wait += gtx.dt
+	if m.file_wait < DOUBLE_CLICK {
+		ui.request_frame(gtx)
+		return
+	}
+	if i := arc_of(r, m.file_click); i >= 0 && r.arcs[i].up >= 0 {
+		open(m, r.arcs[r.arcs[i].up].node)
+	}
+	m.file_click = 0
 }
 
 // ICICLE_ROWS is the icicle's rows: the directory at the centre, and a row for

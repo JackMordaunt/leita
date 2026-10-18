@@ -213,7 +213,8 @@ watched_row :: proc(
 	ui.column(gtx, gap = 4, align = .Fill)
 	if ui.row(gtx, gap = 8, align = .Center) {
 		ui.flexible(gtx, 1)
-		primer.truncate(gtx, w.place, title = w.place, max_width = ui.INF, weight = .Semibold)
+		place := safe(gtx, w.place)
+		primer.truncate(gtx, place, title = place, max_width = ui.INF, weight = .Semibold)
 		if w.alerting {
 			primer.label(gtx, tr(.Alerting), .Danger)
 		}
@@ -229,7 +230,7 @@ watched_row :: proc(
 			options,
 			&at,
 			size = .Small,
-			name = trf(gtx, .Schedule_Of, w.place),
+			name = trf(gtx, .Schedule_Of, safe(gtx, w.place)),
 		) {
 			c := watch_of(w)
 			c.every = u8(at)
@@ -238,7 +239,7 @@ watched_row :: proc(
 		if primer.icon_button(
 			gtx,
 			.Bell,
-			trf(gtx, .Limits_Of, w.place),
+			trf(gtx, .Limits_Of, safe(gtx, w.place)),
 			.Invisible,
 			size = .Small,
 		) {
@@ -247,7 +248,7 @@ watched_row :: proc(
 		if primer.icon_button(
 			gtx,
 			.Trash,
-			trf(gtx, .Stop_Watching, w.place),
+			trf(gtx, .Stop_Watching, safe(gtx, w.place)),
 			.Invisible,
 			size = .Small,
 		) {
@@ -376,7 +377,7 @@ LIMIT_FIELD :: f32(120)
 limits_editor :: proc(gtx: ^ui.Ctx, m: ^Model, r: ^query.Monitor_Result, w: query.Watched_Place) {
 	ui.inset(gtx, {left = 16})
 	ui.column(gtx, gap = 12, align = .Fill)
-	primer.text(gtx, trf(gtx, .Limits_Of, w.place), weight = .Semibold)
+	primer.text(gtx, trf(gtx, .Limits_Of, safe(gtx, w.place)), weight = .Semibold)
 	field :: proc(gtx: ^ui.Ctx, s: ^ui.Text_State, label: string, bad: bool) {
 		if ui.row(gtx, gap = 12, align = .Center) {
 			ui.flexible(gtx, 1)

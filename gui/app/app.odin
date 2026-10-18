@@ -108,6 +108,7 @@ Desk_In :: union {
 	Updated,
 	Finished_Pass,
 	Open_Failure,
+	Recorder_Change,
 }
 
 // Scan is one run of a reader and everything derived from it. It is heap
@@ -129,6 +130,10 @@ Scan :: struct {
 	baseline:              string, // the fill's, owned: where the place's tree is kept
 	roll:                  survey.Rollup,
 	reader:                ^thread.Thread,
+	// The directories the walk left incomplete, built once the scan is over, and
+	// whether it has been (incomplete).
+	incomplete_dirs:       map[u32]struct{},
+	incomplete_built:      bool,
 	// The filesystem the target is on, as of the last measure.
 	disk_total, disk_free: u64,
 }
@@ -197,6 +202,8 @@ Desk :: struct {
 	searched:        ^stream.Port(Finished_Pass),
 	open_failures:   ^stream.Port(Open_Failure), // act.odin's open_entry
 	opening:         ^sync.Wait_Group, // the entries open_entry is opening
+	recordings:      ^stream.Port(Recorder_Change), // recorder_linux.odin's set_recording
+	recording:       ^sync.Wait_Group, // the change it is running, if any
 	scratch:         ^search.Scratch,
 	monitoring:      Monitoring, // monitor.odin
 }
@@ -210,6 +217,8 @@ Host :: struct {
 	searched:      stream.Port(Finished_Pass),
 	open_failures: stream.Port(Open_Failure),
 	opening:       sync.Wait_Group,
+	recordings:    stream.Port(Recorder_Change),
+	recording:     sync.Wait_Group,
 	thumbs:        Thumbs, // thumbs.odin
 	workers:       ^stream.Workers,
 	inbox:         ui.Inbox,
@@ -261,6 +270,8 @@ init :: proc(
 		searched      = &h.searched,
 		open_failures = &h.open_failures,
 		opening       = &h.opening,
+		recordings    = &h.recordings,
+		recording     = &h.recording,
 		scratch       = new(search.Scratch, allocator),
 	}
 	msg.init(h.desk.words, .English)
@@ -295,6 +306,8 @@ init :: proc(
 	searched, h.searched = stream.port(p, Finished_Pass, cap = 256, name = "searched")
 	open_failures: stream.Stream(Open_Failure)
 	open_failures, h.open_failures = stream.port(p, Open_Failure, cap = 16, name = "open failures")
+	recordings: stream.Stream(Recorder_Change)
+	recordings, h.recordings = stream.port(p, Recorder_Change, cap = 4, name = "recorder changes")
 	thumbs_init(h, thumbs)
 
 	desk_in := stream.merge(
@@ -306,6 +319,7 @@ init :: proc(
 			stream.transform(updates, updated_in),
 			stream.transform(searched, finished_in),
 			stream.transform(open_failures, open_failure_in),
+			stream.transform(recordings, recorder_change_in),
 		},
 		name = "desk in",
 	)
@@ -348,9 +362,11 @@ stop :: proc(h: ^Host) {
 	find_halt(&h.desk)
 	stream.port_close(h.searched)
 	stream.port_close(h.open_failures)
+	stream.port_close(h.recordings)
 	// An entry still being opened says a failure through the port, which
 	// refuses it now but lives until the pipeline goes.
 	sync.wait_group_wait(&h.opening)
+	sync.wait_group_wait(&h.recording)
 	stream.workers_stop(h.workers)
 	find_stop(&h.desk)
 	thumbs_destroy(h)
@@ -603,6 +619,9 @@ desk_step :: proc(d: ^Desk, v: Desk_In) {
 	case Open_Failure:
 		tell(d, true, .Open_Failed, command.text_of(&e.name))
 		answer_all(d)
+	case Recorder_Change:
+		finish_recording(d, &e)
+		answer_all(d)
 	case Tick:
 		if advance(d) {
 			answer_all(d)
@@ -724,6 +743,7 @@ scan_end :: proc(d: ^Desk) {
 	delete(s.path)
 	delete(s.problem)
 	delete(s.baseline)
+	delete(s.incomplete_dirs)
 	free(s)
 }
 
@@ -930,6 +950,7 @@ sorted_children :: proc(d: ^Desk, dir: u32) -> []query.Entry {
 				bytes = directory ? survey.total(&s.roll, c) : n.disk,
 				directory = directory,
 				was = was_of(d, c),
+				incomplete = directory && incomplete(s, c),
 			},
 		)
 	}
@@ -940,6 +961,59 @@ sorted_children :: proc(d: ^Desk, dir: u32) -> []query.Entry {
 		return a.name < b.name
 	})
 	return entries[:]
+}
+
+/*
+incomplete says whether the walk left directory node short of what is in it, so
+its total is less than it holds: it, or a directory under it, could not be opened
+or listed, or the scan was stopped or failed and one under it has no entries
+yet. A directory cut off in the middle of its listing is not told, and an empty
+one in a scan cut short is, as nothing separates it from one never reached.
+Nothing is incomplete while the scan runs, as every directory is still to come.
+*/
+incomplete :: proc(s: ^Scan, node: u32) -> bool {
+	if s.state == .Scanning {
+		return false
+	}
+	if !s.incomplete_built {
+		build_incomplete(s)
+	}
+	return node in s.incomplete_dirs
+}
+
+// build_incomplete works out which directories of the finished scan s are
+// incomplete: each one that was not read, and every directory above it.
+@(private = "file")
+build_incomplete :: proc(s: ^Scan) {
+	s.incomplete_built = true
+	cut := s.state == .Stopped || s.state == .Failed
+	if unread, _ := scan.unread(&s.tree); !cut && unread == 0 {
+		return
+	}
+	for i in 0 ..< s.roll.seen {
+		flags := scan.node_flags(scan.node(&s.tree, i))
+		if .Used not_in flags || .Directory not_in flags || .Mount in flags || .Reparse in flags {
+			continue
+		}
+		if .Unread not_in flags {
+			it := survey.children(&s.roll, i)
+			if _, has := survey.next_child(&it); !cut || has {
+				continue
+			}
+		}
+		at := i
+		for {
+			if at in s.incomplete_dirs {
+				break
+			}
+			s.incomplete_dirs[at] = {}
+			up := scan.node(&s.tree, at).parent
+			if up == at || up >= s.roll.seen {
+				break
+			}
+			at = up
+		}
+	}
 }
 
 rings :: proc(d: ^Desk, q: query.Rings) -> query.Rings_Result {
@@ -968,6 +1042,7 @@ rings :: proc(d: ^Desk, q: query.Rings) -> query.Rings_Result {
 	r.was = was_of(d, dir)
 	r.compared = d.compared.id != 0
 	r.crumbs = crumbs(s, dir, top)
+	r.incomplete = s.state == .Stopped || s.state == .Failed || incomplete(s, dir)
 	arcs := make([dynamic]query.Arc, context.temp_allocator)
 	if r.bytes > 0 {
 		lay_ring(d, &arcs, dir, r.bytes, 1, 0, 0, 1)
@@ -1015,6 +1090,7 @@ lay_ring :: proc(
 				sweep = w,
 				up = up,
 				was = e.was,
+				incomplete = e.incomplete,
 			},
 		)
 		if e.directory && depth < query.RING_DEPTH {

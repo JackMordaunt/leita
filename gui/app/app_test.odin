@@ -1203,7 +1203,10 @@ the_treemap_draws_the_same_directory_as_boxes :: proc(t: ^testing.T) {
 	testing.expect(t, ui.probe_tagged(&r.p, "Rename"), "the box has the entry menu")
 	ui.probe_key(&r.p, .Escape)
 	press_and_hand_on(&r)
+	// The middle of the box is on a file in it, whose click waits out a double
+	// click before it takes the directory holding the file.
 	ui.probe_click_at(&r.p, {photos.x + photos.w / 2, photos.y + photos.h / 2})
+	ui.probe_advance(&r.p, 40, 1.0 / 60)
 	press_and_hand_on(&r)
 	testing.expect(t, settle(&r, "270.3 kB in 2 items"), "photos opened")
 	testing.expect(t, settle(&r, "box big.raw"), "and shows its files as boxes")
@@ -3407,4 +3410,112 @@ closing_during_an_update_waits_without_racing_the_desk :: proc(t: ^testing.T) {
 	rig_close(&r)
 	testing.expect(t, sync.atomic_load(&f.desk_was_stopping), "the desk stopped accepting answers before the closing thread waited for the request")
 	testing.expect(t, r.h.desk.update_thread == nil, "the outstanding update was joined and destroyed")
+}
+
+// A folder the walk could not open holds nothing to draw, so the folders above
+// it are outlined instead: their totals are short of what is there. The one read
+// in full is not.
+@(test)
+the_folders_above_one_the_walk_could_not_open_are_outlined_on_the_chart :: proc(t: ^testing.T) {
+	if ODIN_OS == .Windows {
+		return // a folder is not shut by its mode there
+	}
+	root := fixture(t, "locked")
+	locked := fmt.tprintf("%s/locked", root)
+	testing.expect(t, os.make_directory(locked) == nil, "could not make locked")
+	testing.expect(
+		t,
+		os.write_entire_file(fmt.tprintf("%s/secret.dat", locked), []byte{1, 2, 3}) == nil,
+	)
+	testing.expect(t, os.chmod(locked, {}) == nil, "could not shut locked")
+	defer os.remove_all(root)
+	defer os.chmod(locked, {.Read_User, .Write_User, .Execute_User})
+	if dir, err := os.open(locked); err == nil {
+		os.close(dir)
+		return // the user it runs as is let in whatever the mode says
+	}
+
+	r: Rig
+	rig_open(&r, root)
+	defer rig_close(&r)
+	testing.expect(t, settle(&r, "Done"))
+	testing.expect(t, settle(&r, "arc photos"), "photos, which the fixture holds, is drawn")
+	testing.expect(
+		t,
+		settle(&r, fmt.tprintf("incomplete %s", filepath.base(root))),
+		"the chart is marked short",
+	)
+	testing.expect(
+		t,
+		!ui.probe_tagged(&r.p, "incomplete photos"),
+		"the folder read in full is not",
+	)
+}
+
+// While pkexec is out for the recorder the desk keeps answering: a scan asked
+// for meanwhile runs, and the change settles when pkexec returns. The stand-in
+// for pkexec waits two seconds, then says the request was dismissed.
+@(test)
+the_recorder_toggle_does_not_hold_the_desk_while_pkexec_asks :: proc(t: ^testing.T) {
+	if ODIN_OS != .Linux {
+		return // the recorder is Linux's
+	}
+	root := fixture(t, "recorder")
+	defer os.remove_all(root)
+	data := fmt.tprintf("%s-data", root)
+	os.remove_all(data)
+	testing.expect(t, os.make_directory(data) == nil, "could not make the data folder")
+	defer os.remove_all(data)
+	pkexec := fmt.tprintf("%s/pkexec", data)
+	testing.expect(
+		t,
+		os.write_entire_file(pkexec, transmute([]byte)string("#!/bin/sh\nsleep 2\nexit 126\n")) ==
+		nil,
+	)
+	testing.expect(t, os.chmod(pkexec, {.Read_User, .Write_User, .Execute_User}) == nil)
+
+	r: Rig
+	rig_open(
+		&r,
+		root,
+		kept = fmt.tprintf("%s/history.db", data),
+		monitor_argv = {"/usr/bin/leita"},
+	)
+	defer rig_close(&r)
+	r.h.desk.monitoring.elevate = pkexec
+	testing.expect(t, settle(&r, "Done"))
+	testing.expect(t, choose(&r, "Monitoring"), "the menu offers monitoring")
+	ui.probe_frame(&r.p)
+	hand_on(&r)
+	testing.expect(
+		t,
+		settle(&r, "Record changes as they happen"),
+		"the dialog offers the recorder",
+	)
+
+	ui.probe_advance(&r.p, 20, 1.0 / 60) // the dialog settles; a press lands where the last frame drew
+	began := time.tick_now()
+	testing.expect(t, ui.probe_click_top(&r.p, "Record changes as they happen"), "the switch")
+	hand_on(&r)
+	first := r.m.generation
+	stream.port_send(r.h.cmd_port, command.Command(command.Scan{path = command.text_make(root)}))
+	testing.expect(t, await_rescan(&r, first), "the desk starts a scan while pkexec asks")
+	asked := time.tick_since(began)
+	testing.expectf(
+		t,
+		asked < 1500 * time.Millisecond,
+		"the scan began after %v, with pkexec held",
+		asked,
+	)
+	testing.expect(t, settle(&r, "Done"), "and finishes")
+
+	testing.expect(
+		t,
+		settle(
+			&r,
+			"Could not change the recorder: the request for administrator rights was dismissed",
+		),
+		"the change settles when pkexec returns",
+	)
+	testing.expect(t, time.tick_since(began) >= 2 * time.Second, "not before it did")
 }

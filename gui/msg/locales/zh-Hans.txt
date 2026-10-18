@@ -46,6 +46,9 @@ done = 已完成
 stopped = 已停止
 failed = 失败
 scan_failed = 扫描失败
+scan_failed_why = 扫描失败，因此图表不完整：{0}
+stopped_incomplete = 扫描已停止，因此图表不完整。带轮廓的文件夹未读取完整。
+incomplete = 不完整
 slow_hint = 如获准打开该设备，直接读取此卷自身的文件表会快得多。
 unread_folders = {0} 个文件夹无法读取。
 unread_hint = 请在“系统设置 › 隐私与安全性 › 完全磁盘访问权限”中授予 {0} 完全磁盘访问权限。
@@ -152,6 +155,7 @@ month_12 = 12月
 # What can be done to an entry
 actions_for = {0} 的操作
 open = 打开
+open_file = 打开文件
 locate = 定位
 rename = 重命名
 trash = 移到回收站

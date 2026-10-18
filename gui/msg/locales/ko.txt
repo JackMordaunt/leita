@@ -44,6 +44,9 @@ done = 완료
 stopped = 중지됨
 failed = 실패
 scan_failed = 스캔에 실패했습니다
+scan_failed_why = 스캔에 실패하여 차트가 불완전합니다: {0}
+stopped_incomplete = 스캔이 중지되어 차트가 불완전합니다. 윤곽선이 있는 폴더는 끝까지 읽지 못했습니다.
+incomplete = 미완료
 slow_hint = 장치를 열 수 있는 권한이 있으면 이 볼륨의 자체 테이블을 읽어 훨씬 빠르게 스캔할 수 있습니다.
 unread_folders = 폴더 {0}개를 읽을 수 없었습니다.
 unread_hint = 시스템 설정 › 개인정보 보호 및 보안 › 전체 디스크 접근 권한에서 {0}에 전체 디스크 접근 권한을 허용하세요.
@@ -150,6 +153,7 @@ month_12 = 12월
 # What can be done to an entry
 actions_for = {0} 작업
 open = 열기
+open_file = 파일 열기
 locate = 위치 보기
 rename = 이름 변경
 trash = 휴지통으로 이동

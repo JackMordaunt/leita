@@ -197,6 +197,15 @@ Model :: struct {
 	said_open:        map[u32]bool,
 	said_dir:         u32,
 	said_generation:  u32,
+	// The file last clicked in the treemap, by node (0 for none), and how long it has
+	// waited for a double click (treemap.odin press_box).
+	file_click:       u32,
+	file_wait:        f32,
+	// The entry the keys have picked in the chart, by node (0 for none), and whether
+	// the pick stands for the pointer's: it does until the pointer moves
+	// (chart_keys.odin).
+	chart_pick:       u32,
+	chart_keys:       bool,
 	// The row hovered, in the contents or the largest files: the frame's rows say so
 	// as they are drawn, after the chart, so the chart reads the last frame's.
 	row_hover:        Hover,
@@ -370,11 +379,12 @@ view :: proc(gtx: ^ui.Ctx, user: rawptr) {
 	if prog == nil || prog.generation == 0 {
 		return
 	}
-	if prog.state == .Failed && prog.problem != "" {
+	if chart_lost(prog) && prog.problem != "" {
 		// In the chart's place, not above it: a banner in the status column would
-		// move the chart, and a failed scan has none to show.
+		// move the chart, and a scan that failed before it read anything has none to
+		// show. One that grew a tree keeps its chart, and says why in the status.
 		if ui.inset(gtx, {right = PAD}) {
-			primer.banner(gtx, tr(.Scan_Failed), prog.problem, .Critical)
+			primer.banner(gtx, tr(.Scan_Failed), safe(gtx, prog.problem), .Critical)
 		}
 	} else {
 		ui.flexible(gtx, 1)
@@ -395,6 +405,13 @@ view :: proc(gtx: ^ui.Ctx, user: rawptr) {
 	record_dialog(gtx, m)
 	notices_dialog(gtx, m)
 	monitor_dialog(gtx, m)
+}
+
+// chart_lost is whether the scan failed with nothing read, so there is no chart to
+// keep.
+@(private)
+chart_lost :: proc(prog: ^query.Progress_Result) -> bool {
+	return prog.state == .Failed && prog.nodes == 0
 }
 
 // chart_row is the chart beside its side panel, the grip between them.
@@ -554,7 +571,7 @@ primer.slot two lines of body text high holds, on the first, how the scan is
 going and what it has found, and on the second the one message that matters
 most, if any. Messages do not stack: the second line shows the first of them
 and says how many more there are, which its tooltip lists. The banner a failed
-scan shows stands in the chart's place (view), and the trial banner, which the
+scan that read nothing shows stands in the chart's place (view), and the trial banner, which the
 licence answer brings at startup, keeps its place in flow under the slot.
 */
 @(private)
@@ -618,13 +635,15 @@ Status_Message :: struct {
 	text:    string,
 	detail:  string,
 	warning: bool,
+	danger:  bool, // a warning that is an error
 }
 
 // status_messages is what the second line could say, the most pressing first:
-// folders the scan could not open, and on macOS, where a refusal is commonly
-// a folder the system guards under the home directory, how to let the window
-// in; that a raw read would be far faster; then why the scan read its place
-// whole. A failed scan's problem is the banner's (view), not the line's.
+// that the scan failed or was stopped and the chart is short for it; folders
+// the scan could not open, and on macOS, where a refusal is commonly a folder
+// the system guards under the home directory, how to let the window in; that a
+// raw read would be far faster; then why the scan read its place whole. The
+// problem of a scan that failed with nothing read is the banner's (view).
 @(private)
 status_messages :: proc(
 	gtx: ^ui.Ctx,
@@ -632,21 +651,35 @@ status_messages :: proc(
 	prog: ^query.Progress_Result,
 ) -> []Status_Message {
 	msgs := make([dynamic]Status_Message, gtx.allocator)
+	switch {
+	case prog.state == .Failed && !chart_lost(prog):
+		why := trf(gtx, .Scan_Failed_Why, safe(gtx, prog.problem))
+		append(&msgs, Status_Message{text = why, detail = why, warning = true, danger = true})
+	case prog.state == .Stopped:
+		append(&msgs, Status_Message{text = tr(.Stopped_Incomplete), warning = true})
+	}
 	if m.path_long {
-		append(&msgs, Status_Message{tr(.Path_Too_Long), "", true})
+		append(&msgs, Status_Message{text = tr(.Path_Too_Long), warning = true})
 	}
 	if prog.unread > 0 {
 		detail := ""
 		if ODIN_OS == .Darwin && prog.denied {
 			detail = trf(gtx, .Unread_Hint, version.PRODUCT)
 		}
-		append(&msgs, Status_Message{trf(gtx, .Unread_Folders, int(prog.unread)), detail, true})
+		append(
+			&msgs,
+			Status_Message {
+				text = trf(gtx, .Unread_Folders, int(prog.unread)),
+				detail = detail,
+				warning = true,
+			},
+		)
 	}
 	if prog.slow {
-		append(&msgs, Status_Message{tr(.Slow_Hint), "", true})
+		append(&msgs, Status_Message{text = tr(.Slow_Hint), warning = true})
 	}
 	if prog.kept && !prog.updated && prog.why != "" {
-		append(&msgs, Status_Message{trf(gtx, .Read_Whole, prog.why), "", false})
+		append(&msgs, Status_Message{text = trf(gtx, .Read_Whole, prog.why)})
 	}
 	return msgs[:]
 }
@@ -676,7 +709,7 @@ message_line :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result) {
 	top := msgs[0]
 	role: tok.Role = .Fg_Color_Muted
 	if top.warning {
-		role = .Fg_Color_Attention
+		role = .Fg_Color_Danger if top.danger else .Fg_Color_Attention
 	}
 	fg := primer.color(role)
 	if top.warning {
@@ -835,7 +868,11 @@ entry :: proc(
 	defer ui.scope_close(&s)
 	ui.row(gtx, gap = 12, align = .Center)
 	ui.flexible(gtx, 3)
-	clicked, name := name_button(gtx, e.name, e.directory ? .File_Directory_Fill : .File)
+	clicked, name := name_button(
+		gtx,
+		e.name,
+		e.directory ? .File_Directory_Fill : .File,
+	)
 	opened = clicked && e.directory
 	row_menu(gtx, m, .Contents, name, {node = e.node, name = e.name, directory = e.directory})
 	if ui.widget_state(gtx, name.id).hovered {
@@ -847,7 +884,7 @@ entry :: proc(
 		gtx,
 		share,
 		bg = e.directory ? .Bg_Color_Accent_Emphasis : .Bg_Color_Neutral_Emphasis,
-		label = trf(gtx, .Share_Of, e.name),
+		label = trf(gtx, .Share_Of, safe(gtx, e.name)),
 	)
 	if ui.sized(gtx, {min = {SIZE_WIDTH, 0}, max = {SIZE_WIDTH, ui.INF}}) {
 		if ui.column(gtx, align = .End) {
@@ -899,14 +936,19 @@ largest :: proc(gtx: ^ui.Ctx, m: ^Model) {
 					}
 					if ui.row(gtx, gap = 8, align = .Center) {
 						ui.flexible(gtx, 1)
-						primer.truncate(
-							gtx,
-							f.path,
-							title = f.path,
-							max_width = ui.INF,
-							size = .Small,
-							color = primer.color(.Fg_Color_Muted),
-						)
+						{
+							stack := ui.stack_open(gtx)
+							defer ui.close(&stack)
+							primer.truncate(
+								gtx,
+								safe(gtx, f.path),
+								title = raw_tip_text(gtx, f.path),
+								max_width = ui.INF,
+								size = .Small,
+								color = primer.color(.Fg_Color_Muted),
+							)
+							show_raw_tip(gtx, f.path, ui.last_widget(gtx))
+						}
 						primer.text(gtx, human.bytes(f.bytes), .Small)
 						if m.colour == .Change {
 							if d := delta_text(f.bytes, f.was, r.compared, gtx.allocator);
@@ -953,7 +995,7 @@ name_window :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result) {
 	}
 	delete(m.titled)
 	m.titled = strings.clone(prog.target)
-	ui.set_window_title(gtx, window_title(prog.target))
+	ui.set_window_title(gtx, window_title(human.shown(prog.target)))
 }
 
 // title is s set in TITLE, read as the window's one first-level heading.
@@ -1063,9 +1105,10 @@ name_button :: proc(
 ) {
 	clip := ui.clip_box_open(gtx, loc = loc)
 	width := gtx.constraints.max.x
+	stack := ui.stack_open(gtx)
 	clicked = primer.button(
 		gtx,
-		label,
+		safe(gtx, label),
 		.Invisible,
 		.Small,
 		leading = ic,
@@ -1073,6 +1116,7 @@ name_button :: proc(
 		block = true,
 	)
 	button = ui.last_widget(gtx)
+	show_raw_tip(gtx, label, button)
 	if ui.is_finite(width) && width > NAME_FADE {
 		bg := primer.color(.Bg_Color_Default)
 		clear := bg
@@ -1082,6 +1126,7 @@ name_button :: proc(
 		edge := ops.Rect{width - NAME_FADE, 0, NAME_FADE, button.size.y}
 		ops.fill(gtx.scene, edge, ops.Linear_Gradient{{edge.x, 0}, {width, 0}, stops})
 	}
+	ui.close(&stack)
 	ui.clip_box_close(&clip)
 	return
 }
@@ -1096,6 +1141,41 @@ logo :: proc(gtx: ^ui.Ctx, loc := #caller_location) {
 	p := ui.widget_open(gtx, loc = loc)
 	mark.draw(gtx, {0, 0}, LOGO, primer.color(.Fg_Color_Default), mark.SEA)
 	ui.widget_close(gtx, &p, {size = {LOGO, LOGO}})
+}
+
+/*
+safe is name as the window draws it: a line break, an escape or a bidi override
+in it, which a disk allows in a name, is a picture of itself (human.shown), so a
+name cannot split a dialog, a row or a menu, or make the text around it read
+differently. A bounded tooltip exposes the original bytes separately. What is
+sent to the host, and what a field edits to be sent, is the real name.
+*/
+@(private)
+safe :: proc(gtx: ^ui.Ctx, name: string) -> string {
+	return human.shown(name, gtx.allocator)
+}
+
+// Raw names stay inside a tooltip, capped at 128 runes and four explicit lines.
+// An ellipsis marks a shortened preview, including pathological disk names.
+@(private)
+raw_tip_text :: proc(gtx: ^ui.Ctx, name: string) -> string {
+	count, lines := 0, 1
+	for r, i in name {
+		line_break := r == '\n' || r == '\r' || r == '\u0085' || r == '\u2028' || r == '\u2029'
+		if count == 128 || (line_break && lines == 4) {
+			return strings.concatenate({name[:i], "…"}, gtx.allocator)
+		}
+		count += 1
+		if line_break {
+			lines += 1
+		}
+	}
+	return name
+}
+
+@(private)
+show_raw_tip :: proc(gtx: ^ui.Ctx, name: string, anchor: ui.Last_Widget) {
+	primer.tooltip(gtx, raw_tip_text(gtx, name), anchor)
 }
 
 @(private)

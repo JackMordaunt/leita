@@ -47,6 +47,9 @@ done = 完了
 stopped = 停止済み
 failed = 失敗
 scan_failed = スキャンに失敗しました
+scan_failed_why = スキャンに失敗したため、グラフは不完全です: {0}
+stopped_incomplete = スキャンが停止されたため、グラフは不完全です。枠線で囲まれたフォルダーは最後まで読み込まれていません。
+incomplete = 未完了
 slow_hint = デバイスを開く権限があれば、このボリューム自体のテーブルを読み取ってはるかに高速にスキャンできます。
 unread_folders = {0} 個のフォルダーを読み取れませんでした。
 unread_hint = システム設定 › プライバシーとセキュリティ › フルディスクアクセス で {0} にフルディスクアクセスを許可してください。
@@ -153,6 +156,7 @@ month_12 = 12月
 # What can be done to an entry
 actions_for = {0} の操作
 open = 開く
+open_file = ファイルを開く
 locate = 場所を表示
 rename = 名前を変更
 trash = ゴミ箱に入れる

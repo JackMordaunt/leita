@@ -44,6 +44,9 @@ done = Completata
 stopped = Interrotta
 failed = Non riuscita
 scan_failed = La scansione non è riuscita
+scan_failed_why = La scansione non è riuscita, quindi il grafico è incompleto: {0}
+stopped_incomplete = La scansione è stata interrotta, quindi il grafico è incompleto. Le cartelle con il contorno non sono state lette per intero.
+incomplete = incompleto
 slow_hint = Leggere direttamente la tabella del volume sarebbe molto più veloce, con il permesso di aprire il dispositivo.
 unread_folders.one = {0} cartella non è stata letta.
 unread_folders.many = {0} di cartelle non sono state lette.
@@ -172,6 +175,7 @@ month_12 = dic
 # What can be done to an entry
 actions_for = Azioni per {0}
 open = Apri
+open_file = Apri file
 locate = Mostra
 rename = Rinomina
 trash = Sposta nel Cestino

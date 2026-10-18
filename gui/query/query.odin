@@ -77,11 +77,15 @@ Listing :: struct {
 }
 
 Entry :: struct {
-	node:      u32,
-	name:      string,
-	bytes:     u64, // on disk; a directory's counts everything under it found so far
-	directory: bool,
-	was:       i64, // what it held in the snapshot compared with, or -1 (History)
+	node:       u32,
+	name:       string,
+	bytes:      u64, // on disk; a directory's counts everything under it found so far
+	directory:  bool,
+	was:        i64, // what it held in the snapshot compared with, or -1 (History)
+	// A directory the walk left short, so its total is less than it holds: it, or a
+	// directory under it, could not be opened or listed, or, in a scan stopped or
+	// failed, has no entries yet, which an empty one cannot be told from.
+	incomplete: bool,
 }
 
 // Crumb is one directory on the way down from the top to a listing.
@@ -141,16 +145,17 @@ Rings :: struct {
 // sweeps in a ring never add to more than their parent's. The arcs under one come
 // largest first.
 Arc :: struct {
-	node:      u32,
-	name:      string,
-	bytes:     u64,
-	directory: bool,
-	depth:     u8, // 1 for the first ring
-	branch:    u8, // which entry of the first ring it lies under, for its colour
-	start:     f32, // turns clockwise from twelve o'clock, 0 to 1
-	sweep:     f32, // turns
-	up:        i32, // the index of the arc it lies in, -1 for the first ring
-	was:       i64, // what it held in the snapshot compared with, or -1
+	node:       u32,
+	name:       string,
+	bytes:      u64,
+	directory:  bool,
+	depth:      u8, // 1 for the first ring
+	branch:     u8, // which entry of the first ring it lies under, for its colour
+	start:      f32, // turns clockwise from twelve o'clock, 0 to 1
+	sweep:      f32, // turns
+	up:         i32, // the index of the arc it lies in, -1 for the first ring
+	was:        i64, // what it held in the snapshot compared with, or -1
+	incomplete: bool, // as for an Entry
 }
 
 Rings_Result :: struct {
@@ -161,6 +166,9 @@ Rings_Result :: struct {
 	was:        i64, // what dir held in the snapshot compared with, or -1
 	compared:   bool, // whether a snapshot is compared with, so was says anything
 	arcs:       []Arc, // ring by ring is not promised; each arc carries its depth
+	// The scan was stopped or failed, or dir itself could not be read whole, so the
+	// chart shows less than is there.
+	incomplete: bool,
 	gone:       bool, // dir was forgotten (moved to the Trash, cleaned up), so nothing else is set but up
 	up:         u32, // when gone, the nearest ancestor the scan still holds
 }

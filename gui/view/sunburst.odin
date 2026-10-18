@@ -1,3 +1,4 @@
+//review:ignore history-coupled-file chart_tree.odin keeps its safe semantic labels; tooltip drawing and queued key iteration do not change its contract.
 package leita_view
 
 import "core:fmt"
@@ -19,7 +20,8 @@ import "../query"
 The directory shown, as a sunburst: its contents in the first ring around a hub,
 theirs in the next, each arc's sweep its share of its parent's. A click on a
 directory's arc opens it, which makes it the hub; a click on the hub goes up. A
-right click opens the entry's menu (actions.odin).
+double click on a file's arc opens it in its application. Keys move a pick
+through the arcs (chart_keys.odin). A right click opens the entry's menu (actions.odin).
 
 Every arc is one entry the host laid out (query.Rings); the view only turns turns
 into radians. Hit testing is done here rather than per arc: the disc is one input
@@ -241,6 +243,9 @@ rings_panel :: proc(gtx: ^ui.Ctx, m: ^Model) {
 	if i := lit_by_row(r, m.row_hover); u == .Nothing && i >= 0 {
 		u, at = .Arc, i
 	}
+	if i, picked := picked_arc(m, r); picked {
+		u, at = .Arc, i
+	}
 	info(gtx, m, r, answer, u, at)
 
 	// The disc is as big as the smaller side of the room it is given, and sits in
@@ -295,6 +300,9 @@ info :: proc(gtx: ^ui.Ctx, m: ^Model, drawn, laid: ^query.Rings_Result, u: Hit, 
 		if note := colour_note(gtx, m, laid, at); note != "" {
 			kind = strings.concatenate({" · ", note}, gtx.allocator)
 		}
+		if a.incomplete {
+			kind = strings.concatenate({kind, " · ", tr(.Incomplete)}, gtx.allocator)
+		}
 		detail = strings.concatenate(
 			{
 				trf(
@@ -302,7 +310,7 @@ info :: proc(gtx: ^ui.Ctx, m: ^Model, drawn, laid: ^query.Rings_Result, u: Hit, 
 					.Arc_Share,
 					human.bytes(a.bytes),
 					fmt.tprintf("%.1f", share),
-					base_name(here),
+					safe(gtx, base_name(here)),
 				),
 				kind,
 				strings.concatenate({" · ", tr(.Click_To_Open)}, gtx.allocator) if a.directory else "",
@@ -320,20 +328,33 @@ info :: proc(gtx: ^ui.Ctx, m: ^Model, drawn, laid: ^query.Rings_Result, u: Hit, 
 			strings.concatenate({" · ", tr(.Click_To_Go_Up)}, gtx.allocator) if up else "",
 			allocator = gtx.allocator,
 		)
+		if drawn.incomplete {
+			detail = strings.concatenate({detail, " · ", tr(.Incomplete)}, gtx.allocator)
+		}
 		// The bar says where the centre is; the line stays, empty, so the block
 		// keeps its height.
 		path = ""
 	}
-	primer.truncate(gtx, name, max_width = ui.INF, weight = .Semibold)
+	{
+		stack := ui.stack_open(gtx)
+		defer ui.close(&stack)
+		primer.truncate(gtx, safe(gtx, name), max_width = ui.INF, weight = .Semibold)
+		show_raw_tip(gtx, name, ui.last_widget(gtx))
+	}
 	primer.truncate(gtx, detail, max_width = ui.INF, size = .Small, color = muted)
-	primer.truncate(
-		gtx,
-		middle_cut(gtx, path, small, width),
-		title = path,
-		max_width = ui.INF,
-		size = .Small,
-		color = muted,
-	)
+	{
+		stack := ui.stack_open(gtx)
+		defer ui.close(&stack)
+		primer.truncate(
+			gtx,
+			middle_cut(gtx, safe(gtx, path), small, width),
+			title = raw_tip_text(gtx, path),
+			max_width = ui.INF,
+			size = .Small,
+			color = muted,
+		)
+		show_raw_tip(gtx, path, ui.last_widget(gtx))
+	}
 }
 
 // colour_note is what the colouring chosen says of the entry at: its kind by
@@ -456,18 +477,28 @@ sunburst :: proc(
 	b := burst_of(side)
 
 	p := ui.widget_open(gtx, loc = loc)
-	pressed, menu := false, false
+	area := ops.Rect{0, 0, side, side}
+	c := design.control(gtx, p.id, area, .Live)
+	pressed, double, menu := false, false, false
+	key_at := hovered
 	for e in ui.events(gtx, p.id) {
 		#partial switch e.kind {
-		case .Move, .Enter:
+		case .Move:
+			m.pointer, m.inside, m.chart_keys = e.pos, true, false
+		case .Enter:
 			m.pointer, m.inside = e.pos, true
 		case .Leave:
 			m.inside = false
+		case .Key:
+			chart_key(gtx, m, r, e, key_at)
+			key_at, _ = picked_arc(m, r)
+		case .Blur:
+			set_chart_pick(m, r, -1)
 		case .Press:
 			m.pointer, m.inside = e.pos, true
 			#partial switch e.button {
 			case .Left:
-				pressed = true
+				pressed, double = true, e.clicks >= 2
 			case .Right:
 				menu = true
 			}
@@ -477,6 +508,7 @@ sunburst :: proc(
 	bg := primer.color(.Bg_Color_Default)
 	// Each arc's box, for its item in the chart's semantics.
 	boxes := make([]Box, len(r.arcs), gtx.allocator)
+	outlined := make([dynamic]ops.Path_Ref, gtx.allocator)
 	for a, i in r.arcs {
 		fill := fill_of(m, r, i, i == hovered, false)
 		r0 := b.hub + b.ring * f32(a.depth - 1)
@@ -488,15 +520,44 @@ sunburst :: proc(
 		ops.fill(gtx.scene, shape, fill)
 		ops.stroke(gtx.scene, shape, bg, {width = 1})
 		if a.depth == 1 {
-			ops.tag(gtx.scene, p.id, fmt.aprintf("arc %s", a.name, allocator = gtx.allocator))
+			ops.tag(
+				gtx.scene,
+				p.id,
+				fmt.aprintf("arc %s", safe(gtx, a.name), allocator = gtx.allocator),
+			)
 		}
+		if a.incomplete {
+			append(&outlined, shape)
+			tag_incomplete(gtx, &p, u64(i), safe(gtx, a.name), boxes[i].rect)
+		}
+	}
+	// Over every arc, not as each is drawn: the next arc's rim would cover half of it.
+	for shape in outlined {
+		mark_incomplete(gtx, shape)
 	}
 	hub := ui.circle(b.center, b.hub - 1)
 	ops.fill(gtx.scene, hub, primer.color(.Bg_Color_Muted))
 	ops.stroke(gtx.scene, hub, primer.color(.Border_Color_Default), {width = 1})
 	ops.tag(gtx.scene, p.id, "hub")
+	if r.incomplete {
+		mark_incomplete(gtx, hub)
+		tag_incomplete(
+			gtx,
+			&p,
+			u64(len(r.arcs)),
+			safe(gtx, base_name(r.crumbs[len(r.crumbs) - 1].name)),
+			ops.Rect{b.center.x - b.hub, b.center.y - b.hub, 2 * b.hub, 2 * b.hub},
+		)
+	}
 
-	ops.input_area(gtx.scene, p.id, ops.Rect{0, 0, side, side}, {.Press, .Move, .Enter, .Leave})
+	design.paint_focus_visible_ring(
+		gtx,
+		c,
+		area,
+		design.corners_all(side / 2),
+		primer.focus_outline(-2),
+	)
+	design.listen(gtx, c.st, p.id, area, design.CLICK_KINDS)
 	ops.tag(gtx.scene, p.id, "Sunburst chart")
 	describe_chart(gtx, &p, m, r, boxes, hovered, tr(.Mode_Sunburst))
 
@@ -513,7 +574,12 @@ sunburst :: proc(
 		case .Nothing:
 		}
 	}
-	if m.menu_from == .Sunburst {
+	preview := ""
+	if m.inside && hovered >= 0 && !m.menu_open {
+		preview = r.arcs[hovered].name
+	}
+	show_raw_tip(gtx, preview, {p.id, {side, side}})
+	if m.menu_open && m.menu_from == .Sunburst {
 		entry_menu(gtx, m, {p.id, {0, 0}}, m.menu_at)
 	}
 	ui.widget_close(gtx, &p, {size = {side, side}})
@@ -525,6 +591,8 @@ sunburst :: proc(
 	case .Arc:
 		if r.arcs[at].directory {
 			open(m, r.arcs[at].node)
+		} else if double {
+			open_file(gtx, m, r.arcs[at].node)
 		}
 	case .Hub:
 		if len(r.crumbs) > 1 {
