@@ -165,6 +165,7 @@ def synthetic(binary, out, frames):
         data = base / 'data'
         data.mkdir()
         env = dict(os.environ, XDG_DATA_HOME=str(data), LEITA_SYNTHETIC='0')
+        env.pop('LEITA_SYNTHETIC_COMPARE_BASELINE', None)
         run([binary, '/', data, theme, '-await', 'Done'], env=env)
         env['LEITA_SYNTHETIC'] = '7'
         steps = []
@@ -192,6 +193,55 @@ def synthetic(binary, out, frames):
         if frames:
             encode(base / 'frames', base / 'demo.mp4')
             storyboard(base)
+
+
+def compare(binary, out):
+    """Capture only Change from 2 real app scans with a shrinking baseline folder."""
+    results = {}
+    for theme in ('light', 'dark'):
+        base = out / 'compare' / theme
+        base.mkdir(parents=True)
+        data = base / 'data'
+        data.mkdir()
+        still = out / theme
+        still.mkdir(exist_ok=True)
+        before, after = base / 'before.json', base / 'after.json'
+        env = dict(os.environ, XDG_DATA_HOME=str(data), LEITA_SYNTHETIC='0',
+                   LEITA_SYNTHETIC_COMPARE_BASELINE='1')
+        with (base / 'baseline.log').open('w') as log:
+            run([binary, '/', data, theme, '-await', 'Done', *export(before)],
+                env=env, stdout=log, stderr=log)
+        env['LEITA_SYNTHETIC'] = '7'
+        env.pop('LEITA_SYNTHETIC_COMPARE_BASELINE')
+        with (base / 'capture.log').open('w') as log:
+            run([binary, '/', data, theme, '-await', 'Done', '-advance', '60',
+                 '-click', 'Treemap', '-click', 'Change', '-advance', '30',
+                 '-png', still / 'change.png', *export(after)],
+                env=env, stdout=log, stderr=log)
+        first, second = json.loads(before.read_text()), json.loads(after.read_text())
+        assert first['schema'] == second['schema'] == 'leita.report/1'
+        assert first['compared'] is None
+        assert second['compared']['bytes'] == first['totals']['bytes']
+        assert first['totals']['unread'] == second['totals']['unread'] == 0
+        entries = second['largest_directories']
+        by_path = {entry['path']: entry for entry in entries}
+        chosen = {name: by_path[name] for name in ('/System', '/Users', '/Library')}
+        assert chosen['/System']['change'] < -(4 << 30), chosen
+        assert chosen['/Users']['change'] > 0, chosen
+        assert chosen['/Library']['change'] == 0, chosen
+        result = dict(baseline_bytes=first['totals']['bytes'],
+                      current_bytes=second['totals']['bytes'],
+                      chosen={path: dict(bytes=e['bytes'], bytes_before=e['bytes_before'],
+                                         change=e['change']) for path, e in chosen.items()},
+                      counts=dict(shrank=sum(e['change'] < 0 for e in entries if e['change'] is not None),
+                                  grew=sum(e['change'] > 0 for e in entries if e['change'] is not None),
+                                  unchanged=sum(e['change'] == 0 for e in entries if e['change'] is not None)),
+                      mechanism='headless app scans; synthetic baseline AssetsV2 is 12 GiB larger')
+        assert all(result['counts'].values()), result
+        (base / 'validation.json').write_text(json.dumps(result, indent=2) + '\n')
+        results[theme] = result
+    assert results['light'] == results['dark'], 'theme data must match'
+    return results
 
 
 def storyboard(base):
@@ -268,29 +318,37 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('output', type=Path, help='new output directory; existing directories are refused')
     parser.add_argument('--binary', type=Path, default=ROOT / 'build' / 'capture')
-    parser.add_argument('--fixture-root', type=Path, required=True,
+    parser.add_argument('--fixture-root', type=Path,
                         help='new directory on tmpfs, e.g. /tmp/leita-example-<id>')
     parser.add_argument('--jm-revision', required=True, help='exact jm revision used to build the driver')
     parser.add_argument('--frames', type=int, default=60, help='enable fixed 30 fps interaction timelines when positive; 0 for stills')
     parser.add_argument('--fixture-only', action='store_true')
+    parser.add_argument('--compare-only', action='store_true',
+                        help='capture only the two Change stills and their actual reports')
     args = parser.parse_args()
     if args.frames < 0:
         parser.error('--frames must be nonnegative')
-    if args.output.exists() or args.fixture_root.exists():
+    if args.output.exists() or (args.fixture_root and args.fixture_root.exists()):
         parser.error('output and fixture root must both be new; nothing is overwritten')
-    # This fixture validates tmpfs only; refuse other filesystems.
-    fs = subprocess.check_output(['stat', '-f', '-c', '%T', args.fixture_root.parent], text=True).strip()
-    if fs != 'tmpfs' or str(args.fixture_root.resolve()).startswith('/dev/'):
-        parser.error('--fixture-root must have an existing parent on tmpfs outside /dev (Reclaim protects /dev)')
+    if not args.compare_only:
+        if args.fixture_root is None:
+            parser.error('--fixture-root is required unless --compare-only is set')
+        # This fixture validates tmpfs only; refuse other filesystems.
+        fs = subprocess.check_output(['stat', '-f', '-c', '%T', args.fixture_root.parent], text=True).strip()
+        if fs != 'tmpfs' or str(args.fixture_root.resolve()).startswith('/dev/'):
+            parser.error('--fixture-root must have an existing parent on tmpfs outside /dev (Reclaim protects /dev)')
     args.output = args.output.resolve()
-    args.fixture_root = args.fixture_root.resolve()
+    if args.fixture_root:
+        args.fixture_root = args.fixture_root.resolve()
     args.output.mkdir(parents=True)
     validation = {}
-    for theme in ('light', 'dark'):
-        validation[theme] = fixture(args.binary.resolve(), args.output, args.fixture_root, theme, args.frames > 0)
-    if not args.fixture_only:
-        synthetic(args.binary.resolve(), args.output, args.frames)
-    if args.frames:
+    if not args.compare_only:
+        for theme in ('light', 'dark'):
+            validation[theme] = fixture(args.binary.resolve(), args.output, args.fixture_root, theme, args.frames > 0)
+        if not args.fixture_only:
+            synthetic(args.binary.resolve(), args.output, args.frames)
+    comparison = compare(args.binary.resolve(), args.output) if args.compare_only or not args.fixture_only else None
+    if args.frames and not args.compare_only:
         pairs = [args.output / 'fixture'] + ([] if args.fixture_only else [args.output])
         for pair in pairs:
             difference = storyboard_difference(json.loads((pair / 'light/storyboard.json').read_text()),
@@ -313,9 +371,9 @@ def main():
                     jm_revision=args.jm_revision,
                     binary_sha256=hashlib.sha256(args.binary.read_bytes()).hexdigest(),
                     geometry=dict(logical=[1280, 820], density=2, pixels=[2560, 1640]),
-                    fixture_video=json.loads((args.output / 'fixture/light/storyboard.json').read_text()) if args.frames else None,
-                    hero=json.loads((args.output / 'light/storyboard.json').read_text()) if args.frames and not args.fixture_only else None,
-                    fixture=validation, sha256=files)
+                    fixture_video=json.loads((args.output / 'fixture/light/storyboard.json').read_text()) if args.frames and not args.compare_only else None,
+                    hero=json.loads((args.output / 'light/storyboard.json').read_text()) if args.frames and not args.fixture_only and not args.compare_only else None,
+                    fixture=validation, compare=comparison, sha256=files)
     (args.output / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
     print(args.output / 'manifest.json')
 

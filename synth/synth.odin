@@ -32,9 +32,10 @@ GiB :: f64(1 << 30)
 HOME :: "/Users/alex"
 
 Config :: struct {
-	day:   int, // which day's disk: a later one has grown
-	pace:  bool, // take as long as walking a real disk would
-	clock: Clock, // optional directory-boundary clock; must return when the tree is cancelled
+	day:              int, // which day's disk: a later one has grown
+	pace:             bool, // take as long as walking a real disk would
+	clock:            Clock, // optional directory-boundary clock; must return when the tree is cancelled
+	compare_baseline: bool, // capture-only baseline with a larger AssetsV2 folder
 }
 
 // Clock replaces wall-clock sleeping, without changing generated entries.
@@ -61,7 +62,17 @@ from_env :: proc() -> (cfg: Config, on: bool) {
 		return {}, false
 	}
 	day, _ := strconv.parse_int(value)
-	return {day = max(day, 0), pace = true, clock = clock_override}, true
+	return {
+			day = max(day, 0),
+			pace = true,
+			clock = clock_override,
+			compare_baseline = os.get_env(
+				"LEITA_SYNTHETIC_COMPARE_BASELINE",
+				context.temp_allocator,
+			) ==
+			"1",
+		},
+		true
 }
 
 // space is the size of the made-up disk and what is free on it on day.

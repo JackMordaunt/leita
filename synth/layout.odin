@@ -58,6 +58,12 @@ layout :: proc(g: ^Gen) {
 @(private)
 place :: proc(g: ^Gen, s: Spec) {
 	bytes := s.gib * GiB * (1 + s.grow * f64(g.cfg.day))
+	// The Compare capture's earlier scan contains a larger system asset folder.
+	// Its day-7 scan uses the ordinary synthetic disk, so this produces a real
+	// shrinking directory without changing the hero's day-7 scan or its film.
+	if g.cfg.compare_baseline && g.at.n == u16(Layout.System_Library) && s.name == "AssetsV2" {
+		bytes += 12 * GiB
+	}
 	parent := g.at.index
 	defer g.at.index = parent
 	name, ok := descend(g, s.name)
