@@ -272,6 +272,7 @@ on_hands_the_monitor_to_the_scheduler_and_off_takes_it_back :: proc(t: ^testing.
 	testing.expect(t, strings.has_prefix(out, "monitoring is off"), out)
 }
 
+//review:ignore history-coupled-file command.odin already delegates list wording to how_read in monitor.odin; only the fallback expectation changes.
 @(test)
 a_run_scans_what_is_due_and_keeps_it_in_history :: proc(t: ^testing.T) {
 	b: Bench
@@ -310,10 +311,19 @@ a_run_scans_what_is_due_and_keeps_it_in_history :: proc(t: ^testing.T) {
 	testing.expect_value(t, runs[0].problem, "")
 	_, out = run_monitor(&b, "list")
 	testing.expect(t, strings.contains(out, "2.1 MB"), out)
-	// The last run updated from the first's tree, and says how much it read again,
-	// and since when, as the command line does.
-	testing.expectf(t, runs[0].updated, "the last run read whole: %s", runs[0].why)
-	testing.expect(t, strings.contains(out, "read again since"), out)
+	// A sharing-aware filesystem rereads because the baseline lacks extent ids;
+	// elsewhere the last run says how much it read again from the first tree.
+	if runs[0].updated {
+		testing.expect(t, strings.contains(out, "read again since"), out)
+	} else {
+		testing.expect(
+			t,
+			runs[0].why == "extent charges require a fresh walk" ||
+				runs[0].why == "clone charges require a fresh walk",
+			out,
+		)
+		testing.expect(t, strings.contains(out, fmt.tprintf("read whole: %s", runs[0].why)), out)
+	}
 
 	// The first run read the place whole and kept it as the baseline the next
 	// update from, named as the command line and the window name theirs; stopping
@@ -327,6 +337,7 @@ a_run_scans_what_is_due_and_keeps_it_in_history :: proc(t: ^testing.T) {
 		scan.location(target, context.temp_allocator),
 		context.temp_allocator,
 	)
+	testing.expect(t, baseline != b.c.paths.history && baseline != b.place)
 	testing.expectf(t, os.exists(baseline), "no baseline at %s", baseline)
 	code, _ = run_monitor(&b, "remove", b.place)
 	testing.expect_value(t, code, 0)

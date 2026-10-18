@@ -527,7 +527,7 @@ test_a_hard_link_read_from_disk_is_charged_once_across_workers :: proc(t: ^testi
 		testing.expect(t, cwd_err == nil, "no working directory")
 		scratch = fmt.tprintf("%s/build", cwd)
 	}
-	root := fmt.tprintf("%s/leita_walk_links", scratch)
+	root := fmt.tprintf("%s/leita_walk_btrfs_disk_links", scratch)
 	defer os.remove_all(root)
 	_, blocks := make_linked_directories(t, root, DIRS, 256 * 1024)
 
