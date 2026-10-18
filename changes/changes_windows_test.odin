@@ -84,15 +84,44 @@ test_a_journal_cursor_that_cannot_be_trusted_rescans :: proc(t: ^testing.T) {
 	other_journal.journal += 1
 	other_volume := c
 	other_volume.volume[0] += 1
+	other_place := c
+	other_place.place[0] += 1
 	behind := c
 	behind.position = -1
 	ahead := c
 	ahead.position = max(i64)
-	for bad in ([]Cursor{{}, other_journal, other_volume, behind, ahead}) {
+	for bad in ([]Cursor{{}, other_journal, other_volume, other_place, behind, ahead}) {
 		set, _, err := since(root, bad)
 		testing.expect_value(t, err, Error.None)
 		testing.expectf(t, set.rescan && set.why != "", "%v: no rescan", bad)
 	}
+}
+
+/*
+Another directory renamed onto the place is recorded only against the place's
+parent, and what it holds has no record since the cursor: the place's file id
+differs, and it is scanned whole.
+*/
+@(test)
+test_a_directory_renamed_onto_the_place_rescans :: proc(t: ^testing.T) {
+	root := fresh(t, "usn_renamed")
+	other := fresh(t, "usn_renamed_other")
+	aside := fmt.tprintf("%s_aside", root)
+	os.remove_all(aside)
+	defer os.remove_all(root)
+	defer os.remove_all(other)
+	defer os.remove_all(aside)
+	put(t, fmt.tprintf(`%s\old.txt`, other), 100)
+	c, ok := now(root)
+	if !testing.expect(t, ok, "no cursor: the temp directory's volume keeps no change journal") {
+		return
+	}
+	testing.expect(t, os.rename(root, aside) == nil, "could not move the place aside")
+	testing.expect(t, os.rename(other, root) == nil, "could not rename onto the place")
+	set, _, err := since(root, c)
+	defer change_set_destroy(&set)
+	testing.expect_value(t, err, Error.None)
+	testing.expect_value(t, set.why, "another directory is in the place than when it was read")
 }
 
 // A whole volume's place is its drive, C:, which must be read as its root, not as

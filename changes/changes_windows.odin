@@ -28,8 +28,8 @@ closes, timestamps, security and the like that make up most of a busy volume's
 journal.
 
 A journal that is not there, was deleted and made again, or has wrapped past the
-cursor, and a volume that is not the one the cursor was taken on, all mean the place
-is scanned whole. Nothing here creates or resizes a journal: that needs an
+cursor, a volume that is not the one the cursor was taken on, and a place that is
+another directory than it was, all mean the place is scanned whole. Nothing here creates or resizes a journal: that needs an
 administrator and changes the machine.
 */
 
@@ -45,10 +45,15 @@ now :: proc(place: string) -> (c: Cursor, ok: bool) {
 	if !queried {
 		return {}, false
 	}
+	id, has_id := place_id(as_directory(place))
+	if !has_id {
+		return {}, false
+	}
 	at := now_ns()
 	return {
 			source = .Usn,
 			volume = {u64(v.serial), 0},
+			place = id,
 			journal = data.journal,
 			position = data.next,
 			full = at,
@@ -80,6 +85,15 @@ since :: proc(
 	defer win.CloseHandle(v.handle)
 	if u64(v.serial) != c.volume[0] {
 		return rescan("another volume is mounted where the place was read"), {}, .None
+	}
+	// Another directory renamed onto the place is one rename, recorded against the
+	// place's parent, outside it; what moved in with it has no record at all.
+	id, has_id := place_id(as_directory(place))
+	if !has_id {
+		return rescan("the place could not be opened"), {}, .None
+	}
+	if id != c.place {
+		return rescan("another directory is in the place than when it was read"), {}, .None
 	}
 	data, queried := query(v.handle)
 	switch {
@@ -313,15 +327,7 @@ system gives it, which is what a path opened by id will start with.
 */
 @(private = "file")
 open_place :: proc(place: string) -> (h: win.HANDLE, canonical: string, ok: bool) {
-	h = win.CreateFileW(
-		win.utf8_to_wstring(place, context.temp_allocator),
-		win.FILE_READ_ATTRIBUTES,
-		win.FILE_SHARE_READ | win.FILE_SHARE_WRITE | win.FILE_SHARE_DELETE,
-		nil,
-		win.OPEN_EXISTING,
-		win.FILE_FLAG_BACKUP_SEMANTICS,
-		nil,
-	)
+	h = open_directory(place)
 	if h == win.INVALID_HANDLE_VALUE {
 		return nil, "", false
 	}
@@ -331,6 +337,36 @@ open_place :: proc(place: string) -> (h: win.HANDLE, canonical: string, ok: bool
 		return nil, "", false
 	}
 	return h, canonical, true
+}
+
+// The 128-bit file id of the directory `place` names, which with the volume serial
+// number identifies one file on the machine (FILE_ID_INFO, Microsoft Learn).
+@(private = "file")
+place_id :: proc(place: string) -> (id: [2]u64, ok: bool) {
+	h := open_directory(place)
+	if h == win.INVALID_HANDLE_VALUE {
+		return {}, false
+	}
+	defer win.CloseHandle(h)
+	info: win.FILE_ID_INFO
+	if !win.GetFileInformationByHandleEx(h, .FileIdInfo, &info, size_of(info)) {
+		return {}, false
+	}
+	return transmute([2]u64)info.FileId.Identifier, true
+}
+
+// A handle on the directory `place` for asking it about itself.
+@(private = "file")
+open_directory :: proc(place: string) -> win.HANDLE {
+	return win.CreateFileW(
+		win.utf8_to_wstring(place, context.temp_allocator),
+		win.FILE_READ_ATTRIBUTES,
+		win.FILE_SHARE_READ | win.FILE_SHARE_WRITE | win.FILE_SHARE_DELETE,
+		nil,
+		win.OPEN_EXISTING,
+		win.FILE_FLAG_BACKUP_SEMANTICS,
+		nil,
+	)
 }
 
 // The path of the directory with file id `id` on the volume `hint` is on, in the
