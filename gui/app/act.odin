@@ -233,8 +233,9 @@ name_of :: proc(d: ^Desk, e: command.Entry) -> string {
 reclaim_answer is what can be deleted under the directory q names, once the scan
 is over: reclaim.find's candidates, grouped by kind, each with when it or what it
 directly holds was last modified. A candidate that is no longer a directory on disk
-is left out, as is one Reclaim run as root may not delete (refused_as_root). What
-it offers is kept, and Clean deletes nothing else.
+is left out, as is a link to one (newest_modification), and one Reclaim run as root
+may not delete (refused_as_root). What it offers is kept, and Clean deletes nothing
+else.
 */
 reclaim_answer :: proc(d: ^Desk, q: query.Reclaim) -> (r: query.Reclaim_Result) {
 	r.generation = d.generation
@@ -370,10 +371,14 @@ refused_as_root :: proc(path: string, who: home.User) -> bool {
 }
 
 // newest_modification is when the directory at path, or anything it directly
-// holds, was last modified, and whether path is a directory and not a link to one.
+// holds, was last modified, and whether path is a directory and not a link to
+// one. files.is_link is asked as well as lstat: on Windows lstat drops the
+// reparse tag and calls a junction or a directory symlink a directory
+// (core/os/stat_windows.odin), and Reclaim would offer it. The link is not
+// listed, so what it names is not read.
 newest_modification :: proc(path: string) -> (modified: i64, is_dir: bool) {
 	info, err := os.stat_do_not_follow_links(path, context.temp_allocator)
-	if err != nil || info.type != .Directory {
+	if err != nil || info.type != .Directory || files.is_link(path) {
 		return 0, false
 	}
 	modified = time.time_to_unix(info.modification_time)

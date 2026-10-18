@@ -86,8 +86,8 @@ open_directory :: proc(path: string) -> (fd: posix.FD, err: Error) {
 	return fd, .None
 }
 
-// is_link is whether path is a symbolic link, as lstat says.
-@(private)
+// is_link is whether path is a symbolic link, as lstat says. Reclaim asks as
+// well as delete_tree, so a link to a directory is never offered.
 is_link :: proc(path: string) -> bool {
 	st: posix.stat_t
 	cpath := strings.clone_to_cstring(path, context.temp_allocator)

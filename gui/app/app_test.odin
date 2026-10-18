@@ -1746,6 +1746,81 @@ reclaim_offers_only_what_rebuilds_and_deletes_what_is_chosen :: proc(t: ^testing
 	testing.expect(t, os.exists(fmt.tprintf("%s/plain/build/out.o", root)), "nothing went")
 }
 
+/*
+A directory link is never offered. The scan records a real node_modules; that
+directory is then replaced by a link before Reclaim asks. On Windows lstat calls
+the junction a directory, so only files.is_link keeps it out of the list. A
+second link is already there at the scan: the walker records it as a reparse and
+find skips it, and the MFT reader records a directory reparse point as a
+directory, which the same check must refuse. Clean up is not clicked. The list
+is the proof it was not offered, and the file the link names is still there.
+*/
+@(test)
+reclaim_never_offers_a_directory_link :: proc(t: ^testing.T) {
+	// remove_all on Windows can follow a junction (SHFileOperationW). Drop any
+	// link a failed run left before projects removes the tree.
+	stale := under(scratch(t), "leita_gui_reclaim_link")
+	os.remove(under(stale, "web", "node_modules"))
+	os.remove(under(stale, "linked", "node_modules"))
+	root := projects(t, "reclaim_link")
+	outside := under(scratch(t), "leita_gui_reclaim_link_outside")
+	os.remove_all(outside)
+	testing.expect(t, os.make_directory(outside) == nil, "the link target")
+	sentinel := under(outside, "keep")
+	testing.expect(t, os.write_entire_file(sentinel, "keep") == nil)
+	web_link := under(root, "web", "node_modules")
+	prior := under(root, "linked", "node_modules")
+	defer {
+		os.remove(web_link)
+		os.remove(prior)
+		os.remove_all(root)
+		os.remove_all(outside)
+	}
+	testing.expect(t, os.make_directory(under(root, "linked")) == nil)
+	testing.expect(t, os.write_entire_file(under(root, "linked", "package.json"), "{}\n") == nil)
+	testing.expect(t, link_directory(outside, prior), "a directory link before the scan")
+
+	r: Rig
+	rig_open(&r, root)
+	defer rig_close(&r)
+	testing.expect(t, settle(&r, "Done"))
+
+	testing.expect(t, os.remove_all(web_link) == nil, "the recorded directory")
+	testing.expect(
+		t,
+		link_directory(outside, web_link),
+		"a directory link where the candidate was",
+	)
+	kept, read_err := os.read_entire_file(sentinel, context.temp_allocator)
+	testing.expect(
+		t,
+		read_err == nil && string(kept) == "keep",
+		"the target is intact before Reclaim",
+	)
+
+	testing.expect(t, ui.probe_click(&r.p, "Reclaim"))
+	press_and_hand_on(&r)
+	testing.expect(t, settle(&r, RUST_TARGET), "a real directory is still offered")
+	testing.expect(
+		t,
+		!ui.probe_tagged(&r.p, WEB_NODE_MODULES),
+		"a link put where a candidate was is not offered",
+	)
+	testing.expect(
+		t,
+		!ui.probe_tagged(&r.p, "linked" + scan.SEPARATOR + "node_modules"),
+		"a directory link under the scan is not offered",
+	)
+	kept, read_err = os.read_entire_file(sentinel, context.temp_allocator)
+	testing.expect(
+		t,
+		read_err == nil && string(kept) == "keep",
+		"what the link names was not touched",
+	)
+	testing.expect(t, os.exists(web_link), "the link itself was not deleted")
+	testing.expect(t, os.exists(prior), "the earlier link was not deleted")
+}
+
 // A folder that cannot all be deleted stays in the list and the chart, and only
 // what went is counted freed. Here node_modules is emptied, but its own folder
 // stays: web is made read-only after the scan, so nothing in it can be unlinked.
