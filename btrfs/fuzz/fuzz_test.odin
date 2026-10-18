@@ -4,6 +4,29 @@ import "core:os"
 import "core:strings"
 import "core:testing"
 
+import btrfs ".."
+
+@(test)
+duplicate_and_malformed_extents_do_not_add_a_charge :: proc(t: ^testing.T) {
+	context.allocator = context.temp_allocator
+	u: btrfs.Usage
+	defer btrfs.usage_destroy(&u)
+	f: btrfs.File
+	defer btrfs.file_destroy(&f)
+	first := make_item(4096, 4096)
+	testing.expect_value(t, btrfs.charge(first, &u, &f), btrfs.Item_Error.None)
+	testing.expect_value(t, btrfs.total(u).disk, u64(4096))
+	// The same address is paid once, even if the next item claims a new length.
+	testing.expect_value(t, btrfs.charge(make_item(4096, 8192), &u, &f), btrfs.Item_Error.None)
+	testing.expect_value(t, btrfs.total(u).disk, u64(4096))
+	testing.expect_value(t, btrfs.charge(first[:20], &u, &f), btrfs.Item_Error.Short)
+	testing.expect_value(t, btrfs.total(u).disk, u64(4096))
+	bad := make_item(8192, 4096)
+	bad[16] = 255
+	testing.expect_value(t, btrfs.charge(bad, &u, &f), btrfs.Item_Error.Compression)
+	testing.expect_value(t, btrfs.total(u).disk, u64(4096))
+}
+
 @(test)
 properties_hold :: proc(t: ^testing.T) {
 	context.allocator = context.temp_allocator
