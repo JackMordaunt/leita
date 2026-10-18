@@ -1,11 +1,11 @@
 {
-  "comment": "Tolerance is 20% because a GitHub runner varies against the machine that wrote these medians. A run fails when its median exceeds the baseline times (1 + tolerance).",
-  "tolerance": 0.2,
+  "comment": "The medians are the ubuntu-latest runner's (4 vCPU; run 39087 on ci/card-532, 2026-10-18), not a developer machine's: this machine walks the same tree in 26 ms, the runner in 165 ms. Tolerance is 30% because one runner varies against another. A run fails when its median exceeds the baseline times (1 + tolerance). Re-record from a runner's printed median, not with --update here.",
+  "tolerance": 0.3,
   "files": 200000,
   "seed": 20261014,
   "filesystems": {
     "tmpfs": {
-      "median_ms": 25.6
+      "median_ms": 165.1
     }
   }
 }

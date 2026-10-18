@@ -580,7 +580,7 @@ fsbench args="": (cli "release")
 # passwordless sudo; no loop device. The release command line, a warmup, then
 # the runs: hyperfine when it is installed, otherwise /usr/bin/time. The median
 # is printed in milliseconds. It fails when the median exceeds the baseline
-# times (1 + tolerance). The tolerance is 20% because a GitHub runner varies
+# times (1 + tolerance). The tolerance is 30% because a GitHub runner varies
 # against the machine that wrote the medians. `--update` rewrites the median.
 #
 # A release build needs a licence key. The test key stands in when
