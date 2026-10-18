@@ -8,6 +8,18 @@ import "core:unicode/utf16"
 
 import "../scan"
 
+@(test)
+test_link_account_is_name_unlink_only :: proc(t: ^testing.T) {
+	testing.expect(t, link_account(1, 4096, false).known == nil)
+	testing.expect(t, link_account(4, 4096, true).known == nil)
+	a := link_account(2, 8192, false)
+	testing.expect_value(t, a.links, u32(2))
+	testing.expect_value(t, a.shared, u64(8192))
+	testing.expect_value(t, a.reclaim, u64(0))
+	testing.expect(t, a.known == {.Links, .Reclaim, .Shared})
+	testing.expect(t, .Allocated not_in a.known && .Logical not_in a.known && .Exclusive not_in a.known)
+}
+
 // ---- synthetic on-disk structures -------------------------------------------------
 //
 // Real MFT records are awkward to ship as fixtures (they carry the volume's file
