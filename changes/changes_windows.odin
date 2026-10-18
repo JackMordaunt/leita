@@ -1,7 +1,6 @@
 #+build windows
 package changes
 
-import "core:slice"
 import "core:strings"
 import win "core:sys/windows"
 
@@ -107,17 +106,17 @@ since :: proc(
 	case c.position > data.next:
 		return rescan("the change journal is behind the last scan"), {}, .None
 	}
-	next = c
-	next.position = data.next
-
 	parents := make(map[[16]u8]struct{}, context.temp_allocator)
 	wrapped, read_ok := read_parents(v.handle, data, c.position, &parents)
 	if wrapped {
 		return rescan("the change journal wrapped past the last scan"), {}, .None
 	}
 	if !read_ok {
-		return rescan("the change journal could not be read"), {}, .None
+		return rescan("the change journal could not be read to its end"), {}, .None
 	}
+	// Only a read that reached where the journal ended moves the cursor there.
+	next = c
+	next.position = data.next
 
 	changed = Change_Set {
 		shallow = make([dynamic]string, allocator),
@@ -244,10 +243,16 @@ query :: proc(volume: win.HANDLE) -> (j: Journal, ok: bool) {
 	return {journal = out[0], first = i64(out[1]), next = i64(out[2])}, true
 }
 
+// The volume and the request a journal read is made with, for usn_read.
+@(private = "file")
+Journal_Read :: struct {
+	volume:  win.HANDLE,
+	request: Read_Usn_Journal_Data_V1,
+}
+
 /*
 Read the journal from `start` to where it ended when queried, collecting the file id
-of every directory holding a file a counted record names. `wrapped` when the records
-from `start` are gone; not ok when a page holds a record usn_page cannot trust.
+of every directory holding a file a counted record names, as usn_read says.
 */
 @(private = "file")
 read_parents :: proc(
@@ -258,49 +263,39 @@ read_parents :: proc(
 ) -> (
 	wrapped, ok: bool,
 ) {
-	request := Read_Usn_Journal_Data_V1 {
-		start       = start,
-		reason_mask = COUNTED,
-		journal     = j.journal,
-		min_major   = 2,
-		max_major   = 3,
+	r := Journal_Read {
+		volume = volume,
+		request = {reason_mask = COUNTED, journal = j.journal, min_major = 2, max_major = 3},
 	}
-	buf: [64 * 1024 / size_of(u64)]u64
-	page := slice.to_bytes(buf[:])
-	for request.start < j.next {
-		got: win.DWORD
-		if !win.DeviceIoControl(
-			volume,
-			FSCTL_READ_UNPRIVILEGED_USN_JOURNAL,
-			&request,
-			size_of(request),
-			&buf,
-			size_of(buf),
-			&got,
-			nil,
-		) {
-			e := win.GetLastError()
-			if e == ERROR_JOURNAL_ENTRY_DELETED {
-				return true, false
-			}
-			if e == win.ERROR_HANDLE_EOF {
-				return false, true
-			}
-			return false, false
+	return usn_read(start, j.next, read_page, &r, parents)
+}
+
+/*
+One FSCTL_READ_UNPRIVILEGED_USN_JOURNAL from `start`. ERROR_HANDLE_EOF is a failure
+here: usn_read asks only below where the journal ended when queried, so an end of
+the journal before that is records gone, not the end of the window.
+*/
+@(private = "file")
+read_page :: proc(volume: rawptr, start: i64, page: []u8) -> (got: int, answer: Usn_Answer) {
+	r := (^Journal_Read)(volume)
+	r.request.start = start
+	filled: win.DWORD
+	if !win.DeviceIoControl(
+		r.volume,
+		FSCTL_READ_UNPRIVILEGED_USN_JOURNAL,
+		&r.request,
+		size_of(r.request),
+		raw_data(page),
+		win.DWORD(len(page)),
+		&filled,
+		nil,
+	) {
+		if win.GetLastError() == ERROR_JOURNAL_ENTRY_DELETED {
+			return 0, .Gone
 		}
-		if int(got) > len(page) {
-			return false, false
-		}
-		after, parsed := usn_page(page[:got], parents)
-		if !parsed {
-			return false, false
-		}
-		if after <= request.start {
-			break
-		}
-		request.start = after
+		return 0, .Failed
 	}
-	return false, true
+	return int(filled), .Read
 }
 
 /*

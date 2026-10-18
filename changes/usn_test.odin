@@ -77,3 +77,75 @@ test_a_usn_record_is_bounded_by_its_length :: proc(t: ^testing.T) {
 	_, ok := usn_page({1, 2, 3}, &parents)
 	testing.expect(t, !ok, "a page shorter than its next USN was read")
 }
+
+// A journal that answers each read with the next of `pages`, as a volume would; a
+// nil page is records gone, and a read past the last fails.
+@(private = "file")
+Fake_Journal :: struct {
+	pages: [][]u8,
+	reads: int,
+}
+
+@(private = "file")
+fake_read :: proc(volume: rawptr, start: i64, page: []u8) -> (got: int, answer: Usn_Answer) {
+	j := (^Fake_Journal)(volume)
+	if j.reads >= len(j.pages) {
+		return 0, .Failed
+	}
+	p := j.pages[j.reads]
+	j.reads += 1
+	if p == nil {
+		return 0, .Gone
+	}
+	return copy(page, p), .Read
+}
+
+// A page of one version 2 record whose parent is `parent`, the next read at `after`.
+@(private = "file")
+one_record :: proc(after: u64, parent: u8) -> []u8 {
+	page := page_from(after)
+	record(&page, 64, 2, parent, 64)
+	return page[:]
+}
+
+// The journal is read page by page from the cursor to where it ended when queried.
+@(test)
+test_a_usn_read_goes_to_the_end :: proc(t: ^testing.T) {
+	j := Fake_Journal {
+		pages = {one_record(200, 1), one_record(300, 2)},
+	}
+	parents := make(map[[16]u8]struct{}, context.temp_allocator)
+	wrapped, ok := usn_read(100, 300, fake_read, &j, &parents)
+	testing.expect(t, ok && !wrapped, "a whole journal was not read")
+	testing.expect_value(t, j.reads, 2)
+	testing.expect_value(t, len(parents), 2)
+}
+
+/*
+A read that stops short of where the journal ended, a page whose next USN does not
+move on or an end of the journal before it, is not ok: since then rescans and does
+not move the cursor past records it never read. Records gone say the journal wrapped.
+*/
+@(test)
+test_a_usn_read_that_stops_short_is_not_ok :: proc(t: ^testing.T) {
+	Case :: struct {
+		name:    string,
+		pages:   [][]u8,
+		wrapped: bool,
+	}
+	cases := []Case {
+		{"a next USN that does not move on", {one_record(200, 1), one_record(200, 2)}, false},
+		{"a next USN that goes back", {one_record(200, 1), one_record(150, 2)}, false},
+		{"the journal ends early", {one_record(200, 1)}, false},
+		{"the records are gone", {one_record(200, 1), nil}, true},
+	}
+	for c in cases {
+		j := Fake_Journal {
+			pages = c.pages,
+		}
+		parents := make(map[[16]u8]struct{}, context.temp_allocator)
+		wrapped, ok := usn_read(100, 300, fake_read, &j, &parents)
+		testing.expectf(t, !ok, "%s: the read was ok", c.name)
+		testing.expectf(t, wrapped == c.wrapped, "%s: wrapped %v", c.name, wrapped)
+	}
+}

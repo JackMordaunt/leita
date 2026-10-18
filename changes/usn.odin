@@ -1,6 +1,7 @@
 package changes
 
 import "core:encoding/endian"
+import "core:slice"
 
 /*
 The USN journal's records as FSCTL_READ_UNPRIVILEGED_USN_JOURNAL answers them: the
@@ -9,6 +10,61 @@ own length and version (USN_RECORD_COMMON_HEADER, Microsoft Learn). Only Windows
 reads a journal; the parsing is plain bytes, kept here so every platform's tests
 can feed it pages the system would never give.
 */
+
+// What one read of the journal gave.
+@(private)
+Usn_Answer :: enum {
+	Read, // a page of records
+	Gone, // the records from where the read began were deleted: the journal wrapped
+	Failed, // anything else
+}
+
+/*
+One read of the journal `volume` names, from USN `start`, into `page`: how many bytes
+it filled. A procedure, not the call itself, so tests can stand in for a volume.
+*/
+@(private)
+Usn_Read :: #type proc(volume: rawptr, start: i64, page: []u8) -> (got: int, answer: Usn_Answer)
+
+/*
+Read the journal from `start` to `end`, where it ended when it was queried,
+collecting the parent of every record. `wrapped` when the records from `start` are
+gone. Not ok when a page cannot be trusted, or a read stops short of `end`: a page
+whose next USN does not move on leaves the records up to `end` unread, and a cursor
+moved to `end` would skip them for good.
+*/
+@(private)
+usn_read :: proc(
+	start, end: i64,
+	read: Usn_Read,
+	volume: rawptr,
+	parents: ^map[[16]u8]struct{},
+) -> (
+	wrapped, ok: bool,
+) {
+	// Eight-byte words, so the records the system writes in place are aligned.
+	buf: [64 * 1024 / size_of(u64)]u64
+	page := slice.to_bytes(buf[:])
+	for at := start; at < end; {
+		got, answer := read(volume, at, page)
+		switch answer {
+		case .Gone:
+			return true, false
+		case .Failed:
+			return false, false
+		case .Read:
+		}
+		if got > len(page) {
+			return false, false
+		}
+		after, parsed := usn_page(page[:got], parents)
+		if !parsed || after <= at {
+			return false, false
+		}
+		at = after
+	}
+	return false, true
+}
 
 // RecordLength u32, MajorVersion u16, MinorVersion u16: what every record begins with.
 @(private = "file")
