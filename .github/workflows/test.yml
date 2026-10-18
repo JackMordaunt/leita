@@ -47,12 +47,20 @@ jobs:
       # Odin, just, SDL3 on Linux and jm's native libraries, cached.
       - uses: ./.github/actions/setup
 
-      # Diagnostic only: use the real native host and one integration scan.
+      # Diagnostic only: four real scans at once, as the suite runs them.
+      # One scan alone reaches Done; this asks whether four together do not.
       - name: focused scan diagnostic
-        timeout-minutes: 5
+        timeout-minutes: 8
         run: |
           mkdir -p build/test/app
           read -r -a build_flags <<< "$(just --evaluate flags)"
+          log=build/test/app/diagnostic.log
+          set +e
           odin test gui/app -debug "${build_flags[@]}" -out:build/test/app/Leita.exe \
-            -define:ODIN_TEST_NAMES=a_scan_streams_into_the_window_and_a_directory_opens \
-            -define:ODIN_TEST_THREADS=1
+            -define:ODIN_TEST_NAMES=leita_app.a_scan_streams_into_the_window_and_a_directory_opens,leita_app.a_click_on_an_arc_opens_it_and_the_hub_goes_back_up,leita_app.colouring_by_type_names_the_kind,leita_app.hovering_a_contents_row_lights_its_arc_and_its_box \
+            -define:ODIN_TEST_THREADS=4 >"$log" 2>&1
+          status=$?
+          set -e
+          cat "$log"
+          grep -E "Finished 4 tests" "$log"
+          exit "$status"
