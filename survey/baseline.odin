@@ -20,9 +20,9 @@ command line, the window and the monitor may each finish a scan of the same plac
 once: each writes its own temporary file, and the last whole one renamed wins. It is
 written for this machine, little-endian:
 
-	magic        "LEITABL3"
+	magic        "LEITABL4"
 	cursor       source u8, volume 2 x u64, place 2 x u64, journal u64,
-	             position i64, full i64
+	             position i64, full i64, updates u64
 	place        u32 length, then its bytes
 	nodes        u32 count, u32 root
 	each node    u32 parent, u8 flags, u64 disk, u16 name length, name bytes
@@ -47,14 +47,16 @@ beside a name it copies; 28 bytes each, for such files alone. LEITABL1 kept none
 and a file of it is read as one of another version: the place is read whole once.
 LEITABL2's cursor kept no place, the directory the place was, so a file of it is
 read whole once too, rather than trusted by a cursor that cannot tell a replaced tree.
+LEITABL3's cursor kept no count of updates, which says whose turn it is among the
+small files an update measures again (walk.Update); a file of it is read whole once.
 */
 
 @(private)
-BASELINE_MAGIC :: "LEITABL3"
+BASELINE_MAGIC :: "LEITABL4"
 
-// The cursor's bytes: source, then seven 64-bit fields.
+// The cursor's bytes: source, then eight 64-bit fields.
 @(private)
-CURSOR_SIZE :: 1 + 7 * 8
+CURSOR_SIZE :: 1 + 8 * 8
 
 // Numbers each temporary file this process writes, so two threads never share one.
 @(private = "file")
@@ -113,6 +115,7 @@ baseline_save :: proc(path, place: string, t: ^scan.Tree, cursor: changes.Cursor
 	put_u64(&w, cursor.journal)
 	put_u64(&w, u64(cursor.position))
 	put_u64(&w, u64(cursor.full))
+	put_u64(&w, cursor.updates)
 	put_u32(&w, u32(len(place)))
 	put(&w, transmute([]u8)place)
 	put_u32(&w, used)
@@ -198,6 +201,7 @@ baseline_load :: proc(
 	cursor.journal = take_u64(&r)
 	cursor.position = i64(take_u64(&r))
 	cursor.full = i64(take_u64(&r))
+	cursor.updates = take_u64(&r)
 	kept_place := string(take(&r, int(take_u32(&r))))
 	if !r.ok || kept_place != place {
 		return {}, "the scan kept is of another place", false

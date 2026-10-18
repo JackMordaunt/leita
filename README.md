@@ -60,8 +60,9 @@ tree of that place beside the scans, and asks the system what changed since:
 the change journal on macOS and Windows, each folder's modification time on
 Linux. When the system cannot say, or too much has happened since, leita reads
 the place whole and tells you why. A file written in place, in a folder the
-update does not read again, can keep its old size until the next whole read.
-On macOS and Linux a file of 1 MiB or more in such a folder is measured again.
+update does not read again, is measured again on macOS and Linux: one of 1 MiB
+or more at every scan, a smaller one within 8 scans. On Windows a file held
+open across scans can keep its old size until the next whole read.
 On Linux a place last read whole over 7 days ago is read whole the next time.
 `leita --whole` reads everything again. `--no-history` neither uses that tree
 nor keeps the scan.

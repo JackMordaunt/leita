@@ -271,6 +271,54 @@ test_a_copied_large_file_is_asked_its_size :: proc(t: ^testing.T) {
 }
 
 /*
+A 200 KB file rewritten in place to 400 KB, in a directory no probe or journal names,
+is under `restat` and so asked only in its slice's turn: of eight updates from the
+same base, one turn to each slice, exactly one measures it again, and the rest keep
+the size the base gave it.
+*/
+@(test)
+test_a_copied_small_file_is_asked_in_its_turn :: proc(t: ^testing.T) {
+	when ODIN_OS == .Windows {
+		return // Windows keeps a copied file's size (stamp_other.odin)
+	}
+	root := place(t, "turn")
+	defer os.remove_all(root)
+	put(t, fmt.tprintf("%s/still/db.sqlite", root), 200_000)
+	base := read_tree(t, root)
+	defer scan.tree_destroy(&base)
+	put(t, fmt.tprintf("%s/still/db.sqlite", root), 400_000)
+	was := scan.node(&base, at(&base, "still", "db.sqlite")).disk
+
+	measured := 0
+	for turn in u64(0) ..< 8 {
+		u := Update {
+			base   = &base,
+			restat = 1 << 20,
+			slices = 8,
+			turn   = turn,
+		}
+		got: scan.Tree
+		testing.expect_value(t, scan.tree_init(&got, 2), scan.Error.None)
+		defer scan.tree_destroy(&got)
+		testing.expect_value(t, update(root, &u, &got, Config{workers = 2}), Error.None)
+		db := at(&got, "still", "db.sqlite")
+		if db == scan.NO_NODE {
+			testing.fail_now(t, "db.sqlite was not copied")
+		}
+		now := scan.node(&got, db).disk
+		if now == was {
+			continue
+		}
+		measured += 1
+		testing.expectf(t, now >= 400_000, "turn %d charged db.sqlite %d", turn, now)
+		want := read_tree(t, root)
+		defer scan.tree_destroy(&want)
+		expect_same_shape(t, &got, &want)
+	}
+	testing.expect_value(t, measured, 1)
+}
+
+/*
 A large file in a directory that can no longer be searched cannot be asked its size,
 but it is still there: the update keeps the size the base gave it rather than
 dropping it as gone. Skipped where the directory can still be searched, as root can.

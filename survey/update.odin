@@ -40,10 +40,24 @@ KEPT_MIN, so every file history keeps is current there. Neither a probe nor FSEv
 sees a file written while held open (walk.Update); on a home directory such files (a
 VM's disk image, logs, a database's write-ahead log) left an update 10.1 GB short
 (2026-10-13). A smaller file written in place, in a directory that did not change,
-keeps its old size until the next whole scan; over a day of a home directory that was
+kept its old size until the next whole scan; over a day of a home directory that was
 8.7 MiB in 110.8 GiB (measured 2026-10-12, 162 files).
 */
 RESTAT :: query.KEPT_MIN
+
+/*
+SLICES is how many updates it takes to ask every smaller file of a copied directory
+its size again, a slice each update (walk.Update). Linux's recorder already names
+the directory of a file written in place (FAN_MODIFY, FAN_CLOSE_WRITE: package
+journal); a probe of folder times does not, and FSEvents names one only once it is
+closed (walk.Update, macOS 15.7). On a home directory of 3.61M entries, 3.06M of them files under 1 MiB, an
+update by probe read in a median 0.82 to 0.87 s over three rounds. Asking
+every file as well took 1.0 to 1.5 s with their inodes cached and 4.1 s on the first
+update after a whole read, which took 2.0 to 5.7 s; an eighth of them took a median
+0.87 to 1.28 s, the most when the inodes had been evicted since (2026-10-18). A
+64 KiB cutoff cost nothing measurable but left 2.91M files measured only whole.
+*/
+SLICES :: 8
 
 /*
 Read the place, from its baseline when that can be trusted, and keep the result as
@@ -77,7 +91,8 @@ fill_from_baseline :: proc(f: ^Fill) {
 		case:
 			// An update fails as a walk does, short of room or called off, and
 			// what it read is left as a walk's would be.
-			f.walk_err = apply(f, place, &base, set)
+			f.walk_err = apply(f, place, &base, set, cursor.updates)
+			next.updates = cursor.updates + 1
 			f.how = .Updated
 			f.by = .Recorded if set.by_hash else .Times if set.probe else .System
 			if f.walk_err == .None {
@@ -111,10 +126,17 @@ Read `place` into f.tree from `base`, reading again what `set` says changed: eac
 directory named shallow listed, each named deep walked, each whose path hashes to
 one the set names listed, and with a probe every directory asked. A path the base
 does not have marks the nearest directory above it that it does, which then finds
-what is new.
+what is new. `turn` is how many updates came before this one since the place was
+read whole, which says which slice of the small files is measured again.
 */
 @(private)
-apply :: proc(f: ^Fill, place: string, base: ^scan.Tree, set: changes.Change_Set) -> walk.Error {
+apply :: proc(
+	f: ^Fill,
+	place: string,
+	base: ^scan.Tree,
+	set: changes.Change_Set,
+	turn: u64,
+) -> walk.Error {
 	ix, ix_err := scan.index_make(base)
 	if ix_err != nil {
 		return .Out_Of_Memory
@@ -126,6 +148,8 @@ apply :: proc(f: ^Fill, place: string, base: ^scan.Tree, set: changes.Change_Set
 		probe  = set.probe,
 		since  = set.since,
 		restat = RESTAT,
+		slices = SLICES,
+		turn   = turn,
 	}
 	defer delete(u.marks)
 	if set.by_hash {

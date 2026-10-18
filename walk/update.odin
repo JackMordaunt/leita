@@ -1,6 +1,7 @@
 package walk
 
 import "base:runtime"
+import "core:hash"
 import "core:sync"
 
 import "../scan"
@@ -31,6 +32,11 @@ and fsynced while held open gave no event until close), so a disk image, a log o
 database's write-ahead log held open keeps growing unseen. Every copied directory's files of
 at least `restat` bytes are therefore asked their size again, probe or journal, where
 RESTATS says the platform asks (not Windows: stamp_other.odin); 0 asks none.
+
+Asking every smaller file too would cost an update what a walk costs on a home of
+millions of them, so each update asks one slice of them, of `slices`, the one `turn`
+names: a file written in place is measured again within `slices` updates. A slice is
+a hash of the file's path, which stays put while the turn moves on.
 */
 // What asking a copied file its size again (disk_of) found.
 @(private)
@@ -46,6 +52,8 @@ Update :: struct {
 	probe:  bool,
 	since:  i64,
 	restat: u64,
+	slices: u64, // 0 asks no file under `restat` bytes
+	turn:   u64,
 	// How many directories the update read rather than copied, counted as it goes.
 	read:   u64,
 	// base's children, built by `update` if left empty. A caller that has built it
@@ -145,10 +153,10 @@ Copy a directory's entries from the base, unchanged.
 
 Under a probe it is first asked whether it changed, and read instead if it did or
 cannot say. Under a probe or a journal its files of at least `restat` bytes are
-asked their sizes, a file that is gone dropped, since neither sees a file written
-while held open (Update). The copies run on the workers, so these stats do too: on
-a home directory of 2.57M entries that was 17,617 files, 45 ms warm and 1.9 s cold
-from one thread (2026-10-13).
+asked their sizes, and its smaller files whose slice's turn it is, a file that is
+gone dropped, since neither sees a file written while held open (Update). The copies
+run on the workers, so these stats do too: on a home directory of 2.57M entries that
+was 17,617 files, 45 ms warm and 1.9 s cold from one thread (2026-10-13).
 */
 @(private)
 copy_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
@@ -172,6 +180,10 @@ copy_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 		w.err = .Out_Of_Memory
 		return 0, 0, false
 	}
+	when RESTATS {
+		// Each file's slice is hashed on from its directory's path, hashed once here.
+		dir := hash.fnv64a(transmute([]byte)d.path)
+	}
 	for c := u.index.first[d.base]; c != scan.NO_NODE; c = u.index.next[c] {
 		b := scan.node(base, c)
 		flags := scan.node_flags(b) & {.Directory, .Reparse, .Extra_Name, .Mount, .Shared}
@@ -179,7 +191,7 @@ copy_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 		disk := b.disk
 		file := flags & {.Directory, .Reparse} == {}
 		when RESTATS {
-			if file && disk >= u.restat && u.restat > 0 {
+			if file && restat_due(u, disk, dir, name) {
 				runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
 				path, err := join(d.path, name, context.temp_allocator)
 				if err != nil {
@@ -226,6 +238,24 @@ copy_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 		slot += 1
 	}
 	return nodes, bytes, true
+}
+
+/*
+Whether a copied file of `disk` bytes, `name` in the directory whose path hashes to
+`dir`, is asked its size again: one of at least `restat` bytes every update, a
+smaller one when its slice's turn comes (Update).
+*/
+@(private)
+restat_due :: proc(u: ^Update, disk, dir: u64, name: string) -> bool {
+	switch {
+	case u.restat == 0:
+		return false
+	case disk >= u.restat:
+		return true
+	case u.slices == 0:
+		return false
+	}
+	return hash.fnv64a(transmute([]byte)name, dir) % u.slices == u.turn % u.slices
 }
 
 /*

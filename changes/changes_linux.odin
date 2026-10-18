@@ -27,9 +27,10 @@ way, so a baseline kept with one serves the other.
 SLACK is taken off that time, for a filesystem that stamps coarsely (FAT keeps
 two-second times) or a clock that read a little ahead of the one stamping.
 
-A probe cannot see a file written in place in a directory that did not change, other
-than the large ones it re-stats; STALE_AFTER bounds how long such drift can build up
-before the place is scanned whole again.
+A probe cannot see a file written in place in a directory that did not change. The
+update asks such a directory's large files their sizes each time and its small ones a
+slice at a time (walk.Update); STALE_AFTER bounds how long any other drift can build
+up before the place is scanned whole again.
 */
 SLACK       :: 2 * time.Second
 STALE_AFTER :: 7 * 24 * time.Hour

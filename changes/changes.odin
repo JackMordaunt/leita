@@ -53,6 +53,7 @@ Cursor :: struct {
 	journal:  u64, // Windows: which journal; a new one has another id
 	position: i64, // the journal's next USN, the next event id, or the time in ns
 	full:     i64, // when the place was last scanned whole, in ns since the epoch
+	updates:  u64, // how many updates since then, which walk.Update.turn follows
 }
 
 /*
