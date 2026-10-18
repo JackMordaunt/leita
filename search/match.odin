@@ -124,7 +124,16 @@ fold :: #force_inline proc(r: rune, exact: bool) -> rune {
 	if r >= utf8.RUNE_SELF {
 		base := latin_base(r)
 		if base == 0 {
-			return r if exact else unicode.to_lower(r)
+			// Lowercase, then fold that letter, so a second fold does not
+			// move again. Exact keeps the case of an ASCII base.
+			lower := unicode.to_lower(r)
+			base = latin_base(lower)
+			if base == 0 {
+				return r if exact else lower
+			}
+			if exact && base >= 'a' && base <= 'z' {
+				base -= 'a' - 'A'
+			}
 		}
 		r = rune(base)
 	}

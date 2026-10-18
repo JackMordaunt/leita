@@ -1,0 +1,36 @@
+# Bounded parser fuzz on Linux. test.yml is the correctness matrix and is left
+# alone; this workflow is the only fuzz job. The budget is a fixed seed, a
+# fixed case count and a wall clock, so a run is deterministic and cannot
+# grow. Suites replay the corpus committed beside them. A crash leaves a
+# breadcrumb there for the next run; committing that case is a person's job.
+name: fuzz
+
+on:
+  push:
+    branches: [main, "ci/**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: fuzz-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          submodules: true
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: fuzz
+        timeout-minutes: 10
+        run: just fuzz "-seed=1 -iters=64 -for=2m"
