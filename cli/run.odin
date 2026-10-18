@@ -416,6 +416,7 @@ scan_and_say :: proc(opt: Options, kept := "", licensee := "", locked := false) 
 			time.duration_milliseconds(elapsed),
 		)
 		say_how_read(&f)
+		print_accounting(&t)
 	}
 	say_unread(&t)
 	if !quiet && scan.has_snapshot_volume(&t) {
@@ -749,6 +750,26 @@ rank :: proc(t: ^scan.Tree, roll: ^survey.Rollup, top: []Sized, kind := Kind.dir
 	return count
 }
 
+// print_accounting says what the scan knows about snapshots and delayed purge.
+// It does not turn a charged size into a frees figure. "none" is not proof.
+print_accounting :: proc(t: ^scan.Tree) {
+	ret := scan.retention_of(t)
+	switch ret.snapshots {
+	case .Present:
+		fmt.println("  A snapshot may still hold deleted data. A charged size is not what deletion frees.")
+	case .None:
+		fmt.println("  No snapshot was found. A charged size is still not what deletion frees.")
+	case .Unchecked:
+		fmt.println("  Whether a snapshot retains deleted data was not checked. A charged size is not what deletion frees.")
+	}
+	if scan.is_scan_order(t) || scan.is_logical(t) {
+		fmt.println("  These charged sizes are estimates, not what deletion frees.")
+	}
+	if ret.purgeable_known {
+		fmt.printfln("  The volume may still purge %s later.", human.bytes(ret.purgeable))
+	}
+}
+
 print_largest :: proc(t: ^scan.Tree, roll: ^survey.Rollup, kind: Kind) {
 	top: [TOP_N]Sized
 	count := rank(t, roll, top[:], kind)
@@ -768,7 +789,18 @@ print_largest :: proc(t: ^scan.Tree, roll: ^survey.Rollup, kind: Kind) {
 		} else {
 			path = human.shown(path)
 		}
-		fmt.printfln("  %10s  %s", human.bytes(s.bytes), path)
+		extra := ""
+		// A directory row is a charged rollup. freed_of is one node, so it is
+		// not what deleting the folder frees. Files are ranked by their charge.
+		if kind != .directories {
+			line := scan.delete_line(t, s.record, s.bytes)
+			if line.has_frees {
+				extra = fmt.tprintf("  deleting frees %s", human.bytes(line.frees))
+			} else if line.unknown {
+				extra = "  deleting frees an unknown amount"
+			}
+		}
+		fmt.printfln("  %10s  %s%s", human.bytes(s.bytes), path, extra)
 	}
 }
 

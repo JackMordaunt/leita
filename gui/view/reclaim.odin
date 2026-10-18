@@ -143,6 +143,7 @@ reclaim_row :: proc(gtx: ^ui.Ctx, i: int, user: rawptr) {
 				m.reclaim_pick[it.node] = tick
 			}
 			primer.text(gtx, size, .Small)
+			primer.tooltip(gtx, tr(.Folder_Charged), ui.last_widget(gtx))
 		}
 		return
 	}

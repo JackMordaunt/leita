@@ -1631,7 +1631,7 @@ reclaim_offers_only_what_rebuilds_and_deletes_what_is_chosen :: proc(t: ^testing
 	testing.expect(t, settle(&r, "65.5 kB in 1 folder chosen"), "the recent one starts unchosen")
 
 	confirm(t, &r, "Clean up", "Delete")
-	testing.expect(t, settle(&r, "Deleted 1 folder and freed 65.5 kB"), "the notice says so")
+	testing.expect(t, settle(&r, "Deleted 1 folder. How much disk space that frees is unknown."), "the notice says so")
 	testing.expect(t, settle(&r, WEB_NODE_MODULES, present = false), "it leaves the list")
 	testing.expect(t, !os.exists(fmt.tprintf("%s/web/node_modules", root)), "and the disk")
 	testing.expect(t, os.exists(fmt.tprintf("%s/web/package.json", root)), "its project stays")
@@ -1644,7 +1644,7 @@ reclaim_offers_only_what_rebuilds_and_deletes_what_is_chosen :: proc(t: ^testing
 	press_and_hand_on(&r)
 	testing.expect(t, settle(&r, "135.2 kB in 1 folder chosen"))
 	confirm(t, &r, "Clean up", "Delete")
-	testing.expect(t, settle(&r, "Deleted 1 folder and freed 135.2 kB"))
+	testing.expect(t, settle(&r, "Deleted 1 folder. How much disk space that frees is unknown."))
 	testing.expect(t, !os.exists(fmt.tprintf("%s/rust/target", root)))
 	testing.expect(t, settle(&r, "Nothing here is safe to reclaim."))
 
@@ -1654,7 +1654,7 @@ reclaim_offers_only_what_rebuilds_and_deletes_what_is_chosen :: proc(t: ^testing
 		count      = 1,
 	}
 	stream.port_send(r.h.cmd_port, command.Command(forged))
-	testing.expect(t, settle(&r, "Deleted 0 folders and freed 0 B; 1 could not be deleted in full"))
+	testing.expect(t, settle(&r, "Deleted 0 folders; 1 could not be deleted in full. How much disk space that frees is unknown."))
 	testing.expect(t, os.exists(fmt.tprintf("%s/plain/build/out.o", root)), "nothing went")
 }
 
@@ -1734,10 +1734,11 @@ reclaim_never_offers_a_directory_link :: proc(t: ^testing.T) {
 }
 
 // A folder that cannot all be deleted stays in the list and the chart, and only
-// what went is counted freed. Here node_modules is emptied, but its own folder
+// what went is recorded on the audit trail. Here node_modules is emptied, but its own folder
 // stays: web is made read-only after the scan, so nothing in it can be unlinked.
+// The notice does not call that a deleted folder or a freed size.
 @(test)
-reclaim_counts_a_partial_delete_as_what_went :: proc(t: ^testing.T) {
+reclaim_does_not_count_a_partial_delete_as_deleted :: proc(t: ^testing.T) {
 	root := projects(t, "reclaim_partly")
 	web := fmt.tprintf("%s/web", root)
 	defer os.remove_all(root)
@@ -1754,14 +1755,15 @@ reclaim_counts_a_partial_delete_as_what_went :: proc(t: ^testing.T) {
 	// Root, or Windows, whose read-only attribute on a folder guards nothing in it,
 	// can still delete from it, so nothing would be left over.
 	if os.make_directory(fmt.tprintf("%s/probe", web)) == nil {
+		//review:ignore skips-in-normal-conditions root and Windows can still create inside a read-only directory, so this fixture cannot show a partial delete there
 		log.warn("skipped: a read-only folder does not stop a delete here")
 		return
 	}
 	confirm(t, &r, "Clean up", "Delete")
 	testing.expect(
 		t,
-		settle(&r, "Deleted 0 folders and freed 65.5 kB; 1 could not be deleted in full"),
-		"what went is freed, and the folder is not counted deleted",
+		settle(&r, "Deleted 0 folders; 1 could not be deleted in full. How much disk space that frees is unknown."),
+		"the folder is not counted deleted, and the notice does not call the charged share freed",
 	)
 	testing.expect(t, !os.exists(fmt.tprintf("%s/node_modules/lib", web)), "its insides went")
 	testing.expect(t, os.exists(fmt.tprintf("%s/node_modules", web)), "the folder did not")
@@ -1826,7 +1828,7 @@ reclaim_empties_the_trash_it_found :: proc(t: ^testing.T) {
 	testing.expect(t, !ui.probe_tagged(&r.p, "All Trash"), "as a button, not a row")
 
 	confirm(t, &r, "Empty Trash", "Empty")
-	testing.expect(t, settle(&r, "Emptied the Trash and freed 20.5 kB"), "the notice says so")
+	testing.expect(t, settle(&r, "Emptied the Trash. How much disk space that frees is unknown."), "the notice says so")
 	testing.expect(t, !os.exists(fmt.tprintf("%s/%s", root, FILE)))
 	testing.expect(t, !os.exists(fmt.tprintf("%s/%s", root, RECORD)))
 	testing.expect(t, os.exists(fmt.tprintf("%s/%s", root, TRASH)), "the Trash stays")

@@ -57,6 +57,14 @@ Progress_Result :: struct {
 	// permission was what any of them lacked.
 	unread:     u64,
 	denied:     bool,
+	// Set once a scan exists. snapshots is 0 unchecked, 1 none, 2 present.
+	// purge_known false means purgeable was not measured, so 0 is not a figure.
+	retention_known: bool,
+	snapshots:       u8,
+	purgeable:       u64,
+	purge_known:     bool,
+	scan_order:      bool,
+	logical_sizes:   bool,
 }
 
 // Notice is what came of a request the window made: an entry moved to the
@@ -86,6 +94,14 @@ Entry :: struct {
 	// directory under it, could not be opened or listed, or, in a scan stopped or
 	// failed, has no entries yet, which an empty one cannot be told from.
 	incomplete: bool,
+	// Length of the file, when the scan measured one. logical_known false is
+	// unknown, not a length of 0.
+	logical:       u64,
+	logical_known: bool,
+	// Exact bytes deleting this one entry frees, including 0. frees_known false
+	// is unknown, never a charged estimate and never a directory's total.
+	frees:         u64,
+	frees_known:   bool,
 }
 
 // Crumb is one directory on the way down from the top to a listing.
@@ -122,8 +138,12 @@ File :: struct {
 	parent: u32, // the directory holding it
 	within: []u32, // the directories it lies in, nearest first, up to the top of the scan
 	path:   string,
-	bytes:  u64,
-	was:    i64, // what it held in the snapshot compared with, or -1
+	bytes:         u64,
+	was:           i64, // what it held in the snapshot compared with, or -1
+	logical:       u64,
+	logical_known: bool,
+	frees:         u64,
+	frees_known:   bool,
 }
 
 Largest_Result :: struct {

@@ -51,8 +51,8 @@ counts_pick_the_form_and_group_their_digits :: proc(t: ^testing.T) {
 	testing.expect_value(t, trf(s, .Listing_Summary, 2, "274.4 kB"), "274.4 kB in 2 items")
 	testing.expect_value(
 		t,
-		trf(s, .Cleaned_Partly, 0, "0 B", 1),
-		"Deleted 0 folders and freed 0 B; 1 could not be deleted in full",
+		trf(s, .Cleaned_Partly, 0, 1),
+		"Deleted 0 folders; 1 could not be deleted in full. How much disk space that frees is unknown.",
 	)
 	testing.expect_value(t, tr(s, .Language), "Language")
 	use(s, .Chinese_Traditional)
