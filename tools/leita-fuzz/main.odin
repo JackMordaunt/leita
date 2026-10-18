@@ -19,6 +19,7 @@ import "core:time"
 import harness "jm:fuzz"
 
 import btrfs_fuzz "../../btrfs/fuzz"
+import history_fuzz "../../history/fuzz"
 import ntfs_fuzz "../../ntfs/fuzz"
 import search_fuzz "../../search/fuzz"
 
@@ -30,6 +31,7 @@ Runner :: struct {
 
 runners := []Runner {
 	{"btrfs", btrfs_fuzz.CORPUS, btrfs_fuzz.run},
+	{"history", history_fuzz.CORPUS, history_fuzz.run},
 	{"ntfs", ntfs_fuzz.CORPUS, ntfs_fuzz.run},
 	{"search", search_fuzz.CORPUS, search_fuzz.run},
 }
@@ -181,6 +183,6 @@ USAGE :: `usage: leita-fuzz [suite...] [-seed=N] [-iters=N] [-for=2m] [-entropy=
                [-shrink=N] [-no-shrink] [-corpus=DIR] [-no-corpus]
                [-isolate] [-stop] [-quiet]
 
-suites: btrfs, ntfs, search. With none named, every suite runs.
+suites: btrfs, history, ntfs, search. With none named, every suite runs.
 Each suite keeps its regressions beside its source and replays them first.
 -corpus=DIR uses DIR/<suite> instead. -isolate runs each case in a child.`
