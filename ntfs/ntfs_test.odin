@@ -929,3 +929,59 @@ test_short_bitmap_still_reads_the_tail :: proc(t: ^testing.T) {
 	defer mft_destroy(&m)
 	testing.expect_value(t, m.entries[tail].name, "tail.txt")
 }
+
+// A record shorter than its header used to be read as a header anyway.
+@(test)
+test_a_short_record_is_not_read_past :: proc(t: ^testing.T) {
+	rec := []byte{0x46, 0x49}
+	it := attributes(rec)
+	_, ok := next_attribute(&it)
+	testing.expect(t, !ok, "a short record has no attribute")
+}
+
+// (1<<52)+1 clusters of 4096 bytes is 2^64+4096, which wraps to 4096.
+@(test)
+test_a_wrapping_cluster_count_is_not_a_small_file :: proc(t: ^testing.T) {
+	runlist := []byte {
+		0x18,
+		0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00,
+		0x01,
+		0x00,
+	}
+	rec := build_record(
+		{nonresident(.Data, 0, 0, runlist)},
+		record_number = 1,
+	)
+	m: Mft
+	testing.expect_value(t, mft_init(&m, 4, 4096, 1), Error.None)
+	defer mft_destroy(&m)
+	testing.expect_value(t, apply_fixups(rec), Error.None)
+	it := attributes(rec)
+	a, a_ok := next_attribute(&it)
+	testing.expect(t, a_ok, "the data attribute is there")
+	n, fit := attr_disk_size(a, 4096)
+	testing.expect(t, !fit, "the cluster multiply must be refused")
+	testing.expect_value(t, n, u64(0))
+	testing.expect_value(
+		t,
+		mft_add_record(&m, 1, rec, &m.sinks[0]),
+		Error.None,
+	)
+	testing.expect_value(t, m.entries[1].allocated, u64(0))
+}
+
+// A VCN that wraps is a corrupt length, not a run that starts over.
+@(test)
+test_a_wrapping_vcn_is_a_bad_runlist :: proc(t: ^testing.T) {
+	data := []byte {
+		0x18,
+		0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+		0x01,
+		0x11,
+		0x01,
+		0x00,
+		0x00,
+	}
+	_, err := decode_runlist(data, 1, context.temp_allocator)
+	testing.expect_value(t, err, Error.Bad_Runlist)
+}

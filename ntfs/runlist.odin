@@ -66,8 +66,15 @@ decode_runlist :: proc(
 			}
 			run.lcn = u64(lcn)
 		}
+		// The next run's VCN is this one's end. A sum that does not fit is a
+		// corrupt length, not a VCN that wrapped back to the start.
+		end, wrapped := bits.overflowing_add(vcn, length)
+		if wrapped {
+			delete(out)
+			return nil, .Bad_Runlist
+		}
 		append(&out, run)
-		vcn += length
+		vcn = end
 	}
 	// The caller frees the result as a plain slice, so its length must equal the
 	// allocation. Trim the dynamic array's spare capacity before handing it over.
