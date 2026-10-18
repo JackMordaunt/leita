@@ -22,6 +22,7 @@ Bench :: struct {
 	c:        Context,
 	commands: [dynamic]string,
 	refuse:   string, // a scheduler command that starts with this fails
+	active:   bool, // the timer is in systemd, including after its file is deleted
 	out:      strings.Builder,
 	shown:    [dynamic]string, // each notification's body
 }
@@ -46,6 +47,20 @@ record_command :: proc(argv: []string, user: rawptr) -> schedule.Outcome {
 	append(&b.commands, line)
 	if b.refuse != "" && strings.has_prefix(line, b.refuse) {
 		return {err = "refused"}
+	}
+	// enable is not a substring of disable. is-active is how installed asks
+	// once the unit file is gone, and it is active only after enable --now.
+	if strings.contains(line, "enable --now") {
+		b.active = true
+	} else if strings.contains(line, "disable --now") {
+		if !b.active {
+			return {err = "Failed to disable unit: Unit leita-monitor.timer does not exist"}
+		}
+		b.active = false
+	} else if strings.contains(line, "is-active") {
+		if !b.active {
+			return {err = "inactive"}
+		}
 	}
 	return {ok = true}
 }

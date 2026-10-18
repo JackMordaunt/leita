@@ -137,14 +137,16 @@ logged_in_only_systemd :: proc(h: Host) -> bool {
 }
 
 // remove_units stops and disables the timer, deletes both units, and has
-// systemd forget them.
+// systemd forget them. Disable runs even when the files are already gone,
+// so a deleted unit file does not skip it and leave monitor off saying the
+// timer had stopped.
 @(private)
 remove_units :: proc(h: Host) -> string {
-	service, timer := unit_paths(h)
-	if !os.exists(service) && !os.exists(timer) {
-		return ""
+	r := h.run(systemctl("disable", "--now", NAME + ".timer"), h.user)
+	if !r.ok && !not_loaded(r) {
+		return r.err
 	}
-	h.run(systemctl("disable", "--now", NAME + ".timer"), h.user)
+	service, timer := unit_paths(h)
 	for path in ([]string{timer, service}) {
 		if err := os.remove(path); err != nil && err != .Not_Exist {
 			return fmt.tprintf("cannot delete %s: %v", path, err)

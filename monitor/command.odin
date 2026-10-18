@@ -367,7 +367,8 @@ switch_on :: proc(c: Context, w: io.Writer) -> int {
 	return 0
 }
 
-// switch_off turns monitoring off, then takes the monitor out of the scheduler.
+// switch_off turns monitoring off, then takes the job out of the scheduler,
+// which disables it before deleting its files.
 switch_off :: proc(c: Context, w: io.Writer) -> int {
 	st: settings.Store
 	if !open_settings(c, &st, w) {

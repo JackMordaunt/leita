@@ -100,14 +100,16 @@ install_agent :: proc(h: Host, argv: []string) -> string {
 	return ""
 }
 
-// remove_agent unloads the agent and deletes its file, if it is there.
+// remove_agent unloads the agent and deletes its file. Bootout runs even
+// when the file is already gone, so a deleted plist does not skip it and
+// leave monitor off saying the agent had stopped.
 @(private)
 remove_agent :: proc(h: Host) -> string {
-	path := agent_path(h)
-	if !os.exists(path) {
-		return ""
+	r := h.run({"launchctl", "bootout", agent_target(h)}, h.user)
+	if !r.ok && !not_loaded(r) {
+		return r.err
 	}
-	h.run({"launchctl", "bootout", agent_target(h)}, h.user)
+	path := agent_path(h)
 	if err := os.remove(path); err != nil && err != .Not_Exist {
 		return fmt.tprintf("cannot delete %s: %v", path, err)
 	}

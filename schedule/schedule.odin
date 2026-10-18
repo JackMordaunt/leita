@@ -19,6 +19,7 @@ package leita_schedule
 import "core:fmt"
 import "core:os"
 import "core:path/filepath"
+import "core:strings"
 
 import "jm:sh"
 
@@ -159,16 +160,53 @@ remove :: proc(h: Host) -> string {
 	return ""
 }
 
-// installed is whether the entry is in the host's scheduler.
+/*
+installed is whether the entry is in the host's scheduler. A file that is
+there counts. When the file is gone, systemd is asked with is-active and
+launchd with print, so a missing file is not read as a missing job.
+*/
 installed :: proc(h: Host) -> bool {
 	switch h.system {
 	case .Systemd:
 		_, timer := unit_paths(h)
-		return os.exists(timer)
+		if os.exists(timer) {
+			return true
+		}
+		return h.run(systemctl("is-active", NAME + ".timer"), h.user).ok
 	case .Task_Scheduler:
 		return h.run({"schtasks", "/Query", "/TN", TASK_NAME}, h.user).ok
 	case .Launchd:
-		return os.exists(agent_path(h))
+		if os.exists(agent_path(h)) {
+			return true
+		}
+		return h.run({"launchctl", "print", agent_target(h)}, h.user).ok
+	}
+	return false
+}
+
+// not_loaded is whether stopping the entry failed because the scheduler does
+// not have it, which is already what remove wants. "inactive" is deliberately
+// not that: it is a timer that is loaded and not running.
+@(private)
+not_loaded :: proc(r: Outcome) -> bool {
+	if r.ok {
+		return false
+	}
+	text := strings.to_lower(r.err, context.temp_allocator)
+	out := strings.to_lower(r.out, context.temp_allocator)
+	phrases := [?]string {
+		"does not exist",
+		"not-found",
+		"not found",
+		"could not be found",
+		"no such process",
+		"not loaded",
+		"could not find",
+	}
+	for phrase in phrases {
+		if strings.contains(text, phrase) || strings.contains(out, phrase) {
+			return true
+		}
 	}
 	return false
 }

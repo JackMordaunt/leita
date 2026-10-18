@@ -17,6 +17,9 @@ Fake :: struct {
 	task:     string,
 	// Whether a schtasks /Query finds the task, as Task Scheduler would.
 	has_task: bool,
+	// Whether this fake's systemd timer or launchd agent is loaded. Disable
+	// and bootout clear it, and fail while it is clear.
+	active:   bool,
 	linger:   string, // what loginctl says of lingering
 	refuse:   string, // a command that starts with this fails
 }
@@ -40,6 +43,29 @@ fake_run :: proc(argv: []string, user: rawptr) -> Outcome {
 		return {ok = f.has_task, out = f.task if f.has_task else ""}
 	case strings.has_prefix(line, "schtasks /Delete"):
 		f.has_task = false
+	case strings.contains(line, "enable --now"):
+		f.active = true
+	case strings.contains(line, "disable --now"):
+		if !f.active {
+			return {err = "Failed to disable unit: Unit leita-monitor.timer does not exist"}
+		}
+		f.active = false
+	case strings.contains(line, "is-active"):
+		if !f.active {
+			return {out = "inactive", err = "inactive"}
+		}
+		return {ok = true, out = "active"}
+	case strings.has_prefix(line, "launchctl bootstrap"):
+		f.active = true
+	case strings.has_prefix(line, "launchctl bootout"):
+		if !f.active {
+			return {err = "Boot-out failed: 3: No such process"}
+		}
+		f.active = false
+	case strings.has_prefix(line, "launchctl print"):
+		if !f.active {
+			return {err = "Could not find service"}
+		}
 	}
 	return {ok = true}
 }
@@ -89,6 +115,7 @@ a_systemd_timer_runs_the_monitor_hourly_and_catches_up :: proc(t: ^testing.T) {
 	f.linger = "Linger=no\n"
 
 	testing.expect(t, !installed(h))
+	clear(&f.commands) // is-active, asked because the unit file is not there yet
 	problem, logged_in_only := install(h, ARGV)
 	testing.expect_value(t, problem, "")
 	testing.expect(t, logged_in_only, "ann does not linger")
@@ -143,6 +170,42 @@ a_timer_systemd_refuses_is_not_left_behind :: proc(t: ^testing.T) {
 	testing.expect(t, !installed(h))
 	service, _ := unit_paths(h)
 	testing.expect(t, !os.exists(service))
+}
+
+@(test)
+not_loaded_means_the_scheduler_has_no_entry :: proc(t: ^testing.T) {
+	testing.expect(
+		t,
+		not_loaded({err = "Failed to disable unit: Unit leita-monitor.timer does not exist"}),
+	)
+	testing.expect(t, not_loaded({out = "not-found"}))
+	testing.expect(t, not_loaded({err = "Unit leita-monitor.timer not loaded"}))
+	testing.expect(t, not_loaded({err = "Boot-out failed: 3: No such process"}))
+	testing.expect(t, not_loaded({err = "Could not find service"}))
+	testing.expect(t, not_loaded({err = "could not be found"}))
+	// inactive is deliberately not a missing job.
+	testing.expect(t, !not_loaded({ok = true, out = "inactive"}))
+	testing.expect(t, !not_loaded({err = "inactive"}))
+	testing.expect(t, !not_loaded({err = "Access denied"}))
+}
+
+@(test)
+a_deleted_unit_file_still_disables_the_timer :: proc(t: ^testing.T) {
+	f: Fake
+	h := fake_host(t, &f, .Systemd)
+	defer os.remove_all(f.dir)
+
+	problem, _ := install(h, ARGV)
+	testing.expect_value(t, problem, "")
+	service, timer := unit_paths(h)
+	testing.expect(t, os.remove(timer) == nil)
+	testing.expect(t, os.remove(service) == nil)
+	testing.expect(t, installed(h), "the timer stays loaded without its file")
+
+	clear(&f.commands)
+	testing.expect_value(t, remove(h), "")
+	testing.expect_value(t, f.commands[0], "systemctl --user disable --now leita-monitor.timer")
+	testing.expect(t, !installed(h))
 }
 
 @(test)
@@ -246,6 +309,23 @@ a_launchd_agent_runs_hourly_in_the_background :: proc(t: ^testing.T) {
 	testing.expect_value(t, remove(h), "")
 	testing.expect(t, !installed(h))
 	testing.expect_value(t, program(h), "")
+}
+
+@(test)
+a_deleted_agent_file_still_boots_the_agent_out :: proc(t: ^testing.T) {
+	f: Fake
+	h := fake_host(t, &f, .Launchd)
+	defer os.remove_all(f.dir)
+
+	problem, _ := install(h, ARGV)
+	testing.expect_value(t, problem, "")
+	testing.expect(t, os.remove(agent_path(h)) == nil)
+	testing.expect(t, installed(h), "the agent stays loaded without its file")
+
+	clear(&f.commands)
+	testing.expect_value(t, remove(h), "")
+	testing.expect_value(t, f.commands[0], "launchctl bootout gui/501/dev.mordaunt.leita.monitor")
+	testing.expect(t, !installed(h))
 }
 
 /*
