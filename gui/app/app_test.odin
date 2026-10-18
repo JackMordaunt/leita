@@ -1029,6 +1029,9 @@ the_location_bar_edits_into_a_field_and_back :: proc(t: ^testing.T) {
 	// Wide enough that the bar has an empty end past the steps of macOS's long
 	// temp folder, /private/var/folders/<two hashed names>/T.
 	r.p.size = {1600, 700}
+	// Frames at the new size, so the bounds read below are laid out for it: a
+	// scan that finishes before the first settle sends nothing to draw one.
+	ui.probe_advance(&r.p, 30, 1.0 / 60)
 	testing.expect(t, settle(&r, "Done"))
 	testing.expect(t, settle(&r, "leita_gui_edit"))
 
@@ -1074,6 +1077,10 @@ a_deep_path_shows_its_deepest_steps :: proc(t: ^testing.T) {
 	rig_open(&r, root)
 	defer rig_close(&r)
 	r.p.size = {760, 700}
+	// Frames at the new size before the first click, which aims at a row's bounds
+	// from the last frame drawn: a scan that finishes before settle looks sends
+	// nothing to draw one, and the row was still where a 1100 wide window put it.
+	ui.probe_advance(&r.p, 30, 1.0 / 60)
 	testing.expect(t, settle(&r, "Done"))
 	// Walk down to the deepest directory by the contents list.
 	for name in ([]string{"first_level_directory", "second_level_directory", "third_level_directory", "fourth_level_directory"}) {
