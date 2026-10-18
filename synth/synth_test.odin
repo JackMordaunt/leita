@@ -3,6 +3,7 @@ package synth
 import "core:fmt"
 import "core:strings"
 import "core:testing"
+import "core:time"
 
 import "../scan"
 
@@ -165,4 +166,29 @@ a_cancelled_scan_stops :: proc(t: ^testing.T) {
 	defer scan.tree_destroy(&tr)
 	scan.cancel(&tr)
 	testing.expect_value(t, read("/", &tr, {}), Error.Cancelled)
+}
+
+@(test)
+a_clock_preserves_generated_entries :: proc(t: ^testing.T) {
+	plain, clocked: scan.Tree
+	if !testing.expect(t, scan.tree_init(&plain) == nil) {return}
+	defer scan.tree_destroy(&plain)
+	if !testing.expect(t, scan.tree_init(&clocked) == nil) {return}
+	defer scan.tree_destroy(&clocked)
+	testing.expect_value(t, read("/", &plain, {day = 7}), Error.None)
+	testing.expect_value(
+		t,
+		read("/", &clocked, {day = 7, clock = {wait = proc(_: ^scan.Tree, _: time.Duration) {}}}),
+		Error.None,
+	)
+	testing.expect(t, plain.count > 300_000)
+	file, found := find(&plain, "private/var/vm/sleepimage")
+	if !testing.expect(t, found) {return}
+	testing.expect_value(t, scan.name_of(&plain, file), "sleepimage")
+	testing.expect_value(t, scan.node(&plain, file).disk, u64(1 << 30))
+	testing.expect_value(t, clocked.count, plain.count)
+	for i in 0 ..< plain.count {
+		testing.expect_value(t, scan.node(&clocked, i).disk, scan.node(&plain, i).disk)
+		testing.expect_value(t, scan.name_of(&clocked, i), scan.name_of(&plain, i))
+	}
 }

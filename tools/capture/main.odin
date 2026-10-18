@@ -4,7 +4,9 @@ package main
 import "core:fmt"
 import "core:os"
 import "core:strconv"
+import "core:strings"
 import "core:time"
+import bl "jm:ui/blend2d"
 
 import "../../gui/app"
 import "../../gui/view"
@@ -13,11 +15,24 @@ import "jm:ui/ops"
 import "jm:ui/render"
 
 // Rasterise the current draws and clips at 2×, then restore their transforms.
-png :: proc(h: ^render.Headless, path: string) -> bool {
+png :: proc(h: ^render.Headless, path: string, movie: ^Movie = nil) -> bool {
 	frame := ui.probe_current(&h.p)
 	scale_frame(frame, 2)
 	defer scale_frame(frame, 0.5)
-	return render.render_png(&h.r, frame, 2560, 1640, path, h.clear)
+	image: bl.ImageCore
+	bl.image_init(&image)
+	defer bl.image_destroy(&image)
+	if bl.image_create(&image, 2560, 1640, .PRGB32) != 0 {return false}
+	render.render(&h.r, frame, &image, h.clear)
+	if movie != nil {movie_overlay(movie, &image)}
+	return(
+		bl.image_write_to_file(
+			&image,
+			strings.clone_to_cstring(path, context.temp_allocator),
+			nil,
+		) ==
+		0 \
+	)
 }
 
 scale_frame :: proc(frame: ^ui.Frame, density: f32) {
@@ -40,6 +55,9 @@ main :: proc() {
 	if args[3] != "light" && args[3] != "dark" {fail("theme must be light or dark")}
 	// The caller must create a dedicated directory. Never discover personal paths.
 	if !os.exists(args[2]) {fail("create the isolated data directory first")}
+	for arg in args {
+		if arg == "-stream" {stream_prepare()}
+	}
 	host: app.Host
 	app.init(
 		&host,
@@ -60,7 +78,7 @@ main :: proc() {
 	h: render.Headless
 	render.headless_init(
 		&h,
-		view.view,
+		capture_view,
 		&model,
 		{1280, 820},
 		faces,
@@ -69,10 +87,14 @@ main :: proc() {
 	)
 	defer render.headless_destroy(&h)
 	h.p.density = 2
+	movie: Movie
+	movie_init(&movie)
+	defer movie_destroy(&movie)
 	// Reapply the requested theme before each scripted step and waiting frame.
 	for i := 4; i < len(args); i += 1 {
 		model.dark = args[3] == "dark"
-		ui.probe_frame(&h.p)
+		if !movie.active {ui.probe_frame(&h.p)}
+		if movie_step(&movie, &h, args, &i) {continue}
 		flag := args[i]
 		switch flag {
 		case "-png", "-await", "-pick", "-signal", "-await-file":
@@ -87,10 +109,17 @@ main :: proc() {
 			case "-signal":
 				if os.write_entire_file(value, "ready\n") != nil {fail("signal write failed")}
 			case "-await", "-await-file":
+				if movie.active && flag == "-await" {
+					if !ui.probe_tagged(
+						&h.p,
+						value,
+					) {fail(fmt.tprintf("movie did not reach %s", value))}
+					continue
+				}
 				deadline := time.tick_now()._nsec + i64(120 * time.Second)
 				for {
 					model.dark = args[3] == "dark"
-					ui.probe_frame(&h.p)
+					if !movie.active {ui.probe_frame(&h.p)}
 					ready := ui.probe_tagged(&h.p, value) if flag == "-await" else os.exists(value)
 					if ready {break}
 					if time.tick_now()._nsec >=
@@ -121,6 +150,7 @@ main :: proc() {
 				free_all(context.temp_allocator)
 			}
 		case:
+			if movie.active {fail("use -tap, -hold and -glide while recording")}
 			handled, ok := render.headless_step(&h, args, &i)
 			if !handled || !ok {fail(fmt.tprintf("failed step: %s", flag))}
 		}

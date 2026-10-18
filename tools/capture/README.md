@@ -23,29 +23,42 @@ recorder, changes a licence, or reads personal history. Each host receives its
 own explicit history, reports and thumbnail directory. Dependencies: Odin, jm's
 native libraries, Python 3, `stat`, Git, and FFmpeg when frames are enabled.
 
-The real fixture starts with a CMake project and 3 files. In the same running
-app, the script exports the initial scan, adds an 8 MiB build object and a CMake
-marker, grows a source asset from 2 to 3 MiB, invokes Rescan, selects Change and
-Reclaim, then exports JSON and HTML through the actual UI save dialog. It checks
-allocated byte totals, snapshot comparison, file counts, unread count, the new
-build-output classification, and the source asset's exact 1 MiB growth. A
-failure stops the suite. `fixture/{light,dark}/validation.json` holds the checked numbers.
-Each theme also records a 14 s workflow: initial scan, baseline, external build
-addition, Rescan, Change, Reclaim, export dialog and saved-report notice. JSON and
-HTML exports are copied into `fixture/{light,dark}/`; their original destinations
-are generic paths alongside the generated fixture, so video notices show no
-personal output directory. The fixture is generated example data, although the report accurately identifies
+The real fixture starts with a CMake project and 3 files. A separate isolated
+host exports its initial report. The filmed host starts a scan through Settings
+→ Rescan, then the script adds an 8 MiB build object and a CMake marker and grows
+a source asset from 2 to 3 MiB. A visible cue explains this external addition.
+The pointer invokes Rescan, selects Change and Reclaim, then exports HTML through
+the actual UI. The save-dialog path is supplied by the headless picker. It never
+selects a cleanup candidate. The 40.13 s continuous recording includes deliberate
+pointer travel, press/release feedback, reading pauses, and the saved notice.
+
+The script checks allocated byte totals, snapshot comparison, file counts,
+unread count, the new build-output classification, and the source asset's exact
+1 MiB growth. A failure stops the suite. `fixture/{light,dark}/validation.json`
+holds the checked numbers. JSON and HTML exports are copied into those folders;
+their original destinations are generic paths alongside the generated fixture.
+The fixture is generated example data, although its report accurately identifies
 it as a real filesystem scan, not Leita's synthetic engine.
 
-Light and dark imagery each uses the synthetic disk at day 0 as the baseline
-and day 7 as the scan. Both run the same five scenes: Sunburst, Treemap, Icicle,
-Treemap by Change, and Reclaim. `--frames 60` (default) records 60 frames of each
-scene at 30 fps, making two 10 s H.264 videos. The scene transitions are clicks;
-the captured scenes begin after 30 animation-settling frames. A scan is complete
-before recording, so host scheduling does not change the scene order or video
-length. This is a view tour, not a recording of elapsed scan time. Use each
-`sunburst.png` as its theme's poster. `--frames 0` skips frames and video;
-`--fixture-only` runs only the validated filesystem scenario.
+The 22 s hero records a running day-7 synthetic scan. Sunburst fills first; the
+pointer selects Treemap and then Icicle while the walker continues, followed by
+2 s at completion. An optional synthetic directory-boundary clock releases the
+same real batches every three video frames in both themes. The host still folds
+the tree and sends its own progress/layout answers; the clock changes pacing,
+not entries or view data. Its optional elapsed clock also supplies the in-app
+synthetic scan counter, so PNG encoding time does not speed that counter up.
+Normal scans keep their wall clock. This is a controlled demonstration, not a measurement
+of elapsed scan time. Each view must show more than 10 distinct increasing
+progress counts while Scanning or capture fails. `storyboard.json` records every
+action, exact target, timing and sampled progress. Theme storyboards must match.
+
+All five clean stills (Sunburst, Treemap, Icicle, Change and Reclaim) are taken
+separately after the scan finishes, against a day-0 history baseline. They have
+no pointer or video cue. Use each `sunburst.png` as its theme's poster.
+`--frames 60` remains accepted for compatibility: any positive value enables the
+fixed 30 fps choreography; `--frames 0` skips videos. `--fixture-only` runs only
+the validated filesystem scenario. Timelines are never stretched to match an
+old duration; use the frame count and seconds in the manifest.
 
 The app lays out at 1280×820 with density 2. The driver scales the flattened
 vector/glyph draws and clips at rasterisation to write 2560×1640 PNGs. It does
@@ -75,7 +88,16 @@ The first three arguments are target, explicit isolated state directory, and
 - `-rescan`: Ctrl+R, then wait for a newer generation to finish (Linux).
 - `-pick PATH`: answer the UI's pending save/open dialog.
 - `-signal PATH`, `-await-file PATH`: synchronize an external fixture mutation.
-- `-frames PREFIX COUNT`: consecutive 30 fps PNGs named `PREFIX00000.png`, etc.
+- `-frames PREFIX COUNT`: consecutive clean 30 fps PNGs named `PREFIX00000.png`, etc.
+- `-movie PREFIX`, `-end-movie`: start/stop continuous frames with a high-contrast pointer.
+- `-tap TAG`: travel 21 frames, hover 6, press 5, then release and settle 18 frames.
+- `-glide X Y FRAMES`, `-hold FRAMES`: move with eased endpoints or pause.
+- `-cue TEXT`: show an explicit external-action caption; an empty string clears it.
+- `-stream`: use the synthetic frame clock (requires `LEITA_SYNTHETIC`).
+
+Inside a movie, use `-tap` instead of instantaneous headless clicks. `-await TAG`
+asserts the expected state at that frame; it fails rather than silently hiding
+extra scan time. `-png` always omits the pointer and cue, even inside a movie.
 
 All input dispatch and host responses are real. Theme selection is the only
 view-state override. The caller owns the step list and must use generated

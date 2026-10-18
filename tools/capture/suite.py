@@ -17,17 +17,13 @@ def run(argv, **kwargs):
     subprocess.run([str(x) for x in argv], check=True, **kwargs)
 
 
-def export(path, include=False, frames=None):
+def export(path, include=False):
     steps = ['-click', 'Settings', '-click', 'Export', '-advance', '20',
              '-click', path.suffix[1:].upper()]
     if include:
         steps += ['-click', 'Include Reclaim candidates']
-    if frames:
-        steps += ['-frames', frames / '06-export-dialog-', '60']
     steps += ['-click', 'Export', '-advance', '5', '-pick', str(path),
               '-await-file', str(path)]
-    if frames:
-        steps += ['-frames', frames / '07-report-saved-', '60']
     return steps + ['-advance', '600']
 
 
@@ -74,18 +70,37 @@ def fixture(binary, out, fixture_root, theme, frames):
     frame_dir = base / 'frames'
     if frames:
         frame_dir.mkdir()
-    def shot(name, count=60):
-        return ['-frames', frame_dir / name, str(count)] if frames else []
-    rescan = ['-key', 'Shortcut+R', *shot('03-rescan-'), '-await', 'Done'] if frames else ['-rescan']
-    args = [binary, root, data, theme, *shot('00-scan-', 30),
-            '-await', 'Done', '-advance', '30', '-png', base / 'before.png',
-            *shot('01-before-'), *export(before, include=True),
-            '-signal', ready, '-await-file', resume, *shot('02-build-added-', 30),
-            *rescan, '-advance', '30',
-            '-click', 'Change', '-advance', '30', '-png', base / 'growth.png',
-            *shot('04-growth-'), '-click', 'Reclaim', '-advance', '30',
-            '-png', base / 'reclaim.png', *shot('05-reclaim-'),
-            *export(after, frames=frame_dir if frames else None), *export(reports / 'report.html')]
+    env = dict(os.environ)
+    env.pop('LEITA_SYNTHETIC', None)
+    env['XDG_DATA_HOME'] = str(data)
+    # Record the before report independently; the filmed host keeps its own history.
+    baseline_data = base / 'baseline-data'
+    baseline_data.mkdir()
+    run([binary, root, baseline_data, theme, '-await', 'Done', *export(before, include=True)], env=env)
+    if frames:
+        args = [binary, root, data, theme, '-await', 'Done', '-advance', '30',
+                '-movie', frame_dir / 'frame-', '-hold', '30',
+                '-tap', 'Settings', '-tap', 'Rescan', '-glide', '1100', '100', '21',
+                '-hold', '60', '-await', 'Done', '-png', base / 'before.png',
+                '-signal', ready, '-await-file', resume,
+                '-cue', 'Example build files added: 8 MiB build output + 1 MiB source growth',
+                '-hold', '90', '-cue', '',
+                '-tap', 'Settings', '-tap', 'Rescan', '-glide', '1100', '100', '21',
+                '-hold', '60', '-await', 'Done',
+                '-tap', 'Change', '-glide', '1100', '100', '21', '-hold', '90',
+                '-png', base / 'growth.png',
+                '-tap', 'Reclaim', '-glide', '700', '238', '21', '-hold', '90',
+                '-png', base / 'reclaim.png',
+                '-tap', 'Settings', '-tap', 'Export', '-tap', 'HTML',
+                '-tap', 'Include Reclaim candidates', '-hold', '60', '-tap', 'Export',
+                '-pick', reports / 'report.html', '-hold', '90', '-await-file', reports / 'report.html',
+                '-end-movie', '-advance', '600', *export(after)]
+    else:
+        args = [binary, root, data, theme, '-await', 'Done', '-advance', '30',
+                '-png', base / 'before.png', '-signal', ready, '-await-file', resume,
+                '-rescan', '-advance', '30', '-click', 'Change', '-advance', '30',
+                '-png', base / 'growth.png', '-click', 'Reclaim', '-advance', '30',
+                '-png', base / 'reclaim.png', *export(after, include=True), *export(reports / 'report.html')]
     env = dict(os.environ)
     env.pop('LEITA_SYNTHETIC', None)
     env['XDG_DATA_HOME'] = str(data)
@@ -101,7 +116,7 @@ def fixture(binary, out, fixture_root, theme, frames):
             expected_after = allocated(root)
             expected_build = allocated(root / 'build')
             resume.write_text('rescan\n')
-            if process.wait(timeout=180) != 0:
+            if process.wait(timeout=300) != 0:
                 raise RuntimeError(f'fixture capture failed; see {base / "capture.log"}')
         finally:
             if process.poll() is None:
@@ -111,6 +126,7 @@ def fixture(binary, out, fixture_root, theme, frames):
         shutil.copy2(path, base / path.name)
     if frames:
         encode(frame_dir, base / 'demo.mp4')
+        storyboard(base)
     first, second = json.loads(before.read_text()), json.loads(after.read_text())
     assert first['schema'] == second['schema'] == 'leita.report/1'
     assert first['compared'] is None
@@ -148,23 +164,59 @@ def synthetic(binary, out, frames):
         env = dict(os.environ, XDG_DATA_HOME=str(data), LEITA_SYNTHETIC='0')
         run([binary, '/', data, theme, '-await', 'Done'], env=env)
         env['LEITA_SYNTHETIC'] = '7'
-        steps = ['-await', 'Done', '-advance', '60']
-        sequence = [('sunburst', 'Sunburst', 'Folder'), ('treemap', 'Treemap', 'Folder'),
-                    ('icicle', 'Icicle', 'Folder'), ('change', 'Treemap', 'Change'),
-                    ('reclaim', 'Reclaim', None)]
+        steps = []
         if frames:
             (base / 'frames').mkdir()
-        for number, (name, mode, colour) in enumerate(sequence):
+            steps += ['-stream', '-movie', base / 'frames' / 'frame-', '-hold', '150',
+                      '-tap', 'Treemap', '-glide', '1100', '100', '21', '-hold', '150',
+                      '-tap', 'Icicle', '-glide', '1100', '100', '21', '-hold', '218',
+                      '-await', 'Done', '-end-movie']
+        steps += ['-await', 'Done', '-advance', '60']
+        for name, mode, colour in [('sunburst', 'Sunburst', 'Folder'),
+                                  ('treemap', 'Treemap', 'Folder'), ('icicle', 'Icicle', 'Folder'),
+                                  ('change', 'Treemap', 'Change'), ('reclaim', 'Reclaim', None)]:
             steps += ['-click', mode]
             if colour:
                 steps += ['-click', colour]
             steps += ['-advance', '30', '-png', base / f'{name}.png']
-            if frames:
-                steps += ['-frames', base / 'frames' / f'{number:02}-{name}-', str(frames)]
         steps += export(base / 'report.json', include=True) + export(base / 'report.html')
-        run([binary, '/', data, theme, *steps], env=env)
+        with (base / 'capture.log').open('w') as log:
+            run([binary, '/', data, theme, *steps], env=env, stdout=log, stderr=log)
         if frames:
             encode(base / 'frames', base / 'demo.mp4')
+            storyboard(base)
+
+
+def storyboard(base):
+    events = []
+    count = 0
+    progress = []
+    for line in (base / 'capture.log').read_text().splitlines():
+        fields = line.split('\t')
+        if fields[0] == 'ACTION':
+            events.append(dict(frame=int(fields[1]), seconds=int(fields[1]) / 30,
+                               action=fields[2], target=[float(fields[3]), float(fields[4])],
+                               travel_frames=21, hover_frames=6, press_frames=5, release_frames=18))
+        elif fields[0] == 'CUE':
+            events.append(dict(frame=int(fields[1]), seconds=int(fields[1]) / 30, cue=fields[2]))
+        elif fields[0] == 'PROGRESS':
+            progress.append(dict(frame=int(fields[1]), nodes=int(fields[2]), bytes=int(fields[3]), state=fields[4], scan_seconds=float(fields[5])))
+        elif fields[0] == 'FRAMES':
+            count = int(fields[1])
+    assert count == len(list((base / 'frames').glob('*.png')))
+    result = dict(fps=30, frames=count, seconds=count / 30, events=events,
+                  pointer='white arrow, dark outline, amber press and release pulse',
+                  source='continuous real app frames with dispatched pointer Move, Press and Release events')
+    if progress:
+        result['progress'] = progress
+        assert all(abs(p['scan_seconds'] - min(p['frame'] / 30, 20)) < .11 for p in progress), 'scan display clock differs from movie clock'
+        for name, start, end in [('Sunburst', 0, 147), ('Treemap', 204, 369), ('Icicle', 423, 597)]:
+            samples = [p for p in progress if start <= p['frame'] <= end]
+            assert len({p['nodes'] for p in samples}) > 10, f'{name} did not visibly scan'
+            assert all(p['state'] == 'Scanning' for p in samples), f'{name} finished prematurely'
+            assert samples[-1]['bytes'] > samples[0]['bytes']
+    (base / 'storyboard.json').write_text(json.dumps(result, indent=2) + '\n')
+    return result
 
 
 def main():
@@ -174,7 +226,7 @@ def main():
     parser.add_argument('--fixture-root', type=Path, required=True,
                         help='new directory on tmpfs, e.g. /tmp/leita-example-<id>')
     parser.add_argument('--jm-revision', required=True, help='exact jm revision used to build the driver')
-    parser.add_argument('--frames', type=int, default=60, help='frames per scene at 30 fps; 0 for stills')
+    parser.add_argument('--frames', type=int, default=60, help='enable fixed 30 fps interaction timelines when positive; 0 for stills')
     parser.add_argument('--fixture-only', action='store_true')
     args = parser.parse_args()
     if args.frames < 0:
@@ -193,9 +245,13 @@ def main():
         validation[theme] = fixture(args.binary.resolve(), args.output, args.fixture_root, theme, args.frames > 0)
     if not args.fixture_only:
         synthetic(args.binary.resolve(), args.output, args.frames)
+    if args.frames:
+        pairs = [args.output / 'fixture'] + ([] if args.fixture_only else [args.output])
+        for pair in pairs:
+            assert json.loads((pair / 'light/storyboard.json').read_text()) == json.loads((pair / 'dark/storyboard.json').read_text()), 'theme choreography differs'
     files = {}
     for path in sorted(args.output.rglob('*')):
-        if path.is_file() and 'data' not in path.relative_to(args.output).parts:
+        if path.is_file() and not any(part in ('data', 'baseline-data') for part in path.relative_to(args.output).parts):
             files[str(path.relative_to(args.output))] = hashlib.sha256(path.read_bytes()).hexdigest()
     application_revision = subprocess.check_output(
         ['git', 'log', '-1', '--format=%H', '--', '.', ':(exclude)tools/capture'], cwd=ROOT, text=True).strip()
@@ -210,10 +266,8 @@ def main():
                     jm_revision=args.jm_revision,
                     binary_sha256=hashlib.sha256(args.binary.read_bytes()).hexdigest(),
                     geometry=dict(logical=[1280, 820], density=2, pixels=[2560, 1640]),
-                    fixture_video=dict(fps=30, frames=420 if args.frames else 0, seconds=14 if args.frames else 0,
-                                       scenes=['scan', 'before', 'build-added', 'rescan', 'growth', 'reclaim', 'export-dialog', 'report-saved']),
-                    hero=dict(fps=30, frames_per_scene=args.frames,
-                              scenes=['sunburst', 'treemap', 'icicle', 'change', 'reclaim']),
+                    fixture_video=json.loads((args.output / 'fixture/light/storyboard.json').read_text()) if args.frames else None,
+                    hero=json.loads((args.output / 'light/storyboard.json').read_text()) if args.frames and not args.fixture_only else None,
                     fixture=validation, sha256=files)
     (args.output / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
     print(args.output / 'manifest.json')

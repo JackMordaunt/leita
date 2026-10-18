@@ -766,6 +766,9 @@ advance :: proc(d: ^Desk) -> bool {
 	}
 	survey.rollup_advance(&s.roll, &s.tree)
 	s.seconds = time.duration_seconds(time.tick_since(s.started))
+	if s.engine == .Synthetic && synth.clock_override.elapsed != nil {
+		s.seconds = time.duration_seconds(synth.clock_override.elapsed())
+	}
 	if finished {
 		thread.join(s.reader)
 		thread.destroy(s.reader)

@@ -32,9 +32,20 @@ GiB :: f64(1 << 30)
 HOME :: "/Users/alex"
 
 Config :: struct {
-	day:  int, // which day's disk: a later one has grown
-	pace: bool, // take as long as walking a real disk would
+	day:   int, // which day's disk: a later one has grown
+	pace:  bool, // take as long as walking a real disk would
+	clock: Clock, // optional directory-boundary clock; must return when the tree is cancelled
 }
+
+// Clock replaces wall-clock sleeping, without changing generated entries.
+Clock :: struct {
+	wait:    proc(tree: ^scan.Tree, elapsed: time.Duration),
+	elapsed: proc() -> time.Duration, // optional display clock for a controlled scan
+}
+
+// Set before starting readers, and leave unchanged until they have stopped.
+// Capture tools use this to pace from_env readers by their rendered timeline.
+clock_override: Clock
 
 Error :: enum {
 	None,
@@ -50,7 +61,7 @@ from_env :: proc() -> (cfg: Config, on: bool) {
 		return {}, false
 	}
 	day, _ := strconv.parse_int(value)
-	return {day = max(day, 0), pace = true}, true
+	return {day = max(day, 0), pace = true, clock = clock_override}, true
 }
 
 // space is the size of the made-up disk and what is free on it on day.
@@ -187,12 +198,16 @@ ENTRY_COST :: 9 * time.Microsecond
 
 @(private)
 pace :: proc(g: ^Gen) {
-	if !g.cfg.pace {
+	if !g.cfg.pace && g.cfg.clock.wait == nil {
 		return
 	}
 	r := Rng{g.at.seed ~ 0xA5A5_A5A5}
 	cost := f64(DIR_COST + time.Duration(g.nodes) * ENTRY_COST) * (0.3 + 1.4 * unit(&r))
 	g.owed += time.Duration(cost)
+	if g.cfg.clock.wait != nil {
+		g.cfg.clock.wait(g.tree, g.owed)
+		return
+	}
 	ahead := g.owed - time.tick_since(g.started)
 	if ahead > 2 * time.Millisecond {
 		time.sleep(ahead)
