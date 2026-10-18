@@ -59,3 +59,27 @@ FSOPT_NOFOLLOW :: 0x00000001
 foreign libc {
 	getattrlist :: proc(path: cstring, al: ^Attr_List, buf: rawptr, n: uint, opt: c.uint) -> c.int ---
 }
+
+/*
+Whether `path` still names the file `id`: false only when lstat finds nothing there
+(ENOENT, ENOTDIR) or another file, so a name that cannot be asked is believed. The
+device is compared as parse_entry takes ATTR_CMN_DEVID, a dev_t read as a u32 in
+read_darwin.odin.
+*/
+@(private)
+still_names :: proc(path: string, id: File_Id) -> bool {
+	buf: Path
+	cpath, terminated := terminate(path, &buf)
+	if !terminated {
+		return true
+	}
+	st: posix.stat_t
+	if posix.lstat(cpath, &st) != .OK {
+		#partial switch posix.errno() {
+		case .ENOENT, .ENOTDIR:
+			return false
+		}
+		return true
+	}
+	return u64(u32(st.st_dev)) == id.device && u64(st.st_ino) == id.inode
+}

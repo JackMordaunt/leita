@@ -18,3 +18,10 @@ changed_since :: proc(path: string, since: i64) -> bool {
 // scans and written before each.
 @(private)
 RESTATS :: false
+
+// Whether `path` still names the file `id`. Not asked here: a name the base charged
+// a file under is believed still there, as the base's own choice would be.
+@(private)
+still_names :: proc(path: string, id: File_Id) -> bool {
+	return true
+}

@@ -142,6 +142,7 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 		//
 		// NO_AUTOMOUNT, so asking about an automount point does not mount it
 		// (AT_NO_AUTOMOUNT in statx(2)).
+		index := first + kept
 		child_device, child_filesystem, child_btrfs := device, filesystem, on_btrfs
 		asked := l.type == .REG || l.type == .UNKNOWN || l.type == .DIR
 		st: linux.Statx
@@ -189,7 +190,7 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 				// so only that name claims its extents (counts). An extra keeps
 				// st_blocks, as it does off btrfs, and is charged nothing.
 				if e.links > 1 {
-					counted, counted_ok := counts(w, e)
+					counted, counted_ok := counts(w, index, d.index, e)
 					if !counted_ok {
 						return nodes, bytes, false
 					}
@@ -202,7 +203,6 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 				}
 			}
 		}
-		index := first + kept
 		kept += 1
 		stored := scan.name_at(span, l.at, l.len)
 		descend, charged, recorded := record_at(w, index, d.index, e, stored)

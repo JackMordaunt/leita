@@ -20,20 +20,26 @@ command line, the window and the monitor may each finish a scan of the same plac
 once: each writes its own temporary file, and the last whole one renamed wins. It is
 written for this machine, little-endian:
 
-	magic        "LEITABL1"
+	magic        "LEITABL2"
 	cursor       source u8, volume 2 x u64, journal u64, position i64, full i64
 	place        u32 length, then its bytes
 	nodes        u32 count, u32 root
 	each node    u32 parent, u8 flags, u64 disk, u16 name length, name bytes
+	links        u32 count
+	each link    u32 node, u64 device, u64 inode, u64 upper
 
 Nodes are numbered afresh, used ones only, so a parent names the new number. The
 flags kept are the ones an update needs: what a node is, and Unread for a directory
 the scan could not open, which the update walks rather than copies (walk.update).
 Roughly 15 bytes and the name a node: a home directory of 2.6 million is 70 to 80 MB.
+The links are scan.Tree.linked, the name each file with more than one was charged
+under and the file it names, which an update needs to charge such a file once
+beside a name it copies; 28 bytes each, for such files alone. LEITABL1 kept none,
+and a file of it is read as one of another version: the place is read whole once.
 */
 
 @(private)
-BASELINE_MAGIC :: "LEITABL1"
+BASELINE_MAGIC :: "LEITABL2"
 
 // Numbers each temporary file this process writes, so two threads never share one.
 @(private = "file")
@@ -73,6 +79,13 @@ baseline_save :: proc(path, place: string, t: ^scan.Tree, cursor: changes.Cursor
 			size += NODE_FIXED + len(scan.name_of(t, i))
 		}
 	}
+	links: u32
+	for l in t.linked {
+		if l.node < count && renumber[l.node] != scan.NO_NODE {
+			links += 1
+		}
+	}
+	size += 4 + int(links) * LINK_SIZE
 	out := make([]u8, size)
 	defer delete(out)
 	w := Writer{out, 0}
@@ -106,6 +119,15 @@ baseline_save :: proc(path, place: string, t: ^scan.Tree, cursor: changes.Cursor
 		put_u64(&w, n.disk)
 		put_u16(&w, u16(len(name)))
 		put(&w, transmute([]u8)name)
+	}
+	put_u32(&w, links)
+	for l in t.linked {
+		if l.node < count && renumber[l.node] != scan.NO_NODE {
+			put_u32(&w, renumber[l.node])
+			put_u64(&w, l.id.device)
+			put_u64(&w, l.id.inode)
+			put_u64(&w, l.id.upper)
+		}
 	}
 	assert(w.at == len(out), "a baseline's size was miscounted")
 
@@ -186,13 +208,38 @@ baseline_load :: proc(
 		n.name = scan.intern(&w, name)
 		scan.node_publish(n, flags | {.Used, .Settled})
 	}
-	// Bytes past the last node: the count does not match what was written.
+	if !take_links(&r, t, count) {
+		scan.tree_destroy(t)
+		return {}, "the scan kept of this place is cut short", false
+	}
+	// Bytes past the last link: the count does not match what was written.
 	if r.at != len(r.data) {
 		scan.tree_destroy(t)
 		return {}, "the scan kept of this place is longer than it says", false
 	}
 	t.root = root
 	return cursor, "", true
+}
+
+// Read the links into t.linked; false when they run short or name no node.
+@(private = "file")
+take_links :: proc(r: ^Reader, t: ^scan.Tree, nodes: u32) -> bool {
+	count := take_u32(r)
+	if !r.ok || int(count) > (len(r.data) - r.at) / LINK_SIZE {
+		return false
+	}
+	t.linked = make([dynamic]scan.Link, 0, count, t.allocator)
+	for _ in 0 ..< count {
+		l := scan.Link {
+			node = take_u32(r),
+			id = {device = take_u64(r), inode = take_u64(r), upper = take_u64(r)},
+		}
+		if !r.ok || l.node >= nodes {
+			return false
+		}
+		append(&t.linked, l)
+	}
+	return true
 }
 
 @(private = "file")
@@ -239,6 +286,10 @@ take_u64 :: proc(r: ^Reader) -> u64 {
 // What a node takes beside its name: parent, flags, size, name length.
 @(private = "file")
 NODE_FIXED :: 4 + 1 + 8 + 2
+
+// What a link takes: its node, then the file's device, inode and upper half.
+@(private = "file")
+LINK_SIZE :: 4 + 3 * 8
 
 @(private = "file")
 Writer :: struct {

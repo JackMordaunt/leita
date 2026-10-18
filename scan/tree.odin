@@ -120,6 +120,30 @@ Tree :: struct {
 	// A walk that folded totals as directories finished. Nil for every other reader,
 	// and for a walk that was told not to. Freed with the tree.
 	folded:     ^Folded,
+	// The name each file with more than one was charged under, as the walk found
+	// them; empty for a reader that keeps no file ids. Freed with the tree.
+	linked:     [dynamic]Link,
+}
+
+// Where a file's data lives, the same for every name it has. `upper` is the high half
+// of a 128-bit file id, which the Windows reader takes from FILE_ID_EXTD_DIR_INFO's
+// FileId (read_windows.odin), and 0 where a reader's ids are 64 bits.
+File_Id :: struct {
+	device: u64,
+	inode:  u64,
+	upper:  u64,
+}
+
+/*
+A name a file with more than one was charged under, and that file. The tree keeps
+no file ids otherwise, and an update needs them: before it reads anything it marks
+each of these files charged, so a name of one that it reads, through a directory
+read again or linked since, is not charged a second time beside a name it copies
+(walk.update).
+*/
+Link :: struct {
+	node: u32,
+	id:   File_Id,
 }
 
 // One writer per worker. Holding two in the same thread, or one in two, is the
@@ -164,6 +188,7 @@ tree_init :: proc(t: ^Tree, writers := 1, allocator := context.allocator) -> Err
 
 tree_destroy :: proc(t: ^Tree) {
 	folded_destroy(t.folded, t.allocator)
+	delete(t.linked)
 	for i in 0 ..< t.committed >> BLOCK_SHIFT {
 		free(t.blocks[i], t.allocator)
 	}

@@ -162,9 +162,12 @@ run :: proc(seed: Dir, t: ^scan.Tree, cfg: Config, u: ^Update) -> Error {
 	defer fold_release(fold)
 
 	linked := Linked_Files {
-		seen = make(map[File_Id]struct{}, allocator),
+		payers = make(map[File_Id]Payer, allocator),
 	}
-	defer delete(linked.seen)
+	defer delete(linked.payers)
+	if u != nil && !mark_base_paid(&linked, u.base) {
+		return .Out_Of_Memory
+	}
 
 	search: Btrfs_Search
 	btrfs_search_init(&search, t, allocator)
@@ -184,6 +187,7 @@ run :: proc(seed: Dir, t: ^scan.Tree, cfg: Config, u: ^Update) -> Error {
 			siblings  = make(map[string]u32, allocator),
 			fold      = fold,
 			dirs      = make([dynamic]u32, allocator),
+			paid      = make([dynamic]scan.Link, allocator),
 			allocator = allocator,
 		}
 	}
@@ -191,12 +195,19 @@ run :: proc(seed: Dir, t: ^scan.Tree, cfg: Config, u: ^Update) -> Error {
 		delete(s.found)
 		delete(s.siblings)
 		delete(s.dirs)
+		delete(s.paid)
 		scratch_destroy(&s.scratch)
 	}
 
 	first := seed
 	first.path = strings.clone(seed.path, allocator)
 	flow.manage([]Dir{first}, states, walk_dir, hand_over, drop)
+	paid, gathered := gather_paid(states, allocator)
+	if !gathered {
+		return .Out_Of_Memory
+	}
+	delete(t.linked)
+	t.linked = paid
 
 	if fold != nil {
 		for &s in states {
@@ -298,6 +309,9 @@ Worker :: struct {
 	// by name, so a name it still has keeps the decision made about it there.
 	siblings:  map[string]u32,
 	listing:   bool,
+	// Names this worker charged for a file with more than one (counts), the tree's
+	// once the walk is done (scan.Tree.linked).
+	paid:      [dynamic]scan.Link,
 	// Directories this worker could not read whole, and whether any of them
 	// refused for want of permission. Summed into the tree once the walk is done.
 	unread:    u64,
@@ -374,14 +388,8 @@ Entry :: struct {
 	extra:     bool, // a name of a file charged under another (`counts`)
 }
 
-// Where a file's data lives, the same for every name it has. `upper` is the high half
-// of a 128-bit file id, which ReFS gives its files, and 0 everywhere else.
 @(private)
-File_Id :: struct {
-	device: u64,
-	inode:  u64,
-	upper:  u64,
-}
+File_Id :: scan.File_Id
 
 /*
 The files with more than one name that some worker has already charged.
@@ -394,44 +402,126 @@ linked from two directories can be charged to either from one scan to the next. 
 rollup charges a node once and for good, so the choice has to be made when the node is
 published and cannot wait until every name is known. Only files with more than one
 name come here, which keeps the lock off the path almost every file takes.
+
+An update starts with the files its base charged already marked, each by the name
+the base charged it under (mark_base_paid in update.odin).
 */
 @(private)
 Linked_Files :: struct {
-	mutex: sync.Mutex,
-	seen:  map[File_Id]struct{},
-}
-
-// Record a name of `id`, and whether it is the first any worker has recorded.
-@(private)
-mark_charged :: proc(l: ^Linked_Files, id: File_Id) -> (first: bool, err: mem.Allocator_Error) {
-	sync.mutex_guard(&l.mutex)
-	_, _, first, err = map_entry(&l.seen, id)
-	return
+	mutex:  sync.Mutex,
+	payers: map[File_Id]Payer,
 }
 
 /*
-Whether this name of a file with more than one is the one its file is charged to.
+Which name a file with more than one is charged under: the base's node `base`, for
+an update, which `present` says was found still on disk, or, at NO_NODE, a name
+this walk read.
+*/
+@(private)
+Payer :: struct {
+	base:    u32,
+	present: bool,
+}
+
+/*
+Whether this name of a file with more than one is the one its file is charged to,
+and if so, kept as the tree's at `index`.
 
 A reader asks before it charges the file anything, and only the name counted may
 claim the file's btrfs extents. Asked after, two workers could each search the
 file: the first claims every extent, the second finds them paid by the same owner
 and is charged nothing without being Shared, and then the second could win the
 count, so the file was charged 0 and the name that paid dropped as an extra.
+
+A file an update's base charged stays charged to the base's name while that name is
+still there, read or copied; another name of it is an extra.
 */
 @(private)
-counts :: proc(w: ^Worker, e: Entry) -> (counted, ok: bool) {
-	first, map_err := mark_charged(w.linked, e.id)
-	if map_err != nil {
+counts :: proc(w: ^Worker, index, parent: u32, e: Entry) -> (counted, ok: bool) {
+	counted, ok = settle(w, parent, e)
+	if ok && counted {
+		ok = keep_paid(w, index, e.id)
+	}
+	return
+}
+
+// Whether this name pays for its file, settled under the map's lock (counts).
+@(private)
+settle :: proc(w: ^Worker, parent: u32, e: Entry) -> (counted, ok: bool) {
+	l := w.linked
+	sync.mutex_lock(&l.mutex)
+	defer sync.mutex_unlock(&l.mutex)
+	_, value, inserted, err := map_entry(&l.payers, e.id)
+	if err != nil {
 		w.err = .Out_Of_Memory
 		return false, false
 	}
-	// A name the tree being updated already had keeps the choice made there,
-	// since the name charged in its place may be in a directory this update
-	// copies rather than reads.
-	if was, known := kept_choice(w, e.name); known {
-		return was, true
+	if inserted {
+		value^ = {
+			base = scan.NO_NODE,
+		}
+		// A base that kept no file ids still says, for a name a List job reads,
+		// which name it charged, and the one charged in its place may be in a
+		// directory this update copies rather than reads.
+		if was, known := kept_choice(w, e.name); known {
+			return was, true
+		}
+		return true, true
 	}
-	return first, true
+	payer := value^
+	switch {
+	case payer.base == scan.NO_NODE:
+		return false, true
+	case same_place(w, payer.base, parent, e.name):
+		value^ = {
+			base = scan.NO_NODE,
+		}
+		return true, true
+	case payer.present:
+		return false, true
+	}
+	// Asked with the lock let go, since a stat may wait on the disk. Whichever name
+	// settles the file first is believed.
+	sync.mutex_unlock(&l.mutex)
+	gone := base_name_gone(w, payer.base, e.id)
+	sync.mutex_lock(&l.mutex)
+	if l.payers[e.id] != payer {
+		return false, true
+	}
+	l.payers[e.id] = {
+		base    = scan.NO_NODE if gone else payer.base,
+		present = !gone,
+	}
+	return gone, true
+}
+
+// Keep the name at `index` as the one `id` is charged under, in this worker's own
+// list so no lock is held for it, for counts and for a name an update copies.
+@(private)
+keep_paid :: proc(w: ^Worker, index: u32, id: File_Id) -> bool {
+	if _, err := append(&w.paid, scan.Link{node = index, id = id}); err != nil {
+		w.err = .Out_Of_Memory
+		return false
+	}
+	return true
+}
+
+// Every name the workers kept as charged for a file with more than one, as one list
+// for the tree (scan.Tree.linked).
+@(private)
+gather_paid :: proc(states: []Worker, allocator: mem.Allocator) -> ([dynamic]scan.Link, bool) {
+	count := 0
+	for &s in states {
+		count += len(s.paid)
+	}
+	all, err := make([dynamic]scan.Link, 0, count, allocator)
+	if err != nil {
+		return nil, false
+	}
+	for &s in states {
+		append(&all, ..s.paid[:])
+	}
+	return all, true
 }
 
 /*
@@ -464,7 +554,7 @@ record :: proc(
 	}
 	e := e
 	if e.links > 1 && !e.directory && !e.symlink {
-		counted, counted_ok := counts(w, e)
+		counted, counted_ok := counts(w, slot, parent, e)
 		if !counted_ok {
 			return 0, false, 0, false
 		}

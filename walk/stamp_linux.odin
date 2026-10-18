@@ -53,3 +53,24 @@ disk_of :: proc(path: string) -> (disk: u64, verdict: Verdict) {
 	}
 	return 0, .Unknown
 }
+
+/*
+Whether `path` still names the file `id`: false only when statx finds nothing there
+(ENOENT, ENOTDIR) or another file, so a name that cannot be asked is believed.
+*/
+@(private)
+still_names :: proc(path: string, id: File_Id) -> bool {
+	buf: Path
+	cpath, terminated := terminate(path, &buf)
+	if !terminated {
+		return true
+	}
+	st: linux.Statx
+	#partial switch linux.statx(linux.AT_FDCWD, cpath, {.SYMLINK_NOFOLLOW}, {.INO}, &st) {
+	case .NONE:
+		return statx_device(st) == id.device && u64(st.ino) == id.inode
+	case .ENOENT, .ENOTDIR:
+		return false
+	}
+	return true
+}

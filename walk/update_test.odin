@@ -350,3 +350,96 @@ test_a_relisted_link_is_charged_once :: proc(t: ^testing.T) {
 	}
 	testing.expect_value(t, total(&got), total(&base))
 }
+
+// What a tree charges in all, as its nodes say.
+@(private = "file")
+charged_total :: proc(tree: ^scan.Tree) -> (sum: u64) {
+	for _, bytes in shape(tree) {
+		sum += bytes
+	}
+	return
+}
+
+/*
+A file named from two directories is charged once when an update copies the
+directory holding the name the base charged and reads the other, walked again
+(Deep) or unread in the base, and reads a third name linked since in a directory
+new since. The copied name's file is marked charged before anything is read, so
+each name read is an extra. Before, the name a Deep or unread directory held was
+charged again, and the total grew by the whole file.
+
+	<root>/a/big     1 MiB, the first name
+	<root>/b/big     a second, made before the base was read
+	<root>/c/big     a third, made after
+*/
+@(test)
+test_an_update_charges_a_link_once_beside_a_copied_name :: proc(t: ^testing.T) {
+	when ODIN_OS != .Linux && ODIN_OS != .Darwin {
+		return
+	}
+	dir, dir_err := os.temp_directory(context.temp_allocator)
+	testing.expect(t, dir_err == nil, "no temp directory")
+	root := fmt.tprintf("%s/leita_update_copied_link", dir)
+	os.remove_all(root)
+	defer os.remove_all(root)
+	for sub in ([]string{"", "/a", "/b"}) {
+		testing.expect(t, os.make_directory(fmt.tprintf("%s%s", root, sub)) == nil, "no directory")
+	}
+	big := fmt.tprintf("%s/a/big", root)
+	put(t, big, 1 << 20)
+	testing.expect(t, os.link(big, fmt.tprintf("%s/b/big", root)) == nil, "could not link")
+	base := read_tree(t, root)
+	defer scan.tree_destroy(&base)
+	paid, other := "a", "b"
+	if .Extra_Name in scan.node_flags(scan.node(&base, at(&base, "a", "big"))) {
+		paid, other = "b", "a"
+	}
+	testing.expect(t, os.make_directory(fmt.tprintf("%s/c", root)) == nil, "no c")
+	testing.expect(t, os.link(big, fmt.tprintf("%s/c/big", root)) == nil, "could not link c")
+
+	for unread in ([]bool{false, true}) {
+		u := Update {
+			base = &base,
+		}
+		defer delete(u.marks)
+		u.marks[base.root] = .List
+		if unread {
+			scan.node_mark(scan.node(&base, at(&base, other)), {.Unread})
+		} else {
+			u.marks[at(&base, other)] = .Deep
+		}
+		got: scan.Tree
+		testing.expect_value(t, scan.tree_init(&got, 4), scan.Error.None)
+		defer scan.tree_destroy(&got)
+		testing.expect_value(t, update(root, &u, &got, Config{workers = 4}), Error.None)
+
+		for name in ([]string{"a", "b", "c"}) {
+			n := at(&got, name, "big")
+			if n == scan.NO_NODE {
+				testing.expectf(t, false, "%s/big is missing", name)
+				continue
+			}
+			extra := .Extra_Name in scan.node_flags(scan.node(&got, n))
+			testing.expectf(
+				t,
+				extra == (name != paid),
+				"%s/big extra %v, %s paid",
+				name,
+				extra,
+				paid,
+			)
+		}
+		testing.expectf(
+			t,
+			charged_total(&got) == charged_total(&base),
+			"unread %v: charged %d, the base %d",
+			unread,
+			charged_total(&got),
+			charged_total(&base),
+		)
+		testing.expect_value(t, len(got.linked), 1)
+		if len(got.linked) == 1 {
+			testing.expect_value(t, got.linked[0].node, at(&got, paid, "big"))
+		}
+	}
+}

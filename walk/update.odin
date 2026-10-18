@@ -1,7 +1,6 @@
 package walk
 
-// Required: only the restat uses it, which a platform without RESTATS compiles out.
-@(require) import "base:runtime"
+import "base:runtime"
 import "core:sync"
 
 import "../scan"
@@ -52,6 +51,9 @@ Update :: struct {
 	// base's children, built by `update` if left empty. A caller that has built it
 	// already, to find what changed in base, passes it and keeps it.
 	index:  scan.Index,
+	// The file each name base charged for one with more than one names, by node of
+	// base (scan.Tree.linked), built by `update` so a copy keeps it.
+	linked: map[u32]scan.File_Id,
 }
 
 /*
@@ -65,9 +67,12 @@ under the same name keeps its own mark. A directory the base could not read is
 walked whatever its mark, since the base holds nothing of it. The result is the
 tree a walk would have read, as far as the marks were right.
 
-A name the base has keeps the base's choice of which name of a hard-linked file to
-charge. A file linked anew since the base, to a name the update copies, is charged
-twice: an update cannot see a link it does not read.
+A file with more than one name stays charged to the name the base charged it under
+while that name is still there, read or copied, by the file id the base kept for it
+(scan.Tree.linked): another name of it, in a directory the update reads, Deep, listed,
+unread in the base or new, is an extra. Without that, a name in a directory walked
+again was charged beside the copied one, and the next baseline kept the total that
+much too high. A base that kept no ids keeps its choice for a name a List job reads.
 */
 update :: proc(root: string, u: ^Update, t: ^scan.Tree, cfg := Config{}) -> Error {
 	if u.base.root >= scan.slots(u.base) {
@@ -83,6 +88,15 @@ update :: proc(root: string, u: ^Update, t: ^scan.Tree, cfg := Config{}) -> Erro
 	}
 	defer if built {
 		scan.index_destroy(&u.index)
+	}
+
+	u.linked = make(map[u32]scan.File_Id, len(u.base.linked))
+	defer {
+		delete(u.linked)
+		u.linked = nil
+	}
+	for named in u.base.linked {
+		u.linked[named.node] = named.id
 	}
 
 	first, ok := claim_root(root, t)
@@ -194,6 +208,9 @@ copy_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 		nodes += 1
 		if file && .Extra_Name not_in flags {
 			bytes += disk
+			if id, linked := u.linked[c]; linked && !keep_paid(w, slot, id) {
+				return nodes, bytes, false
+			}
 		}
 
 		if descends(flags, w.follow) {
@@ -257,4 +274,92 @@ kept_choice :: proc(w: ^Worker, name: string) -> (charged, known: bool) {
 		return false, false
 	}
 	return .Extra_Name not_in flags, true
+}
+
+/*
+Mark each file with more than one name that the base charged as charged to the name
+the base charged it under, before any directory is read, so counts holds to the
+base's choice whichever directory the update reaches another name of it in first.
+A name the update copies cannot say what file it names: the tree keeps no ids but
+these. False when out of memory.
+*/
+@(private)
+mark_base_paid :: proc(l: ^Linked_Files, base: ^scan.Tree) -> bool {
+	for named in base.linked {
+		if named.node >= scan.slots(base) {
+			continue
+		}
+		_, value, inserted, err := map_entry(&l.payers, named.id)
+		if err != nil {
+			return false
+		}
+		if inserted {
+			value^ = {
+				base = named.node,
+			}
+		}
+	}
+	return true
+}
+
+// How far up a tree same_place and base_path go before taking a chain for a cycle,
+// which only a corrupt base could hold.
+@(private)
+MAX_DEPTH :: 4096
+
+/*
+Whether `name` in the directory `parent` of the tree being read lies where the base's
+node `was` did: the same name, in directories of the same names, up to each root.
+*/
+@(private)
+same_place :: proc(w: ^Worker, was, parent: u32, name: string) -> bool {
+	base, tree := w.update.base, w.writer.tree
+	if scan.name_of(base, was) != name {
+		return false
+	}
+	b, n := scan.node(base, was).parent, parent
+	for _ in 0 ..< MAX_DEPTH {
+		if b == base.root || n == tree.root {
+			return b == base.root && n == tree.root
+		}
+		if scan.name_of(base, b) != scan.name_of(tree, n) {
+			return false
+		}
+		b, n = scan.node(base, b).parent, scan.node(tree, n).parent
+	}
+	return false
+}
+
+/*
+Whether the base's node `was` no longer names the file `id` on disk, so another name
+of it has to pay for it: deleted or renamed since, in a directory this update reads.
+A path that cannot be built or asked is taken to name it still.
+*/
+@(private)
+base_name_gone :: proc(w: ^Worker, was: u32, id: File_Id) -> bool {
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	path, ok := base_path(w.update.base, was, context.temp_allocator)
+	return ok && !still_names(path, id)
+}
+
+// The path of the base's node `was`, from the base's root, which names the place.
+// scan.path stops at 64 directories, and a deeper name is still a name.
+@(private)
+base_path :: proc(base: ^scan.Tree, was: u32, allocator: runtime.Allocator) -> (string, bool) {
+	chain := make([dynamic]u32, allocator)
+	for at := was; at != base.root; at = scan.node(base, at).parent {
+		if len(chain) >= MAX_DEPTH {
+			return "", false
+		}
+		append(&chain, at)
+	}
+	path := scan.name_of(base, base.root)
+	#reverse for at in chain {
+		joined, err := join(path, scan.name_of(base, at), allocator)
+		if err != nil {
+			return "", false
+		}
+		path = joined
+	}
+	return path, true
 }

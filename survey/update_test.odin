@@ -87,15 +87,33 @@ expect_same :: proc(t: ^testing.T, got, want: ^scan.Tree) {
 	}
 }
 
-// A baseline reads back as the tree that was kept, with its cursor.
+// The file each name a tree charged for a file with more than one names, by path.
+@(private = "file")
+linked_paths :: proc(tree: ^scan.Tree) -> map[string]scan.File_Id {
+	out := make(map[string]scan.File_Id, context.temp_allocator)
+	for l in tree.linked {
+		out[scan.path(tree, l.node, context.temp_allocator)] = l.id
+	}
+	return out
+}
+
+// A baseline reads back as the tree that was kept, with its cursor, and with the
+// name a file of two names was charged under, which an update needs to charge it
+// once beside a name it copies (walk.update).
 @(test)
 test_a_baseline_reads_back_what_was_kept :: proc(t: ^testing.T) {
 	root := fixture(t, "keep")
 	defer os.remove_all(root)
 	file := join(root, "..", "leita_survey_keep.tree")
 	defer os.remove(file)
+	testing.expect(
+		t,
+		os.link(join(root, "sub", "b.txt"), join(root, "still", "b2.txt")) == nil,
+		"could not link",
+	)
 	tree := read_tree(t, root)
 	defer scan.tree_destroy(&tree)
+	testing.expect_value(t, len(tree.linked), 1)
 
 	cursor := changes.Cursor {
 		source   = .Probe,
@@ -111,6 +129,11 @@ test_a_baseline_reads_back_what_was_kept :: proc(t: ^testing.T) {
 	testing.expectf(t, ok, "not read back: %s", why)
 	testing.expect_value(t, got, cursor)
 	expect_same(t, &back, &tree)
+	kept, want := linked_paths(&back), linked_paths(&tree)
+	testing.expect_value(t, len(kept), len(want))
+	for path, id in want {
+		testing.expectf(t, kept[path] == id, "%s names %v, the tree %v", path, kept[path], id)
+	}
 
 	other: scan.Tree
 	_, why, ok = baseline_load(file, join(root, "sub"), &other)
