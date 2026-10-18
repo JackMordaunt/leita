@@ -41,7 +41,8 @@ Report :: struct {
 	generated:           time.Time, // when the report was built
 	version:             string, // the leita that built it
 	// Whose licence the leita that built it runs under, "" for none: every
-	// format says so where it says what built it.
+	// format says so where it says what built it, as it says a name: a CSV cell
+	// of it is neutralised like a path's.
 	licensee:            string,
 	target:              string, // the path scanned, its top; the display formats picture its controls
 	volume:              string, // the device behind it, "" when unknown

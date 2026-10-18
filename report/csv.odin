@@ -29,7 +29,7 @@ The byte order mark is written so that Excel takes the file as UTF-8 rather than
 guessing an encoding, which would garble every name that is not ASCII. A program
 reading the file as plain UTF-8 sees it as U+FEFF before the first header.
 
-A cell holding a name from the disk that starts = + - @ tab or CR, the leaders
+A cell holding a name from the disk, or the licensee, that starts = + - @ tab or CR, the leaders
 OWASP's "CSV Injection" page (owasp.org/www-community/attacks/CSV_Injection)
 says a spreadsheet may run as a formula, gets an apostrophe in front, since
 whoever made a file chose its name. Numbers are written bare.
@@ -134,12 +134,15 @@ csv_entries :: proc(sb: ^strings.Builder, r: ^Report, section: string, entries: 
 	}
 }
 
+// csv_note writes a note row. The text is a name from outside as far as a
+// spreadsheet is concerned, since the last note carries the licensee, so it
+// is written as cell_name writes one.
 @(private)
 csv_note :: proc(sb: ^strings.Builder, text: string) {
 	row := Row{sb, 0}
 	cell_text(&row, "note")
 	cell_text(&row, "")
-	cell_text(&row, text)
+	cell_name(&row, text)
 	for _ in 3 ..< len(CSV_HEADERS) {
 		cell_text(&row, "")
 	}
