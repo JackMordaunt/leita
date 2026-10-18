@@ -3,6 +3,7 @@ package leita_alert
 import "core:strings"
 
 import "../appid"
+import "../human"
 import "../version"
 
 /*
@@ -61,12 +62,19 @@ notify :: proc(system: System, title, body: string, run: Runner, user: rawptr = 
 	return false
 }
 
-// commands are the ways to show title and body on system, the first to try
-// first, in the temp allocator.
+/*
+commands are the ways to show title and body on system, the first to try
+first, in the temp allocator. A body names a place, which a person or a
+program chose, so it is made safe for each: shown without its controls
+(human.shown) where a server takes it raw, since a toast's XML takes no control
+but tab and line breaks; its & < > escaped as well on freedesktop, whose servers
+read a body as markup; and quoted by apple_quote on macOS.
+*/
 commands :: proc(system: System, title, body: string) -> [][]string {
 	out := make([dynamic][]string, context.temp_allocator)
 	switch system {
 	case .Freedesktop:
+		heading, marked := human.shown(title), markup_escape(human.shown(body))
 		append(
 			&out,
 			clone(
@@ -74,8 +82,8 @@ commands :: proc(system: System, title, body: string) -> [][]string {
 					"notify-send",
 					"--app-name=" + version.NAME,
 					"--icon=drive-harddisk",
-					title,
-					body,
+					heading,
+					marked,
 				},
 			),
 		)
@@ -92,8 +100,8 @@ commands :: proc(system: System, title, body: string) -> [][]string {
 					version.NAME,
 					"0",
 					"drive-harddisk",
-					title,
-					body,
+					heading,
+					marked,
 					"[]",
 					"{}",
 					"-1",
@@ -111,7 +119,7 @@ commands :: proc(system: System, title, body: string) -> [][]string {
 					"-WindowStyle",
 					"Hidden",
 					"-Command",
-					toast_script(title, body),
+					toast_script(human.shown(title), human.shown(body)),
 				},
 			),
 		)
@@ -123,6 +131,29 @@ commands :: proc(system: System, title, body: string) -> [][]string {
 		append(&out, clone({"osascript", "-e", script}))
 	}
 	return out[:]
+}
+
+// markup_escape is s with the three characters the Desktop Notifications
+// Specification's body markup gives meaning to written as entities, so a body
+// shows as text and not as the <b>, <i>, <u>, <a> and <img> tags a server takes.
+markup_escape :: proc(s: string) -> string {
+	if !strings.contains_any(s, "&<>") {
+		return s
+	}
+	b := strings.builder_make(context.temp_allocator)
+	for c in transmute([]byte)s {
+		switch c {
+		case '&':
+			strings.write_string(&b, "&amp;")
+		case '<':
+			strings.write_string(&b, "&lt;")
+		case '>':
+			strings.write_string(&b, "&gt;")
+		case:
+			strings.write_byte(&b, c)
+		}
+	}
+	return strings.to_string(b)
 }
 
 // clone is argv in the temp allocator, since a literal's lives on the stack.
@@ -182,16 +213,29 @@ powershell_quote :: proc(s: string) -> string {
 }
 
 // apple_quote is s as an AppleScript string: in double quotes, with each
-// backslash and double quote escaped.
+// backslash and double quote escaped, a line break, carriage return and tab as
+// the escapes AppleScript reads them by, and any other control, bidi override
+// or byte that is not UTF-8 as human.shown has it, so nothing in s ends the
+// string or the line it is on.
 apple_quote :: proc(s: string) -> string {
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_byte(&b, '"')
 	for c in transmute([]byte)s {
-		if c == '"' || c == '\\' {
+		switch c {
+		case '"', '\\':
 			strings.write_byte(&b, '\\')
+			strings.write_byte(&b, c)
+		case '\n':
+			strings.write_string(&b, "\\n")
+		case '\r':
+			strings.write_string(&b, "\\r")
+		case '\t':
+			strings.write_string(&b, "\\t")
+		case:
+			strings.write_byte(&b, c)
 		}
-		strings.write_byte(&b, c)
 	}
 	strings.write_byte(&b, '"')
-	return strings.to_string(b)
+	// The escapes above are plain letters; what is left to rewrite is the rest.
+	return human.shown(strings.to_string(b))
 }

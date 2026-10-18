@@ -220,3 +220,56 @@ a_notification_reaches_each_desktop_with_nothing_in_it_run :: proc(t: ^testing.T
 	}
 	testing.expect(t, !notify(.Freedesktop, title, body, run, &tried), "neither ran")
 }
+
+// HOSTILE is a place that tries a notification: an OSC 52 write, a CSI colour, a
+// line break, a right-to-left override, markup, an ampersand and a formula.
+@(private = "file")
+HOSTILE :: "=\x1b]52;c;ZXZpbA==\x07\x1b[31m\nname\u202E<img src=x> & \"q\" \\"
+
+@(test)
+a_notification_body_is_text_on_every_desktop :: proc(t: ^testing.T) {
+	escaped :: "=\u241B]52;c;ZXZpbA==\u2407\u241B[31m\u240Aname\uFFFD&lt;img src=x&gt; &amp; \"q\" \\"
+
+	// Freedesktop servers read the body as markup: notify-send's last argument and
+	// gdbus's, the body ahead of its actions, hints and timeout.
+	linux := commands(.Freedesktop, "leita", HOSTILE)
+	testing.expect_value(t, linux[0][len(linux[0]) - 1], escaped)
+	testing.expect_value(t, linux[1][len(linux[1]) - 4], escaped)
+	for argv in linux {
+		for arg in argv {
+			testing.expect(t, !strings.contains_any(arg, "\x1b\x07\n\u202E"), arg)
+		}
+	}
+	testing.expect_value(t, commands(.Freedesktop, "a", "a & b")[0][4], "a &amp; b")
+
+	// AppleScript: the string has no line break to end it, and no control.
+	mac := commands(.Macos, "leita", HOSTILE)[0][2]
+	testing.expect_value(
+		t,
+		mac,
+		"display notification \"=\u241B]52;c;ZXZpbA==\u2407\u241B[31m\\nname\uFFFD<img src=x> & \\\"q\\\" \\\\\" with title \"leita\"",
+	)
+	testing.expect(t, !strings.contains_any(mac, "\x1b\x07\n\r\u202E"), mac)
+
+	// PowerShell: a single-quoted string expands nothing, and CreateTextNode takes
+	// the markup as text; the control is pictured so the toast's XML stays valid.
+	windows := commands(.Windows, "leita", HOSTILE)
+	script := windows[0][len(windows[0]) - 1]
+	testing.expect(
+		t,
+		strings.contains(
+			script,
+			"CreateTextNode('=\u241B]52;c;ZXZpbA==\u2407\u241B[31m\u240Aname\uFFFD<img src=x> & \"q\" \\')",
+		),
+		script,
+	)
+	testing.expect(t, !strings.contains_any(script, "\x1b\x07\n\u202E"), script)
+}
+
+@(test)
+apple_quote_ends_no_string_early :: proc(t: ^testing.T) {
+	testing.expect_value(t, apple_quote("a\nb\rc\td"), `"a\nb\rc\td"`)
+	testing.expect_value(t, apple_quote("\x1b\x7f\x00"), "\"\u241B\u2421\u2400\"")
+	testing.expect_value(t, apple_quote("a\xffb\u009b"), "\"a\uFFFDb\uFFFD\"")
+	testing.expect_value(t, apple_quote(`"\`), `"\"\\"`)
+}
