@@ -18,6 +18,7 @@ import "core:time"
 
 import harness "jm:fuzz"
 
+import ntfs_fuzz "../../ntfs/fuzz"
 import search_fuzz "../../search/fuzz"
 
 Runner :: struct {
@@ -26,7 +27,10 @@ Runner :: struct {
 	run:    proc(opts: harness.Opts, allocator := context.allocator) -> harness.Report,
 }
 
-runners := []Runner{{"search", search_fuzz.CORPUS, search_fuzz.run}}
+runners := []Runner {
+	{"ntfs", ntfs_fuzz.CORPUS, ntfs_fuzz.run},
+	{"search", search_fuzz.CORPUS, search_fuzz.run},
+}
 
 main :: proc() {
 	opts := harness.Opts {
@@ -175,6 +179,6 @@ USAGE :: `usage: leita-fuzz [suite...] [-seed=N] [-iters=N] [-for=2m] [-entropy=
                [-shrink=N] [-no-shrink] [-corpus=DIR] [-no-corpus]
                [-isolate] [-stop] [-quiet]
 
-suites: search. With none named, every suite runs.
+suites: ntfs, search. With none named, every suite runs.
 Each suite keeps its regressions beside its source and replays them first.
 -corpus=DIR uses DIR/<suite> instead. -isolate runs each case in a child.`

@@ -1,5 +1,6 @@
 package ntfs
 
+import "core:math/bits"
 import "core:mem"
 
 RECORD_MAGIC     :: u32(0x454C4946) // "FILE"
@@ -122,20 +123,26 @@ covers only that extent's VCN range, so summing over every extent of a fragmente
 attribute gives the whole. The header sizes are only a fallback for a malformed run
 list, and then only on the first extent, since later extents repeat them.
 */
-attr_disk_size :: proc "contextless" (a: Attribute, bytes_per_cluster: u64) -> u64 {
+attr_disk_size :: proc "contextless" (a: Attribute, bytes_per_cluster: u64) -> (n: u64, ok: bool) {
 	if !a.non_resident {
-		return 0
+		return 0, true
 	}
-	if clusters, ok := runlist_allocated_clusters(a.runlist); ok {
-		return clusters * bytes_per_cluster
+	if clusters, clusters_ok := runlist_allocated_clusters(a.runlist); clusters_ok {
+		// clusters * bytes_per_cluster wraps to a small number for a huge
+		// run (2^52+1 clusters of 4096 bytes becomes 4096). Refuse it.
+		product, wrapped := bits.overflowing_mul(clusters, bytes_per_cluster)
+		if wrapped {
+			return 0, false
+		}
+		return product, true
 	}
 	if a.lowest_vcn != 0 {
-		return 0
+		return 0, true
 	}
 	if .Compressed in a.flags || .Sparse in a.flags {
-		return a.compressed_size
+		return a.compressed_size, true
 	}
-	return a.allocated_size
+	return a.allocated_size, true
 }
 
 record_header :: proc "contextless" (rec: []byte) -> ^Record_Header {
@@ -183,6 +190,11 @@ Attr_Iterator :: struct {
 // Iterate a fixed-up record's attributes. Stops at the end marker or the first
 // malformed header, so a corrupt record yields a prefix rather than garbage.
 attributes :: proc "contextless" (rec: []byte) -> Attr_Iterator {
+	// record_header reads a 48-byte header in place. A short slice has no
+	// header, so the iterator is already exhausted and nothing is read.
+	if len(rec) < size_of(Record_Header) {
+		return Attr_Iterator{rec = rec, offset = len(rec)}
+	}
 	return Attr_Iterator{rec = rec, offset = int(record_header(rec).attrs_offset)}
 }
 

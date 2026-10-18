@@ -1,5 +1,6 @@
 package ntfs
 
+import "core:math/bits"
 import "core:mem"
 import "core:mem/virtual"
 import "core:strings"
@@ -221,6 +222,21 @@ attribute anyway.
 Records not in use are skipped entirely. Their contents are stale and may point at
 records that have since been reused.
 */
+// charge_allocated adds the on-disk size of one attribute. A size that does
+// not fit in u64 is left out: adding it would wrap the file's total down.
+@(private)
+charge_allocated :: proc(e: ^Entry, a: Attribute, bytes_per_cluster: u64) {
+	n, fit := attr_disk_size(a, bytes_per_cluster)
+	if !fit {
+		return
+	}
+	sum, wrapped := bits.overflowing_add(e.allocated, n)
+	if wrapped {
+		return
+	}
+	e.allocated = sum
+}
+
 mft_add_record :: proc(m: ^Mft, record_number: u32, rec: []byte, sink: ^Sink) -> Error {
 	if len(rec) < size_of(Record_Header) {
 		return .Bad_Record
@@ -272,7 +288,7 @@ mft_add_record :: proc(m: ^Mft, record_number: u32, rec: []byte, sink: ^Sink) ->
 		case .Data:
 			if a.non_resident {
 				// Every extent contributes its own clusters.
-				e.allocated += attr_disk_size(a, m.bytes_per_cluster)
+				charge_allocated(e, a, m.bytes_per_cluster)
 			} else if len(a.name) == 0 {
 				sink.stats.resident_files += 1
 				sink.stats.resident_bytes += u64(len(a.value))
@@ -283,7 +299,7 @@ mft_add_record :: proc(m: ^Mft, record_number: u32, rec: []byte, sink: ^Sink) ->
 			}
 		case:
 			// Directory indexes, bitmaps, reparse data, and EFS streams occupy clusters too.
-			e.allocated += attr_disk_size(a, m.bytes_per_cluster)
+			charge_allocated(e, a, m.bytes_per_cluster)
 		}
 	}
 	// Last, and atomically: this is what tells a watching thread the entry is whole.
