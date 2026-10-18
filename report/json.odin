@@ -8,6 +8,7 @@ import "core:unicode/utf8"
 
 import "../kinds"
 import "../reclaim"
+import "../scan"
 
 // SCHEMA names what write_json writes; SCHEMA.md describes it. A change a reader
 // of the last one would misread takes a new number.
@@ -128,7 +129,9 @@ write_json :: proc(sb: ^strings.Builder, r: ^Report) {
 			for c, j in g.items {
 				strings.write_string(sb, ",\n      {" if j > 0 else "\n      {")
 				json_path(sb, c.path)
-				fmt.sbprintf(sb, ", \"bytes\": %d, \"share\": %.6f}}", c.bytes, share(r, c.bytes))
+				fmt.sbprintf(sb, ", \"bytes\": %d, \"share\": %.6f, \"frees\": ", c.bytes, share(r, c.bytes))
+				json_u64_or_null(sb, c.frees)
+				strings.write_string(sb, "}")
 			}
 			strings.write_string(sb, "\n    ]}" if len(g.items) > 0 else "]}")
 		}
@@ -158,6 +161,20 @@ write_json :: proc(sb: ^strings.Builder, r: ^Report) {
 	} else {
 		strings.write_string(sb, "null")
 	}
+	strings.write_string(sb, ",\n  \"accounting\": ")
+	if acct, ok := r.accounting.?; ok {
+		strings.write_string(sb, "{\"snapshots\": ")
+		json_string(sb, SNAPSHOT_KEYS[acct.snapshots])
+		strings.write_string(sb, ", \"purgeable\": ")
+		json_u64_or_null(sb, acct.purgeable)
+		strings.write_string(sb, ", \"scan_order\": ")
+		json_bool(sb, acct.scan_order)
+		strings.write_string(sb, ", \"logical\": ")
+		json_bool(sb, acct.logical)
+		strings.write_string(sb, "}")
+	} else {
+		strings.write_string(sb, "null")
+	}
 	strings.write_string(sb, ",\n  \"generated_by\": ")
 	json_string(sb, generated_by(r))
 	strings.write_string(sb, "\n}\n")
@@ -178,10 +195,13 @@ json_entries :: proc(sb: ^strings.Builder, r: ^Report, name: string, entries: []
 		)
 		if was, ok := e.was.?; ok {
 			delta, _ := change(e)
-			fmt.sbprintf(sb, "%d, \"change\": %d}}", was, delta)
+			fmt.sbprintf(sb, "%d, \"change\": %d", was, delta)
 		} else {
-			strings.write_string(sb, "null, \"change\": null}")
+			strings.write_string(sb, "null, \"change\": null")
 		}
+		strings.write_string(sb, ", \"frees\": ")
+		json_u64_or_null(sb, e.frees)
+		strings.write_string(sb, "}")
 	}
 	strings.write_string(sb, "\n  ],\n" if len(entries) > 0 else "],\n")
 }
@@ -203,12 +223,24 @@ json_path :: proc(sb: ^strings.Builder, path: string) {
 }
 
 @(private)
+SNAPSHOT_KEYS := [scan.Snapshot_State]string {
+	.Unchecked = "unchecked",
+	.None      = "none",
+	.Present   = "present",
+}
+
+@(private)
 json_int_or_null :: proc(sb: ^strings.Builder, v: Maybe(int)) {
 	if n, ok := v.?; ok {
 		fmt.sbprintf(sb, "%d", n)
 	} else {
 		strings.write_string(sb, "null")
 	}
+}
+
+@(private)
+json_bool :: proc(sb: ^strings.Builder, v: bool) {
+	strings.write_string(sb, "true" if v else "false")
 }
 
 @(private)

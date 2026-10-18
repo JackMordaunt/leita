@@ -361,3 +361,46 @@ ensure_rare :: proc(t: ^Tree, block: u32) -> bool {
 	sync.atomic_store(&tables.rares[block], b)
 	return true
 }
+
+/*
+exact_frees is the quantity a report may write. ok is false unless the basis is
+Exact, and then bytes may be 0. Charged and Unknown are not reported as 0.
+*/
+exact_frees :: proc(f: Freed) -> (bytes: u64, ok: bool) {
+	if f.basis != .Exact {
+		return 0, false
+	}
+	return f.bytes, true
+}
+
+/*
+Delete_Line is the extra line beside one node's charged size.
+
+has_frees is set only for Exact, and only when that quantity differs from
+charged, so an exact 0 equal to a charged 0 is not "deleting frees 0". unknown
+is the phrase for a known length that differs from the charge when the basis is
+not Exact. An ordinary charged file whose length is unknown, or equal to the
+charge, gets neither.
+*/
+Delete_Line :: struct {
+	frees:     u64,
+	has_frees: bool,
+	unknown:   bool,
+}
+
+delete_line :: proc(t: ^Tree, index: u32, charged: u64) -> (line: Delete_Line) {
+	f := freed_of(t, index)
+	if f.basis == .Exact && f.bytes != charged {
+		line.frees = f.bytes
+		line.has_frees = true
+		return
+	}
+	if f.basis == .Exact {
+		return
+	}
+	a, ok := account_of(t, index)
+	if ok && .Logical in a.known && a.logical != charged {
+		line.unknown = true
+	}
+	return
+}

@@ -291,3 +291,44 @@ test_account_blocks_are_freed_with_the_tree :: proc(t: ^testing.T) {
 	tree_destroy(&tree)
 	testing.expect_value(t, len(track.allocation_map), 0)
 }
+
+@(test)
+test_exact_frees_is_null_unless_exact_and_keeps_exact_zero :: proc(t: ^testing.T) {
+	_, ok := exact_frees({})
+	testing.expect(t, !ok)
+	_, ok = exact_frees({basis = .Charged})
+	testing.expect(t, !ok)
+	bytes, ok2 := exact_frees({basis = .Exact})
+	testing.expect(t, ok2)
+	testing.expect_value(t, bytes, u64(0))
+	bytes, ok2 = exact_frees({bytes = 12, basis = .Exact})
+	testing.expect(t, ok2)
+	testing.expect_value(t, bytes, u64(12))
+}
+
+@(test)
+test_delete_line_names_a_quantity_only_when_exact_differs :: proc(t: ^testing.T) {
+	tree := opened(t)
+	defer tree_destroy(&tree)
+	testing.expect_value(t, reserve(&tree, 4), Error.None)
+
+	// Exact 0 against a charged share: say so. Exact 0 against a charged 0: say nothing.
+	testing.expect(t, account_set(&tree, 0, Account{links = 2, known = {.Links}}))
+	line := delete_line(&tree, 0, 4096)
+	testing.expect(t, line.has_frees && line.frees == 0 && !line.unknown)
+	line = delete_line(&tree, 0, 0)
+	testing.expect(t, !line.has_frees && !line.unknown)
+
+	// Charged, length different from the charge: a phrase, not a quantity.
+	testing.expect(t, account_set(&tree, 1, Account{logical = 100, allocated = 4096, links = 1, known = {.Logical, .Allocated, .Links}}))
+	testing.expect_value(t, freed_of(&tree, 1).basis, Basis.Charged)
+	line = delete_line(&tree, 1, 4096)
+	testing.expect(t, !line.has_frees && line.unknown)
+
+	// Length equal to the charge, or unknown: no extra line.
+	testing.expect(t, account_set(&tree, 2, Account{logical = 4096, allocated = 4096, links = 1, known = {.Logical, .Allocated, .Links}}))
+	line = delete_line(&tree, 2, 4096)
+	testing.expect(t, !line.has_frees && !line.unknown)
+	line = delete_line(&tree, 3, 4096)
+	testing.expect(t, !line.has_frees && !line.unknown)
+}
