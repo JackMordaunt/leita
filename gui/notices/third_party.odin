@@ -3,10 +3,6 @@ package leita_notices
 import "core:fmt"
 import "core:strings"
 
-// OFL_1_1 is the SIL Open Font License 1.1. Liberation and Noto are under it,
-// so the rendered file carries the text once rather than beside each family.
-OFL_1_1 :: #load("text/ofl-1.1.txt", string)
-
 // Font_Family is one family a PDF may embed from the machine it is written
 // on. pdf/system.odin names the files; this names the family and its licence.
 Font_Family :: struct {
@@ -19,7 +15,7 @@ Font_Family :: struct {
 // file tries the sans-serif and then its fallbacks. None of these files is
 // in this repository.
 PDF_FONTS := [?]Font_Family {
-	{"Liberation Sans", "sans-serif", "SIL Open Font License 1.1"},
+	{"Liberation Sans", "sans-serif, when installed", "SIL Open Font License 1.1"},
 	{
 		"Noto Sans, Noto Sans CJK, Noto Sans Arabic, Noto Sans Hebrew, " +
 		"Noto Sans Devanagari, Noto Sans Thai, Noto Sans Symbols 2",
@@ -93,8 +89,10 @@ write_notices :: proc(b: ^strings.Builder, list: []Notice) {
 	}
 }
 
-// write_fonts says which faces a PDF may embed. They come from the machine,
-// except the place card 543 fills when its fallback sans lands on this branch.
+// write_fonts says which faces a PDF may embed. The one leita ships, Liberation
+// Sans, is a component above with its licence text, the SIL Open Font License
+// 1.1, written once there. The rest come from the machine, so they are named
+// with their licences and nothing more.
 @(private)
 write_fonts :: proc(b: ^strings.Builder) {
 	strings.write_string(
@@ -102,18 +100,13 @@ write_fonts :: proc(b: ^strings.Builder) {
 		`## Fonts
 
 A PDF embeds a font from the machine it is written on (pdf/system.odin), and
-only a face whose OS/2 fsType allows embedding. leita does not ship the
-families below.
+only a face whose OS/2 fsType allows embedding. The one font leita ships is
+Liberation Sans, listed under Components above with its licence text, the SIL
+Open Font License 1.1. That text is written once, there; the table below
+names the licence of each family and does not repeat it.
 
-### Shipped with leita
-
-None in this tree. branding/ and gui/ contain no font file. Card 543 adds a
-fallback sans for PDF on another branch; that face is not here yet. When it
-lands, replace this paragraph with its name, version and licence. The OFL
-text at the end of this file is included once, and covers that face too if
-it is under the OFL.
-
-### Taken from the system
+leita does not ship the families below. This table names each with its
+licence.
 
 Arial, Arial Unicode, Segoe UI, Segoe UI Symbol, MS Gothic and Microsoft
 YaHei are Microsoft fonts. A PDF may embed one from the user's own Windows
@@ -125,19 +118,5 @@ or macOS install. leita never distributes them.
 	)
 	for f in PDF_FONTS {
 		fmt.sbprintf(b, "| %s | %s | %s |\n", f.name, f.role, f.licence)
-	}
-	strings.write_string(
-		b,
-		`
-### SIL Open Font License 1.1
-
-Liberation and Noto are under the SIL Open Font License 1.1. The text
-follows once, for every font in this file under that licence.
-
-`,
-	)
-	strings.write_string(b, OFL_1_1)
-	if !strings.has_suffix(OFL_1_1, "\n") {
-		strings.write_byte(b, '\n')
 	}
 }

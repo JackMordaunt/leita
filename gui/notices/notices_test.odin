@@ -62,12 +62,9 @@ third_party_matches_the_notices :: proc(t: ^testing.T) {
 			f.name,
 		)
 	}
+	// The OFL is the Liberation Sans entry's text, once; the Fonts section
+	// names the licence and points at it.
 	testing.expect_value(t, strings.count(got, "SIL OPEN FONT LICENSE Version 1.1"), 1)
-	testing.expect(
-		t,
-		strings.contains(got, "Card 543"),
-		"the place for the fallback sans is marked",
-	)
 	testing.expect(t, strings.contains(got, "leita never distributes them"))
 
 	path := fmt.tprintf("%s/THIRD_PARTY.md", root)
