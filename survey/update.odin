@@ -93,7 +93,9 @@ fill_from_baseline :: proc(f: ^Fill) {
 			// what it read is left as a walk's would be.
 			f.walk_err = apply(f, place, &base, set, cursor.updates)
 			next.updates = cursor.updates + 1
-			f.how = .Updated
+			if f.how == .Full {
+				next.updates = 0
+			}
 			f.by = .Recorded if set.by_hash else .Times if set.probe else .System
 			if f.walk_err == .None {
 				f.saved = baseline_save(f.baseline, place, f.tree, next)
@@ -173,6 +175,11 @@ apply :: proc(
 	cfg.fold = !f.watched
 	err := walk.update(place, &u, f.tree, cfg)
 	f.reread = u.read
+	f.how = .Updated
+	f.why = u.whole
+	if u.whole != "" {
+		f.how = .Full
+	}
 	return err
 }
 
