@@ -195,11 +195,20 @@ watches :: proc(st: ^Store, allocator := context.allocator) -> (out: []Watch, er
 	) or_return
 	found := make([dynamic]Watch, allocator)
 	for sqlite3.next(&rows) {
+		place := sqlite3.text(rows, 0)
+		// min_free is an i64 in the file. A negative one was a size past 2^63
+		// stored wrapped, and reading it back as a u64 makes every scan alert.
+		if sqlite3.integer(rows, 5) < 0 {
+			err = row_fault(place, "min_free is negative")
+			sqlite3.finish(&rows)
+			watches_destroy(found[:], allocator)
+			return nil, err
+		}
 		every, _ := frequency_named(sqlite3.text(rows, 1))
 		append(
 			&found,
 			Watch {
-				place = strings.clone(sqlite3.text(rows, 0), allocator),
+				place = strings.clone(place, allocator),
 				every = every,
 				added = sqlite3.integer(rows, 2),
 				limits = {
@@ -217,6 +226,18 @@ watches :: proc(st: ^Store, allocator := context.allocator) -> (out: []Watch, er
 		return nil, err
 	}
 	return found[:], nil
+}
+
+// row_fault is a watch row the scan must not trust. place names the row, so a
+// copied settings.db says which one. Callers already report a sqlite3.Error
+// when a read fails; a row that would lie is that kind of failure. The text is
+// in the temp allocator, for the caller to print with the error.
+@(private)
+row_fault :: proc(place, why: string) -> sqlite3.Error {
+	return sqlite3.Fault {
+		code = .Error,
+		text = strings.concatenate({place, ": ", why}, context.temp_allocator),
+	}
 }
 
 // watches_destroy frees what watches returned.

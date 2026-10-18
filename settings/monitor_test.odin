@@ -3,6 +3,7 @@ package leita_settings
 import "core:fmt"
 import "core:os"
 import "core:path/filepath"
+import "core:strings"
 import "core:testing"
 
 import "jm:sqlite3"
@@ -174,6 +175,15 @@ a_watch_keeps_its_limits_and_a_run_what_was_firing :: proc(t: ^testing.T) {
 		full_within = 14,
 		growth      = true,
 	}
+	// The largest size an i64 holds round-trips. One past it cannot be stored.
+	testing.expect(
+		t,
+		watch(&st, {place = "/top", every = .Daily, limits = {min_free = u64(max(i64))}}) == nil,
+	)
+	top, terr := watches(&st, context.temp_allocator)
+	testing.expect(t, terr == nil)
+	testing.expect_value(t, top[0].limits.min_free, u64(max(i64)))
+
 	testing.expect(t, watch(&st, {place = "/srv", every = .Daily, limits = limits}) == nil)
 	ws, _ := watches(&st, context.temp_allocator)
 	testing.expect_value(t, ws[0].limits, limits)
@@ -185,6 +195,37 @@ a_watch_keeps_its_limits_and_a_run_what_was_firing :: proc(t: ^testing.T) {
 	testing.expect(t, err == nil)
 	last, _ := last_run(&st, "/srv", context.temp_allocator)
 	testing.expect_value(t, last.firing, "warn_used,filling")
+}
+
+// A size past 2^63 is stored negative. Reading it back as a u64 would alert on
+// every scan, so the row is refused and named.
+@(test)
+a_negative_min_free_is_refused :: proc(t: ^testing.T) {
+	st: Store
+	testing.expect(t, open(&st, ":memory:") == nil)
+	defer close(&st)
+	testing.expect(
+		t,
+		sqlite3.exec_args(
+			st.db,
+			`INSERT INTO watch(place, every, added, warn_used, fail_used, min_free, full_within, growth)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			"/data",
+			"daily",
+			i64(1),
+			i64(0),
+			i64(0),
+			i64(-1),
+			i64(0),
+			false,
+		) ==
+		nil,
+	)
+	ws, err := watches(&st, context.temp_allocator)
+	testing.expect_value(t, len(ws), 0)
+	fault := err.(sqlite3.Fault) or_else sqlite3.Fault{}
+	testing.expect(t, strings.contains(fault.text, "/data"), fault.text)
+	testing.expect(t, strings.contains(fault.text, "min_free"), fault.text)
 }
 
 @(test)

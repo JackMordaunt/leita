@@ -53,7 +53,8 @@ parse_bytes_reads_a_size_a_flag_was_given_in_either_family :: proc(t: ^testing.T
 	case_ok(t, "1PB", 1_000_000_000_000_000)
 	case_ok(t, "1PiB", 1 << 50)
 
-	bad := []string{"", "GiB", "abc", "-5GiB", "5XiB", "5 GiB extra", "5GiBB"}
+	// 10000PB is 10^19. It fits in a u64 and not in the i64 a size is kept as.
+	bad := []string{"", "GiB", "abc", "-5GiB", "5XiB", "5 GiB extra", "5GiBB", "10000PB"}
 	for s in bad {
 		_, ok := parse_bytes(s)
 		testing.expectf(t, !ok, "%q should not parse", s)

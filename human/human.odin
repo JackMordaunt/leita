@@ -49,8 +49,9 @@ optionally fractional, then an optional unit, with or without a space between.
 Units are case-insensitive. None, or B, means bytes. K, KB, M, MB, G, GB, T, TB,
 P and PB are the decimal units bytes writes, 1,000 apart: 20GB is 20,000,000,000.
 KiB, MiB, GiB, TiB and PiB are the binary ones, 1,024 apart: 20GiB is
-21,474,836,480. ok is false for anything else, including a negative number or an
-empty string.
+21,474,836,480. ok is false for anything else, including a negative number, an
+empty string, or a size that does not fit in a signed 64-bit count. A size is
+kept as one, and a larger one would be stored negative.
 */
 parse_bytes :: proc(s: string) -> (n: u64, ok: bool) {
 	trimmed := strings.trim_space(s)
@@ -70,7 +71,17 @@ parse_bytes :: proc(s: string) -> (n: u64, ok: bool) {
 	}
 	unit := strings.trim_space(trimmed[i:])
 	factor := unit_factor(strings.to_upper(unit, context.temp_allocator)) or_return
-	return u64(value * factor), true
+	// NaN fails the first comparison. Past the largest i64, settings would store
+	// the size negative and the next scan would treat free space as under it.
+	scaled := value * factor
+	if !(scaled >= 0) || scaled > f64(max(i64)) {
+		return 0, false
+	}
+	n = u64(scaled)
+	if n > u64(max(i64)) {
+		return 0, false
+	}
+	return n, true
 }
 
 // unit_factor is the bytes in one of unit, already upper-cased, or false for a
