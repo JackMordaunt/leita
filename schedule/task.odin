@@ -18,13 +18,29 @@ last run is still going. It runs as the person who made it, only while they are
 logged on, with the least privilege and below normal priority. The Task
 Scheduler Schema reference on learn.microsoft.com gives each element, and
 schtasks /Create /XML wants the file in UTF-16 (utf16_file).
+
+The program runs through conhost.exe --headless, since leita.exe is a console
+program and card 82 found that a task running one as the logged-on user may open
+a console window every hour. The switch makes the console host run its command
+line in a console with no window (--headless is among the arguments the console
+host in github.com/microsoft/terminal, src/host/ConsoleArguments.cpp, parses),
+which the notification's powershell, started from leita, then shares.
+ASSUMPTION: no one has watched a Windows desktop through an hour to see that
+nothing appears; the Windows runner's test reads the task back
+(task_scheduler_takes_and_gives_back_the_task_on_ci), and card 82 asks for the
+watching.
 */
+
+// HEADLESS_HOST is the console host a task's program runs through, and
+// HEADLESS the switch that gives it a console with no window.
+HEADLESS_HOST :: "conhost.exe"
+HEADLESS      :: "--headless"
 
 // TASK_NAME is the task's path in Task Scheduler.
 TASK_NAME :: `leita\monitor`
 
-// task_xml is the task that runs argv every hour, as schtasks /XML reads it once
-// it is written as UTF-16 (utf16_file).
+// task_xml is the task that runs argv every hour, through conhost --headless, as
+// schtasks /XML reads it once it is written as UTF-16 (utf16_file).
 task_xml :: proc(argv: []string, allocator := context.temp_allocator) -> string {
 	b := strings.builder_make(allocator)
 	w :: proc(b: ^strings.Builder, s: string) {strings.write_string(b, s)}
@@ -65,9 +81,10 @@ task_xml :: proc(argv: []string, allocator := context.temp_allocator) -> string 
 	w(&b, "  </Settings>\n")
 	w(&b, "  <Actions Context=\"Author\">\n")
 	w(&b, "    <Exec>\n")
-	fmt.sbprintf(&b, "      <Command>%s</Command>\n", escape_xml(windows_quote(argv[0])))
+	fmt.sbprintf(&b, "      <Command>%s</Command>\n", HEADLESS_HOST)
 	args := make([dynamic]string, context.temp_allocator)
-	for arg in argv[1:] {
+	append(&args, HEADLESS)
+	for arg in argv {
 		append(&args, windows_quote(arg))
 	}
 	fmt.sbprintf(

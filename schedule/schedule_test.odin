@@ -167,8 +167,9 @@ a_task_repeats_hourly_catches_up_once_and_never_stacks :: proc(t: ^testing.T) {
 		"<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>",
 		"<LogonType>InteractiveToken</LogonType>",
 		"<RunLevel>LeastPrivilege</RunLevel>",
-		`<Command>&quot;C:\Program Files\leita\leita.exe&quot;</Command>`,
-		"<Arguments>monitor run</Arguments>",
+		// Through the console host's headless switch (card 82).
+		"<Command>conhost.exe</Command>",
+		`<Arguments>--headless &quot;C:\Program Files\leita\leita.exe&quot; monitor run</Arguments>`,
 	}
 	for w in want {
 		testing.expectf(t, strings.contains(f.task, w), "missing %q in\n%s", w, f.task)
@@ -360,6 +361,12 @@ an_entry_gives_back_the_program_it_was_given :: proc(t: ^testing.T) {
 	testing.expect_value(t, task_program(task_xml({`C:\leita\leita.exe`, "monitor", "run"})), `C:\leita\leita.exe`)
 	testing.expect_value(t, windows_unquote(`"C:\Program Files\\"`), `C:\Program Files\`)
 	testing.expect_value(t, task_program("<Task/>"), "")
+	// Unquoted, with and without the console host; and a task written before
+	// it, which ran the program itself.
+	host :: "<Command>conhost.exe</Command><Arguments>"
+	testing.expect_value(t, task_program(host + `--headless C:\leita.exe monitor run</Arguments>`), `C:\leita.exe`)
+	testing.expect_value(t, task_program(host + "</Arguments>"), "")
+	testing.expect_value(t, task_program(`<Command>C:\leita.exe</Command>`), `C:\leita.exe`)
 }
 
 @(test)
@@ -393,6 +400,8 @@ task_scheduler_takes_and_gives_back_the_task_on_ci :: proc(t: ^testing.T) {
 			testing.expect(t, installed(h), "the task is in Task Scheduler")
 			query := run_command({"schtasks", "/Query", "/TN", TASK_NAME, "/XML"}, nil)
 			testing.expect(t, strings.contains(query.out, "<Interval>PT1H</Interval>"), query.out)
+			testing.expect(t, strings.contains(query.out, "conhost.exe"), query.out)
+			testing.expect_value(t, program(h), exe)
 			testing.expect_value(t, remove(h), "")
 			testing.expect(t, !installed(h), "and gone again")
 			log.infof("Task Scheduler made, read back and deleted %s", TASK_NAME)

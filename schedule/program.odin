@@ -192,17 +192,57 @@ service_program :: proc(unit: string, allocator := context.temp_allocator) -> st
 	return ""
 }
 
-// task_program is the task's Command, as schtasks /Query /XML gives it, or "".
+// task_program is the program the task runs, as schtasks /Query /XML gives it, or
+// "": the Command, or when that is the console host task_xml runs it through, the
+// first argument after its switch.
 task_program :: proc(xml: string, allocator := context.temp_allocator) -> string {
-	_, open, after := strings.partition(xml, "<Command>")
+	command := xml_text(xml, "Command")
+	if command == "" {
+		return ""
+	}
+	program := windows_unquote(unescape_xml(command, context.temp_allocator), allocator)
+	if !strings.equal_fold(program, HEADLESS_HOST) {
+		return program
+	}
+	arguments := unescape_xml(xml_text(xml, "Arguments"), context.temp_allocator)
+	arguments = strings.trim_left_space(
+		strings.trim_prefix(strings.trim_left_space(arguments), HEADLESS),
+	)
+	return first_argument(arguments, allocator)
+}
+
+// xml_text is the text of the first element of the given name, or "".
+@(private)
+xml_text :: proc(xml, name: string) -> string {
+	_, open, after := strings.partition(
+		xml,
+		strings.concatenate({"<", name, ">"}, context.temp_allocator),
+	)
 	if open == "" {
 		return ""
 	}
-	command, end, _ := strings.partition(after, "</Command>")
+	text, end, _ := strings.partition(
+		after,
+		strings.concatenate({"</", name, ">"}, context.temp_allocator),
+	)
 	if end == "" {
 		return ""
 	}
-	return windows_unquote(unescape_xml(command, context.temp_allocator), allocator)
+	return text
+}
+
+// first_argument is the first argument of a Windows command line, as
+// windows_quote wrote it, or "".
+@(private)
+first_argument :: proc(line: string, allocator := context.temp_allocator) -> string {
+	if strings.has_prefix(line, `"`) {
+		return windows_unquote(line, allocator)
+	}
+	end := strings.index_any(line, " \t")
+	if end < 0 {
+		end = len(line)
+	}
+	return strings.clone(line[:end], allocator)
 }
 
 // systemd_unquote is the first word of a systemd command line, as systemd_quote
