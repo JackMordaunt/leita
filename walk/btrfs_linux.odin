@@ -24,9 +24,14 @@ tree records as logical (scan.mark_logical).
 NO_BTRFS_SEARCH_ENV set to anything turns the search off for the whole walk, so the
 cost of searching can be measured against the same walk without it.
 
-An update copies a directory it has not seen change with the sizes the tree it
-updates had, so whatever it reads afresh is charged against this walk's extents
-only: a file sharing an extent with one only copied pays for it again.
+An update on btrfs reads the whole tree again. The baseline stores each file's
+once-only charge, not the extents that produced it or the capability under which
+it was read. Mixing a copied charge with a restat or a new extent search can
+therefore charge a shared extent twice, or mix charged and st_blocks sizes after
+a privilege change. A fresh walk builds one extent set and chooses its basis
+from current capabilities, at the cost of incremental scan speed on btrfs.
+Other filesystems retain incremental updates. Following links also reads afresh,
+since those links can enter btrfs even when the root is on another filesystem.
 */
 @(private)
 Btrfs_Search :: struct {
@@ -156,4 +161,20 @@ btrfs_pool_find :: proc(b: ^Btrfs_Search, filesystem: u128) -> ^Btrfs_Pool {
 btrfs_search_stop :: proc(w: ^Worker, p: ^Btrfs_Pool) {
 	sync.atomic_store(&p.off, true)
 	scan.mark_logical(w.writer.tree)
+}
+
+// A normal walk stops at other filesystems, so root identifies its accounting
+// domain. A failed query cannot establish that copying old charges is safe.
+@(private)
+btrfs_update_needs_read :: proc(root: string, follow: bool) -> bool {
+	if follow || search_stand_in != nil {
+		return true
+	}
+	buf: Path
+	cpath, terminated := terminate(root, &buf)
+	if !terminated {
+		return true
+	}
+	fs: linux.Stat_FS
+	return linux.statfs(cpath, &fs) != .NONE || fs.type == .BTRFS_SUPER_MAGIC
 }

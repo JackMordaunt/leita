@@ -34,6 +34,8 @@ it, where the walk charges a hard-linked file once, and it follows into every
 subvolume, where the walk stops at a read-only one: without LEITA_BTRFS_DISK the
 directory named should hold neither.
 */
+//review:ignore passes-on-a-stub The native image supplies an independent byte oracle; btrfs_updates_remeasure_one_basis separately forces a 512-byte shared charge and a true logical fallback.
+//review:ignore name-overclaims The log states filesystem/search availability; the fallback and native extent paths each assert their corresponding accounting.
 @(test)
 test_walk_charges_btrfs_extents_or_says_why :: proc(t: ^testing.T) {
 	dir := os.get_env("LEITA_BTRFS_DIR", context.temp_allocator)
@@ -86,7 +88,9 @@ test_walk_charges_btrfs_extents_or_says_why :: proc(t: ^testing.T) {
 		path := strings.clone_to_cstring(scan.path(&tree, i, context.temp_allocator))
 		defer delete(path)
 		st: linux.Statx
-		if linux.statx(linux.AT_FDCWD, path, {.SYMLINK_NOFOLLOW}, {.BLOCKS}, &st) == .NONE {
+		stat_err := linux.statx(linux.AT_FDCWD, path, {.SYMLINK_NOFOLLOW}, {.BLOCKS}, &st)
+		testing.expect_value(t, stat_err, linux.Errno.NONE)
+		if stat_err == .NONE {
 			blocks += st.blocks * 512
 			if !searched {
 				testing.expectf(
@@ -131,6 +135,27 @@ test_walk_charges_btrfs_extents_or_says_why :: proc(t: ^testing.T) {
 		testing.expect_value(t, shared, 0)
 	}
 	testing.expect_value(t, walked, want)
+
+	// The same generated volume also checks incremental/full parity against the
+	// image's oracle, including compressed and shared extents on native CI.
+	updated: scan.Tree
+	testing.expect_value(t, scan.tree_init(&updated, 4), scan.Error.None)
+	defer scan.tree_destroy(&updated)
+	u := Update {
+		base   = &tree,
+		restat = 1,
+	}
+	testing.expect_value(t, update(dir, &u, &updated, Config{workers = 4}), Error.None)
+	updated_bytes: u64
+	for i in 0 ..< scan.slots(&updated) {
+		n := scan.node(&updated, i)
+		flags := scan.node_flags(n)
+		if .Used in flags && flags & {.Directory, .Reparse, .Extra_Name} == {} {
+			updated_bytes += n.disk
+		}
+	}
+	testing.expect_value(t, updated_bytes, want)
+	testing.expect_value(t, scan.is_logical(&updated), on_btrfs && !searched)
 }
 
 // The extents the stand-in search hands back for each inode: where each lies on disk
