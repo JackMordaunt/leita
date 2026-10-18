@@ -329,7 +329,9 @@ data_host :: proc(h: ^Host) -> ui.Data_Host {
 // scan and frees everything.
 stop :: proc(h: ^Host) {
 	licence_stop(&h.desk)
-	update_stop(&h.desk)
+	// An update may finish while the desk is stopping. Close its inbox so
+	// the worker cannot wait for a desk that has stopped draining it.
+	stream.port_close(h.update_port)
 	thumbs_cancel(h)
 	stream.stop(h.p)
 	thread.join(h.pool)
@@ -338,6 +340,9 @@ stop :: proc(h: ^Host) {
 	sync.sema_post(&h.desk_wake)
 	thread.join(h.desk_main)
 	thread.destroy(h.desk_main)
+	// Only the desk reaps completed jobs while it runs. Once it is gone,
+	// a still-running update is this thread's to join and destroy.
+	update_stop(&h.desk)
 	// The desk is gone, so its passes are this thread's to halt, before the
 	// workers stop and the tree they read goes.
 	find_halt(&h.desk)

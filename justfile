@@ -246,7 +246,7 @@ run *args:
 # run on its own: it is what keeps THIRD_PARTY.md equal to the window's list.
 test: sqlite
     mkdir -p build/test
-    {{odin}} test . -all-packages -debug {{san}} {{flags}} -out:build/test/{{bin}}{{exe}}
+    {{odin}} test . -all-packages -debug {{san}} {{flags}} {{curl_open}} -out:build/test/{{bin}}{{exe}}
     {{odin}} test gui/notices -debug {{san}} {{flags}} -out:build/test/notices{{exe}}
 
 # The btrfs and walk tests on a btrfs image made, mounted and filled for them,
