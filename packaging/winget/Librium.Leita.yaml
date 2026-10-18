@@ -1,0 +1,9 @@
+# Leita's winget version manifest, schema 1.6. The manifests job fills the
+# version from the tag (without the leading v: winget's version is 1.2.0
+# where the tag is v1.2.0). Publisher Librium is the package identifier's
+# publisher; the installer records Librium LLC, which is the legal name.
+PackageIdentifier: Librium.Leita
+PackageVersion: __VERSION__
+DefaultLocale: en-US
+ManifestType: version
+ManifestVersion: "1.6.0"

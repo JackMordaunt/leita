@@ -864,3 +864,81 @@ jobs:
           if [ "$PRERELEASE" = true ]; then flags=(--draft --prerelease); fi
           gh release create "$VERSION" assets/* -R "$GITHUB_REPOSITORY" --verify-tag \
             --title "Leita $VERSION" --generate-notes "${flags[@]}"
+
+  # After the release exists, so a manifest's download URL resolves. A
+  # pre-release is published as a draft, and a draft's files are not there
+  # for winget to fetch, so this job stays on the tag a person can install.
+  # It fills the channel templates from sha256sums.txt (the sums over the
+  # bytes just published) and uploads them. A channel whose secret is set
+  # also publishes; without the secret the artifact is the submission.
+  manifests:
+    needs: [plan, assemble, release]
+    if: needs.plan.outputs.dry_run == 'false' && needs.plan.outputs.prerelease == 'false' && needs.release.result == 'success'
+    runs-on: windows-2025
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # As the build job: a checkout that rewrote line endings would change
+      # the bash script this job runs.
+      - name: keep line endings as committed (windows)
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-${{ needs.plan.outputs.version }}
+          path: assets
+      - name: fill
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: bash packaging/fill-manifests.sh assets/sha256sums.txt manifests-out
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: winget-${{ needs.plan.outputs.version }}
+          path: manifests-out/winget
+          if-no-files-found: error
+      # wingetcreate update opens a pull request on microsoft/winget-pkgs
+      # for Librium.Leita at this version. The tool is pinned by version so
+      # a newer one cannot change the schema it writes. The first release
+      # has nothing to update: the package is not in that repository yet, so
+      # that pull request is opened once by hand from the artifact
+      # (wingetcreate submit), and this step does the ones after.
+      # WINGET_TOKEN is a GitHub token that can fork microsoft/winget-pkgs
+      # and open the pull request. Without it the step leaves the artifact.
+      - name: winget pull request
+        env:
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+          WINGETCREATE_VERSION: "1.9.4.0"
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not $env:WINGET_TOKEN) {
+            Write-Host '::notice::WINGET_TOKEN is unset: the winget manifest is the artifact, and no pull request is opened'
+            exit 0
+          }
+          winget install --id Microsoft.WingetCreate --exact --version $env:WINGETCREATE_VERSION --scope user --accept-package-agreements --accept-source-agreements --disable-interactivity
+          if ($LASTEXITCODE -ne 0) { throw "winget install wingetcreate $($env:WINGETCREATE_VERSION) exited $LASTEXITCODE" }
+          $settingsDir = Join-Path $env:LOCALAPPDATA 'Microsoft\WinGetCreate'
+          New-Item -ItemType Directory -Force -Path $settingsDir | Out-Null
+          # The tool reports usage unless this is set. A release job does not.
+          Set-Content -LiteralPath (Join-Path $settingsDir 'settings.json') -Value '{"telemetry":{"disable":true}}' -Encoding ascii
+          $tool = $null
+          $links = Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Links\wingetcreate.exe'
+          if (Test-Path -LiteralPath $links) { $tool = $links }
+          if (-not $tool) {
+            $found = Get-ChildItem -Path (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages') -Recurse -Filter 'wingetcreate.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($found) { $tool = $found.FullName }
+          }
+          if (-not $tool) { throw "wingetcreate $($env:WINGETCREATE_VERSION) installed but the executable was not found" }
+          $ver = $null
+          $url = $null
+          foreach ($line in Get-Content -LiteralPath 'manifests-out/winget/Librium.Leita.installer.yaml') {
+            if ($line -match '^\s*PackageVersion:\s*(\S+)\s*$') { $ver = $Matches[1] }
+            if ($line -match '^\s*InstallerUrl:\s*(\S+)\s*$') { $url = $Matches[1] }
+          }
+          if (-not $ver -or -not $url) { throw 'the filled installer manifest has no version or url' }
+          & $tool update Librium.Leita --version $ver --urls $url --submit --token $env:WINGET_TOKEN
+          if ($LASTEXITCODE -ne 0) { throw "wingetcreate update exited $LASTEXITCODE" }
