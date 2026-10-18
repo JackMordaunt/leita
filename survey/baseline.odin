@@ -20,8 +20,9 @@ command line, the window and the monitor may each finish a scan of the same plac
 once: each writes its own temporary file, and the last whole one renamed wins. It is
 written for this machine, little-endian:
 
-	magic        "LEITABL2"
-	cursor       source u8, volume 2 x u64, journal u64, position i64, full i64
+	magic        "LEITABL3"
+	cursor       source u8, volume 2 x u64, place 2 x u64, journal u64,
+	             position i64, full i64
 	place        u32 length, then its bytes
 	nodes        u32 count, u32 root
 	each node    u32 parent, u8 flags, u64 disk, u16 name length, name bytes
@@ -44,10 +45,16 @@ The links are scan.Tree.linked, the name each file with more than one was charge
 under and the file it names, which an update needs to charge such a file once
 beside a name it copies; 28 bytes each, for such files alone. LEITABL1 kept none,
 and a file of it is read as one of another version: the place is read whole once.
+LEITABL2's cursor kept no place, the directory the place was, so a file of it is
+read whole once too, rather than trusted by a cursor that cannot tell a replaced tree.
 */
 
 @(private)
-BASELINE_MAGIC :: "LEITABL2"
+BASELINE_MAGIC :: "LEITABL3"
+
+// The cursor's bytes: source, then seven 64-bit fields.
+@(private)
+CURSOR_SIZE :: 1 + 7 * 8
 
 // Numbers each temporary file this process writes, so two threads never share one.
 @(private = "file")
@@ -81,7 +88,7 @@ baseline_save :: proc(path, place: string, t: ^scan.Tree, cursor: changes.Cursor
 	// Sized first and written in place. Appended field by field it took 384 ms for
 	// /home/jfm's 2.1 million nodes, 125 ms this way (2026-10-12, timed around
 	// baseline_save as survey/bench_test.odin times a fill).
-	size := len(BASELINE_MAGIC) + 1 + 5 * 8 + 4 + len(place) + 2 * 4
+	size := len(BASELINE_MAGIC) + CURSOR_SIZE + 4 + len(place) + 2 * 4
 	for i in 0 ..< count {
 		if renumber[i] != scan.NO_NODE {
 			size += NODE_FIXED + len(scan.name_of(t, i))
@@ -101,6 +108,8 @@ baseline_save :: proc(path, place: string, t: ^scan.Tree, cursor: changes.Cursor
 	put_u8(&w, u8(cursor.source))
 	put_u64(&w, cursor.volume[0])
 	put_u64(&w, cursor.volume[1])
+	put_u64(&w, cursor.place[0])
+	put_u64(&w, cursor.place[1])
 	put_u64(&w, cursor.journal)
 	put_u64(&w, u64(cursor.position))
 	put_u64(&w, u64(cursor.full))
@@ -184,6 +193,8 @@ baseline_load :: proc(
 	cursor.source = changes.Source(take_u8(&r))
 	cursor.volume[0] = take_u64(&r)
 	cursor.volume[1] = take_u64(&r)
+	cursor.place[0] = take_u64(&r)
+	cursor.place[1] = take_u64(&r)
 	cursor.journal = take_u64(&r)
 	cursor.position = i64(take_u64(&r))
 	cursor.full = i64(take_u64(&r))

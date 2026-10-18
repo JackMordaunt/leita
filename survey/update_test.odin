@@ -154,7 +154,7 @@ test_a_baseline_reads_back_what_was_kept :: proc(t: ^testing.T) {
 	// Counting fewer nodes than it holds, it is refused rather than read as a
 	// smaller tree. The count follows the magic, the cursor and the place.
 	fewer := slice.clone(data, context.temp_allocator)
-	at := len(BASELINE_MAGIC) + 1 + 5 * 8 + 4 + len(root)
+	at := len(BASELINE_MAGIC) + CURSOR_SIZE + 4 + len(root)
 	count, _ := endian.get_u32(fewer[at:], .Little)
 	endian.put_u32(fewer[at:], .Little, count - 1)
 	testing.expect(t, os.write_entire_file(file, fewer) == nil)
@@ -480,13 +480,13 @@ keep_nodes :: proc(t: ^testing.T, name, place: string, root: u32, nodes: []Kept_
 	dir, dir_err := os.temp_directory(context.temp_allocator)
 	testing.expect(t, dir_err == nil, "no temp directory")
 	path := join(strings.trim_right(dir, `\/`), name)
-	size := len(BASELINE_MAGIC) + 1 + 5 * 8 + 4 + len(place) + 8 + 4 // 4: no links
+	size := len(BASELINE_MAGIC) + CURSOR_SIZE + 4 + len(place) + 8 + 4 // 4: no links
 	for n in nodes {
 		size += 15 + len(n.name)
 	}
 	out := make([]u8, size, context.temp_allocator)
 	copy(out, BASELINE_MAGIC)
-	at := len(BASELINE_MAGIC) + 1 + 5 * 8
+	at := len(BASELINE_MAGIC) + CURSOR_SIZE
 	endian.put_u32(out[at:], .Little, u32(len(place)))
 	at += 4
 	copy(out[at:], place)
@@ -524,7 +524,7 @@ test_a_count_the_file_cannot_hold_reserves_nothing :: proc(t: ^testing.T) {
 	defer scan.tree_destroy(&tree)
 	testing.expect(t, baseline_save(file, root, &tree, {}), "the baseline was not kept")
 	data, _ := os.read_entire_file(file, context.temp_allocator)
-	at := len(BASELINE_MAGIC) + 1 + 5 * 8 + 4 + len(root)
+	at := len(BASELINE_MAGIC) + CURSOR_SIZE + 4 + len(root)
 	endian.put_u32(data[at:], .Little, 0xFFFF_FFFF)
 	testing.expect(t, os.write_entire_file(file, data) == nil)
 

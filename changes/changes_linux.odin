@@ -36,25 +36,20 @@ STALE_AFTER :: 7 * 24 * time.Hour
 
 // A cursor for `place` as it is now, to take before scanning it whole.
 now :: proc(place: string) -> (c: Cursor, ok: bool) {
-	dev, found := device_of(place)
+	volume, dir, found := identity_of(place)
 	if !found {
 		return {}, false
 	}
 	at := now_ns()
-	c = Cursor {
-		source   = .Probe,
-		position = at,
-		full     = at,
-	}
-	c.volume[0] = dev
-	return c, true
+	return {source = .Probe, volume = volume, place = dir, position = at, full = at}, true
 }
 
 /*
 What to read again in `place` since `c`: the directories the recorder's log says
 changed, when it covers the time since, or else a probe; or a rescan when the place
-is on another device than it was, the clock went back, or the last whole scan is
-older than STALE_AFTER. The new cursor carries the last whole scan's time on.
+is on another device or filesystem than it was, is another directory, the clock went
+back, or the last whole scan is older than STALE_AFTER. The new cursor carries the
+last whole scan's time on.
 */
 since :: proc(
 	place: string,
@@ -68,12 +63,18 @@ since :: proc(
 	if c.source != .Probe {
 		return rescan("no cursor was kept for this place"), {}, .None
 	}
-	dev, found := device_of(place)
+	volume, dir, found := identity_of(place)
 	if !found {
 		return rescan("the place could not be asked which device it is on"), {}, .None
 	}
-	if c.volume[0] != dev {
+	if c.volume[0] != volume[0] {
 		return rescan("the place is on another device than when it was read"), {}, .None
+	}
+	if c.volume[1] != volume[1] {
+		return rescan("the place's filesystem was made anew since it was read"), {}, .None
+	}
+	if c.place != dir {
+		return rescan("another directory is in the place than when it was read"), {}, .None
 	}
 	at := now_ns()
 	if at < c.position {
@@ -133,12 +134,30 @@ recorded :: proc(
 	return set, w.end, true
 }
 
+/*
+What the place is on and which directory it is. The device number names the block
+device, the partition, not what mkfs writes on it; the filesystem's id from
+statfs(2) is taken from the UUID mkfs writes on ext4 and btrfs (ext4_statfs,
+btrfs_statfs in the kernel's fs/), but from the device number on XFS
+(xfs_fs_statfs). The place's inode and birth time are the directory's own: another
+directory renamed onto the place, one made anew there whose inode number was reused,
+or an XFS made anew, has others. Mtimes
+cannot tell: a restored tree's are older than the cursor. A filesystem that keeps no
+birth time gives 0 each time.
+*/
 @(private = "file")
-device_of :: proc(place: string) -> (dev: u64, ok: bool) {
+identity_of :: proc(place: string) -> (volume, dir: [2]u64, ok: bool) {
 	cpath := strings.clone_to_cstring(place, context.temp_allocator)
 	st: linux.Statx
-	if linux.statx(linux.AT_FDCWD, cpath, {}, {.INO}, &st) != .NONE {
-		return 0, false
+	if linux.statx(linux.AT_FDCWD, cpath, {}, {.INO, .BTIME}, &st) != .NONE {
+		return {}, {}, false
 	}
-	return u64(st.dev_major) << 32 | u64(st.dev_minor), true
+	fsid := journal.fsid_of(place) or_return
+	volume[0] = u64(st.dev_major) << 32 | u64(st.dev_minor)
+	volume[1] = u64(u32(fsid[0])) << 32 | u64(u32(fsid[1]))
+	dir[0] = u64(st.ino)
+	if .BTIME in st.mask {
+		dir[1] = u64(st.btime.sec) * 1_000_000_000 + u64(st.btime.nsec)
+	}
+	return volume, dir, true
 }

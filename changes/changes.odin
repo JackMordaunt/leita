@@ -44,8 +44,12 @@ tree it belongs to and read back on another run.
 Cursor :: struct {
 	source:   Source,
 	// What the place was on: Windows' volume serial number, the FSEvents store's
-	// UUID, or the device number on Linux. Another one means another volume.
+	// UUID, or on Linux the device number and the filesystem's id. Another one
+	// means another volume, or the same partition made anew.
 	volume:   [2]u64,
+	// Which directory the place was: its inode and birth time on Linux, its file id
+	// on Windows. Another one means another tree was put where the place was read.
+	place:    [2]u64,
 	journal:  u64, // Windows: which journal; a new one has another id
 	position: i64, // the journal's next USN, the next event id, or the time in ns
 	full:     i64, // when the place was last scanned whole, in ns since the epoch

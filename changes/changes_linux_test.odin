@@ -64,6 +64,51 @@ test_a_linux_cursor_that_cannot_be_trusted_rescans :: proc(t: ^testing.T) {
 	}
 }
 
+/*
+mkfs on the same partition keeps its device number, and a restored image's
+directories can be older than the cursor, so a probe would find nothing changed: the
+filesystem's id, or the place's inode or birth time, differing says the tree was
+replaced.
+*/
+@(test)
+test_a_linux_cursor_rescans_a_filesystem_made_anew :: proc(t: ^testing.T) {
+	place, _ := os.temp_directory(context.temp_allocator)
+	c, ok := now(place)
+	testing.expect(t, ok, "no cursor for the temp directory")
+	remade := c
+	remade.volume[1] += 1
+	restored := c
+	restored.place[0] += 1
+	reborn := c
+	reborn.place[1] += 1
+	for bad in ([]Cursor{remade, restored, reborn}) {
+		set, _, err := since(place, bad)
+		testing.expect_value(t, err, Error.None)
+		testing.expectf(t, set.rescan && set.why != "", "%v: no rescan", bad)
+	}
+}
+
+// Another directory renamed onto the place keeps its own, older stamps: the place's
+// inode differs, and the place is scanned whole.
+@(test)
+test_a_directory_renamed_onto_the_place_rescans :: proc(t: ^testing.T) {
+	dir, _ := os.temp_directory(context.temp_allocator)
+	place, _ := filepath.join({dir, "leita_changes_renamed_place"}, context.temp_allocator)
+	other, _ := filepath.join({dir, "leita_changes_renamed_other"}, context.temp_allocator)
+	os.remove_all(place)
+	os.remove_all(other)
+	testing.expect(t, os.make_directory(place) == nil, "could not make the place")
+	testing.expect(t, os.make_directory(other) == nil, "could not make the other")
+	defer os.remove_all(place)
+	defer os.remove_all(other)
+	c, ok := now(place)
+	testing.expect(t, ok, "no cursor for the place")
+	testing.expect(t, os.rename(other, place) == nil, "could not rename onto the place")
+	set, _, err := since(place, c)
+	testing.expect_value(t, err, Error.None)
+	testing.expect_value(t, set.why, "another directory is in the place than when it was read")
+}
+
 // A log for the filesystem place is on, in logs, its paths spelt from mount:
 // heartbeats every 10 s from 40 s before the cursor to 1 s ago, with `extra`
 // records among them.
