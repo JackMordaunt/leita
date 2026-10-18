@@ -9,6 +9,8 @@
 #   just run [release] [dir]  build the window, then open it on a directory, the
 #                             home directory by default
 #   just test                 run every imported package's tests under ASan -> build/test/
+#   just fuzz [args]          leita-fuzz, fixed seed and case budget, under ASan
+#   just fuzz-isolate [args]  the same, one child process per case
 #   just btrfs-test [--sudo]  the btrfs and walk tests on a throw-away btrfs image,
 #                             as root too with --sudo where sudo asks no password
 #   just mount-test [--sudo]  the delete test that mounts, in a namespace of its own
@@ -392,6 +394,25 @@ test: sqlite
     mkdir -p build/test
     {{odin}} test cmd/cli -all-packages -debug {{san}} {{flags}} {{curl_open}} -out:build/test/{{bin}}{{exe}}
     {{odin}} test gui/notices -debug {{san}} {{flags}} -out:build/test/notices{{exe}}
+    # Fuzz packages are not imported by the command line, so -all-packages
+    # never sees them. These are the short fixed-seed replays; just fuzz is
+    # the longer budget. test.yml stays as it is and still runs this recipe.
+    {{odin}} test search/fuzz -debug {{san}} {{flags}} {{curl_open}} -out:build/test/fuzz-search{{exe}}
+
+# Parser properties under ASan. args replace the budget, they do not add to
+# it: just fuzz "-seed=1 -iters=64 -for=2m". The corpus beside each suite is
+# replayed first. No device and no root filesystem: the inputs are the
+# committed seeds and bytes the suite draws.
+fuzz args="-seed=1 -iters=64 -for=2m": sqlite
+    mkdir -p build/debug
+    {{odin}} build tools/leita-fuzz -debug {{san}} {{flags}} {{curl_open}} -out:build/debug/leita-fuzz{{exe}}
+    build/debug/leita-fuzz{{exe}} {{args}}
+
+# A child process per case, so a crash or a hang is a report.
+fuzz-isolate args="-seed=1 -iters=16 -for=2m": sqlite
+    mkdir -p build/debug
+    {{odin}} build tools/leita-fuzz -debug {{san}} {{flags}} {{curl_open}} -out:build/debug/leita-fuzz{{exe}}
+    build/debug/leita-fuzz{{exe}} -isolate {{args}}
 
 # The btrfs and walk tests on a btrfs image made, mounted and filled for them,
 # against a total worked out from the image; skipped where nothing can mount one.
