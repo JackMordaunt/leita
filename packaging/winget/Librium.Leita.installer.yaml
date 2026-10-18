@@ -1,0 +1,37 @@
+# The installer manifest. Installer type inno: the setup exe is built by
+# tools/windows/leita.iss. The job fills the version, the file name (the
+# exe carries -unsigned until the certificate exists) and the sha256 from
+# sha256sums.txt, the file assemble writes over the bytes that shipped.
+PackageIdentifier: Librium.Leita
+PackageVersion: __VERSION__
+InstallerType: inno
+# Program Files, and the installer asks for an administrator. winget should
+# not try a per-user install the exe would refuse.
+Scope: machine
+ElevationRequirement: elevationRequired
+# Inno replaces an older install itself, matched by its AppId. Uninstalling
+# first would ask about the person's data.
+UpgradeBehavior: install
+# 1809, the installer's MinVersion: the first Windows 10 with
+# conhost --headless, which the hourly task runs leita.exe through.
+MinimumOSVersion: "10.0.17763.0"
+# The switches the release runs the installer with, and the ones Inno
+# accepts for a silent install. /VERYSILENT has no window; /SILENT keeps
+# the progress bar. The PATH task stays off, as it does when a person
+# clicks through and leaves it unchecked. <INSTALLPATH> and <LOGPATH> are
+# winget's own tokens, filled with the directory and the log it chose.
+InstallerSwitches:
+  Silent: "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART"
+  SilentWithProgress: "/SILENT /SUPPRESSMSGBOXES /NORESTART"
+  InstallLocation: '/DIR="<INSTALLPATH>"'
+  Log: '/LOG="<LOGPATH>"'
+# Add/Remove Programs, as the exe writes it (AppPublisher, UninstallDisplayName).
+AppsAndFeaturesEntries:
+  - DisplayName: Leita
+    Publisher: Librium LLC
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/jackmordaunt/leita/releases/download/v__VERSION__/__FILE_SETUP__
+    InstallerSha256: __SUM_SETUP__
+ManifestType: installer
+ManifestVersion: "1.6.0"

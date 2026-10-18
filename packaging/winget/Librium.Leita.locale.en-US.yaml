@@ -1,0 +1,25 @@
+# The default locale. The one-line description is the product's; the
+# longer one is what the .deb says. The licence text is the tag's
+# LICENSE.md, so the link moves with the version the job fills in.
+PackageIdentifier: Librium.Leita
+PackageVersion: __VERSION__
+PackageLocale: en-US
+Publisher: Librium
+PublisherUrl: https://mordaunt.dev/leita
+PublisherSupportUrl: https://mordaunt.dev/leita
+PackageName: Leita
+PackageUrl: https://mordaunt.dev/leita
+License: Proprietary
+LicenseUrl: https://github.com/jackmordaunt/leita/blob/v__VERSION__/LICENSE.md
+Copyright: Copyright Librium LLC
+ShortDescription: See what is filling a drive, and report on it.
+Description: |-
+  leita scans a drive or folder and shows what uses the space as it reads,
+  finds what can be deleted and made again, and writes a scan up as a CSV,
+  JSON, HTML or PDF report. Leita is the window; leita the command line.
+Moniker: leita
+Tags:
+  - disk
+  - storage
+ManifestType: defaultLocale
+ManifestVersion: "1.6.0"

@@ -1,0 +1,37 @@
+{
+    "version": "__VERSION__",
+    "description": "See what is filling a drive, and report on it",
+    "homepage": "https://mordaunt.dev/leita",
+    "license": "Proprietary",
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/jackmordaunt/leita/releases/download/v__VERSION__/leita-v__VERSION__-windows-amd64__ZIP_SUFFIX__.zip",
+            "hash": "__SUM_ZIP__"
+        }
+    },
+    "extract_dir": "leita-v__VERSION__-windows-amd64",
+    "bin": [
+        "leita.exe"
+    ],
+    "shortcuts": [
+        [
+            "app/Leita.exe",
+            "Leita"
+        ]
+    ],
+    "checkver": {
+        "github": "https://github.com/jackmordaunt/leita"
+    },
+    "autoupdate": {
+        "architecture": {
+            "64bit": {
+                "url": "https://github.com/jackmordaunt/leita/releases/download/v$version/leita-v$version-windows-amd64__ZIP_SUFFIX__.zip",
+                "hash": {
+                    "url": "https://github.com/jackmordaunt/leita/releases/download/v$version/sha256sums.txt",
+                    "regex": "$sha256\\s+\\*?$basename"
+                }
+            }
+        },
+        "extract_dir": "leita-v$version-windows-amd64"
+    }
+}

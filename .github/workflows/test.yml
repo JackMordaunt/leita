@@ -44,6 +44,14 @@ jobs:
         with:
           submodules: true
           persist-credentials: false
+      - name: packaging manifests (linux and windows)
+        if: runner.os != 'macOS'
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then
+            MANIFEST_TEST_BASH=$(cygpath -w "$BASH")
+            export MANIFEST_TEST_BASH
+          fi
+          python -m unittest discover -s packaging -p 'test_*.py'
       # Odin, just, SDL3 on Linux and jm's native libraries, cached.
       - uses: ./.github/actions/setup
 

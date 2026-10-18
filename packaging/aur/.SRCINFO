@@ -1,0 +1,29 @@
+pkgbase = leita-bin
+	pkgdesc = See what is filling a drive, and report on it
+	pkgver = __VERSION__
+	pkgrel = 1
+	url = https://mordaunt.dev/leita
+	arch = x86_64
+	arch = aarch64
+	license = LicenseRef-proprietary
+	depends = glibc>=2.39
+	depends = gcc-libs
+	optdepends = curl: activate a licence
+	provides = leita
+	conflicts = leita
+	options = !strip
+	options = !debug
+	source = dev.mordaunt.Leita.desktop::https://raw.githubusercontent.com/jackmordaunt/leita/v__VERSION__/packaging/linux/dev.mordaunt.Leita.desktop
+	source = dev.mordaunt.Leita.metainfo.xml::https://raw.githubusercontent.com/jackmordaunt/leita/v__VERSION__/packaging/linux/dev.mordaunt.Leita.metainfo.xml
+	source = leita-journal.service::https://raw.githubusercontent.com/jackmordaunt/leita/v__VERSION__/packaging/linux/leita-journal.service
+	source = dev.mordaunt.Leita.svg::https://raw.githubusercontent.com/jackmordaunt/leita/v__VERSION__/branding/mark-light.svg
+	sha256sums = __SUM_DESKTOP__
+	sha256sums = __SUM_METAINFO__
+	sha256sums = __SUM_UNIT__
+	sha256sums = __SUM_ICON__
+	source_x86_64 = leita-linux-amd64.tar.zst::https://github.com/jackmordaunt/leita/releases/download/v__VERSION__/leita-v__VERSION__-linux-amd64.tar.zst
+	sha256sums_x86_64 = __SUM_LINUX_AMD64__
+	source_aarch64 = leita-linux-arm64.tar.zst::https://github.com/jackmordaunt/leita/releases/download/v__VERSION__/leita-v__VERSION__-linux-arm64.tar.zst
+	sha256sums_aarch64 = __SUM_LINUX_ARM64__
+
+pkgname = leita-bin
