@@ -345,6 +345,9 @@ blocks_panel :: proc(gtx: ^ui.Ctx, m: ^Model, answer: ^query.Rings_Result, k: Bl
 		// With the pointer off the chart, a hovered row stands for its box.
 		u, at = .Arc, row
 	}
+	if i, picked := picked_arc(m, answer); picked {
+		u, at = .Arc, i
+	}
 	info(gtx, m, answer, answer, u, at)
 	ui.flexible(gtx, 1)
 	blocks(gtx, m, answer, boxes, u, at, k)
@@ -369,13 +372,21 @@ blocks :: proc(
 		size = {480, 360}
 	}
 	m.tree_room = size
+	room := ops.Rect{0, 0, size.x, size.y}
+	c := design.control(gtx, p.id, room, .Live)
 	pressed, double, menu := false, false, false
 	for e in ui.events(gtx, p.id) {
 		#partial switch e.kind {
-		case .Move, .Enter:
+		case .Move:
+			m.pointer, m.inside, m.chart_keys = e.pos, true, false
+		case .Enter:
 			m.pointer, m.inside = e.pos, true
 		case .Leave:
 			m.inside = false
+		case .Key:
+			chart_key(gtx, m, r, e, at if lit == .Arc else -1)
+		case .Blur:
+			set_chart_pick(m, r, -1)
 		case .Press:
 			m.pointer, m.inside = e.pos, true
 			#partial switch e.button {
@@ -433,8 +444,8 @@ blocks :: proc(
 		}
 	}
 
-	room := ops.Rect{0, 0, size.x, size.y}
-	ops.input_area(gtx.scene, p.id, room, {.Press, .Move, .Enter, .Leave})
+	design.paint_focus_visible_ring(gtx, c, room, design.corners_all(0), primer.focus_outline(-2))
+	design.listen(gtx, c.st, p.id, room, design.CLICK_KINDS)
 	ops.tag(gtx.scene, p.id, k.name)
 	describe_chart(gtx, &p, m, r, boxes, at if lit == .Arc else -1, tr(k.title))
 
@@ -449,7 +460,7 @@ blocks :: proc(
 			m.menu_open, m.menu_at, m.menu_from = true, m.pointer, k.from
 		}
 	}
-	if m.menu_from == k.from {
+	if m.menu_open && m.menu_from == k.from {
 		entry_menu(gtx, m, {p.id, {0, 0}}, m.menu_at)
 	}
 	ui.widget_close(gtx, &p, {size = size})

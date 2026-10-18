@@ -1,6 +1,7 @@
 package leita_view
 
 import "core:math"
+import "core:strings"
 import "core:testing"
 
 import "jm:ui"
@@ -217,4 +218,122 @@ a_double_click_on_a_treemap_file_opens_it :: proc(t: ^testing.T) {
 	release(p, at)
 	ui.probe_advance(p, 60, 1.0 / 60)
 	testing.expect_value(t, r.m.dir, query.ROOT)
+}
+
+// tab_to_chart tabs through the window until the area tagged name holds focus,
+// which for the sunburst is the first tag its area was given.
+@(private = "file")
+tab_to_chart :: proc(r: ^Chart_Rig, name: string) -> bool {
+	p := &r.h.p
+	for _ in 0 ..< 40 {
+		if ui.probe_focus_name(p) == name {
+			return true
+		}
+		ui.probe_key(p, .Tab)
+	}
+	return false
+}
+
+// With the chart focused, the arrows pick one arc after another: Right and Left
+// across a ring, largest first, Down into a directory and Up out of it, and each
+// keeps the chart's tree for a screen reader in step.
+@(test)
+the_arrows_move_a_pick_through_the_sunburst :: proc(t: ^testing.T) {
+	r: Chart_Rig
+	chart_open(&r)
+	defer chart_close(&r)
+	p := &r.h.p
+	testing.expect(t, tab_to_chart(&r, "arc docs"), "Tab reaches the chart")
+
+	step :: proc(r: ^Chart_Rig, key: ui.Key, mods: ui.Mods = {}) -> u32 {
+		ui.probe_key(&r.h.p, key, mods)
+		ui.probe_frame(&r.h.p) // the one the key asked for
+		return r.m.chart_pick
+	}
+	testing.expect_value(t, step(&r, .Right), DOCS) // from nothing, the largest
+	testing.expect_value(t, step(&r, .Right), MOVIE)
+	testing.expect_value(t, step(&r, .Right), NOTES)
+	testing.expect_value(t, step(&r, .Right), NOTES) // the last stays
+	testing.expect_value(t, step(&r, .Left), MOVIE)
+	testing.expect_value(t, step(&r, .Down), MOVIE) // a file has nothing under it
+	testing.expect_value(t, step(&r, .Left), DOCS)
+	testing.expect_value(t, step(&r, .Left), DOCS)
+	testing.expect_value(t, step(&r, .Down), A_TXT)
+	testing.expect(t, r.m.said_open[DOCS], "going down opens the folder in the chart's tree")
+	said := ui.probe_semantics(p, context.temp_allocator)
+	testing.expect(
+		t,
+		strings.contains(said, `tree item "a.txt, 30 B, 30.0% of top" level 2 selected at`),
+		said,
+	)
+	testing.expect_value(t, step(&r, .Right), B_TXT)
+	testing.expect_value(t, step(&r, .Right), B_TXT)
+	testing.expect_value(t, step(&r, .Up), DOCS)
+	testing.expect(t, !r.m.said_open[DOCS], "going up closes it")
+	testing.expect_value(t, step(&r, .Up), 0)
+	testing.expect_value(t, step(&r, .Right), DOCS)
+	testing.expect_value(t, step(&r, .Escape), 0)
+
+	// Alt with an arrow is the window's history, not the chart's.
+	testing.expect_value(t, step(&r, .Right, {.Alt}), 0)
+}
+
+// Enter opens the pick: a directory becomes the one shown, a file opens in its
+// application; and Up with nothing picked goes to the directory above.
+@(test)
+enter_opens_the_pick_and_up_without_one_leaves_the_directory :: proc(t: ^testing.T) {
+	r: Chart_Rig
+	chart_open(&r)
+	defer chart_close(&r)
+	p := &r.h.p
+	testing.expect(t, tab_to_chart(&r, "arc docs"), "Tab reaches the chart")
+
+	ui.probe_key(p, .Right)
+	ui.probe_key(p, .Right)
+	ui.probe_key(p, .Enter)
+	opened, ok := sent(p, command.Open).?
+	testing.expect(t, ok, "Enter on a file opens it")
+	testing.expect_value(t, opened.entry.node, MOVIE)
+	testing.expect_value(t, r.m.dir, query.ROOT)
+
+	ui.probe_key(p, .Left)
+	ui.probe_key(p, .Enter)
+	testing.expect(
+		t,
+		sent(p, command.Open) == nil,
+		"Enter on a directory only opens it in the chart",
+	)
+	testing.expect_value(t, r.m.dir, DOCS)
+	testing.expect_value(t, r.m.chart_pick, 0)
+
+	// Inside docs, with nothing picked, Up goes to the directory above.
+	crumbs := []query.Crumb{{1, "/top"}, {DOCS, "docs"}}
+	inside := query.Rings_Result {
+		generation = 1,
+		dir        = DOCS,
+		crumbs     = crumbs,
+		bytes      = 50,
+		was        = -1,
+	}
+	ui.probe_deliver(p, query.Rings{generation = 1, dir = DOCS}, inside)
+	ui.probe_advance(p, 3, 1.0 / 60)
+	ui.probe_key(p, .Up)
+	testing.expect_value(t, r.m.dir, u32(1))
+}
+
+// The treemap and the icicle take the same keys.
+@(test)
+the_treemap_and_the_icicle_take_the_same_keys :: proc(t: ^testing.T) {
+	for mode in ([?]Mode{.Treemap, .Icicle}) {
+		r: Chart_Rig
+		chart_open(&r, mode)
+		defer chart_close(&r)
+		name := "Treemap chart" if mode == .Treemap else "Icicle chart"
+		testing.expect(t, tab_to_chart(&r, name), "Tab reaches the chart")
+		ui.probe_key(&r.h.p, .Right)
+		ui.probe_key(&r.h.p, .Right)
+		testing.expect_value(t, r.m.chart_pick, MOVIE)
+		ui.probe_key(&r.h.p, .Escape)
+		testing.expect_value(t, r.m.chart_pick, 0)
+	}
 }

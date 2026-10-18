@@ -201,6 +201,11 @@ Model :: struct {
 	// waited for a double click (treemap.odin press_box).
 	file_click:       u32,
 	file_wait:        f32,
+	// The entry the keys have picked in the chart, by node (0 for none), and whether
+	// the pick stands for the pointer's: it does until the pointer moves
+	// (chart_keys.odin).
+	chart_pick:       u32,
+	chart_keys:       bool,
 	// The row hovered, in the contents or the largest files: the frame's rows say so
 	// as they are drawn, after the chart, so the chart reads the last frame's.
 	row_hover:        Hover,

@@ -19,8 +19,8 @@ so a layer holds only its largest entries and one item summing the rest.
 
 A reader opens and closes a folder with its expand and collapse actions, which
 jm:ui offers on an expandable item and hands back as Expand and Collapse events
-to the item's id (bridge_take_actions, jm/ui/shell/a11y.odin). The chart takes no
-keys of its own yet; once it does, they open a folder through toggle_said_open.
+to the item's id (bridge_take_actions, jm/ui/shell/a11y.odin). The chart's
+keys open and close a folder the same way (toggle_said_open, chart_keys.odin).
 */
 
 // SAID_MOST is the most items a layer of a chart's tree holds before one item
@@ -121,6 +121,7 @@ describe_chart :: proc(
 	if m.said_dir != r.dir || m.said_generation != r.generation {
 		clear(&m.said_open)
 		m.said_dir, m.said_generation = r.dir, r.generation
+		m.chart_pick, m.chart_keys = 0, false
 	}
 	// A reader's expand or collapse of a folder drawn, before the layers are
 	// worked out, so this frame says the folder as it now is.

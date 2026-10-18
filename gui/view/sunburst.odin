@@ -19,7 +19,8 @@ import "../query"
 The directory shown, as a sunburst: its contents in the first ring around a hub,
 theirs in the next, each arc's sweep its share of its parent's. A click on a
 directory's arc opens it, which makes it the hub; a click on the hub goes up. A
-double click on a file's arc opens it in its application. A right click opens the entry's menu (actions.odin).
+double click on a file's arc opens it in its application. Keys move a pick
+through the arcs (chart_keys.odin). A right click opens the entry's menu (actions.odin).
 
 Every arc is one entry the host laid out (query.Rings); the view only turns turns
 into radians. Hit testing is done here rather than per arc: the disc is one input
@@ -241,6 +242,9 @@ rings_panel :: proc(gtx: ^ui.Ctx, m: ^Model) {
 	if i := lit_by_row(r, m.row_hover); u == .Nothing && i >= 0 {
 		u, at = .Arc, i
 	}
+	if i, picked := picked_arc(m, r); picked {
+		u, at = .Arc, i
+	}
 	info(gtx, m, r, answer, u, at)
 
 	// The disc is as big as the smaller side of the room it is given, and sits in
@@ -456,13 +460,21 @@ sunburst :: proc(
 	b := burst_of(side)
 
 	p := ui.widget_open(gtx, loc = loc)
+	area := ops.Rect{0, 0, side, side}
+	c := design.control(gtx, p.id, area, .Live)
 	pressed, double, menu := false, false, false
 	for e in ui.events(gtx, p.id) {
 		#partial switch e.kind {
-		case .Move, .Enter:
+		case .Move:
+			m.pointer, m.inside, m.chart_keys = e.pos, true, false
+		case .Enter:
 			m.pointer, m.inside = e.pos, true
 		case .Leave:
 			m.inside = false
+		case .Key:
+			chart_key(gtx, m, r, e, hovered)
+		case .Blur:
+			set_chart_pick(m, r, -1)
 		case .Press:
 			m.pointer, m.inside = e.pos, true
 			#partial switch e.button {
@@ -496,7 +508,14 @@ sunburst :: proc(
 	ops.stroke(gtx.scene, hub, primer.color(.Border_Color_Default), {width = 1})
 	ops.tag(gtx.scene, p.id, "hub")
 
-	ops.input_area(gtx.scene, p.id, ops.Rect{0, 0, side, side}, {.Press, .Move, .Enter, .Leave})
+	design.paint_focus_visible_ring(
+		gtx,
+		c,
+		area,
+		design.corners_all(side / 2),
+		primer.focus_outline(-2),
+	)
+	design.listen(gtx, c.st, p.id, area, design.CLICK_KINDS)
 	ops.tag(gtx.scene, p.id, "Sunburst chart")
 	describe_chart(gtx, &p, m, r, boxes, hovered, tr(.Mode_Sunburst))
 
@@ -513,7 +532,7 @@ sunburst :: proc(
 		case .Nothing:
 		}
 	}
-	if m.menu_from == .Sunburst {
+	if m.menu_open && m.menu_from == .Sunburst {
 		entry_menu(gtx, m, {p.id, {0, 0}}, m.menu_at)
 	}
 	ui.widget_close(gtx, &p, {size = {side, side}})
