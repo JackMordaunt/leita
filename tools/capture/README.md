@@ -30,7 +30,7 @@ a source asset from 2 to 3 MiB. A visible cue explains this external addition.
 The pointer invokes Rescan, selects Change and Reclaim, then exports HTML through
 the actual UI. The save-dialog path is supplied by the headless picker. It never
 selects a cleanup candidate. The 40.13 s continuous recording includes deliberate
-pointer travel, press/release feedback, reading pauses, and the saved notice.
+pointer travel, native control press/release feedback, reading pauses, and the saved notice.
 
 The script checks allocated byte totals, snapshot comparison, file counts,
 unread count, the new build-output classification, and the source asset's exact
@@ -89,7 +89,7 @@ The first three arguments are target, explicit isolated state directory, and
 - `-pick PATH`: answer the UI's pending save/open dialog.
 - `-signal PATH`, `-await-file PATH`: synchronize an external fixture mutation.
 - `-frames PREFIX COUNT`: consecutive clean 30 fps PNGs named `PREFIX00000.png`, etc.
-- `-movie PREFIX`, `-end-movie`: start/stop continuous frames with a high-contrast pointer.
+- `-movie PREFIX`, `-end-movie`: start/stop continuous frames with a macOS-style black arrow and thin white outline.
 - `-tap TAG`: travel 21 frames, hover 6, press 5, then release and settle 18 frames.
 - `-glide X Y FRAMES`, `-hold FRAMES`: move with eased endpoints or pause.
 - `-cue TEXT`: show an explicit external-action caption; an empty string clears it.

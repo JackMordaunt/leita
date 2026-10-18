@@ -35,11 +35,6 @@ write_html :: proc(sb: ^strings.Builder, r: ^Report) {
 		strings.write_string(sb, "</time>, ")
 	}
 	fmt.sbprintf(sb, "in %.1f s</p>\n", time.duration_seconds(r.duration))
-	if r.engine == .Synthetic {
-		strings.write_string(sb, "<p class=\"banner\">")
-		html_text(sb, SYNTHETIC_BANNER)
-		strings.write_string(sb, "</p>\n")
-	}
 	strings.write_string(sb, "</header>\n")
 
 	strings.write_string(sb, "<section class=\"facts\">\n<dl>\n")
@@ -284,7 +279,6 @@ h3 { margin: 20px 0 2px; font-size: 14px; font-weight: 600; }
 h3 .total { color: var(--muted); font-weight: 400; margin-left: 6px; }
 .sub, .note, .reason, .lede { margin: 0; color: var(--muted); }
 .reason { margin-bottom: 8px; }
-.banner { margin: 8px 0 0; padding: 6px 10px; border: 1px solid var(--up); color: var(--up); font-weight: 600; }
 .path {
 	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
 	font-variant-ligatures: none; overflow-wrap: anywhere; word-break: break-all;

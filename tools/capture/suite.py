@@ -205,7 +205,7 @@ def storyboard(base):
             count = int(fields[1])
     assert count == len(list((base / 'frames').glob('*.png')))
     result = dict(fps=30, frames=count, seconds=count / 30, events=events,
-                  pointer='white arrow, dark outline, amber press and release pulse',
+                  pointer='macOS-style black arrow, thin white outline and subtle shadow',
                   source='continuous real app frames with dispatched pointer Move, Press and Release events')
     if progress:
         result['progress'] = progress

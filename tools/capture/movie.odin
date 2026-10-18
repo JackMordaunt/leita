@@ -9,24 +9,30 @@ import "jm:ui/ops"
 import "jm:ui/render"
 
 Movie :: struct {
-	active:  bool,
+	active: bool,
 	//review:ignore odin-destroy-incomplete prefix borrows an os.args string for the lifetime of main.
-	prefix:  string,
-	frame:   int,
-	at:      ops.Point,
-	pressed: bool,
-	pulse:   int,
+	prefix: string,
+	frame:  int,
+	at:     ops.Point,
 	//review:ignore odin-destroy-incomplete cue borrows an os.args string for the lifetime of main.
-	cue:     string,
-	arrow:   bl.PathCore,
-	face:    bl.FontFaceCore,
-	font:    bl.FontCore,
+	cue:    string,
+	arrow:  bl.PathCore,
+	face:   bl.FontFaceCore,
+	font:   bl.FontCore,
 }
 
 movie_init :: proc(m: ^Movie) {
 	m.at = {1100, 100}
 	bl.path_init(&m.arrow)
-	points := [?]ops.Point{{0, 0}, {0, 28}, {7, 21}, {13, 34}, {19, 31}, {13, 18}, {25, 18}}
+	points := [?]ops.Point {
+		{0, 0},
+		{0, 21},
+		{5.5, 16.2},
+		{9.6, 25.2},
+		{13.1, 23.6},
+		{9, 14.6},
+		{16.5, 14.6},
+	}
 	for p, i in points {
 		if i ==
 		   0 {bl.path_move_to(&m.arrow, f64(p.x * 2), f64(p.y * 2))} else {bl.path_line_to(&m.arrow, f64(p.x * 2), f64(p.y * 2))}
@@ -66,16 +72,13 @@ movie_overlay :: proc(m: ^Movie, image: ^bl.ImageCore) {
 		)
 	}
 	origin := bl.Point{f64(m.at.x * 2), f64(m.at.y * 2)}
-	if m.pressed || m.pulse > 0 {
-		circle := bl.Circle{origin.x, origin.y, 34 + f64(12 - m.pulse)}
-		bl.context_set_stroke_width(&ctx, 10)
-		bl.context_stroke_geometry_rgba32(&ctx, .CIRCLE, &circle, 0xff111827)
-		bl.context_set_stroke_width(&ctx, 6)
-		bl.context_stroke_geometry_rgba32(&ctx, .CIRCLE, &circle, 0xffffc857)
-	}
-	bl.context_set_stroke_width(&ctx, 7)
-	bl.context_stroke_path_d_rgba32(&ctx, &origin, &m.arrow, 0xff111827)
-	bl.context_fill_path_d_rgba32(&ctx, &origin, &m.arrow, 0xffffc857 if m.pressed else 0xffffffff)
+	shadow := bl.Point{origin.x + 1, origin.y + 2}
+	bl.context_set_stroke_width(&ctx, 4)
+	bl.context_stroke_path_d_rgba32(&ctx, &shadow, &m.arrow, 0x30000000)
+	bl.context_fill_path_d_rgba32(&ctx, &shadow, &m.arrow, 0x30000000)
+	bl.context_set_stroke_width(&ctx, 2)
+	bl.context_stroke_path_d_rgba32(&ctx, &origin, &m.arrow, 0xffffffff)
+	bl.context_fill_path_d_rgba32(&ctx, &origin, &m.arrow, 0xff000000)
 }
 
 movie_frame :: proc(m: ^Movie, h: ^render.Headless) {
@@ -90,7 +93,6 @@ movie_frame :: proc(m: ^Movie, h: ^render.Headless) {
 		) {fail("movie frame write failed")}
 		m.frame += 1
 	}
-	m.pulse = max(0, m.pulse - 1)
 	free_all(context.temp_allocator)
 }
 
@@ -122,10 +124,8 @@ movie_tap :: proc(m: ^Movie, h: ^render.Headless, name: string) {
 	fmt.printfln("ACTION\t%d\t%s\t%.3f\t%.3f", m.frame, name, target.x, target.y)
 	movie_move(m, h, target, 21)
 	movie_hold(m, h, 6)
-	m.pressed, m.pulse = true, 12
 	ui.router_push(&h.p.router, {kind = .Press, pos = m.at, button = .Left, clicks = 1})
 	movie_hold(m, h, 5)
-	m.pressed, m.pulse = false, 12
 	ui.router_push(&h.p.router, {kind = .Release, pos = m.at, button = .Left})
 	movie_hold(m, h, 18)
 }
