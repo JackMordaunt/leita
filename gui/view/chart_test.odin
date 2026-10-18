@@ -339,8 +339,8 @@ the_treemap_and_the_icicle_take_the_same_keys :: proc(t: ^testing.T) {
 }
 
 // A name with a line break and a right-to-left override in it, as a disk allows,
-// is drawn as pictures of them: the menu, the Trash question and the rename field
-// each keep it on one line, and a rename left as shown renames nothing.
+// is drawn as pictures in menu and dialog prose. The bounded editor retains
+// the real bytes, and accepting them unchanged renames nothing.
 @(test)
 a_name_with_a_newline_stays_on_one_line_in_the_dialogs :: proc(t: ^testing.T) {
 	r: Chart_Rig
@@ -355,7 +355,7 @@ a_name_with_a_newline_stays_on_one_line_in_the_dialogs :: proc(t: ^testing.T) {
 	ui.probe_advance(p, 3, 1.0 / 60)
 	said := ui.probe_semantics(p, context.temp_allocator)
 	testing.expect(t, strings.contains(said, safe), said)
-	testing.expect(t, !strings.contains(said, `\nname`), "the name does not split a line")
+	testing.expect(t, !strings.contains(said, `menu "Actions for evil\nname`), "the menu name does not split a line")
 
 	testing.expect(t, ui.probe_click(p, "Trash"))
 	ui.probe_advance(p, 3, 1.0 / 60)
@@ -372,10 +372,18 @@ a_name_with_a_newline_stays_on_one_line_in_the_dialogs :: proc(t: ^testing.T) {
 	ui.probe_advance(p, 3, 1.0 / 60)
 	said = ui.probe_semantics(p, context.temp_allocator)
 	testing.expect(t, strings.contains(said, safe), said)
-	testing.expect(t, !strings.contains(said, `\nname`), "the rename field stays on a line")
-	testing.expect_value(t, ui.text_string(&r.m.rename), "evil\u240Aname\uFFFD.txt")
+	testing.expect_value(t, ui.text_string(&r.m.rename), "evil\nname\u202e.txt")
 	ui.probe_key(p, .Enter)
-	testing.expect(t, sent(p, command.Rename) == nil, "a name left as it is shown renames nothing")
+	testing.expect(t, sent(p, command.Rename) == nil, "an unedited raw name renames nothing")
+	r.m.rename_open = true
+	ui.text_set(&r.m.rename, " evil\nname\u202e.md ")
+	ui.probe_advance(p, 3, 1.0 / 60)
+	ui.probe_key(p, .Enter)
+	renamed, ok := sent(p, command.Rename).?
+	testing.expect(t, ok, "the edited name sends a rename")
+	if ok {
+		testing.expect_value(t, command.text_of(&renamed.name), " evil\nname\u202e.md ")
+	}
 }
 
 // The location bar's steps, the rows of the listing and the largest files, and
@@ -415,10 +423,93 @@ a_name_with_a_newline_is_safe_in_the_bar_the_lists_and_the_info_line :: proc(t: 
 	said := ui.probe_semantics(p, context.temp_allocator)
 	testing.expect(t, strings.contains(said, `button "evil\u240aname.txt"`), said)
 	testing.expect(t, strings.contains(said, `evil\u240aname.txt`), "the lists")
-	testing.expect(t, !strings.contains(said, `\n`), "no line is broken by a name")
+	testing.expect(t, !strings.contains(said, `button "evil\nname`), "list buttons stay on one line")
+
+	// Hover the list's safe name and then the largest file's safe path.
+	for label, i in ([2]string{safe, "/top/odd\u240Adir/evil\u240Aname.txt"}) {
+		b := ui.probe_bounds(p, label)
+		testing.expect(t, b.w > 0, "the tooltip anchor is drawn")
+		ui.probe_move(p, b.x + b.w / 2, b.y + b.h / 2)
+		ui.probe_advance(p, 90, 1.0 / 60)
+		raw := bad if i == 0 else files[0].path
+		testing.expect(t, ui.probe_tagged(p, raw), "the tooltip exposes the raw name")
+		ui.probe_move(p, 0, 0)
+		ui.probe_advance(p, 3, 1.0 / 60)
+	}
 
 	// The info line over the chart, with the pointer on the arc.
 	ui.probe_move(p, ring_point(&r, 1, 0.65).x, ring_point(&r, 1, 0.65).y)
 	ui.probe_advance(p, 3, 1.0 / 60)
 	testing.expect(t, ui.probe_tagged(p, safe), "the info line")
+}
+
+// A slow frame can collect several keys. Each one starts at the pick left by the
+// previous key, including Enter and Escape, rather than the frame's first pick.
+@(test)
+keys_in_one_frame_move_and_open_the_current_pick :: proc(t: ^testing.T) {
+	for mode in ([?]Mode{.Sunburst, .Treemap, .Icicle}) {
+		r: Chart_Rig
+		chart_open(&r, mode)
+		defer chart_close(&r)
+		name := "arc docs" if mode == .Sunburst else "Treemap chart" if mode == .Treemap else "Icicle chart"
+		testing.expect(t, tab_to_chart(&r, name), "Tab reaches the chart")
+		p := &r.h.p
+
+		ui.router_push(&p.router, {kind = .Key, key = .Right})
+		ui.router_push(&p.router, {kind = .Key, key = .Right})
+		ui.probe_frame(p)
+		ui.probe_frame(p)
+		testing.expect_value(t, r.m.chart_pick, MOVIE)
+
+		ui.router_push(&p.router, {kind = .Key, key = .Right})
+		ui.router_push(&p.router, {kind = .Key, key = .Enter})
+		ui.probe_frame(p)
+		opened, ok := sent(p, command.Open).?
+		testing.expect(t, ok, "Enter opens the entry the preceding arrow picked")
+		testing.expect_value(t, opened.entry.node, NOTES)
+		ui.probe_frame(p)
+
+		ui.router_push(&p.router, {kind = .Key, key = .Escape})
+		ui.router_push(&p.router, {kind = .Key, key = .Right})
+		ui.probe_frame(p)
+		ui.probe_frame(p)
+		testing.expect_value(t, r.m.chart_pick, DOCS)
+	}
+}
+
+// Keyboard selection holds the info line steady while its raw-name tooltip is
+// hovered, in each chart. Explicit lines and very long names have a finite preview.
+@(test)
+chart_info_tooltips_keep_the_raw_name_in_a_bounded_preview :: proc(t: ^testing.T) {
+	for mode in ([?]Mode{.Sunburst, .Treemap, .Icicle}) {
+		r: Chart_Rig
+		chart_open(&r, mode, "evil\nname.txt")
+		defer chart_close(&r)
+		p := &r.h.p
+		if mode == .Sunburst {
+			at := ring_point(&r, 1, 0.65)
+			ui.probe_move(p, at.x, at.y)
+		} else {
+			label := "box evil\u240Aname.txt" if mode == .Treemap else "bar evil\u240Aname.txt"
+			b := ui.probe_bounds(p, label)
+			testing.expect(t, b.w > 0, "the chart entry is drawn")
+			ui.probe_move(p, b.x + b.w / 2, b.y + b.h / 2)
+		}
+		ui.probe_advance(p, 90, 1.0 / 60)
+		testing.expect(t, ui.probe_tagged(p, "evil\nname.txt"), "hovering a chart entry exposes its raw name")
+		ui.probe_move(p, 0, 0)
+		ui.probe_advance(p, 3, 1.0 / 60)
+		rings := top_rings("evil\nname.txt")
+		set_chart_pick(&r.m, &rings, 3)
+		ui.probe_advance(p, 3, 1.0 / 60)
+		b := ui.probe_bounds(p, "evil\u240Aname.txt")
+		ui.probe_move(p, b.x + b.w / 2, b.y + b.h / 2)
+		ui.probe_advance(p, 90, 1.0 / 60)
+		testing.expect(t, ui.probe_tagged(p, "evil\nname.txt"), ui.probe_semantics(p, context.temp_allocator))
+		gtx := ui.Ctx{allocator = context.temp_allocator}
+		testing.expect_value(t, raw_tip_text(&gtx, "a\nb\nc\nd\ne"), "a\nb\nc\nd…")
+		testing.expect_value(t, raw_tip_text(&gtx, "a\rb\u0085c\u2028d\u2029e"), "a\rb\u0085c\u2028d…")
+		long := strings.repeat("é", 129, context.temp_allocator)
+		testing.expect_value(t, raw_tip_text(&gtx, long), strings.concatenate({long[:256], "…"}, context.temp_allocator))
+	}
 }

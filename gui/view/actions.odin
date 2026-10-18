@@ -1,3 +1,4 @@
+//review:ignore history-coupled-file location.odin already preserves raw path edits; only menu targets and rename prefill change here.
 package leita_view
 
 import "core:strings"
@@ -6,7 +7,6 @@ import "jm:ui"
 import "jm:ui/ops"
 import "jm:ui/primer"
 
-import "../../human"
 import "../command"
 import "../query"
 
@@ -164,14 +164,13 @@ rescan :: proc(gtx: ^ui.Ctx, prog: ^query.Progress_Result) {
 	ui.command(gtx, command.Command(command.Scan{path = command.text_make(prog.target)}))
 }
 
-// aim makes the menu and dialogs about t, under its name made safe to draw
-// (safe): the dialogs show it, the rename field starts from it, and a rename
-// that leaves it as it is is none.
+// aim keeps the real name for editing. Menus and dialog prose make it safe
+// when drawn; accepting the unedited name never sends a rename.
 @(private)
 aim :: proc(m: ^Model, t: Target) {
 	delete(m.target.name)
 	m.target = t
-	m.target.name = strings.clone(human.shown(t.name))
+	m.target.name = strings.clone(t.name)
 }
 
 @(private)
@@ -201,7 +200,7 @@ entry_menu :: proc(gtx: ^ui.Ctx, m: ^Model, anchor: ui.Last_Widget, at := ops.Po
 		gtx,
 		&m.menu_open,
 		anchor,
-		name = trf(gtx, .Actions_For, m.target.name),
+		name = trf(gtx, .Actions_For, safe(gtx, m.target.name)),
 	)
 	defer primer.action_menu_close(&menu)
 	if !menu.visible {
@@ -255,8 +254,8 @@ dialogs :: proc(gtx: ^ui.Ctx, m: ^Model) {
 	answer := primer.confirmation_dialog(
 		gtx,
 		&m.trash_open,
-		trf(gtx, .Trash_Title, m.target.name),
-		trf(gtx, .Trash_Body, m.target.name),
+		trf(gtx, .Trash_Title, safe(gtx, m.target.name)),
+		trf(gtx, .Trash_Body, safe(gtx, m.target.name)),
 		confirm_content = tr(.Trash),
 		confirm_type = .Danger,
 	)
@@ -273,7 +272,7 @@ dialogs :: proc(gtx: ^ui.Ctx, m: ^Model) {
 		gtx,
 		&m.rename_open,
 		tr(.Rename),
-		m.target.name,
+		safe(gtx, m.target.name),
 		footer = buttons[:],
 		width = .Medium,
 	) {
@@ -295,7 +294,7 @@ dialogs :: proc(gtx: ^ui.Ctx, m: ^Model) {
 	}
 	if rename {
 		m.rename_open = false
-		name := strings.trim_space(ui.text_string(&m.rename))
+		name := ui.text_string(&m.rename)
 		if name != "" && name != m.target.name {
 			ui.command(
 				gtx,

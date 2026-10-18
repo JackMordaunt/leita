@@ -870,7 +870,7 @@ entry :: proc(
 	ui.flexible(gtx, 3)
 	clicked, name := name_button(
 		gtx,
-		safe(gtx, e.name),
+		e.name,
 		e.directory ? .File_Directory_Fill : .File,
 	)
 	opened = clicked && e.directory
@@ -926,7 +926,7 @@ largest :: proc(gtx: ^ui.Ctx, m: ^Model) {
 				defer ui.scope_close(&s)
 				if ui.column(gtx, gap = 2, align = .Fill) {
 					// The name opens the directory holding the file.
-					clicked, name := name_button(gtx, safe(gtx, base_name(f.path)), .File)
+					clicked, name := name_button(gtx, base_name(f.path), .File)
 					if clicked {
 						open(m, f.parent)
 					}
@@ -936,14 +936,19 @@ largest :: proc(gtx: ^ui.Ctx, m: ^Model) {
 					}
 					if ui.row(gtx, gap = 8, align = .Center) {
 						ui.flexible(gtx, 1)
-						primer.truncate(
-							gtx,
-							safe(gtx, f.path),
-							title = safe(gtx, f.path),
-							max_width = ui.INF,
-							size = .Small,
-							color = primer.color(.Fg_Color_Muted),
-						)
+						{
+							stack := ui.stack_open(gtx)
+							defer ui.close(&stack)
+							primer.truncate(
+								gtx,
+								safe(gtx, f.path),
+								title = raw_tip_text(gtx, f.path),
+								max_width = ui.INF,
+								size = .Small,
+								color = primer.color(.Fg_Color_Muted),
+							)
+							show_raw_tip(gtx, f.path, ui.last_widget(gtx))
+						}
 						primer.text(gtx, human.bytes(f.bytes), .Small)
 						if m.colour == .Change {
 							if d := delta_text(f.bytes, f.was, r.compared, gtx.allocator);
@@ -1100,9 +1105,10 @@ name_button :: proc(
 ) {
 	clip := ui.clip_box_open(gtx, loc = loc)
 	width := gtx.constraints.max.x
+	stack := ui.stack_open(gtx)
 	clicked = primer.button(
 		gtx,
-		label,
+		safe(gtx, label),
 		.Invisible,
 		.Small,
 		leading = ic,
@@ -1110,6 +1116,7 @@ name_button :: proc(
 		block = true,
 	)
 	button = ui.last_widget(gtx)
+	show_raw_tip(gtx, label, button)
 	if ui.is_finite(width) && width > NAME_FADE {
 		bg := primer.color(.Bg_Color_Default)
 		clear := bg
@@ -1119,6 +1126,7 @@ name_button :: proc(
 		edge := ops.Rect{width - NAME_FADE, 0, NAME_FADE, button.size.y}
 		ops.fill(gtx.scene, edge, ops.Linear_Gradient{{edge.x, 0}, {width, 0}, stops})
 	}
+	ui.close(&stack)
 	ui.clip_box_close(&clip)
 	return
 }
@@ -1139,13 +1147,35 @@ logo :: proc(gtx: ^ui.Ctx, loc := #caller_location) {
 safe is name as the window draws it: a line break, an escape or a bidi override
 in it, which a disk allows in a name, is a picture of itself (human.shown), so a
 name cannot split a dialog, a row or a menu, or make the text around it read
-differently. The window draws no name raw and offers none in a tooltip either, as
-the tooltip would only repeat what the name hides. What is sent to the host, and
-what a field edits to be sent, is the real name.
+differently. A bounded tooltip exposes the original bytes separately. What is
+sent to the host, and what a field edits to be sent, is the real name.
 */
 @(private)
 safe :: proc(gtx: ^ui.Ctx, name: string) -> string {
 	return human.shown(name, gtx.allocator)
+}
+
+// Raw names stay inside a tooltip, capped at 128 runes and four explicit lines.
+// An ellipsis marks a shortened preview, including pathological disk names.
+@(private)
+raw_tip_text :: proc(gtx: ^ui.Ctx, name: string) -> string {
+	count, lines := 0, 1
+	for r, i in name {
+		line_break := r == '\n' || r == '\r' || r == '\u0085' || r == '\u2028' || r == '\u2029'
+		if count == 128 || (line_break && lines == 4) {
+			return strings.concatenate({name[:i], "…"}, gtx.allocator)
+		}
+		count += 1
+		if line_break {
+			lines += 1
+		}
+	}
+	return name
+}
+
+@(private)
+show_raw_tip :: proc(gtx: ^ui.Ctx, name: string, anchor: ui.Last_Widget) {
+	primer.tooltip(gtx, raw_tip_text(gtx, name), anchor)
 }
 
 @(private)

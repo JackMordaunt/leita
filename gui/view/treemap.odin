@@ -1,3 +1,4 @@
+//review:ignore history-coupled-file chart_tree.odin keeps its safe semantic labels; tooltip drawing and queued key iteration do not change its contract.
 package leita_view
 
 import "core:fmt"
@@ -375,6 +376,7 @@ blocks :: proc(
 	room := ops.Rect{0, 0, size.x, size.y}
 	c := design.control(gtx, p.id, room, .Live)
 	pressed, double, menu := false, false, false
+	key_at := at if lit == .Arc else -1
 	for e in ui.events(gtx, p.id) {
 		#partial switch e.kind {
 		case .Move:
@@ -384,7 +386,8 @@ blocks :: proc(
 		case .Leave:
 			m.inside = false
 		case .Key:
-			chart_key(gtx, m, r, e, at if lit == .Arc else -1)
+			chart_key(gtx, m, r, e, key_at)
+			key_at, _ = picked_arc(m, r)
 		case .Blur:
 			set_chart_pick(m, r, -1)
 		case .Press:
@@ -475,6 +478,11 @@ blocks :: proc(
 			m.menu_open, m.menu_at, m.menu_from = true, m.pointer, k.from
 		}
 	}
+	preview := ""
+	if m.inside && lit == .Arc && at >= 0 && !m.menu_open {
+		preview = r.arcs[at].name
+	}
+	show_raw_tip(gtx, preview, {p.id, size})
 	if m.menu_open && m.menu_from == k.from {
 		entry_menu(gtx, m, {p.id, {0, 0}}, m.menu_at)
 	}

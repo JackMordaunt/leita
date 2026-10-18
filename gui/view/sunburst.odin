@@ -1,3 +1,4 @@
+//review:ignore history-coupled-file chart_tree.odin keeps its safe semantic labels; tooltip drawing and queued key iteration do not change its contract.
 package leita_view
 
 import "core:fmt"
@@ -294,7 +295,7 @@ info :: proc(gtx: ^ui.Ctx, m: ^Model, drawn, laid: ^query.Rings_Result, u: Hit, 
 	case .Arc:
 		a := drawn.arcs[at]
 		share := drawn.bytes > 0 ? 100 * f64(a.bytes) / f64(drawn.bytes) : 0
-		name = safe(gtx, a.name)
+		name = a.name
 		kind: string
 		if note := colour_note(gtx, m, laid, at); note != "" {
 			kind = strings.concatenate({" · ", note}, gtx.allocator)
@@ -316,9 +317,9 @@ info :: proc(gtx: ^ui.Ctx, m: ^Model, drawn, laid: ^query.Rings_Result, u: Hit, 
 			},
 			gtx.allocator,
 		)
-		path = safe(gtx, arc_path(gtx, laid, at))
+		path = arc_path(gtx, laid, at)
 	case .Hub, .Nothing:
-		name = safe(gtx, base_name(here))
+		name = base_name(here)
 		up := u == .Hub && len(drawn.crumbs) > 1
 		detail = fmt.aprintf(
 			"%s%s%s",
@@ -334,16 +335,26 @@ info :: proc(gtx: ^ui.Ctx, m: ^Model, drawn, laid: ^query.Rings_Result, u: Hit, 
 		// keeps its height.
 		path = ""
 	}
-	primer.truncate(gtx, name, max_width = ui.INF, weight = .Semibold)
+	{
+		stack := ui.stack_open(gtx)
+		defer ui.close(&stack)
+		primer.truncate(gtx, safe(gtx, name), max_width = ui.INF, weight = .Semibold)
+		show_raw_tip(gtx, name, ui.last_widget(gtx))
+	}
 	primer.truncate(gtx, detail, max_width = ui.INF, size = .Small, color = muted)
-	primer.truncate(
-		gtx,
-		middle_cut(gtx, path, small, width),
-		title = path,
-		max_width = ui.INF,
-		size = .Small,
-		color = muted,
-	)
+	{
+		stack := ui.stack_open(gtx)
+		defer ui.close(&stack)
+		primer.truncate(
+			gtx,
+			middle_cut(gtx, safe(gtx, path), small, width),
+			title = raw_tip_text(gtx, path),
+			max_width = ui.INF,
+			size = .Small,
+			color = muted,
+		)
+		show_raw_tip(gtx, path, ui.last_widget(gtx))
+	}
 }
 
 // colour_note is what the colouring chosen says of the entry at: its kind by
@@ -469,6 +480,7 @@ sunburst :: proc(
 	area := ops.Rect{0, 0, side, side}
 	c := design.control(gtx, p.id, area, .Live)
 	pressed, double, menu := false, false, false
+	key_at := hovered
 	for e in ui.events(gtx, p.id) {
 		#partial switch e.kind {
 		case .Move:
@@ -478,7 +490,8 @@ sunburst :: proc(
 		case .Leave:
 			m.inside = false
 		case .Key:
-			chart_key(gtx, m, r, e, hovered)
+			chart_key(gtx, m, r, e, key_at)
+			key_at, _ = picked_arc(m, r)
 		case .Blur:
 			set_chart_pick(m, r, -1)
 		case .Press:
@@ -561,6 +574,11 @@ sunburst :: proc(
 		case .Nothing:
 		}
 	}
+	preview := ""
+	if m.inside && hovered >= 0 && !m.menu_open {
+		preview = r.arcs[hovered].name
+	}
+	show_raw_tip(gtx, preview, {p.id, {side, side}})
 	if m.menu_open && m.menu_from == .Sunburst {
 		entry_menu(gtx, m, {p.id, {0, 0}}, m.menu_at)
 	}
