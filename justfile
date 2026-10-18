@@ -150,6 +150,9 @@ gui mode="debug": deps
     release) opt="-o:speed -define:LEITA_LICENCE_KEY=$(just --justfile "{{justfile()}}" release-key)" ;;
     *) echo "gui: the mode is debug or release, not {{mode}}" >&2; exit 1 ;;
     esac
+    # A release window on Windows is a GUI program, so starting it opens no
+    # console behind it; a debug one keeps its console, where printing goes.
+    if [ "{{os()}}" = windows ] && [ "{{mode}}" = release ]; then opt="$opt -subsystem:windows"; fi
     mkdir -p build/{{mode}}/app
     {{odin}} build gui $opt {{flags}} {{curl_open}} {{sdl3_link}} -out:build/{{mode}}/app/{{gui}}{{exe}}
     if [ "{{os()}}" = windows ]; then

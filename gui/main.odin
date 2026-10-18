@@ -16,6 +16,12 @@ exits with. So a flag the window has no use for, --report say, still does what
 leita does, and -h is help rather than a folder named -h. A Mac with only the
 app can therefore run reports from the terminal: Leita ~ --report usage.pdf.
 
+On Windows a release is built for the GUI subsystem, so that starting the window
+opens no console behind it. Its command line prints into the console of the
+terminal that started it (attach_console), but a terminal does not wait for a
+GUI program, so a script that needs its exit code or its output in order runs
+leita.exe, or start /wait.
+
 The window is jm:ui in Primer. Its pieces are gui's packages:
 
 	query    the reads the window may need, and their results   (leaf)
@@ -96,6 +102,7 @@ main :: proc() {
 
 	args := without_psn(os.args[1:])
 	if launch(args) == .Terminal {
+		attach_console()
 		code := cli.run(args)
 		free_all(context.temp_allocator)
 		os.exit(code)

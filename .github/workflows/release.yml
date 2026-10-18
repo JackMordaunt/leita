@@ -250,6 +250,20 @@ jobs:
             "leita $LEITA_VERSION "*) ;;
             *) echo "::error::--version names another version than $LEITA_VERSION"; exit 1 ;;
           esac
+          # The Windows window is a GUI program, so that starting it opens
+          # no console behind it (the PE header's subsystem is 2, a console
+          # program's 3), and it still answers as leita when given a flag.
+          if [ "$RUNNER_OS" = Windows ]; then
+            pe=$(od -An -tu4 -j60 -N4 "build/release/app/Leita.exe")
+            subsystem=$(od -An -tu2 -j$((pe + 24 + 68)) -N2 "build/release/app/Leita.exe" | tr -d ' ')
+            [ "$subsystem" = 2 ] || { echo "::error::Leita.exe is subsystem $subsystem, not 2 (Windows GUI)"; exit 1; }
+            line=$("build/release/app/Leita.exe" --version)
+            echo "$line"
+            case "$line" in
+              "leita $LEITA_VERSION "*) ;;
+              *) echo "::error::Leita.exe --version names another version than $LEITA_VERSION"; exit 1 ;;
+            esac
+          fi
           # The Linux window must start where neither SDL3 nor libcurl is
           # installed: neither may be among what it loads.
           if [ "$RUNNER_OS" = Linux ]; then
