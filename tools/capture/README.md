@@ -23,7 +23,10 @@ recorder, changes a licence, or reads personal history. Each host receives its
 own explicit history, reports and thumbnail directory. Dependencies: Odin, jm's
 native libraries, Python 3, `stat`, Git, and FFmpeg when frames are enabled.
 
-The real fixture starts with a CMake project and 3 files. A separate isolated
+The real fixture starts with a CMake project and 3 files. Both themes use the
+same target path so its text wraps identically in Export. The generated light
+fixture is archived under `light/` before dark recreates that target; no generated
+files are deleted. A separate isolated
 host exports its initial report. The filmed host starts a scan through Settings
 → Rescan, then the script adds an 8 MiB build object and a CMake marker and grows
 a source asset from 2 to 3 MiB. A visible cue explains this external addition.

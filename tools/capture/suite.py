@@ -57,14 +57,14 @@ def fixture(binary, out, fixture_root, theme, frames):
     base.mkdir(parents=True)
     data = base / 'data'
     data.mkdir()
-    root = fixture_root / theme / 'example-project'
+    root = fixture_root / 'example-project'
     root.mkdir(parents=True)
     (root / 'CMakeLists.txt').write_text('project(example)\n')
     payload(root / 'source' / 'assets.bin', 2 << 20, 1)
     payload(root / 'docs' / 'reference.bin', 1 << 20, 2)
     expected_before = allocated(root)
     reports = fixture_root / theme / 'reports'
-    reports.mkdir()
+    reports.mkdir(parents=True)
     before, after = reports / 'before.json', reports / 'after.json'
     ready, resume = base / 'ready', base / 'resume'
     frame_dir = base / 'frames'
@@ -146,6 +146,9 @@ def fixture(binary, out, fixture_root, theme, frames):
                   grown_file_change_bytes=grown['change'], validated=True,
                   mechanism='real app host, UI Rescan and Export; generated fixture files only')
     (base / 'validation.json').write_text(json.dumps(result, indent=2) + '\n')
+    if theme == 'light':
+        # Keep the completed light fixture beside its reports.
+        root.rename(reports.parent / root.name)
     return result
 
 
