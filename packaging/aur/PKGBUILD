@@ -1,0 +1,67 @@
+# Maintainer: Jack Mordaunt <jackmordaunt.dev@gmail.com>
+# leita-bin installs the release's Linux archives, one per architecture, and
+# the same files the .deb does (packaging/linux/nfpm.yaml): both binaries,
+# the desktop entry, the icon, the AppStream metadata, the journal unit and
+# the notices. The manifests job fills the version and the sums. Installing
+# does not enable the recorder; leita journal on does, as the .deb's
+# postinstall does.
+# shellcheck shell=bash disable=SC2034,SC2154
+# Sourced by makepkg, which reads the variables above and sets pkgdir, srcdir and CARCH.
+
+pkgname=leita-bin
+pkgver='__VERSION__'
+pkgrel=1
+pkgdesc='See what is filling a drive, and report on it'
+arch=('x86_64' 'aarch64')
+url='https://mordaunt.dev/leita'
+license=('LicenseRef-proprietary')
+# The release is built on ubuntu-24.04 and needs glibc 2.39 (release.yml).
+depends=('glibc>=2.39' 'gcc-libs')
+# libcurl is opened only to activate a licence, so it is optional, as the
+# .deb recommends it rather than depending on it.
+optdepends=('curl: activate a licence')
+provides=('leita')
+conflicts=('leita')
+# Prebuilt binaries. strip would rewrite a binary this package did not link,
+# and there are no debug symbols to split out.
+options=('!strip' '!debug')
+# The four files are this tag's copies, in this order: desktop, metainfo,
+# unit, icon. The sums follow the same order.
+source=(
+  "dev.mordaunt.Leita.desktop::https://raw.githubusercontent.com/jackmordaunt/leita/v${pkgver}/packaging/linux/dev.mordaunt.Leita.desktop"
+  "dev.mordaunt.Leita.metainfo.xml::https://raw.githubusercontent.com/jackmordaunt/leita/v${pkgver}/packaging/linux/dev.mordaunt.Leita.metainfo.xml"
+  "leita-journal.service::https://raw.githubusercontent.com/jackmordaunt/leita/v${pkgver}/packaging/linux/leita-journal.service"
+  "dev.mordaunt.Leita.svg::https://raw.githubusercontent.com/jackmordaunt/leita/v${pkgver}/branding/mark-light.svg"
+)
+source_x86_64=("leita-linux-amd64.tar.zst::https://github.com/jackmordaunt/leita/releases/download/v${pkgver}/leita-v${pkgver}-linux-amd64.tar.zst")
+source_aarch64=("leita-linux-arm64.tar.zst::https://github.com/jackmordaunt/leita/releases/download/v${pkgver}/leita-v${pkgver}-linux-arm64.tar.zst")
+sha256sums=(
+  '__SUM_DESKTOP__'
+  '__SUM_METAINFO__'
+  '__SUM_UNIT__'
+  '__SUM_ICON__'
+)
+sha256sums_x86_64=('__SUM_LINUX_AMD64__')
+sha256sums_aarch64=('__SUM_LINUX_ARM64__')
+
+package() {
+  local cpu=amd64
+  if [ "$CARCH" = aarch64 ]; then
+    cpu=arm64
+  fi
+  # release.yml packs the archive as this directory.
+  local root="${srcdir}/leita-v${pkgver}-linux-${cpu}"
+
+  install -Dm755 "${root}/leita" "${pkgdir}/usr/bin/leita"
+  install -Dm755 "${root}/app/Leita" "${pkgdir}/usr/bin/Leita"
+  install -dm755 "${pkgdir}/usr/libexec/leita"
+  ln -s /usr/bin/leita "${pkgdir}/usr/libexec/leita/leita"
+  install -Dm644 "${srcdir}/leita-journal.service" "${pkgdir}/usr/lib/systemd/system/leita-journal.service"
+  install -Dm644 "${srcdir}/dev.mordaunt.Leita.desktop" "${pkgdir}/usr/share/applications/dev.mordaunt.Leita.desktop"
+  install -Dm644 "${srcdir}/dev.mordaunt.Leita.metainfo.xml" "${pkgdir}/usr/share/metainfo/dev.mordaunt.Leita.metainfo.xml"
+  install -Dm644 "${srcdir}/dev.mordaunt.Leita.svg" "${pkgdir}/usr/share/icons/hicolor/scalable/apps/dev.mordaunt.Leita.svg"
+  install -Dm644 "${root}/LICENSE.md" "${pkgdir}/usr/share/doc/leita/LICENSE.md"
+  install -Dm644 "${root}/THIRD_PARTY.md" "${pkgdir}/usr/share/doc/leita/THIRD_PARTY.md"
+  # Arch looks for the licence here as well as in the doc path the .deb uses.
+  install -Dm644 "${root}/LICENSE.md" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE.md"
+}

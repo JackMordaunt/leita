@@ -48,6 +48,25 @@ sum_of() {
   return 1
 }
 
+# sum_file hashes a file in this checkout. The desktop entry, the icon and
+# the unit are not release assets, so they are not in sha256sums.txt; the
+# tag's copies are hashed here.
+sum_file() {
+  local file=$1 sum
+  [ -f "$file" ] || {
+    echo "::error::no ${file} to sum" >&2
+    exit 1
+  }
+  sum=$(sha256sum "$file")
+  sum=${sum%% *}
+  sum=${sum,,}
+  [[ $sum =~ ^[0-9a-f]{64}$ ]] || {
+    echo "::error::sha256 of ${file} is not 64 hex characters" >&2
+    exit 1
+  }
+  printf '%s\n' "$sum"
+}
+
 require_sum() {
   local name=$1 sum
   sum=$(sum_of "$name") || {
@@ -142,5 +161,33 @@ fill_homebrew() {
     __VERSION__ "$version"
 }
 
+fill_aur() {
+  local root sum_desktop sum_metainfo sum_unit sum_icon sum_amd64 sum_arm64
+  root=$(cd "$here/.." && pwd)
+  sum_desktop=$(sum_file "$root/packaging/linux/dev.mordaunt.Leita.desktop")
+  sum_metainfo=$(sum_file "$root/packaging/linux/dev.mordaunt.Leita.metainfo.xml")
+  sum_unit=$(sum_file "$root/packaging/linux/leita-journal.service")
+  sum_icon=$(sum_file "$root/branding/mark-light.svg")
+  sum_amd64=$(require_sum "leita-v${version}-linux-amd64.tar.zst")
+  sum_arm64=$(require_sum "leita-v${version}-linux-arm64.tar.zst")
+  subst "${here}/aur/PKGBUILD" "${OUT}/aur/PKGBUILD" \
+    __SUM_DESKTOP__ "$sum_desktop" \
+    __SUM_METAINFO__ "$sum_metainfo" \
+    __SUM_UNIT__ "$sum_unit" \
+    __SUM_ICON__ "$sum_icon" \
+    __SUM_LINUX_AMD64__ "$sum_amd64" \
+    __SUM_LINUX_ARM64__ "$sum_arm64" \
+    __VERSION__ "$version"
+  subst "${here}/aur/.SRCINFO" "${OUT}/aur/.SRCINFO" \
+    __SUM_DESKTOP__ "$sum_desktop" \
+    __SUM_METAINFO__ "$sum_metainfo" \
+    __SUM_UNIT__ "$sum_unit" \
+    __SUM_ICON__ "$sum_icon" \
+    __SUM_LINUX_AMD64__ "$sum_amd64" \
+    __SUM_LINUX_ARM64__ "$sum_arm64" \
+    __VERSION__ "$version"
+}
+
 fill_winget
 fill_homebrew
+fill_aur

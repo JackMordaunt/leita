@@ -1014,3 +1014,43 @@ jobs:
             commit -m "leita: publish v${VERSION#v}"
           git -C "$dir" -c credential.helper= -c "credential.helper=!$cred" \
             push origin HEAD:main
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: aur-${{ needs.plan.outputs.version }}
+          path: manifests-out/aur
+          if-no-files-found: error
+      # Pushes PKGBUILD and .SRCINFO to leita-bin on the AUR, whose git
+      # branch is master. AUR_SSH_KEY is the SSH private key of the account
+      # that owns the package, and that account must list
+      # jackmordaunt.dev@gmail.com or the push is rejected. The package
+      # repository has to exist first: it is created once on the AUR, and
+      # this step does the updates after. The host key is accepted on first
+      # use because it is not recorded in this repository. Without the key
+      # the artifact is the submission and the AUR is left as it is.
+      - name: aur
+        env:
+          AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -z "${AUR_SSH_KEY:-}" ]; then
+            echo "::notice::AUR_SSH_KEY is unset: the PKGBUILD is the artifact, and the AUR is left as it is"
+            exit 0
+          fi
+          export GIT_TERMINAL_PROMPT=0
+          sshdir=$(mktemp -d)
+          trap 'rm -rf "$sshdir"' EXIT
+          printf '%s\n' "$AUR_SSH_KEY" > "$sshdir/key"
+          chmod 600 "$sshdir/key"
+          export GIT_SSH_COMMAND="ssh -i ${sshdir}/key -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=${sshdir}/known_hosts"
+          dir=$(mktemp -d)
+          git clone ssh://aur@aur.archlinux.org/leita-bin.git "$dir"
+          cp manifests-out/aur/PKGBUILD manifests-out/aur/.SRCINFO "$dir/"
+          git -C "$dir" add PKGBUILD .SRCINFO
+          if git -C "$dir" diff --cached --quiet; then
+            echo "the AUR already has this package"
+            exit 0
+          fi
+          git -C "$dir" -c user.name='Jack Mordaunt' -c user.email='jackmordaunt.dev@gmail.com' \
+            commit -m "leita-bin: ${VERSION#v}"
+          git -C "$dir" push origin HEAD:master
