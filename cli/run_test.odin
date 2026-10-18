@@ -1,5 +1,6 @@
 package leita_cli
 
+import "core:strings"
 import "core:testing"
 
 import "../scan"
@@ -90,4 +91,20 @@ a_file_seventy_directories_deep_is_among_the_largest :: proc(t: ^testing.T) {
 		}
 	}
 	testing.expect(t, found, "the deep directory is among the largest")
+}
+
+// The summary's first line says when the disk is made up, and only then.
+@(test)
+the_first_line_says_when_the_disk_is_made_up :: proc(t: ^testing.T) {
+	target := scan.Target {
+		volume = "/dev/sda1",
+		mount  = "/data",
+	}
+	line := head_line(target, .Walk, .Buffered)
+	testing.expect(t, strings.contains(line, "Walk engine"), line)
+	testing.expect(t, !strings.contains(line, "made-up"), line)
+
+	line = head_line(target, .Synthetic, .Buffered)
+	testing.expect(t, strings.has_suffix(line, "This is a made-up disk: LEITA_SYNTHETIC was set."), line)
+	testing.expect(t, !strings.contains(line, "\n"), line)
 }

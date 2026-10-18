@@ -33,6 +33,10 @@ import "../version"
 // when its caller does not say.
 DEFAULT_TOP :: 50
 
+// SYNTHETIC_BANNER is what a report of a made-up disk says first, so a demo's
+// figures are not taken for someone's real files. JSON says it as its engine.
+SYNTHETIC_BANNER :: "This report is of a made-up disk: " + scan.SYNTHETIC_ENV + " was set."
+
 Report :: struct {
 	generated:           time.Time, // when the report was built
 	version:             string, // the leita that built it
@@ -42,7 +46,7 @@ Report :: struct {
 	target:              string, // the path scanned, its top
 	volume:              string, // the device behind it, "" when unknown
 	filesystem:          scan.Filesystem,
-	engine:              scan.Engine,
+	engine:              scan.Engine, // .Synthetic is a made-up disk, which the formats say first
 	started:             time.Time, // when the scan began
 	duration:            time.Duration, // how long it took
 	bytes:               u64, // on disk under the target, the target's own included

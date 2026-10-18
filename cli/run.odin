@@ -334,21 +334,7 @@ scan_and_say :: proc(opt: Options, kept := "", licensee := "", locked := false) 
 	}
 
 	if !quiet {
-		fmt.printfln(
-			"%s %s on %s %s",
-			dim("leita:"),
-			bold(scan.location(target, context.temp_allocator)),
-			target.volume,
-			dim(
-				fmt.tprintf(
-					"(%v, %v media, %v engine, %v io)",
-					target.fs,
-					target.media,
-					engine.engine,
-					opts.io_mode,
-				),
-			),
-		)
+		fmt.println(head_line(target, engine.engine, opts.io_mode))
 		if engine.engine == .Walk {
 			fmt.printfln("%s %d readers at %v pace", dim("walk:"), walk.width(wcfg), wcfg.pace)
 		}

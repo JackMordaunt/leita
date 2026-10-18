@@ -3,6 +3,7 @@ package leita_cli
 import "core:fmt"
 import "core:strings"
 
+import "../ntfs"
 import "../scan"
 import "../term"
 
@@ -26,6 +27,26 @@ bold :: proc(text: string) -> string {
 
 dim :: proc(text: string) -> string {
 	return term.painted(style, {.Dim}, text)
+}
+
+// SYNTHETIC_NOTE is what the summary's first line adds when the disk is made up,
+// so a demo's figures are not read as someone's files.
+SYNTHETIC_NOTE :: "This is a made-up disk: " + scan.SYNTHETIC_ENV + " was set."
+
+// head_line is the summary's first line: what is scanned, where, and how it is
+// read; a made-up disk says so at its end.
+head_line :: proc(target: scan.Target, engine: scan.Engine, io: ntfs.IO_Mode) -> string {
+	line := fmt.tprintf(
+		"%s %s on %s %s",
+		dim("leita:"),
+		bold(scan.location(target, context.temp_allocator)),
+		target.volume,
+		dim(fmt.tprintf("(%v, %v media, %v engine, %v io)", target.fs, target.media, engine, io)),
+	)
+	if engine == .Synthetic {
+		line = strings.concatenate({line, " ", SYNTHETIC_NOTE}, context.temp_allocator)
+	}
+	return line
 }
 
 // label writes one line of the summary: name in bold, padded to LABEL, then
