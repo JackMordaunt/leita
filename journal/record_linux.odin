@@ -760,10 +760,15 @@ mark_problem :: proc(m: Mount, errno: linux.Errno) -> string {
 /*
 start_recording opens the log of the filesystem mounted at m, marked already, and
 appends a Start with a new generation. A log whose paths were spelt from another
-mount point is begun again: its hashes would not match this one's.
+mount point is begun again: its hashes would not match this one's, and a scan reads
+a log only for a place on the very mount point its header names.
 */
 @(private = "file")
 start_recording :: proc(r: ^Recorder, m: Mount) -> (fs: Recorded_Filesystem, problem: string) {
+	// header_read refuses a longer one, so its log would never be read.
+	if len(m.point) > PATH_MAX {
+		return {}, "its mount point is longer than a log's header holds"
+	}
 	dir, fsid, err := open_point(m.point)
 	if err != .NONE {
 		return {}, fmt.tprintf("cannot open it: %v", err)

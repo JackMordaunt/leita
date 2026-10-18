@@ -2,6 +2,7 @@
 package journal
 
 import "core:fmt"
+import "core:os"
 import "core:strings"
 import "core:sys/linux"
 
@@ -32,9 +33,25 @@ fd_path :: proc(fd: linux.Fd, allocator := context.allocator) -> (out: string, o
 	return strings.clone(string(buf[:n]), allocator), true
 }
 
-// PATH_MAX is the longest path the kernel hands back (limits.h).
-@(private)
-PATH_MAX :: 4096
+/*
+mount_of is where the mount that holds path is mounted, in allocator: the mount
+statx(2) names by its id, as /proc/self/mountinfo spells its point. A log covers a
+place only when its paths are spelt from that point.
+*/
+mount_of :: proc(path: string, allocator := context.allocator) -> (point: string, ok: bool) {
+	cpath := strings.clone_to_cstring(path, context.temp_allocator)
+	st: linux.Statx
+	if linux.statx(linux.AT_FDCWD, cpath, {}, {.MNT_ID}, &st) != .NONE || .MNT_ID not_in st.mask {
+		return "", false
+	}
+	text, err := os.read_entire_file("/proc/self/mountinfo", context.temp_allocator)
+	if err != nil {
+		return "", false
+	}
+	mounts := mounts_parse(string(text), context.temp_allocator)
+	m := mount_by_id(mounts, int(st.mnt_id)) or_return
+	return strings.clone(m.point, allocator), true
+}
 
 // fsid_of is the id statfs(2) gives the filesystem path is on, which names its log.
 fsid_of :: proc(path: string) -> (fsid: [2]i32, ok: bool) {

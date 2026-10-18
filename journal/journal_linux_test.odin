@@ -216,3 +216,14 @@ test_the_loop_writes_a_slept_cover_accepts :: proc(t: ^testing.T) {
 	testing.expectf(t, why == "", "the suspend was not covered: %s", why)
 	testing.expect_value(t, w.end, from + 3612 * SEC)
 }
+
+// A place's mount point is the one its own mount is at, not the root above it.
+@(test)
+test_a_place_is_on_its_own_mount :: proc(t: ^testing.T) {
+	root, ok := mount_of("/", context.temp_allocator)
+	testing.expect(t, ok && root == "/", "/ is not on /")
+	procs, ok2 := mount_of("/proc/self", context.temp_allocator)
+	testing.expect(t, ok2 && procs == "/proc", "/proc/self is not on /proc")
+	_, ok3 := mount_of("/no/such/leita/place", context.temp_allocator)
+	testing.expect(t, !ok3, "a place that is not there has a mount")
+}

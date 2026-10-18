@@ -1,5 +1,6 @@
 package journal
 
+import "core:encoding/endian"
 import "core:fmt"
 import "core:os"
 import "core:path/filepath"
@@ -74,6 +75,12 @@ test_a_log_reads_back_what_was_written :: proc(t: ^testing.T) {
 	testing.expect(t, !ok, "a short header was read")
 	_, _, ok = header_read(transmute([]byte)string("LEITAJL0\x00\x00"))
 	testing.expect(t, !ok, "another magic was read")
+	// A length no mount point has, with as many bytes after it as it says.
+	long := make([]byte, len(MAGIC) + 2 + 5000, context.temp_allocator)
+	copy(long, MAGIC)
+	endian.put_u16(long[len(MAGIC):], .Little, 5000)
+	_, _, ok = header_read(long)
+	testing.expect(t, !ok, "a header longer than a mount point was read")
 
 	buf: [RECORD_SIZE]byte
 	r := Record{.Changed, -5, 0xfedc_ba98_7654_3210}

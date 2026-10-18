@@ -2,6 +2,7 @@
 package changes
 
 import "core:fmt"
+import "core:log"
 import "core:os"
 import "core:path/filepath"
 import "core:testing"
@@ -152,6 +153,8 @@ test_a_covered_log_names_what_changed :: proc(t: ^testing.T) {
 	place, _ := os.temp_directory(context.temp_allocator)
 	root, canon := journal.canonical(place, context.temp_allocator)
 	testing.expect(t, canon, "no canonical path for the temp directory")
+	mount, mounted := journal.mount_of(place, context.temp_allocator)
+	testing.expect(t, mounted, "no mount for the temp directory")
 	c, ok := now(place)
 	testing.expect(t, ok, "no cursor for the temp directory")
 	c.position -= 15 * i64(time.Second)
@@ -161,7 +164,7 @@ test_a_covered_log_names_what_changed :: proc(t: ^testing.T) {
 		{.Changed, c.position - 30 * i64(time.Second), before},
 		{.Changed, c.position + 1, sub},
 	}
-	write_log(t, logs, place, "/", c, changed)
+	write_log(t, logs, place, mount, c, changed)
 
 	set, next, err := since(place, c)
 	defer change_set_destroy(&set)
@@ -187,6 +190,8 @@ test_a_log_that_does_not_cover_falls_back_to_a_probe :: proc(t: ^testing.T) {
 	defer os.remove_all(logs)
 	defer journal.logs_here = ""
 	place, _ := os.temp_directory(context.temp_allocator)
+	mount, mounted := journal.mount_of(place, context.temp_allocator)
+	testing.expect(t, mounted, "no mount for the temp directory")
 	c, ok := now(place)
 	testing.expect(t, ok, "no cursor for the temp directory")
 	c.position -= 15 * i64(time.Second)
@@ -196,8 +201,8 @@ test_a_log_that_does_not_cover_falls_back_to_a_probe :: proc(t: ^testing.T) {
 		extra: []journal.Record,
 	}
 	cases := []Case {
-		{"overflow", "/", {{.Overflow, c.position + 1, 0}}},
-		{"restart", "/", {{.Start, c.position + 1, 4}}},
+		{"overflow", mount, {{.Overflow, c.position + 1, 0}}},
+		{"restart", mount, {{.Start, c.position + 1, 4}}},
 		{"another mount", "/leita/nowhere", {}},
 	}
 	for k in cases {
@@ -210,7 +215,7 @@ test_a_log_that_does_not_cover_falls_back_to_a_probe :: proc(t: ^testing.T) {
 	}
 
 	// A log whose last heartbeat is half a minute old: the recorder is not running.
-	write_log(t, logs, place, "/", c, {})
+	write_log(t, logs, place, mount, c, {})
 	fsid, _ := journal.fsid_of(place)
 	path, _ := filepath.join({logs, journal.log_name(fsid)}, context.temp_allocator)
 	data, _ := os.read_entire_file(path, context.temp_allocator)
@@ -219,4 +224,44 @@ test_a_log_that_does_not_cover_falls_back_to_a_probe :: proc(t: ^testing.T) {
 	set, _, _ := since(place, c)
 	defer change_set_destroy(&set)
 	testing.expect(t, set.probe && !set.by_hash, "a stale log was used")
+}
+
+/*
+A log whose header names "/", as a damaged length can make it, does not speak for a
+place on a mount of its own: the header must name the place's own mount point, not
+one above it. The place is the first of the temp directory, /dev/shm and /proc
+that is not on /.
+*/
+@(test)
+test_a_log_spelt_from_above_the_place_falls_back_to_a_probe :: proc(t: ^testing.T) {
+	logs := no_logs(t, "above")
+	defer os.remove_all(logs)
+	defer journal.logs_here = ""
+	temp, _ := os.temp_directory(context.temp_allocator)
+	place, mount: string
+	for p in ([]string{temp, "/dev/shm", "/proc"}) {
+		if m, ok := journal.mount_of(p, context.temp_allocator); ok && m != "/" {
+			place, mount = p, m
+			break
+		}
+	}
+	if place == "" {
+		log.info("skipped: neither the temp directory, /dev/shm nor /proc is a mount of its own")
+		return
+	}
+	c, ok := now(place)
+	testing.expect(t, ok, "no cursor for the place")
+	c.position -= 15 * i64(time.Second)
+
+	write_log(t, logs, place, "/", c, {})
+	set, _, err := since(place, c)
+	testing.expect_value(t, err, Error.None)
+	testing.expectf(t, set.probe && !set.by_hash, "a log spelt from / was trusted on %s", mount)
+	change_set_destroy(&set)
+
+	write_log(t, logs, place, mount, c, {})
+	own, _, own_err := since(place, c)
+	defer change_set_destroy(&own)
+	testing.expect_value(t, own_err, Error.None)
+	testing.expectf(t, own.by_hash, "a log spelt from the place's own mount %s was not used", mount)
 }

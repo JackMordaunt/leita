@@ -162,7 +162,8 @@ header_make :: proc(mount: string, allocator := context.allocator) -> []byte {
 /*
 header_read reads the header that begins data: the mount point the log's paths are
 spelt from, borrowed from data, and how many bytes the header takes. Not ok when
-data does not begin with a whole header.
+data does not begin with a whole header, or the header says it is longer than
+HEADER_MAX: a damaged length would take records for the mount point's bytes.
 */
 header_read :: proc(data: []byte) -> (mount: string, size: int, ok: bool) {
 	if len(data) < len(MAGIC) + 2 || string(data[:len(MAGIC)]) != MAGIC {
@@ -170,16 +171,21 @@ header_read :: proc(data: []byte) -> (mount: string, size: int, ok: bool) {
 	}
 	n, _ := endian.get_u16(data[len(MAGIC):], .Little)
 	size = len(MAGIC) + 2 + int(n)
-	if len(data) < size {
+	if size > HEADER_MAX || len(data) < size {
 		return "", 0, false
 	}
 	return string(data[len(MAGIC) + 2:size]), size, true
 }
 
-// HEADER_MAX is the most bytes of a header open_log reads: MAGIC, the length, and a
-// mount point of at most PATH_MAX (4096, limits.h). A log spelt from a longer mount
-// point does not open, and a scan there asks each folder instead.
-HEADER_MAX :: len(MAGIC) + 2 + 4096
+// PATH_MAX is the longest path a system call takes (limits.h), and so the longest
+// mount point a log names.
+@(private)
+PATH_MAX :: 4096
+
+// HEADER_MAX is the most bytes a header takes: MAGIC, the length, and a mount point
+// no longer than any path. The recorder does not record a filesystem mounted at a
+// longer one.
+HEADER_MAX :: len(MAGIC) + 2 + PATH_MAX
 
 // A log's header, as open_log reads it: the mount point its paths are spelt from,
 // and the offset at which its records begin.

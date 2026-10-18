@@ -103,7 +103,9 @@ recorded is what the recorder's log says changed in `place` from `from` to `to`,
 since the epoch, when it covers that time without a break: the hashes of the
 directories that changed, and when the log's record of the time ends, which is where
 the next window begins. Not ok when there is no log for the place's filesystem, it
-does not cover the time, or it spells paths from a mount the place is not under.
+does not cover the time, or it spells paths from another mount point than the one
+the place is on. That must be the same point, not one above it: a header damaged to
+name "/" would otherwise speak for every place on the machine.
 */
 @(private = "file")
 recorded :: proc(
@@ -117,9 +119,10 @@ recorded :: proc(
 ) {
 	fsid := journal.fsid_of(place) or_return
 	root := journal.canonical(place, allocator) or_return
+	mount, mounted := journal.mount_of(root, context.temp_allocator)
 	w, why := journal.window(journal.log_path(fsid), from, to, allocator)
 	defer delete(w.mount, allocator)
-	if _, inside := under(w.mount, root); why != "" || !inside {
+	if why != "" || !mounted || w.mount != mount {
 		delete(root, allocator)
 		delete(w.hashes)
 		return {}, 0, false
