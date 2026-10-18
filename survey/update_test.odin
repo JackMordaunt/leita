@@ -446,78 +446,75 @@ again, is measured again within SLICES updates, by its slice's turn. Each update
 counts itself in the cursor it keeps, which turns the slice. The fixture's folders
 are left SLACK to age, so the probe's window does not reach back to their making.
 */
-@(test)
-test_a_small_file_written_in_place_is_measured_in_its_turn :: proc(t: ^testing.T) {
-	// Only Linux updates by a probe of folder times, which misses the write. macOS and
-	// Windows journals name the written file's directory once it is closed
-	// (walk.Update, stamp_other.odin), so that directory is read again, not sliced.
-	when ODIN_OS != .Linux {
-		return
-	}
-	root := fixture(t, "turn")
-	defer os.remove_all(root)
-	file := join(root, "..", "leita_survey_turn.tree")
-	defer os.remove(file)
-	target, choice, err := scan.resolve(root)
-	testing.expect_value(t, err, scan.Error.None)
-	defer scan.target_destroy(&target)
-	place := scan.location(target, context.temp_allocator)
-	db := join(place, "still", "db.sqlite")
-	put(t, db, 200_000)
-	time.sleep(changes.SLACK + 200 * time.Millisecond)
+when ODIN_OS == .Linux {
+	@(test)
+	test_a_small_file_written_in_place_is_measured_in_its_turn :: proc(t: ^testing.T) {
+		// This test exercises Linux's folder-time probe and small-file slices.
+		root := fixture(t, "turn")
+		defer os.remove_all(root)
+		file := join(root, "..", "leita_survey_turn.tree")
+		defer os.remove(file)
+		target, choice, err := scan.resolve(root)
+		testing.expect_value(t, err, scan.Error.None)
+		defer scan.target_destroy(&target)
+		place := scan.location(target, context.temp_allocator)
+		db := join(place, "still", "db.sqlite")
+		put(t, db, 200_000)
+		time.sleep(changes.SLACK + 200 * time.Millisecond)
 
-	Ran :: struct {
-		how:     Fill_Kind,
-		by:      Read_Source,
-		reread:  u64,
-		disk:    u64, // what db.sqlite was charged
-		updates: u64, // what the cursor kept counts
-	}
-	run :: proc(t: ^testing.T, target: scan.Target, engine: scan.Engine, file, db: string) -> Ran {
-		tree: scan.Tree
-		testing.expect_value(t, scan.tree_init(&tree, 2), scan.Error.None)
-		defer scan.tree_destroy(&tree)
-		f := Fill {
-			target = target,
-			engine = engine,
-			wcfg = {workers = 2},
-			tree = &tree,
-			baseline = file,
+		Ran :: struct {
+			how:     Fill_Kind,
+			by:      Read_Source,
+			reread:  u64,
+			disk:    u64, // what db.sqlite was charged
+			updates: u64, // what the cursor kept counts
 		}
-		defer fill_destroy(&f)
-		fill_run(&f)
-		testing.expectf(t, problem(&f) == "", "the fill failed: %s", problem(&f))
-		testing.expect(t, f.saved, "the result was not kept")
-		kept: scan.Tree
-		defer scan.tree_destroy(&kept)
-		cursor, why, ok := baseline_load(file, scan.location(target, context.temp_allocator), &kept)
-		testing.expectf(t, ok, "the baseline was not read back: %s", why)
-		return {f.how, f.by, f.reread, seen(&tree)[db].disk, cursor.updates}
-	}
+		run :: proc(t: ^testing.T, target: scan.Target, engine: scan.Engine, file, db: string) -> Ran {
+			tree: scan.Tree
+			testing.expect_value(t, scan.tree_init(&tree, 2), scan.Error.None)
+			defer scan.tree_destroy(&tree)
+			f := Fill {
+				target = target,
+				engine = engine,
+				wcfg = {workers = 2},
+				tree = &tree,
+				baseline = file,
+			}
+			defer fill_destroy(&f)
+			fill_run(&f)
+			testing.expectf(t, problem(&f) == "", "the fill failed: %s", problem(&f))
+			testing.expect(t, f.saved, "the result was not kept")
+			kept: scan.Tree
+			defer scan.tree_destroy(&kept)
+			cursor, why, ok := baseline_load(file, scan.location(target, context.temp_allocator), &kept)
+			testing.expectf(t, ok, "the baseline was not read back: %s", why)
+			return {f.how, f.by, f.reread, seen(&tree)[db].disk, cursor.updates}
+		}
 
-	first := run(t, target, choice.engine, file, db)
-	testing.expect_value(t, first.how, Fill_Kind.Full)
-	testing.expect_value(t, first.updates, 0)
-	second := run(t, target, choice.engine, file, db)
-	testing.expect_value(t, second.how, Fill_Kind.Updated)
-	testing.expect_value(t, second.updates, 1)
+		first := run(t, target, choice.engine, file, db)
+		testing.expect_value(t, first.how, Fill_Kind.Full)
+		testing.expect_value(t, first.updates, 0)
+		second := run(t, target, choice.engine, file, db)
+		testing.expect_value(t, second.how, Fill_Kind.Updated)
+		testing.expect_value(t, second.updates, 1)
 
-	put(t, db, 400_000)
-	measured := false
-	for i in 0 ..< SLICES {
-		r := run(t, target, choice.engine, file, db)
-		testing.expect_value(t, r.how, Fill_Kind.Updated)
-		testing.expect_value(t, r.updates, u64(i + 2))
-		if r.by == .Times {
-			testing.expectf(t, r.reread == 0, "update %d read %d directories again", i, r.reread)
+		put(t, db, 400_000)
+		measured := false
+		for i in 0 ..< SLICES {
+			r := run(t, target, choice.engine, file, db)
+			testing.expect_value(t, r.how, Fill_Kind.Updated)
+			testing.expect_value(t, r.updates, u64(i + 2))
+			if r.by == .Times {
+				testing.expectf(t, r.reread == 0, "update %d read %d directories again", i, r.reread)
+			}
+			if r.disk != first.disk {
+				testing.expectf(t, r.disk >= 400_000, "update %d charged db.sqlite %d", i, r.disk)
+				measured = true
+				break
+			}
 		}
-		if r.disk != first.disk {
-			testing.expectf(t, r.disk >= 400_000, "update %d charged db.sqlite %d", i, r.disk)
-			measured = true
-			break
-		}
+		testing.expectf(t, measured, "db.sqlite kept %d over %d updates", first.disk, SLICES)
 	}
-	testing.expectf(t, measured, "db.sqlite kept %d over %d updates", first.disk, SLICES)
 }
 
 // how_read words each way a place was read.
