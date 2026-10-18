@@ -228,6 +228,32 @@ a_negative_min_free_is_refused :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(fault.text, "min_free"), fault.text)
 }
 
+// An every this leita does not know must not be read as daily. The error names
+// the row, so a copied settings.db says which place.
+@(test)
+an_unknown_frequency_is_refused :: proc(t: ^testing.T) {
+	st: Store
+	testing.expect(t, open(&st, ":memory:") == nil)
+	defer close(&st)
+	testing.expect(t, watch(&st, {place = "/srv", every = .Daily}) == nil)
+	testing.expect(
+		t,
+		sqlite3.exec_args(
+			st.db,
+			`INSERT INTO watch(place, every, added) VALUES (?, ?, ?)`,
+			"/data",
+			"fortnightly",
+			i64(2),
+		) ==
+		nil,
+	)
+	ws, err := watches(&st, context.temp_allocator)
+	testing.expect_value(t, len(ws), 0)
+	fault := err.(sqlite3.Fault) or_else sqlite3.Fault{}
+	testing.expect(t, strings.contains(fault.text, "/data"), fault.text)
+	testing.expect(t, strings.contains(fault.text, "fortnightly"), fault.text)
+}
+
 @(test)
 alerts_are_kept_newest_first_up_to_a_limit :: proc(t: ^testing.T) {
 	st: Store
