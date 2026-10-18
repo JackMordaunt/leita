@@ -77,6 +77,97 @@ test_bulk_agrees_with_lstat :: proc(t: ^testing.T) {
 	testing.expect_value(t, checked, 5)
 }
 
+// A test directory on APFS supplies real kernel clone ids and allocations.
+// The source and duplicate share only their data fork; a pure clone charges it
+// once while preserving each file's other allocation.
+@(test)
+test_apfs_clone_is_recognized_and_reduces_charge :: proc(t: ^testing.T) {
+	root := fresh_root(t, "clone")
+	defer os.remove_all(root)
+	st, stat_ok := scan.stat_fs(root)
+	if !testing.expect(
+		t,
+		stat_ok && string(cstring(&st.fstypename[0])) == "apfs",
+		"macOS clone fixture requires APFS",
+	) {return}
+	body := make([]byte, 1 << 20, context.temp_allocator)
+	slice.fill(body, 'x')
+	testing.expect(t, os.write_entire_file(fmt.tprintf("%s/source", root), body) == nil)
+	state, _, stderr, err := os.process_exec(
+		{
+			command = []string {
+				"cp",
+				"-c",
+				fmt.tprintf("%s/source", root),
+				fmt.tprintf("%s/clone", root),
+			},
+		},
+		context.temp_allocator,
+	)
+	if !testing.expectf(
+		t,
+		err == nil && state.exited && state.exit_code == 0,
+		"cp -c failed: %v %s",
+		err,
+		stderr,
+	) {return}
+	tree: scan.Tree
+	testing.expect_value(t, scan.tree_init(&tree, 1), scan.Error.None)
+	defer scan.tree_destroy(&tree)
+	testing.expect_value(t, read(root, &tree, Config{}), Error.None)
+	shared := 0
+	file_count := 0
+	charged, allocated: u64
+	for i in 0 ..< tree.count {
+		if i == tree.root {continue}
+		n := scan.node(&tree, i)
+		if .Used not_in n.flags || .Directory in n.flags {continue}
+		file_count += 1
+		account, measured := scan.account_of(&tree, i)
+		testing.expect(t, measured && .Allocated in account.known)
+		allocated += account.allocated
+		charged += n.disk
+		if .Shared in n.flags {
+			shared += 1
+			testing.expect(t, scan.freed_of(&tree, i).basis == .Unknown)
+		}
+	}
+	testing.expect_value(t, file_count, 2)
+	testing.expect_value(t, shared, 1)
+	testing.expect(
+		t,
+		charged > 0 && charged < allocated,
+		"a pure clone must reduce the charged total below two allocations",
+	)
+}
+
+// A fresh image isolates enumeration from the runner's Time Machine snapshots.
+// The expected result for this image is a completed, empty local snapshot list.
+@(test)
+test_empty_apfs_image_has_no_local_snapshots :: proc(t: ^testing.T) {
+	root := fresh_root(t, "snapshots")
+	defer os.remove_all(root)
+	image := fmt.tprintf("%s.dmg", root)
+	mount := fmt.tprintf("%s/mounted", root)
+	defer os.remove(image)
+	testing.expect(t, os.make_directory(mount) == nil)
+	if !hdiutil(t, "create", "-size", "64m", "-fs", "APFS", "-volname", "leita", image) {
+		return
+	}
+	if !hdiutil(t, "attach", "-nobrowse", "-noverify", "-mountpoint", mount, image) {
+		return
+	}
+	defer hdiutil(t, "detach", "-force", mount)
+	tree: scan.Tree
+	testing.expect_value(t, scan.tree_init(&tree, 1), scan.Error.None)
+	defer scan.tree_destroy(&tree)
+	darwin_retention(mount, &tree)
+	testing.expect(t, scan.has_snapshot_volume(&tree))
+	testing.expect_value(t, scan.retention_of(&tree).snapshots, scan.Snapshot_State.None)
+	testing.expect_value(t, len(scan.snapshot_names_of(&tree)), 0)
+	testing.expect(t, !scan.retention_of(&tree).purgeable_known)
+}
+
 /*
 A directory too big for one buffer comes back whole over several calls.
 
@@ -221,6 +312,60 @@ test_a_malformed_entry_is_refused :: proc(t: ^testing.T) {
 
 	_, _, ok = parse_entry(good[:3])
 	testing.expect(t, !ok, "a buffer too short for a length was accepted")
+}
+
+@(test)
+test_extended_apfs_entry_reads_each_returned_fact :: proc(t: ^testing.T) {
+	b: [104]u8
+	endian.put_u32(b[0:], .Little, u32(len(b)))
+	endian.put_u32(
+		b[4:],
+		.Little,
+		ATTR_CMN_RETURNED_ATTRS |
+		ATTR_CMN_NAME |
+		ATTR_CMN_DEVID |
+		ATTR_CMN_OBJTYPE |
+		ATTR_CMN_FILEID,
+	)
+	endian.put_u32(
+		b[16:],
+		.Little,
+		ATTR_FILE_LINKCOUNT | ATTR_FILE_ALLOCSIZE | ATTR_FILE_DATALENGTH | ATTR_FILE_DATAALLOCSIZE,
+	)
+	endian.put_u32(
+		b[20:],
+		.Little,
+		ATTR_CMNEXT_PRIVATESIZE | ATTR_CMNEXT_REALDEVID | ATTR_CMNEXT_CLONEID,
+	)
+	endian.put_u32(b[24:], .Little, 72) // name starts at 96, relative to attrreference
+	endian.put_u32(b[28:], .Little, 4)
+	endian.put_u32(b[32:], .Little, 4)
+	endian.put_u32(b[36:], .Little, 1) // VREG
+	endian.put_u64(b[40:], .Little, 99)
+	endian.put_u32(b[48:], .Little, 1)
+	endian.put_u64(b[52:], .Little, 12288)
+	endian.put_u64(b[60:], .Little, 7000)
+	endian.put_u64(b[68:], .Little, 8192)
+	endian.put_u64(b[76:], .Little, 4096)
+	endian.put_u32(b[84:], .Little, 8)
+	endian.put_u64(b[88:], .Little, 101)
+	copy(b[96:], "one\x00")
+	e, length, ok := parse_entry(b[:])
+	if !testing.expect(t, ok) {return}
+	testing.expect_value(t, length, len(b))
+	testing.expect_value(t, e.name, "one")
+	testing.expect_value(t, e.id.device, u64(4))
+	testing.expect_value(t, e.id.inode, u64(99))
+	testing.expect_value(t, e.links, u32(1))
+	testing.expect_value(t, e.darwin.account.links, u32(1))
+	testing.expect(t, !e.directory && !e.symlink, "VREG must remain a regular file")
+	testing.expect_value(t, e.disk, u64(12288))
+	testing.expect_value(t, e.darwin.account.logical, u64(7000))
+	testing.expect_value(t, e.darwin.data_allocated, u64(8192))
+	testing.expect_value(t, e.darwin.account.exclusive, u64(4096))
+	testing.expect_value(t, e.darwin.device, u64(8))
+	testing.expect_value(t, e.darwin.clone, u64(101))
+	testing.expect(t, e.darwin.account.known == {.Allocated, .Logical, .Exclusive, .Links})
 }
 
 @(private = "file")

@@ -83,6 +83,14 @@ again was charged beside the copied one, and the next baseline kept the total th
 much too high. A base that kept no ids keeps its choice for a name a List job reads.
 */
 update :: proc(root: string, u: ^Update, t: ^scan.Tree, cfg := Config{}) -> Error {
+	when ODIN_OS == .Darwin {
+		if st, ok := scan.stat_fs(root); !ok || string(cstring(&st.fstypename[0])) == "apfs" {
+			// Baselines keep the charge, not clone stream identities. Mixing
+			// copied charges with fresh clones loses the payer or doubles it.
+			// Full APFS walks preserve the once-only total until baselines carry ids.
+			return read(root, t, cfg)
+		}
+	}
 	if u.base.root >= scan.slots(u.base) {
 		return read(root, t, cfg)
 	}

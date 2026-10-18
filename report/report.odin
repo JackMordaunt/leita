@@ -51,6 +51,7 @@ Report :: struct {
 	directories:         u64, // under the target, not counting it
 	unread:              u64, // directories the scan could not open, so left out
 	space:               Maybe(Space),
+	retention:           Maybe(Volume_Retention), // APFS local snapshots and purgeable space
 	// The earlier scan the largest entries are compared with: absent when there
 	// is none, or the caller had none to give.
 	compared:            Maybe(Baseline),
@@ -74,6 +75,12 @@ Report :: struct {
 Space :: struct {
 	total: u64,
 	free:  u64,
+}
+
+Volume_Retention :: struct {
+	snapshots: scan.Snapshot_State,
+	names:     []string, // owned by the report
+	purgeable: Maybe(u64), // no verified public numeric API on macOS 11+
 }
 
 // Baseline is the earlier scan of the same place that sizes are compared with:
@@ -187,6 +194,21 @@ build :: proc(
 	r.started = facts.started
 	r.duration = facts.duration
 	r.space = facts.space
+	if scan.has_snapshot_volume(t) {
+		measured := scan.retention_of(t)
+		retained := Volume_Retention {
+			snapshots = measured.snapshots,
+		}
+		if measured.purgeable_known {
+			retained.purgeable = measured.purgeable
+		}
+		names := scan.snapshot_names_of(t)
+		retained.names = make([]string, len(names), allocator)
+		for name, i in names {
+			retained.names[i] = strings.clone(name, allocator)
+		}
+		r.retention = retained
+	}
 	if th, configured, _ := threshold_of(
 		r.space,
 		opt.warn_used,
@@ -298,6 +320,10 @@ build :: proc(
 }
 
 destroy :: proc(r: ^Report) {
+	if retained, ok := r.retention.?; ok {
+		for name in retained.names {delete(name, r.allocator)}
+		delete(retained.names, r.allocator)
+	}
 	for e in r.largest_directories {
 		delete(e.path, r.allocator)
 	}

@@ -46,6 +46,10 @@ totals               {"bytes", "files", "directories", "unread"}
                      of permission or otherwise; what they hold is in none of
                      the totals, so a nonzero count means bytes is short
 space                {"total", "free"} of the volume, or null when unknown
+retention            APFS {"snapshots", "names", "purgeable_bytes"}, or null on other volumes
+  snapshots          "unchecked", "none", or "present"; unchecked includes failed enumeration
+  names              local snapshot names returned by a completed or partial enumeration
+  purgeable_bytes    measured bytes, or null when no verified volume counter exists
 compared             {"taken": time, "bytes"}, the earlier scan of the same
                      place that sizes are compared with, or null for none
 largest_directories  entries, largest first

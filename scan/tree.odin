@@ -123,6 +123,11 @@ Tree :: struct {
 	// The name each file with more than one was charged under, as the walk found
 	// them; empty for a reader that keeps no file ids. Freed with the tree.
 	linked:     [dynamic]Link,
+	// Snapshot names belong to this volume and are read only after the walk ends.
+	// Kept once per volume, not in every node or its accounting sidecar.
+	snapshot_names: [dynamic]string,
+	// Set for an APFS volume even when asking for snapshots failed.
+	snapshot_volume: bool,
 }
 
 // Where a file's data lives, the same for every name it has. `upper` is the high half
@@ -189,6 +194,10 @@ tree_init :: proc(t: ^Tree, writers := 1, allocator := context.allocator) -> Err
 tree_destroy :: proc(t: ^Tree) {
 	folded_destroy(t.folded, t.allocator)
 	delete(t.linked)
+	for name in t.snapshot_names {
+		delete(name, t.allocator)
+	}
+	delete(t.snapshot_names)
 	for i in 0 ..< t.committed >> BLOCK_SHIFT {
 		free(t.blocks[i], t.allocator)
 	}
