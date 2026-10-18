@@ -9,6 +9,7 @@ import "core:time"
 import "jm:timefmt"
 
 import "../history"
+import "../scan"
 
 // A data folder for one test, and the history store in it, holding done.
 @(private = "file")
@@ -33,15 +34,30 @@ history_says :: proc(kept: string, args: ..string) -> (int, string) {
 	return code, strings.to_string(b)
 }
 
-// DONE are five actions at noon UTC on 2027-01-15 and each day after, so a date
+// host_path is the path written with / as the host writes it: on Windows with
+// \ and a drive, where PLACE is made whole by the drive it is on, so a place
+// typed as /home/ann would be C:\home\ann and match nothing seeded without one.
+@(private = "file")
+host_path :: proc(path: string) -> string {
+	when ODIN_OS == .Windows {
+		whole, _ := strings.replace_all(path, "/", scan.SEPARATOR, context.temp_allocator)
+		return strings.concatenate({"C:", whole}, context.temp_allocator)
+	} else {
+		return path
+	}
+}
+
+// seed_actions are five actions at noon UTC on 2027-01-15 and each day after, so a date
 // in any zone within twelve hours of UTC splits them the same way.
 @(private = "file")
-DONE :: [?]history.Action {
-	{1_800_014_400, .Trash, "/home/ann/old.iso", "", 4_000_000_000, false},
-	{1_800_100_800, .Delete, "/home/ann/app/node_modules", "permission denied", 9_000_000, true},
-	{1_800_187_200, .Rename, "/home/ann/photos", "pictures", 2_000_000, false},
-	{1_800_273_600, .Empty_Trash, "/home/ann/.Trash/bell\a\nname", "", 12, false},
-	{1_800_360_000, .Delete, "/home/anna/cache", "", 1_500, false},
+seed_actions :: proc() -> [5]history.Action {
+	return {
+		{1_800_014_400, .Trash, host_path("/home/ann/old.iso"), "", 4_000_000_000, false},
+		{1_800_100_800, .Delete, host_path("/home/ann/app/node_modules"), "permission denied", 9_000_000, true},
+		{1_800_187_200, .Rename, host_path("/home/ann/photos"), "pictures", 2_000_000, false},
+		{1_800_273_600, .Empty_Trash, host_path("/home/ann/.Trash/bell\a\nname"), "", 12, false},
+		{1_800_360_000, .Delete, host_path("/home/anna/cache"), "", 1_500, false},
+	}
 }
 
 // The record is written newest first, a line to an action: when in local time with
@@ -49,7 +65,7 @@ DONE :: [?]history.Action {
 // name does not reach the terminal.
 @(test)
 the_record_is_printed_newest_first :: proc(t: ^testing.T) {
-	done := DONE
+	done := seed_actions()
 	dir, kept := seeded(t, done[:])
 	defer os.remove_all(dir)
 
@@ -61,11 +77,11 @@ the_record_is_printed_newest_first :: proc(t: ^testing.T) {
 		return
 	}
 	want := [?]string {
-		"  /home/anna/cache  1.5 kB",
-		"  /home/ann/.Trash/bell␇␊name  12 B",
-		"  /home/ann/photos (renamed to pictures)  2.0 MB",
-		"  /home/ann/app/node_modules  9.0 MB  failed: permission denied",
-		"  /home/ann/old.iso  4.0 GB",
+		strings.concatenate({"  ", host_path("/home/anna/cache"), "  1.5 kB"}, context.temp_allocator),
+		strings.concatenate({"  ", host_path("/home/ann/.Trash/bell␇␊name"), "  12 B"}, context.temp_allocator),
+		strings.concatenate({"  ", host_path("/home/ann/photos"), " (renamed to pictures)  2.0 MB"}, context.temp_allocator),
+		strings.concatenate({"  ", host_path("/home/ann/app/node_modules"), "  9.0 MB  failed: permission denied"}, context.temp_allocator),
+		strings.concatenate({"  ", host_path("/home/ann/old.iso"), "  4.0 GB"}, context.temp_allocator),
 	}
 	for line, i in lines {
 		testing.expectf(t, strings.has_suffix(line, want[i]), "line %d is %q", i, line)
@@ -96,22 +112,25 @@ taken_of :: proc(line: string) -> i64 {
 
 @(test)
 the_record_can_be_narrowed_by_place_and_date :: proc(t: ^testing.T) {
-	done := DONE
+	done := seed_actions()
 	dir, kept := seeded(t, done[:])
 	defer os.remove_all(dir)
 
-	_, said := history_says(kept, "/home/ann")
+	ann := host_path("/home/ann")
+	_, said := history_says(kept, ann)
 	testing.expect_value(t, strings.count(said, "\n"), 4)
-	testing.expect(t, !strings.contains(said, "/home/anna"), "a sibling with the same start is not under it")
-	_, said = history_says(kept, "/home/ann/")
+	testing.expect(t, !strings.contains(said, host_path("/home/anna")), "a sibling with the same start is not under it")
+	_, said = history_says(kept, strings.concatenate({ann, scan.SEPARATOR}, context.temp_allocator))
 	testing.expect_value(t, strings.count(said, "\n"), 4)
-	_, said = history_says(kept, "/home/ann/app/node_modules")
+	_, said = history_says(kept, host_path("/home/ann/app/node_modules"))
 	testing.expect_value(t, strings.count(said, "\n"), 1)
+	testing.expect(t, strings.contains(said, "node_modules"), said)
 
 	_, said = history_says(kept, "--since", "2027-01-17")
 	testing.expect_value(t, strings.count(said, "\n"), 3)
-	_, said = history_says(kept, "--since=2027-01-17", "/home/ann")
+	_, said = history_says(kept, "--since=2027-01-17", ann)
 	testing.expect_value(t, strings.count(said, "\n"), 2)
+	testing.expect(t, strings.contains(said, "photos") && !strings.contains(said, "anna"), said)
 	_, said = history_says(kept, "--since", "2100-01-01")
 	testing.expect_value(t, said, "nothing recorded\n")
 }
