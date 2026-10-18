@@ -68,6 +68,7 @@ write_pdf :: proc(w: io.Writer, r: ^Report, paper: Paper, installed := true) -> 
 
 	page(&p)
 	pdf_header(&p)
+	pdf_retention(&p)
 	pdf_entries(&p, "Largest directories", r.largest_directories)
 	pdf_entries(&p, "Largest files", r.largest_files)
 	pdf_kinds(&p)
@@ -80,6 +81,34 @@ write_pdf :: proc(w: io.Writer, r: ^Report, paper: Paper, installed := true) -> 
 		return .Write_Failed
 	}
 	return .None
+}
+
+@(private)
+pdf_retention :: proc(p: ^Pen) {
+	retained, ok := p.r.retention.?
+	if !ok {return}
+	heading(p, "APFS local snapshots", 2 * LINE)
+	switch retained.snapshots {
+	case .None:
+		prose(p, "No local snapshots found.", BODY_SIZE, MUTED)
+	case .Present:
+		prose(p, fmt.tprintf("%d local snapshots found.", len(retained.names)), BODY_SIZE, MUTED)
+	case .Unchecked:
+		prose(p, "Local snapshot list incomplete or unavailable.", BODY_SIZE, MUTED)
+	}
+	for name in retained.names {
+		prose(p, readable(name), BODY_SIZE, INK)
+	}
+	if bytes, known := retained.purgeable.?; known {
+		prose(
+			p,
+			fmt.tprintf("Purgeable space: %s (%d bytes).", human.bytes(bytes), bytes),
+			BODY_SIZE,
+			MUTED,
+		)
+	} else {
+		prose(p, "Purgeable space: unknown.", BODY_SIZE, MUTED)
+	}
 }
 
 // Paper is the sheet a PDF is laid out on.

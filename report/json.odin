@@ -59,6 +59,27 @@ write_json :: proc(sb: ^strings.Builder, r: ^Report) {
 	} else {
 		strings.write_string(sb, "null")
 	}
+	strings.write_string(sb, ",\n  \"retention\": ")
+	if retained, ok := r.retention.?; ok {
+		state := "unchecked"
+		switch retained.snapshots {
+		case .None:
+			state = "none"
+		case .Present:
+			state = "present"
+		case .Unchecked:
+		}
+		fmt.sbprintf(sb, "{{\"snapshots\": %q, \"names\": [", state)
+		for name, i in retained.names {
+			if i > 0 {strings.write_string(sb, ", ")}
+			json_string(sb, name)
+		}
+		strings.write_string(sb, "], \"purgeable_bytes\": ")
+		json_u64_or_null(sb, retained.purgeable)
+		strings.write_byte(sb, '}')
+	} else {
+		strings.write_string(sb, "null")
+	}
 	strings.write_string(sb, ",\n  \"compared\": ")
 	if c, ok := r.compared.?; ok {
 		strings.write_string(sb, "{\"taken\": ")
