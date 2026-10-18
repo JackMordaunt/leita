@@ -232,6 +232,19 @@ settle :: proc(r: ^Rig, name: string, present := true) -> bool {
 		}
 		time.sleep(time.Millisecond)
 	}
+	if s := r.h.desk.scan; s != nil {
+		log.errorf(
+			"settle timed out waiting for %q: state=%v engine=%v nodes=%d pending=%d problem=%q",
+			name,
+			s.state,
+			s.engine,
+			sync.atomic_load(&s.tree.nodes_done),
+			s.roll.pending,
+			s.problem,
+		)
+	} else {
+		log.errorf("settle timed out waiting for %q: no scan", name)
+	}
 	return false
 }
 
