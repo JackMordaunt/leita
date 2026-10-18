@@ -149,10 +149,49 @@ charge_from_table :: proc(
 	e: ^btrfs.Extents,
 	owner: u64,
 ) -> (
+	btrfs.Charge,
+	btrfs.Error,
+) {
+	return charge_listed(stand_in_extents[ino], e, owner)
+}
+
+// The file the hard-link test names from many directories, and its one extent. Its
+// own, not stand_in_extents: Odin's test runner runs tests in parallel threads, and
+// sharing that table failed test_walk_charges_each_extent_once (2026-10-18).
+@(private = "file")
+linked_inode: u64
+@(private = "file")
+linked_extent: [2]u64
+
+// Charges linked_extent to linked_inode, and nothing to any other file.
+@(private = "file")
+charge_linked :: proc(
+	dir: linux.Fd,
+	ino: u64,
+	args: ^btrfs.Search_Args,
+	e: ^btrfs.Extents,
+	owner: u64,
+) -> (
+	btrfs.Charge,
+	btrfs.Error,
+) {
+	if ino != linked_inode {
+		return {}, .None
+	}
+	return charge_listed({linked_extent}, e, owner)
+}
+
+// Charges each of `extents`, where it lies on disk and what it occupies there.
+@(private = "file")
+charge_listed :: proc(
+	extents: [][2]u64,
+	e: ^btrfs.Extents,
+	owner: u64,
+) -> (
 	c: btrfs.Charge,
 	err: btrfs.Error,
 ) {
-	for x in stand_in_extents[ino] {
+	for x in extents {
 		// struct btrfs_file_extent_item in linux/btrfs_tree.h, regular: type at 20,
 		// disk_bytenr at 21, disk_num_bytes at 29, as btrfs/extent.odin reads it.
 		item: [53]u8
@@ -322,4 +361,173 @@ test_a_refused_search_falls_back_to_st_blocks :: proc(t: ^testing.T) {
 		WORKERS,
 	)
 	testing.expect(t, scan.is_logical(&tree), "st_blocks on btrfs is not called logical")
+}
+
+/*
+`root` made afresh holding `dirs` directories, d00 onwards, each with a name for one
+file of `size` bytes, written and synced in d00, and that file's inode and
+st_blocks. No name lies in the root, so no one worker reads a name before the others
+are queued.
+*/
+@(private = "file")
+make_linked_directories :: proc(
+	t: ^testing.T,
+	root: string,
+	dirs, size: int,
+) -> (
+	inode: u64,
+	blocks: u64,
+) {
+	os.remove_all(root)
+	testing.expect(t, os.make_directory_all(root) == nil, "could not make the root")
+	for i in 0 ..< dirs {
+		testing.expect(t, os.make_directory(fmt.tprintf("%s/d%02d", root, i)) == nil)
+	}
+	first := fmt.tprintf("%s/d00/name", root)
+	data := make([]u8, size, context.temp_allocator)
+	for &b, i in data {
+		b = u8(i * 7919 >> 3)
+	}
+	f, open_err := os.open(first, {.Write, .Create, .Trunc})
+	testing.expect(t, open_err == nil, "could not create the file")
+	_, write_err := os.write(f, data)
+	testing.expect(t, write_err == nil, "could not write the file")
+	// Synced, so its extents have been written when the walk searches for them.
+	testing.expect(t, os.sync(f) == nil, "could not sync the file")
+	os.close(f)
+	for i in 1 ..< dirs {
+		testing.expect(
+			t,
+			os.link(first, fmt.tprintf("%s/d%02d/name", root, i)) == nil,
+			"could not link",
+		)
+	}
+	st: linux.Statx
+	testing.expect_value(
+		t,
+		linux.statx(
+			linux.AT_FDCWD,
+			strings.clone_to_cstring(first, context.temp_allocator),
+			{},
+			{.INO, .BLOCKS},
+			&st,
+		),
+		linux.Errno.NONE,
+	)
+	return u64(st.ino), st.blocks * 512
+}
+
+/*
+Walk `root`, holding `dirs` names of one file, `rounds` times with `workers`
+workers, and expect each walk to charge the file to exactly one name, `want`, and
+every other name to be an Extra_Name charged nothing, which keeps `extra`, the
+file's st_blocks, whichever worker reads it. Without that, the name a worker counted could be one whose extents
+another worker had already claimed for the same owner, so charged nothing and not
+Shared, while the name that claimed them was dropped as an extra.
+*/
+@(private = "file")
+expect_charged_once :: proc(
+	t: ^testing.T,
+	root: string,
+	dirs, workers, rounds: int,
+	want, extra: u64,
+) {
+	for _ in 0 ..< rounds {
+		tree: scan.Tree
+		testing.expect_value(t, scan.tree_init(&tree, workers), scan.Error.None)
+		defer scan.tree_destroy(&tree)
+		testing.expect_value(t, read(root, &tree, Config{workers = workers}), Error.None)
+		names, counted: int
+		for i in 0 ..< tree.count {
+			n := scan.node(&tree, i)
+			flags := scan.node_flags(n)
+			if .Used not_in flags || .Directory in flags {
+				continue
+			}
+			names += 1
+			testing.expect(t, .Shared not_in flags, "a name of one file is called Shared")
+			if .Extra_Name in flags {
+				testing.expectf(t, n.disk == extra, "an extra name has %d, not %d", n.disk, extra)
+				continue
+			}
+			counted += 1
+			testing.expectf(
+				t,
+				n.disk == want,
+				"the counted name was charged %d, not %d",
+				n.disk,
+				want,
+			)
+		}
+		testing.expect_value(t, names, dirs)
+		testing.expect_value(t, counted, 1)
+		testing.expect_value(t, tree.bytes_done, want)
+	}
+}
+
+/*
+One file named from 48 directories and read by 24 workers is charged its extents
+once, under one name, however the workers interleave. A stand-in search answers for
+it, anywhere; the walk is repeated since the race depends on scheduling.
+*/
+@(test)
+test_a_hard_link_is_charged_its_extents_once_across_workers :: proc(t: ^testing.T) {
+	DIRS   :: 48
+	EXTENT :: 65536
+	temp, temp_err := os.temp_directory(context.temp_allocator)
+	testing.expect(t, temp_err == nil, "no temp directory")
+	root := fmt.tprintf("%s/leita_walk_btrfs_links", temp)
+	defer os.remove_all(root)
+	inode, blocks := make_linked_directories(t, root, DIRS, 1)
+	linked_inode, linked_extent = inode, {1 << 20, EXTENT}
+	search_stand_in = charge_linked
+	defer search_stand_in = nil
+	expect_charged_once(t, root, DIRS, 24, 8, EXTENT, blocks)
+}
+
+/*
+The same with the kernel answering, in LEITA_BTRFS_SCRATCH, the btrfs directory
+tools/btrfs-fixture names, or under build/ when it is unset, as
+test_the_walk_stays_on_one_filesystem_but_not_one_device does. Where measure can
+search, as root on btrfs, the counted name is charged what measure charges the whole
+directory; where it cannot, unprivileged or off btrfs, st_blocks, still once.
+*/
+@(test)
+test_a_hard_link_read_from_disk_is_charged_once_across_workers :: proc(t: ^testing.T) {
+	DIRS :: 48
+	named := os.get_env("LEITA_BTRFS_SCRATCH", context.temp_allocator)
+	scratch := named
+	if scratch == "" {
+		cwd, cwd_err := os.get_working_directory(context.temp_allocator)
+		testing.expect(t, cwd_err == nil, "no working directory")
+		scratch = fmt.tprintf("%s/build", cwd)
+	}
+	root := fmt.tprintf("%s/leita_walk_links", scratch)
+	defer os.remove_all(root)
+	_, blocks := make_linked_directories(t, root, DIRS, 256 * 1024)
+
+	want := blocks
+	searched: bool
+	u: btrfs.Usage
+	defer btrfs.usage_destroy(&u)
+	switch btrfs.measure(root, &u) {
+	case .None:
+		if os.get_env(NO_BTRFS_SEARCH_ENV, context.temp_allocator) == "" {
+			want, searched = btrfs.total(u).disk, true
+		}
+	case .Not_Permitted:
+	case .Not_Btrfs, .Unsupported:
+		testing.expectf(t, named == "", "LEITA_BTRFS_SCRATCH, %s, is not on btrfs", named)
+	case .Not_Found, .Io, .Malformed, .Out_Of_Memory:
+		testing.fail_now(t, "measure could not read the directory")
+	}
+	testing.expect(t, want > 0, "the file was charged nothing")
+	log.infof(
+		"%s: one file in %d directories, charged %d (searched %v)",
+		root,
+		DIRS,
+		want,
+		searched,
+	)
+	expect_charged_once(t, root, DIRS, 24, 8, want, blocks)
 }

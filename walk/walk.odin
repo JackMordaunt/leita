@@ -371,6 +371,7 @@ Entry :: struct {
 	id:        File_Id,
 	mount:     bool, // a directory another volume is mounted on
 	shared:    bool, // a file charged only what it does not share (scan.Node_Flag.Shared)
+	extra:     bool, // a name of a file charged under another (`counts`)
 }
 
 // Where a file's data lives, the same for every name it has. `upper` is the high half
@@ -385,7 +386,7 @@ File_Id :: struct {
 /*
 The files with more than one name that some worker has already charged.
 
-A hard-linked file is charged once, to the first of its names a worker records, and
+A hard-linked file is charged once, to the first of its names a worker reaches, and
 every later name is an Extra_Name: in the tree so the file can be found at each path,
 but not counted again, as the NTFS reader does with its extra names. Which name is
 first depends on how the workers' directories happened to interleave, so a file
@@ -406,6 +407,31 @@ mark_charged :: proc(l: ^Linked_Files, id: File_Id) -> (first: bool, err: mem.Al
 	sync.mutex_guard(&l.mutex)
 	_, _, first, err = map_entry(&l.seen, id)
 	return
+}
+
+/*
+Whether this name of a file with more than one is the one its file is charged to.
+
+A reader asks before it charges the file anything, and only the name counted may
+claim the file's btrfs extents. Asked after, two workers could each search the
+file: the first claims every extent, the second finds them paid by the same owner
+and is charged nothing without being Shared, and then the second could win the
+count, so the file was charged 0 and the name that paid dropped as an extra.
+*/
+@(private)
+counts :: proc(w: ^Worker, e: Entry) -> (counted, ok: bool) {
+	first, map_err := mark_charged(w.linked, e.id)
+	if map_err != nil {
+		w.err = .Out_Of_Memory
+		return false, false
+	}
+	// A name the tree being updated already had keeps the choice made there,
+	// since the name charged in its place may be in a directory this update
+	// copies rather than reads.
+	if was, known := kept_choice(w, e.name); known {
+		return was, true
+	}
+	return first, true
 }
 
 /*
@@ -436,6 +462,14 @@ record :: proc(
 		w.err = .Out_Of_Memory
 		return 0, false, 0, false
 	}
+	e := e
+	if e.links > 1 && !e.directory && !e.symlink {
+		counted, counted_ok := counts(w, e)
+		if !counted_ok {
+			return 0, false, 0, false
+		}
+		e.extra = !counted
+	}
 	descend, charged, ok = record_at(w, slot, parent, e, scan.intern(&w.writer, e.name))
 	return slot, descend, charged, ok
 }
@@ -445,7 +479,8 @@ Fill one slot this worker already claimed, with a name it already stored.
 
 The Linux reader claims a directory's slots and copies its names once, then fills
 each entry here. Readers that learn an entry only as its buffer arrives still go
-through `record`, one claim and one copy at a time.
+through `record`, one claim and one copy at a time. Either way, whether a name of a
+file with more than one is an extra (`counts`) is decided before this is called.
 */
 @(private)
 record_at :: proc(
@@ -481,22 +516,9 @@ record_at :: proc(
 		if e.shared {
 			flags |= {.Shared}
 		}
-		if e.links > 1 {
-			first, map_err := mark_charged(w.linked, e.id)
-			if map_err != nil {
-				w.err = .Out_Of_Memory
-				return false, 0, false
-			}
-			// A name the tree being updated already had keeps the choice made
-			// there, since the name charged in its place may be in a directory
-			// this update copies rather than reads.
-			if was, known := kept_choice(w, e.name); known {
-				first = was
-			}
-			if !first {
-				flags |= {.Extra_Name}
-				charged = 0
-			}
+		if e.extra {
+			flags |= {.Extra_Name}
+			charged = 0
 		}
 	}
 	// Last, so a builder watching this tree never sees a node before its size.

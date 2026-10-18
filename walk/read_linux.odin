@@ -185,7 +185,17 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 					device = statx_device(st),
 					inode  = u64(l.ino),
 				}
-				if pool != nil && linux.S_ISREG(st.mode) {
+				// Which name a file with several is charged to is settled first,
+				// so only that name claims its extents (counts). An extra keeps
+				// st_blocks, as it does off btrfs, and is charged nothing.
+				if e.links > 1 {
+					counted, counted_ok := counts(w, e)
+					if !counted_ok {
+						return nodes, bytes, false
+					}
+					e.extra = !counted
+				}
+				if pool != nil && linux.S_ISREG(st.mode) && !e.extra {
 					if !charge_extents(w, fd, &pool, &e) {
 						return nodes, bytes, false
 					}
