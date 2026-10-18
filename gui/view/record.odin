@@ -108,7 +108,7 @@ record_row :: proc(gtx: ^ui.Ctx, i: int, user: rawptr) {
 		primer.text(gtx, record_time(a.taken), .Small, color = primer.color(.Fg_Color_Muted))
 		ui.flexible(gtx, 1)
 		if ui.column(gtx, gap = 2) {
-			primer.text(gtx, cut_path(gtx, a.path, room))
+			primer.text(gtx, cut_path(gtx, safe(gtx, a.path), room))
 			if how := record_how(gtx, a); how != "" {
 				primer.truncate(
 					gtx,
@@ -125,7 +125,7 @@ record_row :: proc(gtx: ^ui.Ctx, i: int, user: rawptr) {
 			.Copy,
 			tr(.Copy_Path),
 			.Invisible,
-			description = a.path,
+			description = safe(gtx, a.path),
 			key = u64(i),
 		) {
 			ui.clipboard_write(gtx, a.path)

@@ -411,11 +411,11 @@ blocks :: proc(
 		fill: ops.Color
 		labelled := b.header
 		if b.arc < 0 {
-			name = base_name(here)
+			name = safe(gtx, base_name(here))
 			fill = mix(primer.color(.Fg_Color_Muted), bg, 0.55 if lit == .Hub else 0.8)
 		} else {
 			a := r.arcs[b.arc]
-			name = a.name
+			name = safe(gtx, a.name)
 			fill = fill_of(m, r, b.arc, lit == .Arc && b.arc == at, k.framed)
 			labelled ||= !a.directory && b.rect.w >= TREE_LABEL_MIN && b.rect.h >= TREE_HEADER
 		}

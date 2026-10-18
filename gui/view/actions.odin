@@ -6,6 +6,7 @@ import "jm:ui"
 import "jm:ui/ops"
 import "jm:ui/primer"
 
+import "../../human"
 import "../command"
 import "../query"
 
@@ -163,12 +164,14 @@ rescan :: proc(gtx: ^ui.Ctx, prog: ^query.Progress_Result) {
 	ui.command(gtx, command.Command(command.Scan{path = command.text_make(prog.target)}))
 }
 
-// aim makes the menu and dialogs about t.
+// aim makes the menu and dialogs about t, under its name made safe to draw
+// (safe): the dialogs show it, the rename field starts from it, and a rename
+// that leaves it as it is is none.
 @(private)
 aim :: proc(m: ^Model, t: Target) {
 	delete(m.target.name)
 	m.target = t
-	m.target.name = strings.clone(t.name)
+	m.target.name = strings.clone(human.shown(t.name))
 }
 
 @(private)
@@ -316,7 +319,12 @@ notice :: proc(gtx: ^ui.Ctx, m: ^Model, n: query.Notice) {
 		if n.saved {
 			opts.action = tr(.Locate)
 		}
-		toast := primer.toast_push(&m.toasts, n.text, .Error if n.failed else .Success, opts)
+		toast := primer.toast_push(
+			&m.toasts,
+			safe(gtx, n.text),
+			.Error if n.failed else .Success,
+			opts,
+		)
 		if n.saved {
 			m.saved_toasts[toast] = n.id
 		}

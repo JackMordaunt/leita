@@ -99,7 +99,7 @@ export_dialog :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result) {
 		gtx,
 		&m.export_open,
 		tr(.Export_Report),
-		prog.target,
+		safe(gtx, prog.target),
 		footer = buttons[:],
 		width = .Medium,
 	) {

@@ -25,7 +25,7 @@ Chart_Rig :: struct {
 DOCS, A_TXT, B_TXT, MOVIE, NOTES :: u32(2), u32(3), u32(4), u32(5), u32(6)
 
 @(private = "file")
-top_rings :: proc() -> query.Rings_Result {
+top_rings :: proc(movie := "movie.mkv") -> query.Rings_Result {
 	arcs := make([]query.Arc, 5, context.temp_allocator)
 	arcs[0] = {
 		node      = DOCS,
@@ -60,7 +60,7 @@ top_rings :: proc() -> query.Rings_Result {
 	}
 	arcs[3] = {
 		node  = MOVIE,
-		name  = "movie.mkv",
+		name  = movie,
 		bytes = 30,
 		depth = 1,
 		start = 0.5,
@@ -84,7 +84,7 @@ top_rings :: proc() -> query.Rings_Result {
 }
 
 @(private = "file")
-chart_open :: proc(r: ^Chart_Rig, mode := Mode.Sunburst) {
+chart_open :: proc(r: ^Chart_Rig, mode := Mode.Sunburst, movie := "movie.mkv") {
 	model_init(&r.m, "/top")
 	r.m.settings_read = true
 	r.m.mode = mode
@@ -101,7 +101,7 @@ chart_open :: proc(r: ^Chart_Rig, mode := Mode.Sunburst) {
 		query.Progress{},
 		query.Progress_Result{generation = 1, state = .Done, target = "/top"},
 	)
-	ui.probe_deliver(p, query.Rings{generation = 1, dir = query.ROOT}, top_rings())
+	ui.probe_deliver(p, query.Rings{generation = 1, dir = query.ROOT}, top_rings(movie))
 	ui.probe_frame(p)
 	// The arcs and boxes grow into place.
 	ui.probe_advance(p, 60, 1.0 / 60)
@@ -336,4 +336,89 @@ the_treemap_and_the_icicle_take_the_same_keys :: proc(t: ^testing.T) {
 		ui.probe_key(&r.h.p, .Escape)
 		testing.expect_value(t, r.m.chart_pick, 0)
 	}
+}
+
+// A name with a line break and a right-to-left override in it, as a disk allows,
+// is drawn as pictures of them: the menu, the Trash question and the rename field
+// each keep it on one line, and a rename left as shown renames nothing.
+@(test)
+a_name_with_a_newline_stays_on_one_line_in_the_dialogs :: proc(t: ^testing.T) {
+	r: Chart_Rig
+	chart_open(&r, movie = "evil\nname\u202e.txt")
+	defer chart_close(&r)
+	p := &r.h.p
+	// A semantics report writes a control or an unprintable as an escape, so a
+	// name that broke a line would show as \n.
+	safe := `evil\u240aname\ufffd.txt`
+
+	ui.probe_click_at(p, ring_point(&r, 1, 0.65), .Right)
+	ui.probe_advance(p, 3, 1.0 / 60)
+	said := ui.probe_semantics(p, context.temp_allocator)
+	testing.expect(t, strings.contains(said, safe), said)
+	testing.expect(t, !strings.contains(said, `\nname`), "the name does not split a line")
+
+	testing.expect(t, ui.probe_click(p, "Trash"))
+	ui.probe_advance(p, 3, 1.0 / 60)
+	said = ui.probe_semantics(p, context.temp_allocator)
+	testing.expect(t, strings.contains(said, safe), said)
+	testing.expect(t, !strings.contains(said, `\nname`), "the Trash question stays whole")
+	testing.expect(t, !strings.contains(said, `\u202e`), "and has no override")
+	r.m.trash_open = false
+	ui.probe_advance(p, 3, 1.0 / 60)
+
+	ui.probe_click_at(p, ring_point(&r, 1, 0.65), .Right)
+	ui.probe_advance(p, 3, 1.0 / 60)
+	testing.expect(t, ui.probe_click(p, "Rename"))
+	ui.probe_advance(p, 3, 1.0 / 60)
+	said = ui.probe_semantics(p, context.temp_allocator)
+	testing.expect(t, strings.contains(said, safe), said)
+	testing.expect(t, !strings.contains(said, `\nname`), "the rename field stays on a line")
+	testing.expect_value(t, ui.text_string(&r.m.rename), "evil\u240Aname\uFFFD.txt")
+	ui.probe_key(p, .Enter)
+	testing.expect(t, sent(p, command.Rename) == nil, "a name left as it is shown renames nothing")
+}
+
+// The location bar's steps, the rows of the listing and the largest files, and
+// the info line over the chart draw a name as pictures too.
+@(test)
+a_name_with_a_newline_is_safe_in_the_bar_the_lists_and_the_info_line :: proc(t: ^testing.T) {
+	r: Chart_Rig
+	chart_open(&r, movie = "evil\nname.txt")
+	defer chart_close(&r)
+	p := &r.h.p
+	bad, safe := "evil\nname.txt", "evil\u240Aname.txt"
+
+	crumbs := []query.Crumb{{1, "/top/odd\ndir"}}
+	rings := top_rings("movie.mkv")
+	rings.crumbs = crumbs
+	ui.probe_deliver(p, query.Rings{generation = 1, dir = query.ROOT}, rings)
+	entries := []query.Entry{{node = MOVIE, name = bad, bytes = 30, was = -1}}
+	ui.probe_deliver(
+		p,
+		query.Listing{generation = 1, dir = query.ROOT},
+		query.Listing_Result {
+			generation = 1,
+			dir = 1,
+			crumbs = crumbs,
+			bytes = 30,
+			was = -1,
+			entries = entries,
+		},
+	)
+	files := []query.File {
+		{node = MOVIE, parent = 1, path = "/top/odd\ndir/evil\nname.txt", bytes = 30, was = -1},
+	}
+	ui.probe_deliver(p, query.Largest{generation = 1}, query.Largest_Result{files = files})
+	ui.probe_advance(p, 5, 1.0 / 60)
+
+	testing.expect(t, ui.probe_tagged(p, "odd\u240Adir"), "the bar's step")
+	said := ui.probe_semantics(p, context.temp_allocator)
+	testing.expect(t, strings.contains(said, `button "evil\u240aname.txt"`), said)
+	testing.expect(t, strings.contains(said, `evil\u240aname.txt`), "the lists")
+	testing.expect(t, !strings.contains(said, `\n`), "no line is broken by a name")
+
+	// The info line over the chart, with the pointer on the arc.
+	ui.probe_move(p, ring_point(&r, 1, 0.65).x, ring_point(&r, 1, 0.65).y)
+	ui.probe_advance(p, 3, 1.0 / 60)
+	testing.expect(t, ui.probe_tagged(p, safe), "the info line")
 }

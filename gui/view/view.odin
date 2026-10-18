@@ -383,7 +383,7 @@ view :: proc(gtx: ^ui.Ctx, user: rawptr) {
 		// In the chart's place, not above it: a banner in the status column would
 		// move the chart, and a failed scan has none to show.
 		if ui.inset(gtx, {right = PAD}) {
-			primer.banner(gtx, tr(.Scan_Failed), prog.problem, .Critical)
+			primer.banner(gtx, tr(.Scan_Failed), safe(gtx, prog.problem), .Critical)
 		}
 	} else {
 		ui.flexible(gtx, 1)
@@ -844,7 +844,11 @@ entry :: proc(
 	defer ui.scope_close(&s)
 	ui.row(gtx, gap = 12, align = .Center)
 	ui.flexible(gtx, 3)
-	clicked, name := name_button(gtx, e.name, e.directory ? .File_Directory_Fill : .File)
+	clicked, name := name_button(
+		gtx,
+		safe(gtx, e.name),
+		e.directory ? .File_Directory_Fill : .File,
+	)
 	opened = clicked && e.directory
 	row_menu(gtx, m, .Contents, name, {node = e.node, name = e.name, directory = e.directory})
 	if ui.widget_state(gtx, name.id).hovered {
@@ -856,7 +860,7 @@ entry :: proc(
 		gtx,
 		share,
 		bg = e.directory ? .Bg_Color_Accent_Emphasis : .Bg_Color_Neutral_Emphasis,
-		label = trf(gtx, .Share_Of, e.name),
+		label = trf(gtx, .Share_Of, safe(gtx, e.name)),
 	)
 	if ui.sized(gtx, {min = {SIZE_WIDTH, 0}, max = {SIZE_WIDTH, ui.INF}}) {
 		if ui.column(gtx, align = .End) {
@@ -898,7 +902,7 @@ largest :: proc(gtx: ^ui.Ctx, m: ^Model) {
 				defer ui.scope_close(&s)
 				if ui.column(gtx, gap = 2, align = .Fill) {
 					// The name opens the directory holding the file.
-					clicked, name := name_button(gtx, base_name(f.path), .File)
+					clicked, name := name_button(gtx, safe(gtx, base_name(f.path)), .File)
 					if clicked {
 						open(m, f.parent)
 					}
@@ -910,8 +914,8 @@ largest :: proc(gtx: ^ui.Ctx, m: ^Model) {
 						ui.flexible(gtx, 1)
 						primer.truncate(
 							gtx,
-							f.path,
-							title = f.path,
+							safe(gtx, f.path),
+							title = safe(gtx, f.path),
 							max_width = ui.INF,
 							size = .Small,
 							color = primer.color(.Fg_Color_Muted),
@@ -962,7 +966,7 @@ name_window :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result) {
 	}
 	delete(m.titled)
 	m.titled = strings.clone(prog.target)
-	ui.set_window_title(gtx, window_title(prog.target))
+	ui.set_window_title(gtx, window_title(human.shown(prog.target)))
 }
 
 // title is s set in TITLE, read as the window's one first-level heading.
@@ -1105,6 +1109,19 @@ logo :: proc(gtx: ^ui.Ctx, loc := #caller_location) {
 	p := ui.widget_open(gtx, loc = loc)
 	mark.draw(gtx, {0, 0}, LOGO, primer.color(.Fg_Color_Default), mark.SEA)
 	ui.widget_close(gtx, &p, {size = {LOGO, LOGO}})
+}
+
+/*
+safe is name as the window draws it: a line break, an escape or a bidi override
+in it, which a disk allows in a name, is a picture of itself (human.shown), so a
+name cannot split a dialog, a row or a menu, or make the text around it read
+differently. The window draws no name raw and offers none in a tooltip either, as
+the tooltip would only repeat what the name hides. What is sent to the host, and
+what a field edits to be sent, is the real name.
+*/
+@(private)
+safe :: proc(gtx: ^ui.Ctx, name: string) -> string {
+	return human.shown(name, gtx.allocator)
 }
 
 @(private)

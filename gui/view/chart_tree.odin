@@ -145,7 +145,7 @@ describe_chart :: proc(
 		m     = m,
 		r     = r,
 		chart = p.id,
-		here  = base_name(r.crumbs[len(r.crumbs) - 1].name),
+		here  = safe(gtx, base_name(r.crumbs[len(r.crumbs) - 1].name)),
 		first = make([]int, n + 1, gtx.allocator),
 		next  = make([]int, n, gtx.allocator),
 		rank  = make([]int, n, gtx.allocator),
@@ -261,7 +261,7 @@ say_layer :: proc(t: ^Teller, slot: int, under: ops.Area_Id, level: u8) {
 			trf(
 				t.gtx,
 				.Chart_Item,
-				a.name,
+				safe(t.gtx, a.name),
 				human.bytes(a.bytes),
 				fmt.tprintf("%.1f", share),
 				t.here,

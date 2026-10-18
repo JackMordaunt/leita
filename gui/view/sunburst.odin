@@ -294,7 +294,7 @@ info :: proc(gtx: ^ui.Ctx, m: ^Model, drawn, laid: ^query.Rings_Result, u: Hit, 
 	case .Arc:
 		a := drawn.arcs[at]
 		share := drawn.bytes > 0 ? 100 * f64(a.bytes) / f64(drawn.bytes) : 0
-		name = a.name
+		name = safe(gtx, a.name)
 		kind: string
 		if note := colour_note(gtx, m, laid, at); note != "" {
 			kind = strings.concatenate({" · ", note}, gtx.allocator)
@@ -306,16 +306,16 @@ info :: proc(gtx: ^ui.Ctx, m: ^Model, drawn, laid: ^query.Rings_Result, u: Hit, 
 					.Arc_Share,
 					human.bytes(a.bytes),
 					fmt.tprintf("%.1f", share),
-					base_name(here),
+					safe(gtx, base_name(here)),
 				),
 				kind,
 				strings.concatenate({" · ", tr(.Click_To_Open)}, gtx.allocator) if a.directory else "",
 			},
 			gtx.allocator,
 		)
-		path = arc_path(gtx, laid, at)
+		path = safe(gtx, arc_path(gtx, laid, at))
 	case .Hub, .Nothing:
-		name = base_name(here)
+		name = safe(gtx, base_name(here))
 		up := u == .Hub && len(drawn.crumbs) > 1
 		detail = fmt.aprintf(
 			"%s%s%s",
@@ -500,7 +500,11 @@ sunburst :: proc(
 		ops.fill(gtx.scene, shape, fill)
 		ops.stroke(gtx.scene, shape, bg, {width = 1})
 		if a.depth == 1 {
-			ops.tag(gtx.scene, p.id, fmt.aprintf("arc %s", a.name, allocator = gtx.allocator))
+			ops.tag(
+				gtx.scene,
+				p.id,
+				fmt.aprintf("arc %s", safe(gtx, a.name), allocator = gtx.allocator),
+			)
 		}
 	}
 	hub := ui.circle(b.center, b.hub - 1)

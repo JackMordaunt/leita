@@ -218,7 +218,7 @@ search_results :: proc(gtx: ^ui.Ctx, m: ^Model, term: string) {
 			if ui.inset(gtx, {top = 24}) {
 				primer.text(
 					gtx,
-					trf(gtx, .Search_None, term),
+					trf(gtx, .Search_None, safe(gtx, term)),
 					.Large,
 					color = primer.color(.Fg_Color_Muted),
 				)
@@ -454,10 +454,10 @@ hit_tile :: proc(gtx: ^ui.Ctx, res: ^Results, index: int) {
 		return max((room - para.width) / 2, 0)
 	}
 	st := primer.text_style(.Small)
-	at := centred(gtx, name, st, room)
+	at := centred(gtx, safe(gtx, name), st, room)
 	marked_line(gtx, name, h.marks, h.name_at, {12 + at, y}, room - at, st, .Fg_Color_Default)
 	y += st.line_height
-	at = centred(gtx, folder, st, room)
+	at = centred(gtx, safe(gtx, folder), st, room)
 	marked_line(
 		gtx,
 		folder,
@@ -526,13 +526,19 @@ hit_close :: proc(
 			m.search_keys, m.search_focus, m.search_pick = false, true, 0
 		}
 	}
-	ops.tag(gtx.scene, p.id, name)
+	ops.tag(gtx.scene, p.id, safe(gtx, name))
 	ui.semantics(
 		gtx,
 		p,
 		{
 			role = .List_Item,
-			label = trf(gtx, .Search_Hit, name, human.bytes(h.bytes), folder),
+			label = trf(
+				gtx,
+				.Search_Hit,
+				safe(gtx, name),
+				human.bytes(h.bytes),
+				safe(gtx, folder),
+			),
 			states = {.Selected} if picked else {},
 		},
 	)
@@ -607,6 +613,12 @@ marked_line :: proc(
 ) {
 	if room <= 0 || s == "" {
 		return
+	}
+	// A name made safe is not the bytes the marks count into, so it is drawn
+	// without them.
+	s, marks := s, marks
+	if drawn := safe(gtx, s); drawn != s {
+		s, marks = drawn, nil
 	}
 	font := primer.font_for(gtx, st.weight)
 	text, start := s, int(base)

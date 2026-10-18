@@ -57,7 +57,7 @@ steps_of :: proc(gtx: ^ui.Ctx, crumbs: []query.Crumb) -> []Step {
 	out := make([dynamic]Step, gtx.allocator)
 	parts := strings.split(strings.trim_right(top, sep), sep, gtx.allocator)
 	if len(parts) <= 1 || top == sep {
-		append(&out, Step{label = top, node = crumbs[0].node, inside = true})
+		append(&out, Step{label = safe(gtx, top), node = crumbs[0].node, inside = true})
 	} else {
 		sb := strings.builder_make(gtx.allocator)
 		for part, i in parts[:len(parts) - 1] {
@@ -65,16 +65,19 @@ steps_of :: proc(gtx: ^ui.Ctx, crumbs: []query.Crumb) -> []Step {
 				strings.write_string(&sb, part)
 			}
 			strings.write_string(&sb, sep)
-			label := part if part != "" else sep
+			label := safe(gtx, part) if part != "" else sep
 			append(
 				&out,
 				Step{label = label, path = strings.clone(strings.to_string(sb), gtx.allocator)},
 			)
 		}
-		append(&out, Step{label = parts[len(parts) - 1], node = crumbs[0].node, inside = true})
+		append(
+			&out,
+			Step{label = safe(gtx, parts[len(parts) - 1]), node = crumbs[0].node, inside = true},
+		)
 	}
 	for c in crumbs[1:] {
-		append(&out, Step{label = c.name, node = c.node, inside = true})
+		append(&out, Step{label = safe(gtx, c.name), node = c.node, inside = true})
 	}
 	out[len(out) - 1].current = true
 	return out[:]
@@ -267,7 +270,7 @@ trail :: proc(gtx: ^ui.Ctx, m: ^Model, steps: []Step, here: string, loc := #call
 	ui.semantics(
 		gtx,
 		&p,
-		{role = .Navigation, label = tr(.Location), value = ui.frame_string(gtx, here)},
+		{role = .Navigation, label = tr(.Location), value = ui.frame_string(gtx, safe(gtx, here))},
 	)
 	ui.widget_close(gtx, &p, {size = {width, LOCATION_HEIGHT}})
 }

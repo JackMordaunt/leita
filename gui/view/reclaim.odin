@@ -137,7 +137,7 @@ reclaim_row :: proc(gtx: ^ui.Ctx, i: int, user: rawptr) {
 			if primer.checkbox(
 				gtx,
 				&tick,
-				label = cut_path(gtx, relative_path(it.path, l.here), room),
+				label = cut_path(gtx, safe(gtx, relative_path(it.path, l.here)), room),
 				caption = modified_caption(it),
 			) {
 				m.reclaim_pick[it.node] = tick
@@ -330,7 +330,7 @@ clean_dialog :: proc(gtx: ^ui.Ctx, m: ^Model, r: ^query.Reclaim_Result) {
 				if !is_chosen(m, it) || listed == CLEAN_LISTED {
 					continue
 				}
-				path := cut_path(gtx, it.path, CLEAN_ROOM)
+				path := cut_path(gtx, safe(gtx, it.path), CLEAN_ROOM)
 				primer.text(gtx, path, .Small, color = primer.color(.Fg_Color_Muted))
 				listed += 1
 			}
