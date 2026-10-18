@@ -19,6 +19,9 @@
 #                                        directory. Windows's carries the
 #                                        window's SDL3.dll and accesskit.dll,
 #                                        and fails the build without them.
+#   leita-v1.2.0-windows-amd64-setup.exe the same files as an installer: Program
+#                                        Files, a Start menu entry, an optional
+#                                        PATH entry, an uninstaller
 #   leita-v1.2.0-linux-amd64.AppImage    the window as one file to run
 #   leita-v1.2.0-linux-amd64.deb         both binaries for apt and dnf, with
 #   leita-v1.2.0-linux-amd64.rpm         the desktop entry, the icon and the
@@ -295,6 +298,68 @@ jobs:
             command -v zstd >/dev/null || sudo apt-get install -y --no-install-recommends zstd
             tar -C pack --owner=0 --group=0 --numeric-owner -cf - "$root" | zstd -q -19 -T0 -o "dist/$root.tar.zst"
           fi
+          ls -l dist
+
+      # The installer, from the tree the zip was made from: Program Files,
+      # a Start menu shortcut carrying the AppUserModelID, an optional PATH
+      # entry, an uninstaller (tools/windows/leita.iss). Inno Setup is on
+      # the runner image, so nothing is downloaded and there is nothing to
+      # pin. Then it is run as a person would, silently: installed, the
+      # files and the shortcut are there, the window's DLLs beside it, the
+      # PATH names the folder; uninstalled, all of that is gone again.
+      - name: installer (windows)
+        if: runner.os == 'Windows'
+        env:
+          # Git Bash would rewrite /VERYSILENT and the like as paths.
+          MSYS_NO_PATHCONV: 1
+        run: |
+          set -euo pipefail
+          iscc=""
+          for candidate in "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" "/c/Program Files/Inno Setup 6/ISCC.exe"; do
+            if [ -x "$candidate" ]; then iscc=$candidate; break; fi
+          done
+          [ -n "$iscc" ] || { echo "::error::Inno Setup 6 is not on this runner image"; exit 1; }
+          root="leita-$LEITA_VERSION-$LEITA_TARGET"
+          name="$root-setup"
+          # The file's version resource takes four numbers: v1.2.0-rc1 is
+          # 1.2.0.0, and a bare commit, g and its hash, is 0.0.0.0.
+          number=0.0.0
+          v=${LEITA_VERSION#v}
+          if [[ $v =~ ^[0-9]+(\.[0-9]+){0,2} ]]; then number=${BASH_REMATCH[0]}; fi
+          while [ "$(tr -cd . <<<"$number" | wc -c)" -lt 3 ]; do number+=.0; done
+          mkdir -p build/installer
+          LEITA_PACK=$(cygpath -w "$PWD/pack/$root") LEITA_NUMBER=$number \
+            LEITA_OUT=$(cygpath -w "$PWD/dist") LEITA_OUTNAME=$name \
+            "$iscc" /Q tools/windows/leita.iss
+          setup="dist/$name.exe"
+          [ -s "$setup" ] || { echo "::error::Inno Setup wrote no $setup"; exit 1; }
+
+          dir='C:\leita-setup-test'
+          machine_path() { reg query 'HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment' /v Path; }
+          "$setup" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=build/installer/install.log "/DIR=$dir" /TASKS=addtopath
+          for f in leita.exe LICENSE.md app/Leita.exe app/SDL3.dll app/accesskit.dll unins000.exe; do
+            [ -f "/c/leita-setup-test/$f" ] || { echo "::error::the installer left no $f"; exit 1; }
+          done
+          /c/leita-setup-test/leita.exe --version
+          shortcut="$PROGRAMDATA/Microsoft/Windows/Start Menu/Programs/Leita.lnk"
+          [ -f "$shortcut" ] || { echo "::error::the installer left no Start menu shortcut"; exit 1; }
+          grep -qiF 'leita-setup-test' <<<"$(machine_path)" \
+            || { echo "::error::the PATH task did not add the install folder"; exit 1; }
+          # What notify.odin looks for to name toasts Leita: the shell lists
+          # the shortcut under its AppUserModelID.
+          apps=$(powershell -NoProfile -Command "Get-StartApps | Where-Object AppID -eq 'Librium.Leita' | Format-List | Out-String")
+          echo "$apps"
+          grep -qF 'Librium.Leita' <<<"$apps" || echo "::warning::Get-StartApps does not list Librium.Leita: toasts will fall back to PowerShell's name"
+
+          # _?= keeps the uninstaller in place, so this waits for it.
+          "$dir\unins000.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /REMOVEDATA "_?=$dir"
+          [ ! -e /c/leita-setup-test/leita.exe ] || { echo "::error::the uninstaller left leita.exe"; exit 1; }
+          [ ! -e "$shortcut" ] || { echo "::error::the uninstaller left the Start menu shortcut"; exit 1; }
+          if grep -qiF 'leita-setup-test' <<<"$(machine_path)"; then
+            echo "::error::the uninstaller left the install folder on the PATH"
+            exit 1
+          fi
+          rm -rf /c/leita-setup-test
           ls -l dist
 
       # The AppImage, .deb and .rpm, from the binaries built above, with
