@@ -1,11 +1,11 @@
 /*
 Package fuzz checks extent charging and TREE_SEARCH_V2 item headers.
 
-	charge  charged disk never exceeds the sum of the lengths charged
+	charge  each unique extent contributes its encoded disk length exactly once
 	search  a header's body stays inside the buffer it was cut from
 
-Disk fields drawn for the sum are capped, and one item may be max(u64) so a
-wrapping add has to come back as Overflow with the total unchanged.
+Disk fields drawn for the independent sum are capped, and one item may be
+max(u64) so a wrapping add has to come back as Overflow with the total unchanged.
 */
 package btrfs_fuzz
 
@@ -43,32 +43,35 @@ check_charge :: proc(_: Case, src: ^harness.Source) -> (detail: string, ok: bool
 	defer btrfs.usage_destroy(&u)
 	f: btrfs.File
 	defer btrfs.file_destroy(&f)
-	sum: u64
-	sum_wrapped := false
+	expected: u64
+	seen := make(map[u64]struct{})
+	defer delete(seen)
 	for _ in 0 ..< n {
-		item := draw_item(src)
+		item, at, disk := draw_item(src)
+		_, duplicate := seen[at]
+		next, wrapped := bits.overflowing_add(expected, disk)
+		if duplicate {
+			next, wrapped = expected, false
+		}
 		before := btrfs.total(u).disk
 		err := btrfs.charge(item, &u, &f)
 		after := btrfs.total(u).disk
-		if err != .None && after != before {
-			//review:ignore odin-temp-in-loop the formatted string is the failure return; the loop stops
-			return fmt.tprintf("%v changed the total", err), false
-		}
-		if after < before {
-			return "charged total wrapped", false
-		}
-		next, wrapped := bits.overflowing_add(sum, after - before)
 		if wrapped {
-			sum_wrapped = true
-		} else {
-			sum = next
+			if err != .Overflow || after != before {
+				return "wrapping extent did not leave the total unchanged", false
+			}
+			continue
 		}
-	}
-	if sum_wrapped {
-		return "the charged lengths do not fit in u64", false
-	}
-	if btrfs.total(u).disk != sum {
-		return fmt.tprintf("charged %d, added lengths sum to %d", btrfs.total(u).disk, sum), false
+		if err != .None {
+			return "valid extent was rejected", false
+		}
+		if !duplicate {
+			seen[at] = {}
+		}
+		expected = next
+		if after != expected {
+			return "unique extents were charged by the wrong length", false
+		}
 	}
 	return "", true
 }
@@ -89,15 +92,20 @@ check_search :: proc(_: Case, src: ^harness.Source) -> (detail: string, ok: bool
 }
 
 @(private)
-draw_item :: proc(src: ^harness.Source) -> []byte {
+draw_item :: proc(src: ^harness.Source) -> (item: []byte, at, disk: u64) {
 	// A regular extent. disk is capped unless one byte asks for the top of u64.
-	disk: u64 = 4096
+	disk = 4096
 	if harness.byte_of(src) == 0xFF {
 		disk = max(u64)
 	} else {
 		disk = u64(harness.integer_in(src, 0, 8)) << 12
 	}
-	at := u64(harness.integer_in(src, 1, 32)) << 12
+	at = u64(harness.integer_in(src, 1, 32)) << 12
+	return make_item(at, disk), at, disk
+}
+
+@(private)
+make_item :: proc(at, disk: u64) -> []byte {
 	b := make([]byte, 53)
 	b[20] = 1
 	endian.put_u64(b[21:29], .Little, at)
