@@ -231,6 +231,29 @@ def storyboard(base):
     return result
 
 
+
+def storyboard_difference(light, dark, path='$'):
+    if type(light) is not type(dark):
+        return f'{path}: light={light!r}, dark={dark!r}'
+    if isinstance(light, dict):
+        for key in sorted(light.keys() | dark.keys()):
+            if key not in light or key not in dark:
+                return f'{path}.{key}: missing from {"light" if key not in light else "dark"}'
+            difference = storyboard_difference(light[key], dark[key], f'{path}.{key}')
+            if difference:
+                return difference
+    elif isinstance(light, list):
+        if len(light) != len(dark):
+            return f'{path}.length: light={len(light)}, dark={len(dark)}'
+        for index, (left, right) in enumerate(zip(light, dark)):
+            difference = storyboard_difference(left, right, f'{path}[{index}]')
+            if difference:
+                return difference
+    elif light != dark:
+        return f'{path}: light={light!r}, dark={dark!r}'
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('output', type=Path, help='new output directory; existing directories are refused')
@@ -260,7 +283,9 @@ def main():
     if args.frames:
         pairs = [args.output / 'fixture'] + ([] if args.fixture_only else [args.output])
         for pair in pairs:
-            assert json.loads((pair / 'light/storyboard.json').read_text()) == json.loads((pair / 'dark/storyboard.json').read_text()), 'theme choreography differs'
+            difference = storyboard_difference(json.loads((pair / 'light/storyboard.json').read_text()),
+                                               json.loads((pair / 'dark/storyboard.json').read_text()))
+            assert difference is None, f'theme choreography differs in {pair}: {difference}'
     files = {}
     for path in sorted(args.output.rglob('*')):
         if path.is_file() and not any(part in ('data', 'baseline-data') for part in path.relative_to(args.output).parts):
