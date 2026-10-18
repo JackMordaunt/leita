@@ -174,6 +174,8 @@ charge_file :: proc(
 		case .None:
 		case .Out_Of_Memory:
 			return c, .Out_Of_Memory
+		case .Overflow:
+			return c, .Malformed
 		case:
 			return c, .Malformed
 		}
@@ -203,23 +205,18 @@ next_item :: proc(it: ^Items) -> (item: []u8, ok: bool, err: Error) {
 	for {
 		for it.left > 0 {
 			it.left -= 1
-			if len(it.rest) < size_of(Search_Header) {
+			rest, offset, item_type, body, step_ok := read_search_item(it.rest)
+			if !step_ok {
 				return nil, false, .Malformed
 			}
-			h := (^Search_Header)(raw_data(it.rest))^
-			it.rest = it.rest[size_of(Search_Header):]
-			if int(h.len) > len(it.rest) {
-				return nil, false, .Malformed
-			}
-			body := it.rest[:h.len]
-			it.rest = it.rest[h.len:]
+			it.rest = rest
 			if it.left == 0 {
-				if h.offset == max(u64) {
+				if offset == max(u64) {
 					it.done = true
 				}
-				it.next = h.offset + 1
+				it.next = offset + 1
 			}
-			if h.type == BTRFS_EXTENT_DATA_KEY {
+			if item_type == BTRFS_EXTENT_DATA_KEY {
 				return body, true, .None
 			}
 		}
