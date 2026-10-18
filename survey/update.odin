@@ -156,6 +156,10 @@ apply :: proc(f: ^Fill, place: string, base: ^scan.Tree, set: changes.Change_Set
 mark_hashed marks List each directory of `base` whose path, spelt from set.root,
 hashes to one set.hashes names, as the recorder hashes paths (package journal). The
 paths are hashed as the tree is gone down, each from its parent's, so none is made.
+
+Each node is stacked once. A parent cycle would otherwise list a directory as a
+child of its descendant and the stack would grow forever; a sibling link that
+repeats is the same, and the walk stops after every node once.
 */
 @(private)
 mark_hashed :: proc(u: ^walk.Update, base: ^scan.Tree, ix: scan.Index, set: changes.Change_Set) {
@@ -163,20 +167,42 @@ mark_hashed :: proc(u: ^walk.Update, base: ^scan.Tree, ix: scan.Index, set: chan
 		node: u32,
 		hash: u64,
 	}
+	count := scan.slots(base)
+	seen := make([]bool, count, context.temp_allocator)
+	if int(count) != len(seen) || base.root >= count {
+		return
+	}
 	stack := make([dynamic]Dir, context.temp_allocator)
+	seen[base.root] = true
 	append(&stack, Dir{base.root, journal.hash_path(set.root)})
 	for len(stack) > 0 {
 		d := pop(&stack)
 		if d.hash in set.hashes && u.marks[d.node] != .Deep {
 			u.marks[d.node] = .List
 		}
+		if int(d.node) >= len(ix.first) {
+			continue
+		}
 		// The root's path may end in a slash already, as "/" does.
 		slash := d.node != base.root || !strings.has_suffix(set.root, "/")
-		for c := ix.first[d.node]; c != scan.NO_NODE; c = ix.next[c] {
+		c := ix.first[d.node]
+		for left := count; left > 0 && c != scan.NO_NODE; left -= 1 {
+			if c >= count || int(c) >= len(ix.next) {
+				break
+			}
+			next := ix.next[c]
+			// Already stacked. Skip it and keep the rest of the list; a link
+			// that repeats runs out of `left` and the walk ends.
+			if seen[c] {
+				c = next
+				continue
+			}
+			seen[c] = true
 			flags := scan.node_flags(scan.node(base, c))
 			if .Directory in flags && .Mount not_in flags {
 				append(&stack, Dir{c, journal.hash_child(d.hash, scan.name_of(base, c), slash)})
 			}
+			c = next
 		}
 	}
 }

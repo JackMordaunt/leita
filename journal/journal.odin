@@ -225,11 +225,15 @@ record_put :: proc(buf: []byte, r: Record) {
 	endian.put_u64(buf[9:], .Little, r.hash)
 }
 
-// record_get reads the record in the first RECORD_SIZE bytes of buf.
-record_get :: proc(buf: []byte) -> Record {
+// record_get reads the record in the first RECORD_SIZE bytes of buf. Not ok when
+// buf is shorter than a record: a short buffer is refused rather than read off its end.
+record_get :: proc(buf: []byte) -> (r: Record, ok: bool) {
+	if len(buf) < RECORD_SIZE {
+		return {}, false
+	}
 	t, _ := endian.get_i64(buf[1:], .Little)
 	h, _ := endian.get_u64(buf[9:], .Little)
-	return {kind = Kind(buf[0]), time = t, hash = h}
+	return {kind = Kind(buf[0]), time = t, hash = h}, true
 }
 
 /*
@@ -281,7 +285,11 @@ window :: proc(
 	}
 	records := make([]Record, count - first, context.temp_allocator)
 	for &r, i in records {
-		r = record_get(body[i * RECORD_SIZE:])
+		got: bool
+		r, got = record_get(body[i * RECORD_SIZE:])
+		if !got {
+			return {}, "the record of changes cannot be read"
+		}
 	}
 	end, gap := cover(records, from, to)
 	if gap != "" {
@@ -330,7 +338,11 @@ last_at_or_before :: proc(f: ^os.File, at, count, t: i64) -> i64 {
 		if !read_full(f, buf[:], at + mid * RECORD_SIZE) {
 			return -1
 		}
-		if record_get(buf[:]).time <= t {
+		rec, got := record_get(buf[:])
+		if !got {
+			return -1
+		}
+		if rec.time <= t {
 			found = mid
 			lo = mid + 1
 		} else {
@@ -401,7 +413,11 @@ compact :: proc(path: string, before: i64) -> (dropped: int, err: os.Error) {
 	out := make([dynamic]byte, 0, len(data), context.temp_allocator)
 	append(&out, ..data[:at])
 	for i := at; i + RECORD_SIZE <= len(data); i += RECORD_SIZE {
-		if record_get(data[i:]).time < before {
+		rec, got := record_get(data[i:])
+		if !got {
+			break
+		}
+		if rec.time < before {
 			dropped += 1
 			continue
 		}

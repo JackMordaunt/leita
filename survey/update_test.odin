@@ -2,6 +2,7 @@ package survey
 
 import "core:encoding/endian"
 import "core:fmt"
+import "core:mem"
 import "core:os"
 import "core:slice"
 import "core:strings"
@@ -463,4 +464,186 @@ test_how_a_place_was_read_is_said :: proc(t: ^testing.T) {
 		"read whole: asked to read it whole",
 	)
 	testing.expect_value(t, how_read(false, ""), "read whole")
+}
+
+// One node of a baseline built by hand, in the order the file stores them.
+@(private = "file")
+Kept_Node :: struct {
+	parent: u32,
+	name:   string,
+}
+
+// A baseline of `nodes` for `place`, written under the temp directory. The caller
+// removes the file.
+@(private = "file")
+keep_nodes :: proc(t: ^testing.T, name, place: string, root: u32, nodes: []Kept_Node) -> string {
+	dir, dir_err := os.temp_directory(context.temp_allocator)
+	testing.expect(t, dir_err == nil, "no temp directory")
+	path := join(strings.trim_right(dir, `\/`), name)
+	size := len(BASELINE_MAGIC) + 1 + 5 * 8 + 4 + len(place) + 8 + 4 // 4: no links
+	for n in nodes {
+		size += 15 + len(n.name)
+	}
+	out := make([]u8, size, context.temp_allocator)
+	copy(out, BASELINE_MAGIC)
+	at := len(BASELINE_MAGIC) + 1 + 5 * 8
+	endian.put_u32(out[at:], .Little, u32(len(place)))
+	at += 4
+	copy(out[at:], place)
+	at += len(place)
+	endian.put_u32(out[at:], .Little, u32(len(nodes)))
+	at += 4
+	endian.put_u32(out[at:], .Little, root)
+	at += 4
+	for n in nodes {
+		endian.put_u32(out[at:], .Little, n.parent)
+		at += 4
+		at += 1 + 8
+		endian.put_u16(out[at:], .Little, u16(len(n.name)))
+		at += 2
+		copy(out[at:], n.name)
+		at += len(n.name)
+	}
+	endian.put_u32(out[at:], .Little, 0) // the links: none
+	at += 4
+	testing.expect(t, at == len(out), "the baseline size was miscounted")
+	testing.expect(t, os.write_entire_file(path, out) == nil, "could not write the baseline")
+	return path
+}
+
+// A count of every u32, on a file of a few nodes, is a short file. It is refused
+// before a block is reserved: one block is 65536 nodes, and the count asks for
+// all of them.
+@(test)
+test_a_count_the_file_cannot_hold_reserves_nothing :: proc(t: ^testing.T) {
+	root := fixture(t, "huge")
+	defer os.remove_all(root)
+	file := join(root, "..", "leita_survey_huge.tree")
+	defer os.remove(file)
+	tree := read_tree(t, root)
+	defer scan.tree_destroy(&tree)
+	testing.expect(t, baseline_save(file, root, &tree, {}), "the baseline was not kept")
+	data, _ := os.read_entire_file(file, context.temp_allocator)
+	at := len(BASELINE_MAGIC) + 1 + 5 * 8 + 4 + len(root)
+	endian.put_u32(data[at:], .Little, 0xFFFF_FFFF)
+	testing.expect(t, os.write_entire_file(file, data) == nil)
+
+	track: mem.Tracking_Allocator
+	mem.tracking_allocator_init(&track, context.allocator)
+	defer mem.tracking_allocator_destroy(&track)
+	// Put the caller's allocator back before the tracker is destroyed, so a
+	// later test does not allocate through it.
+	prev := context.allocator
+	context.allocator = mem.tracking_allocator(&track)
+	defer context.allocator = prev
+
+	back: scan.Tree
+	_, why, ok := baseline_load(file, root, &back)
+	defer scan.tree_destroy(&back)
+	testing.expect(t, !ok, "a count past the file was read")
+	testing.expect_value(t, why, "the scan kept of this place is cut short")
+	testing.expectf(
+		t,
+		track.peak_memory_allocated < 1 << 20,
+		"reserved from the count: peak %d",
+		track.peak_memory_allocated,
+	)
+}
+
+// A parent numbered above its node, and an orphan that holds itself, are what the
+// writer stores. A parent that leads back to a node is not, and is refused.
+@(test)
+test_a_parent_loop_is_refused :: proc(t: ^testing.T) {
+	place := "place"
+	ahead := keep_nodes(t, "leita_survey_ahead.tree", place, 1, {
+		{parent = 1, name = "a"},
+		{parent = 1, name = place},
+	})
+	defer os.remove(ahead)
+	kept: scan.Tree
+	_, why, ok := baseline_load(ahead, place, &kept)
+	defer scan.tree_destroy(&kept)
+	testing.expectf(t, ok, "a parent above its node was refused: %s", why)
+	testing.expect_value(t, scan.node(&kept, 0).parent, u32(1))
+	testing.expect_value(t, scan.node(&kept, 1).parent, u32(1))
+
+	orphan := keep_nodes(t, "leita_survey_orphan.tree", place, 1, {
+		{parent = 0, name = "loose"},
+		{parent = 1, name = place},
+	})
+	defer os.remove(orphan)
+	loose: scan.Tree
+	_, why, ok = baseline_load(orphan, place, &loose)
+	defer scan.tree_destroy(&loose)
+	testing.expectf(t, ok, "an orphan that holds itself was refused: %s", why)
+
+	loop := keep_nodes(t, "leita_survey_loop.tree", place, 0, {
+		{parent = 1, name = "a"},
+		{parent = 0, name = "b"},
+	})
+	defer os.remove(loop)
+	back: scan.Tree
+	_, why, ok = baseline_load(loop, place, &back)
+	defer scan.tree_destroy(&back)
+	testing.expect(t, !ok, "a parent loop was read")
+	testing.expect_value(t, why, "the scan kept of this place loops")
+}
+
+// A child named "../../.ssh", or with a backslash or a NUL, is joined onto its
+// directory and would leave it. The root's own name is the place path.
+@(test)
+test_a_name_with_a_separator_or_nul_is_refused :: proc(t: ^testing.T) {
+	place := "place"
+	bad := [?]string{"../../.ssh", "..\\secret", "a\x00b"}
+	for name, i in bad {
+		path := keep_nodes(
+			t,
+			fmt.tprintf("leita_survey_name_%d.tree", i),
+			place,
+			0,
+			{{parent = 0, name = place}, {parent = 0, name = name}},
+		)
+		back: scan.Tree
+		_, why, ok := baseline_load(path, place, &back)
+		testing.expectf(t, !ok, "a name %q was read", name)
+		testing.expect_value(t, why, "the scan kept of this place holds a name that is not one entry")
+		scan.tree_destroy(&back)
+		os.remove(path)
+	}
+}
+
+// A directory that is its own descendant must not keep the hashed walk going.
+@(test)
+test_a_parent_loop_ends_the_hashed_walk :: proc(t: ^testing.T) {
+	tree: scan.Tree
+	testing.expect_value(t, scan.tree_init(&tree, 1), scan.Error.None)
+	defer scan.tree_destroy(&tree)
+	testing.expect_value(t, scan.reserve(&tree, 2), scan.Error.None)
+	w := scan.writer(&tree, 0)
+	a := scan.node(&tree, 0)
+	a.parent = 1
+	a.name = scan.intern(&w, "a")
+	scan.node_publish(a, {.Used, .Settled, .Directory})
+	b := scan.node(&tree, 1)
+	b.parent = 0
+	b.name = scan.intern(&w, "b")
+	scan.node_publish(b, {.Used, .Settled, .Directory})
+	tree.root = 0
+
+	ix, ix_err := scan.index_make(&tree)
+	testing.expect_value(t, ix_err, scan.Error.None)
+	defer scan.index_destroy(&ix)
+	u := walk.Update {
+		base   = &tree,
+		index  = ix,
+		marks  = make(map[u32]walk.Mark, context.temp_allocator),
+	}
+	set := changes.Change_Set {
+		by_hash = true,
+		root    = "/place",
+		hashes  = make(map[u64]struct{}, context.temp_allocator),
+	}
+	set.hashes[journal.hash_path("/place")] = {}
+	mark_hashed(&u, &tree, ix, set)
+	testing.expect_value(t, u.marks[0], walk.Mark.List)
 }

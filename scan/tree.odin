@@ -231,7 +231,12 @@ claim :: proc(w: ^Writer, n: u32) -> (first: u32, err: Error) {
 	return first, .None
 }
 
+// The node at i. Nil when i addresses a block the array does not have: one
+// compare, so a count or a parent taken from a file cannot be followed off its end.
 node :: proc(t: ^Tree, i: u32) -> ^Node {
+	if i >> BLOCK_SHIFT >= MAX_BLOCKS {
+		return nil
+	}
 	return &t.blocks[i >> BLOCK_SHIFT][i & (BLOCK_NODES - 1)]
 }
 

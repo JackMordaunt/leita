@@ -484,6 +484,8 @@ mark_all :: proc(r: ^Recorder, kind: Kind, hash := u64(0)) {
 
 @(private = "file")
 append_record :: proc(fs: ^Recorded_Filesystem, rec: Record) {
+	// record_put writes RECORD_SIZE bytes and does not check the length. This
+	// buffer is that long, so the write stays inside it.
 	buf: [RECORD_SIZE]byte
 	record_put(buf[:], rec)
 	append(&fs.buf, ..buf[:])

@@ -302,5 +302,9 @@ log_tail :: proc(path: string) -> (size: i64, last: Record, ok: bool) {
 	if count <= 0 || !read_full(f, buf[:], head.at + (count - 1) * RECORD_SIZE) {
 		return size, {}, false
 	}
-	return size, record_get(buf[:]), true
+	rec, got := record_get(buf[:])
+	if !got {
+		return size, {}, false
+	}
+	return size, rec, true
 }

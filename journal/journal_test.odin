@@ -78,7 +78,13 @@ test_a_log_reads_back_what_was_written :: proc(t: ^testing.T) {
 	buf: [RECORD_SIZE]byte
 	r := Record{.Changed, -5, 0xfedc_ba98_7654_3210}
 	record_put(buf[:], r)
-	testing.expect_value(t, record_get(buf[:]), r)
+	got, ok2 := record_get(buf[:])
+	testing.expect(t, ok2, "the record did not read back")
+	testing.expect_value(t, got, r)
+	_, ok2 = record_get(buf[:len(buf) - 1])
+	testing.expect(t, !ok2, "a short record was read")
+	_, ok2 = record_get(nil)
+	testing.expect(t, !ok2, "an empty record was read")
 }
 
 // A log with a heartbeat before the window and every 10 s through it covers it,
@@ -226,7 +232,9 @@ test_compaction_drops_old_records :: proc(t: ^testing.T) {
 	mount, at, ok := header_read(data)
 	testing.expect(t, ok && mount == "/mnt/e", "the header was not kept")
 	testing.expect_value(t, (len(data) - at) / RECORD_SIZE, 4)
-	testing.expect_value(t, record_get(data[at:]).time, T0 + 30 * SEC)
+	rec, ok2 := record_get(data[at:])
+	testing.expect(t, ok2, "the kept record did not read")
+	testing.expect_value(t, rec.time, T0 + 30 * SEC)
 	w, why := window(path, T0 + 5 * SEC, T0 + 65 * SEC)
 	defer window_destroy(&w)
 	testing.expect(t, why != "", "a window older than the log was covered")

@@ -29,12 +29,16 @@ written for this machine, little-endian:
 	each link    u32 node, u64 device, u64 inode, u64 upper
 
 Nodes are numbered afresh, used ones only, so a parent names the new number. The
-flags kept are the ones an update needs: what a node is, Unread for a directory the
-scan could not open, which the update walks rather than copies (walk.update), and
-Shared for a btrfs file charged only what it does not share, so a tree read back,
-and an update copying from it, can still tell it from a file that shares nothing.
-The flags byte held every flag before Shared was kept, so a file written without it
-reads as one whose files share nothing, which is what it said.
+numbers follow the scan's order. A parent is not moved ahead of its child, a root
+or an orphan stores its own number, and a cycle is refused when the file is read.
+A name is one entry in its directory: a separator or a NUL is refused, apart from
+the root, whose name is the place path. The flags kept are the ones an update
+needs: what a node is, Unread for a directory the scan could not open, which the
+update walks rather than copies (walk.update), and Shared for a btrfs file charged
+only what it does not share, so a tree read back, and an update copying from it,
+can still tell it from a file that shares nothing. The flags byte held every flag
+before Shared was kept, so a file written without it reads as one whose files
+share nothing, which is what it said.
 Roughly 15 bytes and the name a node: a home directory of 2.6 million is 70 to 80 MB.
 The links are scan.Tree.linked, the name each file with more than one was charged
 under and the file it names, which an update needs to charge such a file once
@@ -192,6 +196,14 @@ baseline_load :: proc(
 	if !r.ok || count == 0 || root >= count {
 		return {}, "the scan kept of this place could not be read", false
 	}
+	// A stored count is not a size to allocate. The unread tail has to hold
+	// every node, the fixed part and each name's bytes, or this is the short
+	// file a read that ran out halfway would refuse. Checked before reserve:
+	// that asks for a block per 65536 nodes, up to MAX_BLOCKS, about 12 GB,
+	// for a count the file does not hold.
+	if !nodes_fit(r.data, r.at, count) {
+		return {}, "the scan kept of this place is cut short", false
+	}
 	if scan.tree_init(t, 1) != nil || scan.reserve(t, count) != nil {
 		scan.tree_destroy(t)
 		return {}, "no room to read the scan kept of this place", false
@@ -205,6 +217,14 @@ baseline_load :: proc(
 		if !r.ok || parent >= count {
 			scan.tree_destroy(t)
 			return {}, "the scan kept of this place is cut short", false
+		}
+		// walk.join spells a child by its name onto its directory. A separator
+		// or a NUL in that name leaves the directory: "../../.ssh" is not an
+		// entry in it. The root's name is the place path, so it is the one
+		// name that holds separators.
+		if !name_fits(name, i == root) {
+			scan.tree_destroy(t)
+			return {}, "the scan kept of this place holds a name that is not one entry", false
 		}
 		n := scan.node(t, i)
 		n.parent = parent
@@ -220,6 +240,16 @@ baseline_load :: proc(
 	if r.at != len(r.data) {
 		scan.tree_destroy(t)
 		return {}, "the scan kept of this place is longer than it says", false
+	}
+	// baseline_save stores the scan's parent renumbered into this file's order
+	// and does not make a parent precede its child. A walk claims a directory
+	// before its entries, but a record kept by its own number can sit below a
+	// directory numbered above it, and a root or an orphan stores its own
+	// index. Comparing the two indices would refuse files this writer emits.
+	// A cycle is a chain of parents that returns to a node.
+	if chain_loops(t, count) {
+		scan.tree_destroy(t)
+		return {}, "the scan kept of this place loops", false
 	}
 	t.root = root
 	return cursor, "", true
@@ -291,9 +321,105 @@ take_u64 :: proc(r: ^Reader) -> u64 {
 @(private = "file")
 NODE_FIXED :: 4 + 1 + 8 + 2
 
+// What the links' count takes, after the last node.
+@(private = "file")
+LINK_COUNT :: 4
+
 // What a link takes: its node, then the file's device, inode and upper half.
 @(private = "file")
 LINK_SIZE :: 4 + 3 * 8
+
+// The unread tail from at holds count nodes, each NODE_FIXED bytes plus its name,
+// and then the links' count that ends the file. A count that cannot fit even with
+// empty names is short, and is refused before the names are walked, so a huge
+// count does not become a huge loop. The links themselves are bounded by their
+// own count in take_links, before anything is reserved for them.
+@(private = "file")
+nodes_fit :: proc(data: []u8, at: int, count: u32) -> bool {
+	if at < 0 || at > len(data) {
+		return false
+	}
+	remain := len(data) - at
+	if remain < LINK_COUNT || int(count) > (remain - LINK_COUNT) / NODE_FIXED {
+		return false
+	}
+	pos := at
+	for _ in 0 ..< count {
+		if pos > len(data) - NODE_FIXED {
+			return false
+		}
+		n, ok := endian.get_u16(data[pos + NODE_FIXED - 2:], .Little)
+		if !ok || int(n) > len(data) - (pos + NODE_FIXED) {
+			return false
+		}
+		pos += NODE_FIXED + int(n)
+	}
+	return len(data) - pos >= LINK_COUNT
+}
+
+// Whether name can be stored for one node. The root's name is the place path,
+// separators and all; every other name is joined onto its parent, so a
+// separator or a NUL in it is another path, not a name.
+@(private = "file")
+name_fits :: proc(name: string, root: bool) -> bool {
+	for b in transmute([]u8)name {
+		if b == 0 || (!root && (b == '/' || b == '\\')) {
+			return false
+		}
+	}
+	return true
+}
+
+// chain_loops reports a chain of parents that returns to a node. A node that
+// holds itself is a root or an orphan, where the chain ends, not a loop. One
+// byte a node: unseen, on the chain now, or settled. The chain is followed
+// again to settle it, which needs no second array.
+@(private = "file")
+chain_loops :: proc(t: ^scan.Tree, count: u32) -> bool {
+	state := make([]u8, count)
+	defer delete(state)
+	if len(state) != int(count) {
+		return true
+	}
+	for start in 0 ..< count {
+		if state[start] != 0 {
+			continue
+		}
+		cur := start
+		looped := false
+		for {
+			if state[cur] == 2 {
+				break
+			}
+			if state[cur] == 1 {
+				looped = true
+				break
+			}
+			state[cur] = 1
+			parent := scan.node(t, cur).parent
+			if parent == cur {
+				break
+			}
+			if parent >= count {
+				return true
+			}
+			cur = parent
+		}
+		if looped {
+			return true
+		}
+		cur = start
+		for state[cur] == 1 {
+			state[cur] = 2
+			parent := scan.node(t, cur).parent
+			if parent == cur {
+				break
+			}
+			cur = parent
+		}
+	}
+	return false
+}
 
 @(private = "file")
 Writer :: struct {

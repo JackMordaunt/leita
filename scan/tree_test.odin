@@ -259,6 +259,19 @@ test_path_stops_at_a_cycle :: proc(t: ^testing.T) {
 }
 
 @(test)
+test_a_node_past_the_last_block_is_refused :: proc(t: ^testing.T) {
+	tree := fresh(t)
+	defer tree_destroy(&tree)
+	testing.expect_value(t, reserve(&tree, 1), Error.None)
+	testing.expect(t, node(&tree, 0) != nil, "a reserved node was not addressed")
+	testing.expect(
+		t,
+		node(&tree, u32(MAX_BLOCKS) << BLOCK_SHIFT) == nil,
+		"a block past the array was addressed",
+	)
+}
+
+@(test)
 test_cancel_is_visible_to_a_reader :: proc(t: ^testing.T) {
 	tree := fresh(t)
 	defer tree_destroy(&tree)
