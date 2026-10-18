@@ -16,12 +16,21 @@ chart_target :: proc(h: ^render.Headless, name: string) -> ops.Point {
 	if model.mode == .Sunburst {
 		hit, ok := ui.probe_find_top(&h.p, "Sunburst chart")
 		if !ok {fail("no Sunburst chart")}
-		pose, found := model.poses[folder_node]
-		if !found || pose.sweep <= 0 {fail("no visible Users arc")}
+		// The fixture's interior ray must lie in both the laid-out and displayed Users arc.
+		arc := folder_arc
+		turn: f32 = 0.125
+		pose, found := model.poses[arc.node]
+		if !found ||
+		   turn <= arc.start ||
+		   turn >= arc.start + arc.sweep ||
+		   turn <= pose.start ||
+		   turn >= pose.start + pose.sweep {
+			fail("Users interior ray is outside the visible arc")
+		}
 		radius := model.burst / 2 - 2
 		hub := radius * view.HUB
 		middle := hub + (radius - hub) / f32(query.RING_DEPTH) / 2
-		angle := (pose.start + pose.sweep / 2) * math.TAU - math.PI / 2
+		angle := turn * math.TAU - math.PI / 2
 		point := ops.Point {
 			model.burst / 2 + middle * math.cos(angle),
 			model.burst / 2 + middle * math.sin(angle),

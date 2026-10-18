@@ -20,7 +20,7 @@ Stream_Clock  :: struct {
 STREAM_FRAMES :: 720
 stream_clock: Stream_Clock
 current_model: ^view.Model
-folder_node: u32
+folder_arc: query.Arc
 //review:ignore noun-for-type observed is a variable holding the latest progress record, not a type declaration.
 observed: struct {
 	nodes, bytes: u64,
@@ -37,7 +37,14 @@ capture_view :: proc(gtx: ^ui.Ctx, user: rawptr) {
 			query.Rings{generation = current_model.generation, dir = current_model.dir},
 			query.Rings_Result,
 		); r != nil {
-			for a in r.arcs {if a.depth == 1 && a.directory && a.name == "Users" {folder_node = a.node}}
+			for a in r.arcs {
+				if a.depth != 1 || !a.directory || a.name != "Users" {continue}
+				folder_arc = {
+					node  = a.node,
+					start = a.start,
+					sweep = a.sweep,
+				}
+			}
 		}
 	}
 	if p, _ := ui.need(gtx, query.Progress{}, query.Progress_Result); p != nil {
