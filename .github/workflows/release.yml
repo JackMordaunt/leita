@@ -17,7 +17,8 @@
 #                                        macOS and Windows fold case, so
 #                                        leita and Leita cannot share a
 #                                        directory. Windows's carries the
-#                                        window's SDL3.dll and accesskit.dll.
+#                                        window's SDL3.dll and accesskit.dll,
+#                                        and fails the build without them.
 #   leita-v1.2.0-linux-amd64.AppImage    the window as one file to run
 #   leita-v1.2.0-linux-amd64.deb         both binaries for apt and dnf, with
 #   leita-v1.2.0-linux-amd64.rpm         the desktop entry, the icon and the
@@ -256,8 +257,7 @@ jobs:
 
       # Each binary under its update name, and on Linux and Windows the
       # archive a person downloads. macOS's go to the universal job as they
-      # are. cp fails on a missing DLL, which the justfile's gui recipe
-      # would let pass.
+      # are. cp fails on a missing DLL, as the justfile's gui recipe does.
       - name: package
         run: |
           set -euo pipefail
@@ -277,7 +277,20 @@ jobs:
           cp "build/release/app/Leita$LEITA_EXE" "pack/$root/app/"
           if [ "$RUNNER_OS" = Windows ]; then
             cp build/release/app/SDL3.dll build/release/app/accesskit.dll "pack/$root/app/"
+            # The third-party notices card 545 adds; until it lands the
+            # archive goes without them.
+            if [ -f THIRD_PARTY.md ]; then
+              cp THIRD_PARTY.md "pack/$root/"
+            else
+              echo "::notice::no THIRD_PARTY.md yet (card 545): the archive goes without it"
+            fi
             (cd pack && 7z a -tzip -bso0 -bsp0 "../dist/$root.zip" "$root")
+            # What a person unzips: the window must have both DLLs beside it.
+            listing=$(7z l -ba "dist/$root.zip")
+            listing=${listing//\\//}
+            for f in leita.exe LICENSE.md app/Leita.exe app/SDL3.dll app/accesskit.dll; do
+              grep -qF "$root/$f" <<<"$listing" || { echo "::error::$root.zip lacks $f"; exit 1; }
+            done
           else
             command -v zstd >/dev/null || sudo apt-get install -y --no-install-recommends zstd
             tar -C pack --owner=0 --group=0 --numeric-owner -cf - "$root" | zstd -q -19 -T0 -o "dist/$root.tar.zst"

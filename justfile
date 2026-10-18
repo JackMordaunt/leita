@@ -153,8 +153,12 @@ gui mode="debug": deps
     mkdir -p build/{{mode}}/app
     {{odin}} build gui $opt {{flags}} {{curl_open}} {{sdl3_link}} -out:build/{{mode}}/app/{{gui}}{{exe}}
     if [ "{{os()}}" = windows ]; then
-        cp "$({{odin}} root)/vendor/sdl3/SDL3.dll" build/{{mode}}/app/
-        cp "{{jm}}/ui/accesskit/lib/accesskit.dll" build/{{mode}}/app/ 2>/dev/null || true
+        # The window does not start without either DLL beside it, so a build
+        # that lacks one stops here rather than shipping a window that cannot run.
+        for dll in "$({{odin}} root)/vendor/sdl3/SDL3.dll" "{{jm}}/ui/accesskit/lib/accesskit.dll"; do
+            [ -f "$dll" ] || { echo "gui: $dll is missing, and the window does not start without it" >&2; exit 1; }
+            cp "$dll" build/{{mode}}/app/
+        done
     fi
 
 # Leita.app, the window as a Mac installs it, from the release window and
