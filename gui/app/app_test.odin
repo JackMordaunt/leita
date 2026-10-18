@@ -355,15 +355,7 @@ a_scan_streams_into_the_window_and_a_directory_opens :: proc(t: ^testing.T) {
 
 	// The scan runs to the end, and the listing of the top shows both entries,
 	// the directory first because it holds more.
-	finished := settle(&r, "Done")
-	p: query.Progress_Result
-	if shape, ok := r.p.layout.shapes[ui.key_of(query.Progress{})]; ok &&
-	   shape.decoded != nil && shape.decoded_type == query.Progress_Result {
-		p = (^query.Progress_Result)(shape.decoded)^
-	}
-	if !testing.expectf(t, finished, "scan finished: state=%v engine=%s problem=%q nodes=%d seconds=%.1f target=%q", p.state, p.engine, p.problem, p.nodes, p.seconds, p.target) {
-		return
-	}
+	testing.expect(t, settle(&r, "Done"), "the scan finished")
 	testing.expect(t, settle(&r, "photos"), "the directory is listed")
 	testing.expect(t, settle(&r, "notes.txt"), "the file is listed")
 	testing.expect(t, settle(&r, "big.raw"), "the largest file is ranked")
