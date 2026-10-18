@@ -1,5 +1,6 @@
 package report
 
+import "base:runtime"
 import "core:fmt"
 import "core:strings"
 
@@ -94,6 +95,26 @@ write_csv :: proc(sb: ^strings.Builder, r: ^Report) {
 	}
 	if r.compared == nil {
 		csv_note(sb, "No earlier scan to compare with.")
+	}
+	if retained, ok := r.retention.?; ok {
+		state := "unchecked"
+		switch retained.snapshots {
+		case .None:
+			state = "none"
+		case .Present:
+			state = "present"
+		case .Unchecked:
+		}
+		csv_note(sb, fmt.tprintf("APFS local snapshots: %s", state))
+		for name in retained.names {
+			runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+			csv_note(sb, fmt.tprintf("Local snapshot: %s", name))
+		}
+		if bytes, known := retained.purgeable.?; known {
+			csv_note(sb, fmt.tprintf("Purgeable space: %d bytes", bytes))
+		} else {
+			csv_note(sb, "Purgeable space: unknown")
+		}
 	}
 	csv_note(sb, generated_by(r))
 }

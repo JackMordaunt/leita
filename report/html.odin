@@ -68,6 +68,40 @@ write_html :: proc(sb: ^strings.Builder, r: ^Report) {
 		strings.write_string(sb, "<p class=\"note\">No earlier scan to compare with.</p>\n")
 	}
 	strings.write_string(sb, "</section>\n")
+	if retained, ok := r.retention.?; ok {
+		strings.write_string(sb, "<section>\n<h2>APFS local snapshots</h2>\n")
+		switch retained.snapshots {
+		case .None:
+			strings.write_string(sb, "<p class=\"note\">No local snapshots found.</p>\n")
+		case .Present:
+			fmt.sbprintf(
+				sb,
+				"<p class=\"note\">%d local snapshots found.</p>\n",
+				len(retained.names),
+			)
+		case .Unchecked:
+			strings.write_string(
+				sb,
+				"<p class=\"note\">Local snapshot list incomplete or unavailable.</p>\n",
+			)
+		}
+		if len(retained.names) > 0 {
+			strings.write_string(sb, "<ul>\n")
+			for name in retained.names {
+				strings.write_string(sb, "<li>")
+				html_text(sb, name)
+				strings.write_string(sb, "</li>\n")
+			}
+			strings.write_string(sb, "</ul>\n")
+		}
+		strings.write_string(sb, "<p class=\"note\">Purgeable space: ")
+		if bytes, known := retained.purgeable.?; known {
+			fmt.sbprintf(sb, "%s (%d bytes).", human.bytes(bytes), bytes)
+		} else {
+			strings.write_string(sb, "unknown.")
+		}
+		strings.write_string(sb, "</p>\n</section>\n")
+	}
 
 	html_entries(sb, r, "Largest directories", r.largest_directories)
 	html_entries(sb, r, "Largest files", r.largest_files)

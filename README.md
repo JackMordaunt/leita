@@ -34,6 +34,12 @@ Sizes are the space a file takes on disk, in the decimal units disks are sold
 in: 1 GB is 1,000,000,000 bytes. On a Mac, a sparse disk image or a compressed
 file is charged what it occupies, not its length.
 
+On APFS, pure clones with the same data stream count that data once. Partially
+shared clones can still make a scan's total an upper bound. Reports list local
+snapshot names when macOS allows it; a refused or unsupported lookup is shown
+as unknown. Purgeable bytes are unknown, and these figures do not establish
+how many bytes deleting a file will return to the volume.
+
 ## Reports that make the case
 
 Turn any scan into a report from **Export** in the settings menu: **PDF** for the person who signs

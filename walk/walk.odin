@@ -175,6 +175,12 @@ run :: proc(seed: Dir, t: ^scan.Tree, cfg: Config, u: ^Update) -> Error {
 	btrfs_search_init(&search, t, allocator)
 	defer btrfs_search_destroy(&search)
 
+	clones := clones_make(allocator)
+	defer delete(clones.paid)
+	when ODIN_OS == .Darwin {
+		darwin_retention(seed.path, t)
+	}
+
 	states := make([]Worker, workers, allocator)
 	defer delete(states, allocator)
 	for i in 0 ..< workers {
@@ -184,6 +190,7 @@ run :: proc(seed: Dir, t: ^scan.Tree, cfg: Config, u: ^Update) -> Error {
 			follow    = cfg.follow,
 			linked    = &linked,
 			btrfs     = &search,
+			clones    = &clones,
 			scratch   = scratch_make(allocator),
 			update    = u,
 			siblings  = make(map[string]u32, allocator),
@@ -315,6 +322,7 @@ Worker :: struct {
 	follow:    bool,
 	linked:    ^Linked_Files, // shared by every worker
 	btrfs:     ^Btrfs_Search, // shared by every worker
+	clones:    ^Clones, // pure data streams, shared by every worker
 	err:       Error, // why this worker gave up, which only the manager acts on
 	scratch:   Scratch, // reused by the platform's reader between directories
 	// An update's, shared by every worker and read only. nil for a walk.
@@ -396,6 +404,7 @@ walk_dir :: proc(d: Dir, w: ^Worker) -> bool {
 // file has, left 0 by a reader that cannot tell, which charges every name.
 @(private)
 Entry :: struct {
+	darwin:    Darwin_Measurement,
 	name:      string,
 	disk:      u64,
 	directory: bool,
@@ -579,6 +588,11 @@ record :: proc(
 		}
 		e.extra = !counted
 	}
+	when ODIN_OS == .Darwin {
+		if !charge_darwin(w, &e) {
+			return 0, false, 0, false
+		}
+	}
 	descend, charged, ok = record_at(w, slot, parent, e, scan.intern(&w.writer, e.name))
 	return slot, descend, charged, ok
 }
@@ -628,6 +642,11 @@ record_at :: proc(
 		if e.extra {
 			flags |= {.Extra_Name}
 			charged = 0
+		}
+	}
+	when ODIN_OS == .Darwin {
+		if !record_darwin_account(w, index, e) {
+			return false, 0, false
 		}
 	}
 	// Last, so a builder watching this tree never sees a node before its size.

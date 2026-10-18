@@ -86,47 +86,47 @@ identifier. One that discovers as it goes calls `claim` for a run of slots. Eith
 way a slot belongs to one worker, so filling it needs no lock.
 */
 Tree :: struct {
-	blocks:     [MAX_BLOCKS]^Block,
-	count:      u32, // slots handed out
-	committed:  u32, // slots backed by an allocated block
-	mutex:      sync.Mutex, // guards block allocation and lending a pool
+	blocks:          [MAX_BLOCKS]^Block,
+	count:           u32, // slots handed out
+	committed:       u32, // slots backed by an allocated block
+	mutex:           sync.Mutex, // guards block allocation and lending a pool
 	// One per writer, then one for names given outside any writer. Names live here
 	// for the tree's life. Each arena sits on a cache line of its own: packed
 	// together, one's mutex shares a line with the next writer's header, and a
 	// ~/Source walk spent 18% of its samples on that line (2026-10-12).
-	arenas:     []Arena_Slot,
+	arenas:          []Arena_Slot,
 	// Every arena above, then any a reader has lent. A slot is filled before any node
 	// names it, so whoever has seen the node's flags may read its pool.
-	pools:      [MAX_POOLS]Pool,
-	pool_count: int,
-	naming:     sync.Mutex, // guards the last arena, which any thread may name into
-	root:       u32,
+	pools:           [MAX_POOLS]Pool,
+	pool_count:      int,
+	naming:          sync.Mutex, // guards the last arena, which any thread may name into
+	root:            u32,
 	// Polled by a UI rather than pushed to it, so sampling costs a reader nothing.
-	nodes_done: u64,
-	bytes_done: u64,
-	cancel:     b32,
-	restated:   b32,
+	nodes_done:      u64,
+	bytes_done:      u64,
+	cancel:          b32,
+	restated:        b32,
 	// Some of the tree's btrfs files are charged their st_blocks, which on btrfs is
 	// the logical size: a compressed file at its uncompressed size, an extent shared
 	// by reflinks or snapshots once for every file. Set by a walk that could not read
 	// the extents themselves, which takes root.
-	logical:    b32,
+	logical:         b32,
 	// Directories a reader could not read whole (Node_Flag.Unread), and whether
 	// any of them refused for want of permission rather than for another reason.
 	// Added by a walk once it has finished.
-	unread:     u64,
-	denied:     b32,
-	allocator:  mem.Allocator,
+	unread:          u64,
+	denied:          b32,
+	allocator:       mem.Allocator,
 	// A walk that folded totals as directories finished. Nil for every other reader,
 	// and for a walk that was told not to. Freed with the tree.
-	folded:     ^Folded,
+	folded:          ^Folded,
 	// The name each file with more than one was charged under, as the walk found
 	// them; empty for a reader that keeps no file ids. Freed with the tree.
-	linked:     [dynamic]Link,
+	linked:          [dynamic]Link,
 	// Per-node measurements, keyed by the same index as `blocks`. A block exists
 	// only after some node in it was given a fact. Freed with the tree.
-	accounts:   [MAX_BLOCKS]^Account_Block,
-	rares:      [MAX_BLOCKS]^Rare_Block,
+	accounts:        [MAX_BLOCKS]^Account_Block,
+	rares:           [MAX_BLOCKS]^Rare_Block,
 	// Volume retention, published once (note_retention). retention_state is
 	// 0, claimed, or published. Fields are read only after published, so a
 	// reader never mixes two notes. Not a per-file held byte, and not a
@@ -137,7 +137,12 @@ Tree :: struct {
 	purgeable_known: b32,
 	// Some charge in this tree is a scan-order first payer. freed_of does not
 	// treat that charge as exclusive or as a frees quantity.
-	scan_order: b32,
+	scan_order:      b32,
+	// Snapshot names belong to this volume and are read only after the walk ends.
+	// Kept once per volume, not in every node or its accounting sidecar.
+	snapshot_names:  [dynamic]string,
+	// Set for an APFS volume even when asking for snapshots failed.
+	snapshot_volume: bool,
 }
 
 // Where a file's data lives, the same for every name it has. `upper` is the high half
@@ -204,6 +209,10 @@ tree_init :: proc(t: ^Tree, writers := 1, allocator := context.allocator) -> Err
 tree_destroy :: proc(t: ^Tree) {
 	folded_destroy(t.folded, t.allocator)
 	delete(t.linked)
+	for name in t.snapshot_names {
+		delete(name, t.allocator)
+	}
+	delete(t.snapshot_names)
 	for i in 0 ..< t.committed >> BLOCK_SHIFT {
 		free(t.blocks[i], t.allocator)
 	}
