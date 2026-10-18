@@ -83,6 +83,11 @@ again was charged beside the copied one, and the next baseline kept the total th
 much too high. A base that kept no ids keeps its choice for a name a List job reads.
 */
 update :: proc(root: string, u: ^Update, t: ^scan.Tree, cfg := Config{}) -> Error {
+	when ODIN_OS == .Linux {
+		if btrfs_update_needs_read(root, cfg.follow) {
+			return read(root, t, cfg)
+		}
+	}
 	if u.base.root >= scan.slots(u.base) {
 		return read(root, t, cfg)
 	}
