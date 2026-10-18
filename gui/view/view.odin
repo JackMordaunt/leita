@@ -613,6 +613,9 @@ state_line :: proc(gtx: ^ui.Ctx, prog: ^query.Progress_Result) {
 	case .Idle:
 	}
 	primer.text(gtx, counters(gtx, prog), color = primer.color(.Fg_Color_Muted))
+	if tip := retention_tip(gtx, prog); tip != "" {
+		primer.tooltip(gtx, tip, ui.last_widget(gtx))
+	}
 	short, whole := how_read(gtx, prog)
 	if short == "" {
 		return
@@ -625,6 +628,30 @@ state_line :: proc(gtx: ^ui.Ctx, prog: ^query.Progress_Result) {
 		color = primer.color(.Fg_Color_Muted),
 	)
 	primer.tooltip(gtx, whole, ui.last_widget(gtx))
+}
+
+// retention_tip is the snapshot and delayed-purge sentence for the counters.
+// It is a tooltip, not another status line: the chart keeps the room under
+// the two-line status.
+@(private)
+retention_tip :: proc(gtx: ^ui.Ctx, prog: ^query.Progress_Result) -> string {
+	if prog == nil || !prog.retention_known {
+		return ""
+	}
+	key: msg.Msg
+	switch prog.snapshots {
+	case 1:
+		key = .Snap_None
+	case 2:
+		key = .Snap_Present
+	case:
+		key = .Snap_Unchecked
+	}
+	tip := tr(key)
+	if prog.purge_known {
+		tip = strings.concatenate({tip, " ", trf(gtx, .Purge_Later, human.bytes(prog.purgeable))}, gtx.allocator)
+	}
+	return tip
 }
 
 // Status_Message is one thing the status' second line can say: a warning, in
@@ -889,6 +916,10 @@ entry :: proc(
 	if ui.sized(gtx, {min = {SIZE_WIDTH, 0}, max = {SIZE_WIDTH, ui.INF}}) {
 		if ui.column(gtx, align = .End) {
 			primer.text(gtx, human.bytes(e.bytes), .Small)
+			if e.directory {
+				primer.tooltip(gtx, tr(.Folder_Charged), ui.last_widget(gtx))
+			}
+			size_notes(gtx, e.bytes, e.logical, e.logical_known, e.frees, e.frees_known)
 			if m.colour == .Change {
 				if d := delta_text(e.bytes, e.was, compared, gtx.allocator); d != "" {
 					primer.text(gtx, d, .Small, color = primer.color(.Fg_Color_Muted))
@@ -950,6 +981,7 @@ largest :: proc(gtx: ^ui.Ctx, m: ^Model) {
 							show_raw_tip(gtx, f.path, ui.last_widget(gtx))
 						}
 						primer.text(gtx, human.bytes(f.bytes), .Small)
+						size_notes(gtx, f.bytes, f.logical, f.logical_known, f.frees, f.frees_known)
 						if m.colour == .Change {
 							if d := delta_text(f.bytes, f.was, r.compared, gtx.allocator);
 							   d != "" {
@@ -1032,6 +1064,28 @@ need_held :: proc(gtx: ^ui.Ctx, q: $Q, held: ^Q, $R: typeid) -> ^R {
 		return r
 	}
 	return nil
+}
+
+// size_notes is the length, and what deleting this one entry frees, under its
+// charged size. A frees quantity is shown only when it is exact and differs
+// from the charge. Unknown is a phrase, and only when a known length differs.
+@(private)
+size_notes :: proc(
+	gtx: ^ui.Ctx,
+	charged, logical: u64,
+	logical_known: bool,
+	frees: u64,
+	frees_known: bool,
+) {
+	muted := primer.color(.Fg_Color_Muted)
+	if logical_known && logical != charged {
+		primer.text(gtx, trf(gtx, .Listing_Length, human.bytes(logical)), .Small, color = muted)
+	}
+	if frees_known && frees != charged {
+		primer.text(gtx, trf(gtx, .Deleting_Frees, human.bytes(frees)), .Small, color = muted)
+	} else if !frees_known && logical_known && logical != charged {
+		primer.text(gtx, tr(.Deleting_Unknown), .Small, color = muted)
+	}
 }
 
 // NO_NODE names no node.

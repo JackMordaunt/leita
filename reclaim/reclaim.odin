@@ -66,7 +66,7 @@ CATEGORY_REASONS := [Category]string {
 	.Package_Cache  = "Downloaded again when a package is next needed.",
 	.App_Cache      = "Applications keep only what they can make again in their cache.",
 	.Device_Support = "Copied again from the device the next time Xcode connects to it.",
-	.Trash          = "Already deleted; emptying it frees the space for good.",
+	.Trash          = "Already deleted. Emptying it removes those copies. How much disk space that frees can be unknown.",
 }
 
 // Platform is the system a scan's paths are of, which says what separates their

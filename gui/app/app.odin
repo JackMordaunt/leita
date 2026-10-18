@@ -885,6 +885,13 @@ progress :: proc(d: ^Desk) -> query.Progress_Result {
 		r.bytes = sync.atomic_load(&s.tree.bytes_done)
 		r.unread, r.denied = scan.unread(&s.tree)
 	}
+	r.retention_known = true
+	ret := scan.retention_of(&s.tree)
+	r.snapshots = u8(ret.snapshots)
+	r.purge_known = ret.purgeable_known
+	r.purgeable = ret.purgeable
+	r.scan_order = scan.is_scan_order(&s.tree)
+	r.logical_sizes = scan.is_logical(&s.tree)
 	return r
 }
 
@@ -945,6 +952,15 @@ sorted_children :: proc(d: ^Desk, dir: u32) -> []query.Entry {
 	for c in survey.next_child(&it) {
 		n := scan.node(&s.tree, c)
 		directory := .Directory in scan.node_flags(n)
+		// A folder row shows the charged rollup. The inode's length and exact
+		// reclaim are not that total, so they stay unknown on the row.
+		logical: u64
+		logical_known: bool
+		frees: u64
+		frees_known: bool
+		if !directory {
+			logical, logical_known, frees, frees_known = node_measures(&s.tree, c)
+		}
 		append(
 			&entries,
 			query.Entry {
@@ -954,6 +970,10 @@ sorted_children :: proc(d: ^Desk, dir: u32) -> []query.Entry {
 				directory = directory,
 				was = was_of(d, c),
 				incomplete = directory && incomplete(s, c),
+				logical = logical,
+				logical_known = logical_known,
+				frees = frees,
+				frees_known = frees_known,
 			},
 		)
 	}
@@ -964,6 +984,19 @@ sorted_children :: proc(d: ^Desk, dir: u32) -> []query.Entry {
 		return a.name < b.name
 	})
 	return entries[:]
+}
+
+// node_measures is one node's length and exact reclaim. A missing fact stays
+// unknown. The charged share is not copied into frees.
+@(private = "file")
+node_measures :: proc(t: ^scan.Tree, index: u32) -> (logical: u64, logical_known: bool, frees: u64, frees_known: bool) {
+	if a, ok := scan.account_of(t, index); ok && .Logical in a.known {
+		logical, logical_known = a.logical, true
+	}
+	if n, ok := scan.exact_frees(scan.freed_of(t, index)); ok {
+		frees, frees_known = n, true
+	}
+	return
 }
 
 /*
@@ -1198,6 +1231,7 @@ largest :: proc(
 		files[i].path = scan.path(&s.tree, top[i].node, allocator)
 		files[i].within = ancestors(s, top[i].node, allocator)
 		files[i].was = was_of(d, top[i].node)
+		files[i].logical, files[i].logical_known, files[i].frees, files[i].frees_known = node_measures(&s.tree, top[i].node)
 	}
 	return {files = files, compared = d.compared.id != 0}
 }

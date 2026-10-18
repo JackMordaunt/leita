@@ -546,6 +546,15 @@ pdf_header :: proc(p: ^Pen) {
 	}
 
 	prose(p, header_line(r), SMALL_SIZE + 0.5, MUTED)
+	prose(
+		p,
+		"Charged is a share of allocated space. Exact reclaim is what deleting that one entry frees, when known, including zero. Unknown is not zero. Deleting a folder does not free the charged total of what it holds.",
+		SMALL_SIZE,
+		MUTED,
+	)
+	if acct, ok := r.accounting.?; ok {
+		prose(p, accounting_line(acct), SMALL_SIZE, MUTED)
+	}
 	p.y += 6
 
 	facts := make([dynamic]Fact, context.temp_allocator)
@@ -627,8 +636,9 @@ pdf_entries :: proc(p: ^Pen, title: string, entries: []Entry) {
 	append(&cols, Column{head = "#", width = 16, align = .Right})
 	append(&cols, Column{head = "Path"})
 	append(&cols, Column{head = "Kind", width = 50})
-	append(&cols, Column{head = "Size", width = 50, align = .Right})
-	append(&cols, Column{head = "Share", width = 82})
+	append(&cols, Column{head = "Charged", width = 52, align = .Right})
+	append(&cols, Column{head = "Share", width = 70})
+	append(&cols, Column{head = "Exact", width = 52, align = .Right})
 	if compared {
 		append(&cols, Column{head = "Change", width = 52, align = .Right})
 	}
@@ -646,18 +656,23 @@ pdf_entries :: proc(p: ^Pen, title: string, entries: []Entry) {
 		cell(p, c[2], y, kinds.NAMES[e.kind], MUTED)
 		cell(p, c[3], y, human.bytes(e.bytes))
 		share_cell(p, c[4], y, e.bytes)
+		if n, known := e.frees.?; known {
+			cell(p, c[5], y, human.bytes(n))
+		} else {
+			cell(p, c[5], y, "unknown", MUTED)
+		}
 		if compared {
-			if delta, ok := change(e); ok {
+			if delta, changed := change(e); changed {
 				switch {
 				case delta > 0:
-					cell(p, c[5], y, fmt.tprintf("+%s", human.bytes(u64(delta))), GREW)
+					cell(p, c[6], y, fmt.tprintf("+%s", human.bytes(u64(delta))), GREW)
 				case delta < 0:
-					cell(p, c[5], y, fmt.tprintf("−%s", human.bytes(u64(-delta))), SHRANK)
+					cell(p, c[6], y, fmt.tprintf("−%s", human.bytes(u64(-delta))), SHRANK)
 				case:
-					cell(p, c[5], y, "no change", MUTED)
+					cell(p, c[6], y, "no change", MUTED)
 				}
 			} else {
-				cell(p, c[5], y, "new", MUTED)
+				cell(p, c[6], y, "new", MUTED)
 			}
 		}
 	}
@@ -683,7 +698,7 @@ pdf_kinds :: proc(p: ^Pen) {
 	cols := []Column {
 		{head = "Kind"},
 		{head = "Files", width = 70, align = .Right},
-		{head = "Size", width = 60, align = .Right},
+		{head = "Charged", width = 60, align = .Right},
 		{head = "Share", width = 200},
 	}
 	c := columns(p, cols)
@@ -715,7 +730,7 @@ pdf_reclaim :: proc(p: ^Pen, groups: []Group) {
 	prose(
 		p,
 		fmt.tprintf(
-			"%s can be deleted without losing anything: each is made again by the tool that made it.",
+			"%s is the charged share of what can be deleted and made again. Deleting a folder does not always free that share.",
 			human.bytes(total),
 		),
 		BODY_SIZE,
@@ -735,8 +750,9 @@ pdf_reclaim :: proc(p: ^Pen, groups: []Group) {
 		cols := []Column {
 			{head = "#", width = 16, align = .Right},
 			{head = "Path"},
-			{head = "Size", width = 50, align = .Right},
-			{head = "Share", width = 82},
+			{head = "Charged", width = 52, align = .Right},
+			{head = "Share", width = 70},
+			{head = "Exact", width = 52, align = .Right},
 		}
 		c := columns(p, cols)
 		table(p, fmt.tprintf("Reclaim: %s", name), c)
@@ -751,6 +767,11 @@ pdf_reclaim :: proc(p: ^Pen, groups: []Group) {
 			}
 			cell(p, c[2], y, human.bytes(item.bytes))
 			share_cell(p, c[3], y, item.bytes)
+			if n, ok := item.frees.?; ok {
+				cell(p, c[4], y, human.bytes(n))
+			} else {
+				cell(p, c[4], y, "unknown", MUTED)
+			}
 		}
 	}
 	// Its tables' titles were made in the loop, and are gone with it.

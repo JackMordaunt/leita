@@ -19,11 +19,13 @@ in every row:
 	rank          1 for the largest in its list; empty for total, kind and note
 	name          the path; a kind's name; the note's text
 	kind          what a directory or file is; a candidate's Reclaim category
-	bytes         on disk, a whole number
+	bytes         charged share, a whole number; not what deletion frees
 	percent       of the target's bytes, to two places
 	files         how many files: the target's, or a kind's
 	bytes_before  in the scan compared with; empty when it kept none
 	change        bytes less bytes_before
+	frees         exact bytes deleting this one entry frees, including 0;
+	              empty when that is unknown. Never a charged estimate.
 
 The byte order mark is written so that Excel takes the file as UTF-8 rather than
 guessing an encoding, which would garble every name that is not ASCII. A program
@@ -57,6 +59,7 @@ write_csv :: proc(sb: ^strings.Builder, r: ^Report) {
 		cell_text(&row, "")
 		cell_text(&row, "")
 	}
+	cell_text(&row, "")
 	row_end(&row)
 
 	csv_entries(sb, r, "directory", r.largest_directories)
@@ -71,6 +74,7 @@ write_csv :: proc(sb: ^strings.Builder, r: ^Report) {
 		cell_number(&row, k.bytes)
 		cell_percent(&row, r, k.bytes)
 		cell_number(&row, k.files)
+		cell_text(&row, "")
 		cell_text(&row, "")
 		cell_text(&row, "")
 		row_end(&row)
@@ -88,6 +92,11 @@ write_csv :: proc(sb: ^strings.Builder, r: ^Report) {
 				cell_text(&row, "")
 				cell_text(&row, "")
 				cell_text(&row, "")
+				if n, known := c.frees.?; known {
+					cell_number(&row, n)
+				} else {
+					cell_text(&row, "")
+				}
 				row_end(&row)
 			}
 		}
@@ -109,6 +118,7 @@ CSV_HEADERS := [?]string {
 	"files",
 	"bytes_before",
 	"change",
+	"frees",
 }
 
 @(private)
@@ -128,6 +138,11 @@ csv_entries :: proc(sb: ^strings.Builder, r: ^Report, section: string, entries: 
 			cell_signed(&row, delta)
 		} else {
 			cell_text(&row, "")
+			cell_text(&row, "")
+		}
+		if n, ok := e.frees.?; ok {
+			cell_number(&row, n)
+		} else {
 			cell_text(&row, "")
 		}
 		row_end(&row)

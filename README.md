@@ -137,7 +137,7 @@ Time Machine, iPhone backups, Xcode archives, the simulators' disks, and
 Docker's or OrbStack's virtual disk are not rules. A folder inside them is
 listed only when a rule matches it.
 
-Each item shows how much it frees and why it is safe to delete.
+Each item shows its charged size and why it is safe to delete. That size is not always what deletion frees.
 
 Each deletion leita makes is recorded: the path, how big it was, when, and
 whether it failed. Scans older than the newest 30 are forgotten. This record
