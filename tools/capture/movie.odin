@@ -1,6 +1,7 @@
 package main
 
 import "core:fmt"
+import "core:math"
 import "core:strconv"
 import "core:strings"
 import "jm:ui"
@@ -9,16 +10,17 @@ import "jm:ui/ops"
 import "jm:ui/render"
 
 Movie :: struct {
-	active: bool,
+	active:  bool,
 	//review:ignore odin-destroy-incomplete prefix borrows an os.args string for the lifetime of main.
-	prefix: string,
-	frame:  int,
-	at:     ops.Point,
+	prefix:  string,
+	frame:   int,
+	actions: int,
+	at:      ops.Point,
 	//review:ignore odin-destroy-incomplete cue borrows an os.args string for the lifetime of main.
-	cue:    string,
-	arrow:  bl.PathCore,
-	face:   bl.FontFaceCore,
-	font:   bl.FontCore,
+	cue:     string,
+	arrow:   bl.PathCore,
+	face:    bl.FontFaceCore,
+	font:    bl.FontCore,
 }
 
 movie_init :: proc(m: ^Movie) {
@@ -101,16 +103,24 @@ movie_hold :: proc(m: ^Movie, h: ^render.Headless, count: int) {
 }
 
 // Smoothstep has zero velocity at both ends of a pointer journey.
-ease_pointer :: proc(start, end: ops.Point, fraction: f32) -> ops.Point {
+ease_pointer :: proc(start, end: ops.Point, fraction: f32, bend: f32 = 0) -> ops.Point {
 	t := clamp(fraction, 0, 1)
 	ease := t * t * (3 - 2 * t)
-	return start + (end - start) * ease
+	delta := end - start
+	distance := math.sqrt(delta.x * delta.x + delta.y * delta.y)
+	if distance == 0 {return start}
+	normal := ops.Point{-delta.y, delta.x} / distance
+	return start + delta * ease + normal * bend * (4 * ease * (1 - ease))
 }
 
 movie_move :: proc(m: ^Movie, h: ^render.Headless, target: ops.Point, count: int) {
 	start := m.at
+	delta := target - start
+	distance := math.sqrt(delta.x * delta.x + delta.y * delta.y)
+	bend := min(distance * 0.045, 18)
+	if m.actions % 2 == 1 {bend = -bend}
 	for i in 1 ..= count {
-		m.at = ease_pointer(start, target, f32(i) / f32(count))
+		m.at = ease_pointer(start, target, f32(i) / f32(count), bend)
 		ui.router_push(&h.p.router, {kind = .Move, pos = m.at})
 		movie_frame(m, h)
 	}
@@ -125,13 +135,31 @@ movie_tap :: proc(m: ^Movie, h: ^render.Headless, name: string) {
 }
 
 movie_press :: proc(m: ^Movie, h: ^render.Headless, name: string, target: ops.Point) {
-	fmt.printfln("ACTION\t%d\t%s\t%.3f\t%.3f", m.frame, name, target.x, target.y)
-	movie_move(m, h, target, 21)
-	movie_hold(m, h, 6)
+	delta := target - m.at
+	distance := math.sqrt(delta.x * delta.x + delta.y * delta.y)
+	travel := clamp(12 + int(distance / 45), 14, 27)
+	hovers := [3]int{3, 4, 2}
+	settles := [3]int{10, 14, 12}
+	hover := hovers[m.actions % 3]
+	settle := settles[m.actions % 3]
+	fmt.printfln(
+		"ACTION\t%d\t%s\t%.3f\t%.3f\t%d\t%d\t%d\t%d",
+		m.frame,
+		name,
+		target.x,
+		target.y,
+		travel,
+		hover,
+		3,
+		settle,
+	)
+	movie_move(m, h, target, travel)
+	movie_hold(m, h, hover)
 	ui.router_push(&h.p.router, {kind = .Press, pos = m.at, button = .Left, clicks = 1})
-	movie_hold(m, h, 5)
+	movie_hold(m, h, 3)
 	ui.router_push(&h.p.router, {kind = .Release, pos = m.at, button = .Left})
-	movie_hold(m, h, 18)
+	movie_hold(m, h, settle)
+	m.actions += 1
 }
 
 movie_step :: proc(m: ^Movie, h: ^render.Headless, args: []string, i: ^int) -> bool {
@@ -154,6 +182,7 @@ movie_step :: proc(m: ^Movie, h: ^render.Headless, args: []string, i: ^int) -> b
 		switch flag {
 		case "-movie":
 			m.prefix, m.frame, m.active = value, 0, true
+			m.actions = 0
 			ui.router_push(&h.p.router, {kind = .Move, pos = m.at})
 		case "-chart":
 			movie_press(m, h, fmt.tprintf("chart %s", value), chart_target(h, value))

@@ -17,7 +17,7 @@ Stream_Clock  :: struct {
 	elapsed:         i64,
 	nodes:           u64,
 }
-STREAM_FRAMES :: 840
+STREAM_FRAMES :: 720
 stream_clock: Stream_Clock
 current_model: ^view.Model
 folder_node: u32

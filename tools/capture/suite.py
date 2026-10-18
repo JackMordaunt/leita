@@ -79,21 +79,21 @@ def fixture(binary, out, fixture_root, theme, frames):
     run([binary, root, baseline_data, theme, '-await', 'Done', *export(before, include=True)], env=env)
     if frames:
         args = [binary, root, data, theme, '-await', 'Done', '-advance', '30',
-                '-movie', frame_dir / 'frame-', '-hold', '30',
-                '-tap', 'Settings', '-tap', 'Rescan', '-glide', '1100', '100', '21',
+                '-movie', frame_dir / 'frame-', '-hold', '45',
+                '-tap', 'Settings', '-tap', 'Rescan',
                 '-hold', '60', '-await', 'Done', '-png', base / 'before.png',
                 '-signal', ready, '-await-file', resume,
                 '-cue', 'Example build files added: 8 MiB build output + 1 MiB source growth',
                 '-hold', '90', '-cue', '',
-                '-tap', 'Settings', '-tap', 'Rescan', '-glide', '1100', '100', '21',
+                '-tap', 'Settings', '-tap', 'Rescan',
                 '-hold', '60', '-await', 'Done',
-                '-tap', 'Change', '-glide', '1100', '100', '21', '-hold', '90',
+                '-tap', 'Change', '-hold', '84',
                 '-png', base / 'growth.png',
-                '-tap', 'Reclaim', '-glide', '700', '238', '21', '-hold', '90',
+                '-tap', 'Reclaim', '-hold', '96',
                 '-png', base / 'reclaim.png',
                 '-tap', 'Settings', '-tap', 'Export', '-tap', 'HTML',
                 '-tap', 'Include Reclaim candidates', '-hold', '60', '-tap', 'Export',
-                '-pick', reports / 'report.html', '-hold', '90', '-await-file', reports / 'report.html',
+                '-pick', reports / 'report.html', '-hold', '93', '-await-file', reports / 'report.html',
                 '-end-movie', '-advance', '600', *export(after)]
     else:
         args = [binary, root, data, theme, '-await', 'Done', '-advance', '30',
@@ -170,10 +170,10 @@ def synthetic(binary, out, frames):
             steps += ['-stream', '-movie', base / 'frames' / 'frame-', '-hold', '45']
             for index, mode in enumerate(('Sunburst', 'Treemap', 'Icicle')):
                 if index:
-                    steps += ['-tap', mode, '-glide', '1100', '100', '21', '-hold', '30']
-                steps += ['-chart', 'Users', '-glide', '1100', '100', '21', '-hold', '60',
-                          '-at', '/Users', '-tap', '/', '-glide', '1100', '100', '21',
-                          '-hold', '15', '-at', '/']
+                    steps += ['-tap', mode, '-hold', str((0, 45, 54)[index])]
+                steps += ['-chart', 'Users', '-hold', str((75, 66, 81)[index]),
+                          '-at', '/Users', '-tap', '/',
+                          '-hold', str((30, 39, 45)[index]), '-at', '/']
             steps += ['-await', 'Done', '-end-movie']
         steps += ['-await', 'Done', '-advance', '60']
         for name, mode, colour in [('sunburst', 'Sunburst', 'Folder'),
@@ -201,7 +201,8 @@ def storyboard(base):
         if fields[0] == 'ACTION':
             events.append(dict(frame=int(fields[1]), seconds=int(fields[1]) / 30,
                                action=fields[2], target=[float(fields[3]), float(fields[4])],
-                               travel_frames=21, hover_frames=6, press_frames=5, release_frames=18))
+                               travel_frames=int(fields[5]), hover_frames=int(fields[6]),
+                               press_frames=int(fields[7]), release_frames=int(fields[8])))
         elif fields[0] == 'NAVIGATION':
             navigation.append(dict(frame=int(fields[1]), view=fields[2], node=int(fields[3]), path=fields[4], state=fields[5]))
         elif fields[0] == 'CUE':
@@ -213,6 +214,7 @@ def storyboard(base):
     assert count == len(list((base / 'frames').glob('*.png')))
     result = dict(fps=30, encoding=dict(codec='libx264', preset='slow', crf=18, pixel_format='yuv420p'), frames=count, seconds=count / 30, events=events,
                   pointer='macOS-style black arrow, thin white outline and subtle shadow',
+                  pointer_motion='direct shallow curves; distance-paced travel and varied deterministic pauses; no parking moves',
                   source='continuous real app frames with dispatched pointer Move, Press and Release events')
     if progress:
         result['progress'] = progress
@@ -221,8 +223,13 @@ def storyboard(base):
         assert all(n['state'] == 'Scanning' for n in navigation if n['path'] == '/Users')
         assert all(n['node'] != 0 for n in navigation if n['path'] == '/Users')
         assert all(n['node'] == 0 for n in navigation if n['path'] == '/')
-        assert all(abs(p['scan_seconds'] - min(p['frame'] / 30, 28)) < .11 for p in progress), 'scan display clock differs from movie clock'
-        for name, start, end in [('Sunburst', 0, 258), ('Treemap', 315, 576), ('Icicle', 633, 837)]:
+        assert all(abs(p['scan_seconds'] - min(p['frame'] / 30, 24)) < .11 for p in progress), 'scan display clock differs from movie clock'
+        switches = [(event['action'], event['frame'] + event['travel_frames'] +
+                     event['hover_frames'] + event['press_frames'])
+                    for event in events if event.get('action') in ('Treemap', 'Icicle')]
+        intervals = [('Sunburst', 0), *switches, ('Done', 720)]
+        for (name, start), (_, stop) in zip(intervals, intervals[1:]):
+            end = stop - 1
             samples = [p for p in progress if start <= p['frame'] <= end]
             assert len({p['nodes'] for p in samples}) > 10, f'{name} did not visibly scan'
             assert all(p['state'] == 'Scanning' for p in samples), f'{name} finished prematurely'

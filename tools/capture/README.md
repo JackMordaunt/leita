@@ -29,8 +29,8 @@ host exports its initial report. The filmed host starts a scan through Settings
 a source asset from 2 to 3 MiB. A visible cue explains this external addition.
 The pointer invokes Rescan, selects Change and Reclaim, then exports HTML through
 the actual UI. The save-dialog path is supplied by the headless picker. It never
-selects a cleanup candidate. The 40.13 s continuous recording includes deliberate
-pointer travel, native control press/release feedback, reading pauses, and the saved notice.
+selects a cleanup candidate. The continuous recording includes direct pointer travel, native control
+press/release feedback, reading pauses, and the saved notice.
 
 The script checks allocated byte totals, snapshot comparison, file counts,
 unread count, the new build-output classification, and the source asset's exact
@@ -40,12 +40,14 @@ their original destinations are generic paths alongside the generated fixture.
 The fixture is generated example data, although its report accurately identifies
 it as a real filesystem scan, not Leita's synthetic engine.
 
-The 29.93 s hero records a running day-7 synthetic scan. In each of Sunburst,
+The hero records a running day-7 synthetic scan. In each of Sunburst,
 Treemap and Icicle the pointer clicks the Users folder inside the chart, pauses
-on its contents, then clicks the root breadcrumb. The scan completes at 28 s;
-the final root view holds for another 1.93 s. Each navigation asserts that the
+on its contents, then clicks the root breadcrumb. The scan completes at 24 s, followed by a pause on the final root view. Each navigation asserts that the
 actual selected node and breadcrumb agree, and records the view, path and node.
-No navigation changes the model directly.
+No navigation changes the model directly. The pointer remains at the last
+meaningful target during reading pauses, then takes a shallow curved route to
+the next control. Travel scales with distance; hover, release and reading pauses
+vary deterministically. There are no repeated parking moves or random jitter.
 
 An optional synthetic directory-boundary clock releases the same real batches
 every three video frames in both themes. The host still folds the tree and sends
@@ -100,7 +102,8 @@ The first three arguments are target, explicit isolated state directory, and
 - `-movie PREFIX`, `-end-movie`: start/stop continuous frames with a macOS-style black arrow and thin white outline.
 - `-chart Users`: click the Users directory in the visible chart.
 - `-at PATH`: assert the selected directory and breadcrumb, then log navigation.
-- `-tap TAG`: travel 21 frames, hover 6, press 5, then release and settle 18 frames.
+- `-tap TAG`: follow a shallow curve at a distance-based pace, hover, press and
+  release. The action log records the exact frame count of each phase.
 - `-glide X Y FRAMES`, `-hold FRAMES`: move with eased endpoints or pause.
 - `-cue TEXT`: show an explicit external-action caption; an empty string clears it.
 - `-stream`: use the synthetic frame clock (requires `LEITA_SYNTHETIC`).
