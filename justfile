@@ -397,6 +397,7 @@ test: sqlite
     # Fuzz packages are not imported by the command line, so -all-packages
     # never sees them. These are the short fixed-seed replays; just fuzz is
     # the longer budget. test.yml stays as it is and still runs this recipe.
+    {{odin}} test btrfs/fuzz -debug {{san}} {{flags}} {{curl_open}} -out:build/test/fuzz-btrfs{{exe}}
     {{odin}} test ntfs/fuzz -debug {{san}} {{flags}} {{curl_open}} -out:build/test/fuzz-ntfs{{exe}}
     {{odin}} test search/fuzz -debug {{san}} {{flags}} {{curl_open}} -out:build/test/fuzz-search{{exe}}
 
