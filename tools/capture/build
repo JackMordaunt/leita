@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Build only the libraries the headless driver uses; do not open a desktop.
+set -euo pipefail
+capture_root=$(cd "$(dirname "$0")/../.." && pwd)
+capture_jm=${JM:-"$capture_root/jm"}
+cd "$capture_root"
+JM="$capture_jm" just sqlite
+(cd "$capture_jm"; ls ui/blend2d/lib/*blend2d* >/dev/null 2>&1 || just blend2d)
+(cd "$capture_jm"; ls ui/kb/lib/kb_text_shape.* >/dev/null 2>&1 || just kb)
+capture_version=${LEITA_VERSION:-"g$(git rev-parse --short HEAD)-capture"}
+mkdir -p build
+"${ODIN:-odin}" build tools/capture -o:minimal -vet -strict-style \
+  "-collection:jm=$capture_jm" "-define:LEITA_VERSION=$capture_version" \
+  -define:JM_HTTP_DLOPEN=true -out:build/capture
