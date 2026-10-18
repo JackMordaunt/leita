@@ -61,6 +61,53 @@ test_a_bind_of_an_ancestor_is_a_mount :: proc(t: ^testing.T) {
 	testing.expect_value(t, files, 1)
 }
 
+/*
+A bind of a tree the walk reads anyway is a mount, so its files count once: var is
+bound at mnt/var and mnt/again, and a walk of the base records both as mounts. A
+walk of mnt alone does not reach var, so one of the two binds is walked, the one
+mounted with the lower id, and the other is a mount.
+*/
+@(test)
+test_a_bind_of_a_walked_tree_is_counted_once :: proc(t: ^testing.T) {
+	base := bind_place(t, "sibling")
+	defer os.remove_all(base)
+	at :: proc(base, name: string) -> string {
+		return fmt.tprintf("%s/%s", base, name)
+	}
+	for dir in ([]string{"var", "mnt/var", "mnt/again"}) {
+		testing.expect(t, os.make_directory_all(at(base, dir)) == nil)
+	}
+	testing.expect(t, os.write_entire_file(at(base, "var/f"), make([]byte, 4096, context.temp_allocator)) == nil)
+
+	if !bind(t, at(base, "var"), at(base, "mnt/var")) {
+		return
+	}
+	defer unmount(at(base, "mnt/var"))
+	testing.expect(t, bind(t, at(base, "var"), at(base, "mnt/again")))
+	defer unmount(at(base, "mnt/again"))
+
+	whole := bind_walked(t, base)
+	defer scan.tree_destroy(&whole)
+	_, files := named_count(&whole, "f")
+	testing.expect_value(t, files, 1)
+	mounts := 0
+	for i in 0 ..< whole.count {
+		if .Mount in scan.node_flags(scan.node(&whole, i)) {
+			mounts += 1
+		}
+	}
+	testing.expect_value(t, mounts, 2)
+
+	alone := bind_walked(t, at(base, "mnt"))
+	defer scan.tree_destroy(&alone)
+	_, files = named_count(&alone, "f")
+	testing.expect_value(t, files, 1)
+	var, _ := named_count(&alone, "var")
+	again, _ := named_count(&alone, "again")
+	testing.expectf(t, .Mount not_in var, "mnt/var, mounted first, is a mount: %v", var)
+	testing.expectf(t, .Mount in again, "mnt/again is walked as well: %v", again)
+}
+
 // An empty directory for one bind test, under the temp directory.
 @(private = "file")
 bind_place :: proc(t: ^testing.T, name: string) -> string {

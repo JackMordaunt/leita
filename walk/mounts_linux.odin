@@ -1,13 +1,18 @@
 #+build linux
 package walk
 
+import "base:runtime"
 import "core:mem"
 import "core:sys/linux"
+import "core:sys/posix"
+
+import "../scan"
 
 /*
-Whether a directory the walk would enter is one it is already inside, which is
-recorded as a mount and not read, and if not, the directories its own entries are
-checked against.
+Whether a directory the walk would enter is one it is already inside or reads
+elsewhere, either of which is recorded as a mount and not read, and if not, the
+directories its own entries are checked against. What a bind of a tree the walk
+reads elsewhere looks like is told at stops_at.
 
 Within one mount the directories form a tree, so only a mount can lead back to a
 directory above it. A bind of a directory onto one below it (mount --bind /data
@@ -46,7 +51,7 @@ enter :: proc(
 		return on_path(above, id), above, true
 	}
 	path := climb(w, dir) or_return
-	if on_path(path, id) {
+	if on_path(path, id) || walked_elsewhere(w, st) {
 		return true, nil, true
 	}
 	below = push(w, id, path) or_return
@@ -98,9 +103,45 @@ climb :: proc(w: ^Worker, dir: linux.Fd) -> (path: ^Ancestor, ok: bool) {
 	return path, true
 }
 
-// PATH_MAX over the two bytes of the shortest directory name and its separator.
+/*
+Whether this walk reads the directory at the root of the mount `st` describes
+somewhere else: shown at or under the walk's start through another mount of the
+same filesystem (scan.shown_elsewhere), and found there when asked, so a place
+since covered by another mount, or gone, does not count. The mount table is read
+only here, for a mount the walk would otherwise enter.
+*/
 @(private)
-CLIMB_LIMIT :: 4096 / 2
+walked_elsewhere :: proc(w: ^Worker, st: linux.Statx) -> bool {
+	if .MNT_ID not_in st.mask {
+		return false
+	}
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	t := w.writer.tree
+	given, real: Path
+	start, start_ok := terminate(scan.name_of(t, t.root), &given)
+	if !start_ok || posix.realpath(start, raw_data(real[:])) == nil {
+		return false
+	}
+	for s in scan.shown_elsewhere(st.mnt_id, string(cstring(&real[0])), context.temp_allocator) {
+		path, path_ok := terminate(s.path, &given)
+		if !path_ok {
+			continue
+		}
+		there: linux.Statx
+		if linux.statx(linux.AT_FDCWD, path, {.NO_AUTOMOUNT}, {.INO, .MNT_ID}, &there) != .NONE {
+			continue
+		}
+		if there.mnt_id == s.mount && statx_device(there) == statx_device(st) && there.ino == st.ino {
+			return true
+		}
+	}
+	return false
+}
+
+// The longest path the walk opens (Path) over the two bytes of the shortest
+// directory name and its separator.
+@(private)
+CLIMB_LIMIT :: len(Path) / 2
 
 // Whether `id` is one of the directories on `path`.
 @(private)

@@ -154,7 +154,7 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 		if asked {
 			mask := linux.Statx_Mask{.TYPE, .BLOCKS, .NLINK}
 			if l.type == .DIR {
-				mask = {.TYPE, .INO}
+				mask = {.TYPE, .INO, .MNT_ID}
 			}
 			flags := linux.FD_Flags{.SYMLINK_NOFOLLOW, .NO_AUTOMOUNT}
 			errno = stat_entry(linux.statx, fd, cstring(&s.names[l.at]), flags, mask, &st)
@@ -394,10 +394,20 @@ UUID, from BTRFS_IOC_FS_INFO, is the same for every subvolume.
 
 A read-only btrfs subvolume is stopped at as a mount is: snapper's snapshots under
 /.snapshots are each a whole copy of the system, and walking them would charge the
-disk for every one. A bind mount of the same filesystem is walked as the directory
-it appears to be, so its files count wherever else they are also reached, unless
-it shows a directory the walk is already inside (enter in mounts_linux.odin). An
-automount point is a mount without being opened, which would mount it.
+disk for every one. An automount point is a mount without being opened, which
+would mount it.
+
+A bind keeps the device of what it shows, so one within a filesystem never reaches
+this test; enter (mounts_linux.odin) asks about every mount the walk would go into,
+whether it came here or not. A total is meant
+to be the space the filesystem gives back, so a bind of a tree the walk reads
+anyway is a mount: mount --bind /var /mnt/var, and a scan of / shows /mnt/var as a
+mount point of size 0, with /var counted once, where it lies. A bind of a tree the
+walk does not otherwise reach is walked as the directory it appears to be, since
+it is the only place that tree is counted: a scan of /mnt alone reads /mnt/var.
+Of two binds of one tree outside the scan, the one with the lower mount id is
+walked and the other is a mount. A bind of a directory the walk is inside is
+always a mount.
 */
 @(private)
 stops_at :: proc(

@@ -3,6 +3,7 @@ package scan
 
 import "core:io"
 import "core:os"
+import "core:strconv"
 import "core:strings"
 
 /*
@@ -232,6 +233,98 @@ mounts_under :: proc(dir: string, allocator := context.allocator) -> []string {
 
 @(private)
 PROC_MOUNTS :: "/proc/mounts"
+
+// A place the mount table shows a directory at: its path, and the id of the mount
+// the path reaches it through.
+Shown :: struct {
+	path:  string,
+	mount: u64,
+}
+
+/*
+shown_elsewhere is every place at or under `under`, a real path, where the mount
+table shows the directory that mount `id` has at its root, through another mount
+of the same filesystem whose own root holds it: a bind of /var at /mnt/var is
+shown at /var, through the mount of /. A mount with the same root as `id` counts
+only when its id is the lower, so of two binds of one directory each finds the
+other only one way round. Paths are in allocator. It reads /proc/self/mountinfo,
+which is Linux's; on another system, or when the file cannot be read, there are
+none.
+*/
+shown_elsewhere :: proc(id: u64, under: string, allocator := context.allocator) -> []Shown {
+	out := make([dynamic]Shown, allocator)
+	when ODIN_OS == .Linux {
+		table, err := os.read_entire_file_from_path(PROC_MOUNTINFO, context.temp_allocator)
+		if err != nil {
+			return out[:]
+		}
+		mounts := mountinfo_parse(string(table))
+		own, found := Mount_Line{}, false
+		for m in mounts {
+			if m.id == id {
+				own, found = m, true
+			}
+		}
+		if !found {
+			return out[:]
+		}
+		for m in mounts {
+			if m.id == own.id || m.device != own.device || !covers(m.root, own.root) {
+				continue
+			}
+			if m.root == own.root && m.id > own.id {
+				continue
+			}
+			// The part of own's root below m's, put under where m is mounted.
+			rest := strings.trim_right(own.root[len(strings.trim_right(m.root, "/")):], "/")
+			path := strings.concatenate(
+				{strings.trim_right(m.point, "/"), rest},
+				context.temp_allocator,
+			)
+			if path == "" {
+				path = "/"
+			}
+			if covers(under, path) {
+				append(&out, Shown{strings.clone(path, allocator), m.id})
+			}
+		}
+	}
+	return out[:]
+}
+
+@(private)
+PROC_MOUNTINFO :: "/proc/self/mountinfo"
+
+// The fields of one line of /proc/self/mountinfo that shown_elsewhere reads
+// (proc_pid_mountinfo(5)): the mount's id, its device as major:minor, the
+// directory of the filesystem at its root, and where it is mounted.
+@(private)
+Mount_Line :: struct {
+	id:     u64,
+	device: string,
+	root:   string,
+	point:  string,
+}
+
+// Every line of the table that has those fields, in the temp allocator.
+@(private)
+mountinfo_parse :: proc(text: string) -> []Mount_Line {
+	out := make([dynamic]Mount_Line, context.temp_allocator)
+	text := text
+	for line in strings.split_lines_iterator(&text) {
+		rest := line
+		first := strings.fields_iterator(&rest) or_continue
+		_ = strings.fields_iterator(&rest) or_continue // the parent's id
+		device := strings.fields_iterator(&rest) or_continue
+		root := strings.fields_iterator(&rest) or_continue
+		point := strings.fields_iterator(&rest) or_continue
+		id := strconv.parse_u64(first, 10) or_continue
+		root = unescape(root, context.temp_allocator)
+		point = unescape(point, context.temp_allocator)
+		append(&out, Mount_Line{id, device, root, point})
+	}
+	return out[:]
+}
 
 // Whether `path` lies at or below `mount`. A prefix is not enough: /home does not
 // cover /home2, only /home and what is under it.
