@@ -195,7 +195,10 @@ a_notification_reaches_each_desktop_with_nothing_in_it_run :: proc(t: ^testing.T
 	windows := commands(.Windows, title, `it's ‘it’`)
 	script := windows[0][len(windows[0]) - 1]
 	testing.expect(t, strings.contains(script, `CreateTextNode('it''s ‘‘it’’')`), script)
-	testing.expect(t, strings.contains(script, `CreateToastNotifier('{1AC14E77`), script)
+	// Leita's own id when the shell lists it, PowerShell's when it does not.
+	testing.expect(t, strings.contains(script, `$app = '{1AC14E77`), script)
+	testing.expect(t, strings.contains(script, `$_.AppID -eq 'Librium.Leita' }) { $app = 'Librium.Leita' }`), script)
+	testing.expect(t, strings.contains(script, `CreateToastNotifier($app)`), script)
 
 	// The next way is tried only when one does not run.
 	Tried :: struct {

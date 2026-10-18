@@ -2,6 +2,7 @@ package leita_alert
 
 import "core:strings"
 
+import "../appid"
 import "../version"
 
 /*
@@ -13,9 +14,11 @@ without installing anything or registering an application:
 	         Specification (specifications.freedesktop.org); where it is
 	         missing, gdbus calls the same method itself.
 	Windows  a toast, through ToastNotificationManager.CreateToastNotifier
-	         with an application id Windows already knows, PowerShell's, since
-	         a toast under an unregistered id is not shown (Microsoft's "Send a
-	         local toast notification from desktop apps").
+	         with an application id Windows already knows, since a toast under
+	         an unregistered id is not shown (Microsoft's "Send a local toast
+	         notification from desktop apps"): Leita's own, appid.ID, where
+	         the installer's Start menu shortcut registered it, so the toast
+	         says Leita; PowerShell's where it did not, a run from the zip.
 	macOS    osascript's display notification (the StandardAdditions
 	         dictionary), which needs no application bundle, where
 	         UNUserNotificationCenter needs one and the person's permission.
@@ -43,7 +46,8 @@ when ODIN_OS == .Windows {
 Runner :: #type proc(argv: []string, user: rawptr) -> bool
 
 // POWERSHELL_APP is the application id of the Windows PowerShell shortcut that
-// Windows installs in the Start menu, so toasts under it are shown.
+// Windows installs in the Start menu, so toasts under it are shown, and the one
+// used when Leita's own is not registered.
 POWERSHELL_APP :: `{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe`
 
 // notify shows title and body on system, trying the next way when one does not
@@ -131,13 +135,21 @@ clone :: proc(argv: []string) -> []string {
 
 /*
 toast_script is the PowerShell that shows title and body as a toast: the
-ToastText02 template's two lines, set as XML text, under POWERSHELL_APP. Each
-is passed as a single-quoted PowerShell string, its quotes doubled, so nothing
-in them is run.
+ToastText02 template's two lines, set as XML text, under appid.ID when the shell
+lists a Start menu entry of that id (Get-StartApps; the installer makes one) and
+under POWERSHELL_APP when it does not or cannot say. Each is passed as a
+single-quoted PowerShell string, its quotes doubled, so nothing in them is run.
 */
 toast_script :: proc(title, body: string) -> string {
 	return strings.concatenate(
 		{
+			"$app = ",
+			powershell_quote(POWERSHELL_APP),
+			"; try { if (Get-StartApps | Where-Object { $_.AppID -eq ",
+			powershell_quote(appid.ID),
+			" }) { $app = ",
+			powershell_quote(appid.ID),
+			" } } catch {}; ",
 			"[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null; ",
 			"$x = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02); ",
 			"$t = $x.GetElementsByTagName('text'); ",
@@ -147,9 +159,7 @@ toast_script :: proc(title, body: string) -> string {
 			"$t.Item(1).AppendChild($x.CreateTextNode(",
 			powershell_quote(body),
 			")) > $null; ",
-			"[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier(",
-			powershell_quote(POWERSHELL_APP),
-			").Show([Windows.UI.Notifications.ToastNotification]::new($x))",
+			"[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($app).Show([Windows.UI.Notifications.ToastNotification]::new($x))",
 		},
 		context.temp_allocator,
 	)

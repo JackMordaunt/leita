@@ -34,6 +34,7 @@ import "core:strings"
 @(require) import "jm:debug"
 import "jm:ui/shell"
 
+import "../appid"
 import "../cli"
 import "../history"
 import "app"
@@ -91,6 +92,7 @@ main :: proc() {
 		context.allocator = debug.allocator(&da)
 	}
 	context.assertion_failure_proc = trace.assertion_failure_proc
+	appid.set()
 
 	args := without_psn(os.args[1:])
 	if launch(args) == .Terminal {

@@ -18,6 +18,7 @@ import "core:os"
 
 @(require) import "jm:debug"
 
+import "appid"
 import "cli"
 
 main :: proc() {
@@ -35,5 +36,6 @@ run :: proc() -> int {
 		context.allocator = debug.allocator(&da)
 	}
 	context.assertion_failure_proc = trace.assertion_failure_proc
+	appid.set()
 	return cli.run(os.args[1:])
 }
