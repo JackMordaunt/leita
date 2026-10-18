@@ -139,6 +139,7 @@ month_12 = 12月
 # What can be done to an entry
 actions_for = {0} の操作
 open = 開く
+open_file = ファイルを開く
 locate = 場所を表示
 rename = 名前を変更
 trash = ゴミ箱に入れる

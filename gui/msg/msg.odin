@@ -139,6 +139,7 @@ Msg :: enum u16 {
 	Month_12,
 	Actions_For,
 	Open,
+	Open_File,
 	Locate,
 	Rename,
 	Trash,

@@ -148,6 +148,7 @@ month_12 = Dez.
 # What can be done to an entry
 actions_for = Aktionen für {0}
 open = Öffnen
+open_file = Datei öffnen
 locate = Anzeigen
 rename = Umbenennen
 trash = In den Papierkorb

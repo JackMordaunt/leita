@@ -176,6 +176,17 @@ entry_of :: proc(m: ^Model) -> command.Entry {
 	return {generation = m.generation, node = m.target.node}
 }
 
+// open_file asks the host to open the file node as the system would, in the
+// application it opens it with. The menu's Open is the other kind: a directory
+// made the one shown.
+@(private)
+open_file :: proc(gtx: ^ui.Ctx, m: ^Model, node: u32) {
+	ui.command(
+		gtx,
+		command.Command(command.Open{entry = {generation = m.generation, node = node}}),
+	)
+}
+
 // entry_menu is the right-click menu, under anchor moved by at: the point
 // clicked in the sunburst, or a list row's name with at zero. The caller draws it
 // in the anchor's own space.
@@ -198,6 +209,9 @@ entry_menu :: proc(gtx: ^ui.Ctx, m: ^Model, anchor: ui.Last_Widget, at := ops.Po
 	   !t.hub &&
 	   primer.action_menu_item(&menu, tr(.Open), leading = .File_Directory_Open_Fill) {
 		open(m, t.node)
+	}
+	if !t.directory && primer.action_menu_item(&menu, tr(.Open_File), leading = .File) {
+		open_file(gtx, m, t.node)
 	}
 	if primer.action_menu_item(&menu, tr(.Locate), leading = .Link_External) {
 		ui.command(gtx, command.Command(command.Locate{entry = entry_of(m)}))

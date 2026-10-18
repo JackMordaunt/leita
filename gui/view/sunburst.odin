@@ -19,7 +19,7 @@ import "../query"
 The directory shown, as a sunburst: its contents in the first ring around a hub,
 theirs in the next, each arc's sweep its share of its parent's. A click on a
 directory's arc opens it, which makes it the hub; a click on the hub goes up. A
-right click opens the entry's menu (actions.odin).
+double click on a file's arc opens it in its application. A right click opens the entry's menu (actions.odin).
 
 Every arc is one entry the host laid out (query.Rings); the view only turns turns
 into radians. Hit testing is done here rather than per arc: the disc is one input
@@ -456,7 +456,7 @@ sunburst :: proc(
 	b := burst_of(side)
 
 	p := ui.widget_open(gtx, loc = loc)
-	pressed, menu := false, false
+	pressed, double, menu := false, false, false
 	for e in ui.events(gtx, p.id) {
 		#partial switch e.kind {
 		case .Move, .Enter:
@@ -467,7 +467,7 @@ sunburst :: proc(
 			m.pointer, m.inside = e.pos, true
 			#partial switch e.button {
 			case .Left:
-				pressed = true
+				pressed, double = true, e.clicks >= 2
 			case .Right:
 				menu = true
 			}
@@ -525,6 +525,8 @@ sunburst :: proc(
 	case .Arc:
 		if r.arcs[at].directory {
 			open(m, r.arcs[at].node)
+		} else if double {
+			open_file(gtx, m, r.arcs[at].node)
 		}
 	case .Hub:
 		if len(r.crumbs) > 1 {

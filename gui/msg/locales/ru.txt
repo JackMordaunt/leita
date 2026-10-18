@@ -169,6 +169,7 @@ month_12 = дек.
 # What can be done to an entry
 actions_for = Действия для {0}
 open = Открыть
+open_file = Открыть файл
 locate = Показать
 rename = Переименовать
 trash = В Корзину

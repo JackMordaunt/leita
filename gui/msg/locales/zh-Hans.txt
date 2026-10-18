@@ -138,6 +138,7 @@ month_12 = 12月
 # What can be done to an entry
 actions_for = {0} 的操作
 open = 打开
+open_file = 打开文件
 locate = 定位
 rename = 重命名
 trash = 移到回收站

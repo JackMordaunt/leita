@@ -136,6 +136,7 @@ month_12 = 12월
 # What can be done to an entry
 actions_for = {0} 작업
 open = 열기
+open_file = 파일 열기
 locate = 위치 보기
 rename = 이름 변경
 trash = 휴지통으로 이동

@@ -197,6 +197,10 @@ Model :: struct {
 	said_open:        map[u32]bool,
 	said_dir:         u32,
 	said_generation:  u32,
+	// The file last clicked in the treemap, by node (0 for none), and how long it has
+	// waited for a double click (treemap.odin press_box).
+	file_click:       u32,
+	file_wait:        f32,
 	// The row hovered, in the contents or the largest files: the frame's rows say so
 	// as they are drawn, after the chart, so the chart reads the last frame's.
 	row_hover:        Hover,

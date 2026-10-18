@@ -24,8 +24,9 @@ that brings its boxes nearer square, so boxes stay easy to compare and to point 
 A directory big enough for one shows its name in a strip along its top.
 
 A click on a directory's box opens it, and a click on a file the directory holding
-it; a right click opens the entry's menu, and
-the boxes ease from one layout to the next as the sunburst's arcs do.
+it; a double click on a file opens the file in its application. A right click
+opens the entry's menu, and the boxes ease from one layout to the next as the
+sunburst's arcs do.
 */
 
 // Mode is how the window draws the directory shown.
@@ -350,8 +351,7 @@ blocks_panel :: proc(gtx: ^ui.Ctx, m: ^Model, answer: ^query.Rings_Result, k: Bl
 }
 
 // blocks draws the boxes across the room it is offered and acts on what is
-// clicked: a directory's box opens it, a file's the directory holding it, and the
-// directory at the centre goes up.
+// clicked (press_box).
 @(private)
 blocks :: proc(
 	gtx: ^ui.Ctx,
@@ -369,7 +369,7 @@ blocks :: proc(
 		size = {480, 360}
 	}
 	m.tree_room = size
-	pressed, menu := false, false
+	pressed, double, menu := false, false, false
 	for e in ui.events(gtx, p.id) {
 		#partial switch e.kind {
 		case .Move, .Enter:
@@ -380,12 +380,13 @@ blocks :: proc(
 			m.pointer, m.inside = e.pos, true
 			#partial switch e.button {
 			case .Left:
-				pressed = true
+				pressed, double = true, e.clicks >= 2
 			case .Right:
 				menu = true
 			}
 		}
 	}
+	settle_file_click(gtx, m, r)
 
 	bg := primer.color(.Bg_Color_Default)
 	small := primer.text_style(.Small)
@@ -453,25 +454,59 @@ blocks :: proc(
 	}
 	ui.widget_close(gtx, &p, {size = size})
 
-	// A directory's contents cover most of its box, so a click on a file opens the
-	// directory holding it, which is the one the pointer was in.
 	if pressed {
 		if i := box_at(boxes, m.pointer); i >= 0 {
-			if boxes[i].arc < 0 {
-				if len(r.crumbs) > 1 {
-					open(m, r.crumbs[len(r.crumbs) - 2].node)
-				}
-				return
-			}
-			a := r.arcs[boxes[i].arc]
-			switch {
-			case a.directory:
-				open(m, a.node)
-			case a.up >= 0:
-				open(m, r.arcs[a.up].node)
-			}
+			press_box(gtx, m, r, boxes[i], double)
 		}
 	}
+}
+
+// DOUBLE_CLICK is how long a click on a file waits for a second before it takes
+// the directory holding the file.
+DOUBLE_CLICK :: f32(0.5)
+
+// press_box acts on a left press on box b: the directory at the centre goes up, a
+// directory's box opens it, and a double click on a file opens the file in its
+// application. A directory's contents cover most of its box, so a click on a
+// file is meant for the directory holding it, which is the one the pointer was
+// in; it waits out a double click first (settle_file_click), as the first click of
+// one would otherwise take the directory out from under the second.
+@(private)
+press_box :: proc(gtx: ^ui.Ctx, m: ^Model, r: ^query.Rings_Result, b: Box, double: bool) {
+	m.file_click = 0
+	if b.arc < 0 {
+		if len(r.crumbs) > 1 {
+			open(m, r.crumbs[len(r.crumbs) - 2].node)
+		}
+		return
+	}
+	a := r.arcs[b.arc]
+	switch {
+	case a.directory:
+		open(m, a.node)
+	case double:
+		open_file(gtx, m, a.node)
+	case a.up >= 0:
+		m.file_click, m.file_wait = a.node, 0
+	}
+}
+
+// settle_file_click opens the directory holding the file clicked once the time for
+// a second click is out, and asks for frames until then.
+@(private)
+settle_file_click :: proc(gtx: ^ui.Ctx, m: ^Model, r: ^query.Rings_Result) {
+	if m.file_click == 0 {
+		return
+	}
+	m.file_wait += gtx.dt
+	if m.file_wait < DOUBLE_CLICK {
+		ui.request_frame(gtx)
+		return
+	}
+	if i := arc_of(r, m.file_click); i >= 0 && r.arcs[i].up >= 0 {
+		open(m, r.arcs[r.arcs[i].up].node)
+	}
+	m.file_click = 0
 }
 
 // ICICLE_ROWS is the icicle's rows: the directory at the centre, and a row for

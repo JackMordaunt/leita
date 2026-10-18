@@ -1197,7 +1197,10 @@ the_treemap_draws_the_same_directory_as_boxes :: proc(t: ^testing.T) {
 	testing.expect(t, ui.probe_tagged(&r.p, "Rename"), "the box has the entry menu")
 	ui.probe_key(&r.p, .Escape)
 	press_and_hand_on(&r)
+	// The middle of the box is on a file in it, whose click waits out a double
+	// click before it takes the directory holding the file.
 	ui.probe_click_at(&r.p, {photos.x + photos.w / 2, photos.y + photos.h / 2})
+	ui.probe_advance(&r.p, 40, 1.0 / 60)
 	press_and_hand_on(&r)
 	testing.expect(t, settle(&r, "270.3 kB in 2 items"), "photos opened")
 	testing.expect(t, settle(&r, "box big.raw"), "and shows its files as boxes")

@@ -11,7 +11,6 @@ import tok "jm:ui/primer/tokens"
 
 import "../../human"
 import "../../kinds"
-import "../command"
 import "../query"
 
 /*
@@ -300,10 +299,7 @@ hit_index :: proc(r: ^query.Search_Result, node: u32) -> int {
 // open_hit asks the host to open h as the system would.
 @(private)
 open_hit :: proc(gtx: ^ui.Ctx, m: ^Model, h: query.Hit) {
-	ui.command(
-		gtx,
-		command.Command(command.Open{entry = {generation = m.generation, node = h.node}}),
-	)
+	open_file(gtx, m, h.node)
 }
 
 /*

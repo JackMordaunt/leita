@@ -161,6 +161,7 @@ month_12 = dic
 # What can be done to an entry
 actions_for = Acciones para {0}
 open = Abrir
+open_file = Abrir archivo
 locate = Mostrar
 rename = Renombrar
 trash = Mover a la Papelera
