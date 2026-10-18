@@ -93,7 +93,10 @@ test_a_baseline_does_not_keep_an_unread_directory_as_empty :: proc(t: ^testing.T
 	)
 	second := run(t, target, choice.engine, file)
 	defer done(&second)
-	testing.expectf(t, second.how == .Updated, "read whole again: %s", second.why)
+	testing.expect_value(t, second.how, fixture_fill_kind(root))
+	if second.how == .Full {
+		testing.expect(t, second.why != "", "whole walk must explain the fallback")
+	}
 	again, _ := scan.unread(second.tree)
 	testing.expect_value(t, again, 0)
 	got, found := seen(second.tree)[big]

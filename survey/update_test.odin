@@ -58,6 +58,11 @@ read_tree :: proc(t: ^testing.T, root: string) -> scan.Tree {
 	return tree
 }
 
+// Sharing-aware walkers cannot reuse a baseline without its extent identities.
+fixture_fill_kind :: proc(root: string) -> Fill_Kind {
+	return .Full if fixture_requires_full(root) else .Updated
+}
+
 // Each used node's path, what it holds on disk, and its flags.
 @(private)
 Record :: struct {
@@ -251,7 +256,14 @@ test_a_change_set_updates_what_it_names :: proc(t: ^testing.T) {
 	g := seen(&got)
 	testing.expect(t, join(root, "sub", "new.txt") in g, "new.txt was not read")
 	testing.expect(t, join(root, "sub", "fresh", "f.txt") in g, "fresh was not walked")
-	testing.expect(t, join(root, "still", "unseen.txt") not_in g, "still was read again")
+	if fixture_fill_kind(root) == .Full {
+		testing.expect(t, join(root, "still", "unseen.txt") in g, "whole walk missed unseen.txt")
+		testing.expect_value(t, f.how, Fill_Kind.Full)
+		testing.expect(t, f.why != "", "whole walk must explain the fallback")
+	} else {
+		testing.expect(t, join(root, "still", "unseen.txt") not_in g, "still was read again")
+		testing.expect_value(t, f.how, Fill_Kind.Updated)
+	}
 	testing.expect(t, join(root, "still", "k.txt") in g, "k.txt was not copied")
 	testing.expect(t, join(root, "a.txt") in g, "a.txt was not copied")
 }
@@ -292,9 +304,16 @@ test_a_change_set_by_hash_reads_the_named_directories :: proc(t: ^testing.T) {
 	testing.expect_value(t, apply(&f, root, &base, set, 0), walk.Error.None)
 	g := seen(&got)
 	testing.expect(t, join(root, "sub", "new.txt") in g, "sub was not read again")
-	testing.expect(t, join(root, "still", "unseen.txt") not_in g, "still was read again")
+	if fixture_fill_kind(root) == .Full {
+		testing.expect(t, join(root, "still", "unseen.txt") in g, "whole walk missed unseen.txt")
+		testing.expect_value(t, f.how, Fill_Kind.Full)
+		testing.expect(t, f.why != "", "whole walk must explain the fallback")
+	} else {
+		testing.expect(t, join(root, "still", "unseen.txt") not_in g, "still was read again")
+		testing.expect_value(t, f.how, Fill_Kind.Updated)
+	}
 	testing.expect(t, join(root, "still", "k.txt") in g, "k.txt was not copied")
-	testing.expect_value(t, f.reread, 1)
+	testing.expect_value(t, f.reread, u64(0) if fixture_fill_kind(root) == .Full else 1)
 }
 
 // The root "/" hashes its children without a second slash.
@@ -325,8 +344,15 @@ test_a_change_set_by_hash_from_the_root :: proc(t: ^testing.T) {
 	testing.expect_value(t, apply(&f, root, &base, set, 0), walk.Error.None)
 	g := seen(&got)
 	testing.expect(t, join(root, "sub", "new.txt") in g, "sub was not read again")
-	testing.expect(t, join(root, "still", "unseen.txt") not_in g, "still was read again")
-	testing.expect_value(t, f.reread, 1)
+	if fixture_fill_kind(root) == .Full {
+		testing.expect(t, join(root, "still", "unseen.txt") in g, "whole walk missed unseen.txt")
+		testing.expect_value(t, f.how, Fill_Kind.Full)
+		testing.expect(t, f.why != "", "whole walk must explain the fallback")
+	} else {
+		testing.expect(t, join(root, "still", "unseen.txt") not_in g, "still was read again")
+		testing.expect_value(t, f.how, Fill_Kind.Updated)
+	}
+	testing.expect_value(t, f.reread, u64(0) if fixture_fill_kind(root) == .Full else 1)
 }
 
 /*
@@ -383,7 +409,10 @@ test_a_fill_with_a_baseline_updates_the_place :: proc(t: ^testing.T) {
 	for {
 		tree, again, why_again := run(t, target, choice.engine, file)
 		defer scan.tree_destroy(&tree)
-		testing.expectf(t, again == .Updated, "read whole again: %s", why_again)
+		testing.expect_value(t, again, fixture_fill_kind(root))
+		if again == .Full {
+			testing.expect(t, why_again != "", "whole walk must explain the fallback")
+		}
 		found := join(place, "sub", "new.txt") in seen(&tree)
 		if found || ODIN_OS != .Darwin || time.tick_since(start) > 10 * time.Second {
 			testing.expect(t, found, "the update did not see new.txt")
@@ -434,10 +463,11 @@ test_a_fill_asked_whole_reads_whole_and_keeps :: proc(t: ^testing.T) {
 	}
 	testing.expect_value(t, runs[1].how, Fill_Kind.Full)
 	testing.expect_value(t, runs[1].why, "asked to read it whole")
-	testing.expectf(t, runs[2].how == .Updated, "read whole: %s", runs[2].why)
+	testing.expect_value(t, runs[2].how, fixture_fill_kind(root))
 	testing.expect(t, runs[2].taken != {}, "no time the base was kept")
-	words := how_read(true, "", runs[2].reread, runs[2].taken)
-	testing.expectf(t, strings.has_prefix(words, "updated: "), "%q", words)
+	words := how_read(runs[2].how == .Updated, runs[2].why, runs[2].reread, runs[2].taken)
+	prefix := "read whole: " if fixture_fill_kind(root) == .Full else "updated: "
+	testing.expectf(t, strings.has_prefix(words, prefix), "%q", words)
 }
 
 /*
@@ -469,7 +499,12 @@ when ODIN_OS == .Linux {
 			disk:    u64, // what db.sqlite was charged
 			updates: u64, // what the cursor kept counts
 		}
-		run :: proc(t: ^testing.T, target: scan.Target, engine: scan.Engine, file, db: string) -> Ran {
+		run :: proc(
+			t: ^testing.T,
+			target: scan.Target,
+			engine: scan.Engine,
+			file, db: string,
+		) -> Ran {
 			tree: scan.Tree
 			testing.expect_value(t, scan.tree_init(&tree, 2), scan.Error.None)
 			defer scan.tree_destroy(&tree)
@@ -486,7 +521,11 @@ when ODIN_OS == .Linux {
 			testing.expect(t, f.saved, "the result was not kept")
 			kept: scan.Tree
 			defer scan.tree_destroy(&kept)
-			cursor, why, ok := baseline_load(file, scan.location(target, context.temp_allocator), &kept)
+			cursor, why, ok := baseline_load(
+				file,
+				scan.location(target, context.temp_allocator),
+				&kept,
+			)
 			testing.expectf(t, ok, "the baseline was not read back: %s", why)
 			return {f.how, f.by, f.reread, seen(&tree)[db].disk, cursor.updates}
 		}
@@ -495,17 +534,23 @@ when ODIN_OS == .Linux {
 		testing.expect_value(t, first.how, Fill_Kind.Full)
 		testing.expect_value(t, first.updates, 0)
 		second := run(t, target, choice.engine, file, db)
-		testing.expect_value(t, second.how, Fill_Kind.Updated)
-		testing.expect_value(t, second.updates, 1)
+		testing.expect_value(t, second.how, fixture_fill_kind(root))
+		testing.expect_value(t, second.updates, u64(0) if second.how == .Full else 1)
 
 		put(t, db, 400_000)
 		measured := false
 		for i in 0 ..< SLICES {
 			r := run(t, target, choice.engine, file, db)
-			testing.expect_value(t, r.how, Fill_Kind.Updated)
-			testing.expect_value(t, r.updates, u64(i + 2))
-			if r.by == .Times {
-				testing.expectf(t, r.reread == 0, "update %d read %d directories again", i, r.reread)
+			testing.expect_value(t, r.how, fixture_fill_kind(root))
+			testing.expect_value(t, r.updates, u64(0) if r.how == .Full else u64(i + 2))
+			if r.how == .Updated && r.by == .Times {
+				testing.expectf(
+					t,
+					r.reread == 0,
+					"update %d read %d directories again",
+					i,
+					r.reread,
+				)
 			}
 			if r.disk != first.disk {
 				testing.expectf(t, r.disk >= 400_000, "update %d charged db.sqlite %d", i, r.disk)
@@ -633,10 +678,13 @@ test_a_count_the_file_cannot_hold_reserves_nothing :: proc(t: ^testing.T) {
 @(test)
 test_a_parent_loop_is_refused :: proc(t: ^testing.T) {
 	place := "place"
-	ahead := keep_nodes(t, "leita_survey_ahead.tree", place, 1, {
-		{parent = 1, name = "a"},
-		{parent = 1, name = place},
-	})
+	ahead := keep_nodes(
+		t,
+		"leita_survey_ahead.tree",
+		place,
+		1,
+		{{parent = 1, name = "a"}, {parent = 1, name = place}},
+	)
 	defer os.remove(ahead)
 	kept: scan.Tree
 	_, why, ok := baseline_load(ahead, place, &kept)
@@ -645,20 +693,26 @@ test_a_parent_loop_is_refused :: proc(t: ^testing.T) {
 	testing.expect_value(t, scan.node(&kept, 0).parent, u32(1))
 	testing.expect_value(t, scan.node(&kept, 1).parent, u32(1))
 
-	orphan := keep_nodes(t, "leita_survey_orphan.tree", place, 1, {
-		{parent = 0, name = "loose"},
-		{parent = 1, name = place},
-	})
+	orphan := keep_nodes(
+		t,
+		"leita_survey_orphan.tree",
+		place,
+		1,
+		{{parent = 0, name = "loose"}, {parent = 1, name = place}},
+	)
 	defer os.remove(orphan)
 	loose: scan.Tree
 	_, why, ok = baseline_load(orphan, place, &loose)
 	defer scan.tree_destroy(&loose)
 	testing.expectf(t, ok, "an orphan that holds itself was refused: %s", why)
 
-	loop := keep_nodes(t, "leita_survey_loop.tree", place, 0, {
-		{parent = 1, name = "a"},
-		{parent = 0, name = "b"},
-	})
+	loop := keep_nodes(
+		t,
+		"leita_survey_loop.tree",
+		place,
+		0,
+		{{parent = 1, name = "a"}, {parent = 0, name = "b"}},
+	)
 	defer os.remove(loop)
 	back: scan.Tree
 	_, why, ok = baseline_load(loop, place, &back)
@@ -684,7 +738,11 @@ test_a_name_with_a_separator_or_nul_is_refused :: proc(t: ^testing.T) {
 		back: scan.Tree
 		_, why, ok := baseline_load(path, place, &back)
 		testing.expectf(t, !ok, "a name %q was read", name)
-		testing.expect_value(t, why, "the scan kept of this place holds a name that is not one entry")
+		testing.expect_value(
+			t,
+			why,
+			"the scan kept of this place holds a name that is not one entry",
+		)
 		scan.tree_destroy(&back)
 		os.remove(path)
 	}
@@ -712,9 +770,9 @@ test_a_parent_loop_ends_the_hashed_walk :: proc(t: ^testing.T) {
 	testing.expect_value(t, ix_err, scan.Error.None)
 	defer scan.index_destroy(&ix)
 	u := walk.Update {
-		base   = &tree,
-		index  = ix,
-		marks  = make(map[u32]walk.Mark, context.temp_allocator),
+		base  = &tree,
+		index = ix,
+		marks = make(map[u32]walk.Mark, context.temp_allocator),
 	}
 	set := changes.Change_Set {
 		by_hash = true,
@@ -724,4 +782,5 @@ test_a_parent_loop_ends_the_hashed_walk :: proc(t: ^testing.T) {
 	set.hashes[journal.hash_path("/place")] = {}
 	mark_hashed(&u, &tree, ix, set)
 	testing.expect_value(t, u.marks[0], walk.Mark.List)
+	testing.expect_value(t, len(u.marks), 1)
 }
