@@ -99,6 +99,20 @@ Safe to call while a scan runs: only records the reader has finished with are re
 and names are borrowed from the table's arenas rather than copied, so repeating this
 allocates nothing. The table must therefore outlive the tree.
 */
+// A non-directory record with more than one name. No logical length is kept
+// on this path, so Allocated is not set. An extra name is Exact from
+// Node_Flag.Extra_Name, not from this account.
+link_account :: proc(links: u16, allocated: u64, directory: bool) -> scan.Account {
+	if directory || links <= 1 {
+		return {}
+	}
+	return {
+		links = u32(links),
+		shared = allocated,
+		known = {.Links, .Reclaim, .Shared},
+	}
+}
+
 to_tree :: proc(m: ^Mft, t: ^scan.Tree, p: ^Projection) -> scan.Error {
 	// Hard links are merged into the table in one go at the very end, so reading them
 	// before that would race the reader appending them, and would size the tree from
@@ -183,6 +197,15 @@ to_tree :: proc(m: ^Mft, t: ^scan.Tree, p: ^Projection) -> scan.Error {
 		if settled {
 			flags |= {.Settled}
 			mark(p.settled, i)
+		}
+		if acct := link_account(e.link_count, e.allocated, .Directory in e.flags); acct.known != nil {
+			// A later pass rewrites the same slot. The first publication stands;
+			// a failed claim is out of memory only when nothing was stored.
+			if !scan.account_set(t, i, acct) {
+				if _, published := scan.account_of(t, i); !published {
+					return .Out_Of_Memory
+				}
+			}
 		}
 		// Last, so a builder watching this tree never sees a node before its parent.
 		scan.node_publish(n, flags)

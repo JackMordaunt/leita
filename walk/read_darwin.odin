@@ -166,6 +166,7 @@ parse_entry :: proc(buf: []u8) -> (e: Entry, length: int, ok: bool) {
 	}
 	// Without both halves of the id there is no telling one file's names apart from
 	// another's, so the entry is charged as though it had one name.
+	// e.account stays empty. Darwin facts are published once by card 48.
 	if returned.fileattr & ATTR_FILE_LINKCOUNT != 0 {
 		links := take_u32(&r) or_return
 		if returned.commonattr & (ATTR_CMN_DEVID | ATTR_CMN_FILEID) ==

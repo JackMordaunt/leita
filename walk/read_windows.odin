@@ -238,6 +238,8 @@ describe :: proc(dir: win.HANDLE, l: Dir_Entry, vol: Volume, s: ^Scratch) -> (e:
 	}
 
 	allocated, length := l.allocated, l.length
+	links_known := false
+	known_links: u32
 	if vol.hard_links {
 		if info, asked := standard_info(dir, l.name); asked {
 			allocated = i64(info.AllocationSize)
@@ -246,23 +248,41 @@ describe :: proc(dir: win.HANDLE, l: Dir_Entry, vol: Volume, s: ^Scratch) -> (e:
 			// file's, so it is charged as though it had one name.
 			if info.NumberOfLinks > 1 && l.has_id {
 				e.links = info.NumberOfLinks
+				known_links = e.links
+				links_known = true
 				e.id = {
 					device = vol.serial,
 					inode  = l.id[0],
 					upper  = l.id[1],
 				}
+			} else if info.NumberOfLinks <= 1 {
+				known_links = u32(info.NumberOfLinks)
+				links_known = true
 			}
 		}
 	}
-	if l.attributes & (win.FILE_ATTRIBUTE_COMPRESSED | win.FILE_ATTRIBUTE_SPARSE_FILE) != 0 {
-		if occupied, asked := compressed_size(dir, l.name); asked {
-			allocated = occupied
+	logical := u64(max(length, 0))
+	reported := u64(max(allocated, 0))
+	occupied: u64
+	occupied_known := false
+	compressed := l.attributes & (win.FILE_ATTRIBUTE_COMPRESSED | win.FILE_ATTRIBUTE_SPARSE_FILE) != 0
+	if compressed {
+		if got, asked := compressed_size(dir, l.name); asked {
+			occupied = u64(max(got, 0))
+			occupied_known = true
 		}
 	}
-	if vol.ntfs && vol.cluster > 0 && u64(max(allocated, 0)) % vol.cluster != 0 {
-		allocated = length
-	}
-	e.disk = u64(max(allocated, 0))
+	e.disk, e.account = windows_account({
+		logical = logical,
+		reported_allocation = reported,
+		occupied = occupied,
+		occupied_known = occupied_known,
+		compressed_or_sparse = compressed,
+		cluster = vol.cluster,
+		ntfs = vol.ntfs,
+		links = known_links,
+		links_known = links_known,
+	})
 	return e, true
 }
 
