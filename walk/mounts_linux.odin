@@ -1,0 +1,127 @@
+#+build linux
+package walk
+
+import "core:mem"
+import "core:sys/linux"
+
+/*
+Whether a directory the walk would enter is one it is already inside, which is
+recorded as a mount and not read, and if not, the directories its own entries are
+checked against.
+
+Within one mount the directories form a tree, so only a mount can lead back to a
+directory above it. A bind of a directory onto one below it (mount --bind /data
+/data/sub/loop) keeps the device, so the device test (stops_at) never sees it, and
+a walk of /data read all of /data again at sub/loop. So a directory that is the
+root of a mount (STATX_ATTR_MOUNT_ROOT, Linux 5.8; an older kernel never says, and
+its binds are walked as before) is checked against every directory above it,
+found by climbing from the directory listing it. If it is none of them it is
+entered, and that chain is carried down with it: a mount can show a tree that
+holds a directory above it without being one. The top of a btrfs pool mounted at
+/mnt/pool holds @, the subvolume mounted at /, and the walk stops at /mnt/pool/@
+rather than reading / again. Below the mount a directory is checked only against
+the chain: within the one mount none of those between it and the mount can be it,
+and the next mount down climbs again.
+
+Kept only below a mount the walk entered, so the path almost every directory takes
+asks nothing more. A scan of this machine's / enters three, the btrfs subvolumes
+mounted at /home, /var/log and /var/cache/pacman/pkg (2026-10-17).
+*/
+@(private)
+enter :: proc(
+	w: ^Worker,
+	dir: linux.Fd,
+	above: ^Ancestor,
+	st: linux.Statx,
+) -> (
+	mount: bool,
+	below: ^Ancestor,
+	ok: bool,
+) {
+	id := File_Id {
+		device = statx_device(st),
+		inode  = u64(st.ino),
+	}
+	if .MOUNT_ROOT not_in st.attributes {
+		return on_path(above, id), above, true
+	}
+	path := climb(w, dir) or_return
+	if on_path(path, id) {
+		return true, nil, true
+	}
+	below = push(w, id, path) or_return
+	return false, below, true
+}
+
+/*
+The directory open as `dir` and every directory above it, as far as the process's
+root, whose ".." is itself. ".." from the root of a mount leads up out of the
+mount, to the parent of the directory it is mounted on, so the climb comes back
+out of every mount the walk went down through.
+
+Bounded at CLIMB_LIMIT directories, the most a path the walk can open has room
+for, so a ".." that never reaches the root still ends. A ".." that cannot be
+opened ends the chain early, which leaves only what lies above it unchecked.
+*/
+@(private)
+climb :: proc(w: ^Worker, dir: linux.Fd) -> (path: ^Ancestor, ok: bool) {
+	at := dir
+	defer if at != dir {
+		linux.close(at)
+	}
+	end := &path
+	last: File_Id
+	for _ in 0 ..< CLIMB_LIMIT {
+		st: linux.Statx
+		if linux.statx(at, "", {.EMPTY_PATH}, {.INO}, &st) != .NONE {
+			break
+		}
+		id := File_Id {
+			device = statx_device(st),
+			inode  = u64(st.ino),
+		}
+		if path != nil && id == last {
+			break
+		}
+		end^ = push(w, id, nil) or_return
+		end = &end^.up
+		last = id
+		up, errno := linux.openat(at, "..", {.PATH, .DIRECTORY, .CLOEXEC})
+		if errno != .NONE {
+			break
+		}
+		if at != dir {
+			linux.close(at)
+		}
+		at = up
+	}
+	return path, true
+}
+
+// PATH_MAX over the two bytes of the shortest directory name and its separator.
+@(private)
+CLIMB_LIMIT :: 4096 / 2
+
+// Whether `id` is one of the directories on `path`.
+@(private)
+on_path :: proc(path: ^Ancestor, id: File_Id) -> bool {
+	for a := path; a != nil; a = a.up {
+		if a.id == id {
+			return true
+		}
+	}
+	return false
+}
+
+// A chain that is `up` with `id` below it, made in this worker's arena (Scratch).
+@(private)
+push :: proc(w: ^Worker, id: File_Id, up: ^Ancestor) -> (a: ^Ancestor, ok: bool) {
+	err: mem.Allocator_Error
+	a, err = new(Ancestor, mem.dynamic_arena_allocator(&w.scratch.ancestry))
+	if err != nil {
+		w.err = .Out_Of_Memory
+		return nil, false
+	}
+	a^ = {id, up}
+	return a, true
+}

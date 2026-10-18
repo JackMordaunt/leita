@@ -279,6 +279,23 @@ Dir :: struct {
 	device:     u64,
 	filesystem: u128,
 	btrfs:      bool, // filesystem is a btrfs pool's UUID
+	// The directories it lies under where the reader keeps them (Ancestor); nil
+	// where it does not.
+	ancestors:  ^Ancestor,
+}
+
+/*
+One directory on the way down to another, by device and inode, and the one above
+it. A directory whose own device and inode are among those above it holds itself,
+as a bind of a directory onto one below it does, so a reader that keeps these
+records it as a mount instead of reading it again (enter in mounts_linux.odin).
+Every directory below shares the one chain, so a level that adds nothing to it
+copies nothing.
+*/
+@(private)
+Ancestor :: struct {
+	id: File_Id,
+	up: ^Ancestor,
 }
 
 // What becomes of a directory waiting to be read.

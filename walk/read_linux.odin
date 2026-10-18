@@ -54,6 +54,9 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 		}
 		filesystem, on_btrfs = filesystem_of(fd)
 	}
+	// The directories this one lies under, kept only below a mount the walk entered
+	// (enter in mounts_linux.odin); nil on the path almost every directory takes.
+	above := d.ancestors
 	// On btrfs, each regular file's extents are searched for through this
 	// directory's fd (see btrfs_linux.odin); nil when the search is off.
 	pool: ^Btrfs_Pool
@@ -144,13 +147,14 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 		// (AT_NO_AUTOMOUNT in statx(2)).
 		index := first + kept
 		child_device, child_filesystem, child_btrfs := device, filesystem, on_btrfs
+		below := above
 		asked := l.type == .REG || l.type == .UNKNOWN || l.type == .DIR
 		st: linux.Statx
 		errno := linux.Errno.NONE
 		if asked {
 			mask := linux.Statx_Mask{.TYPE, .BLOCKS, .NLINK}
 			if l.type == .DIR {
-				mask = {.TYPE}
+				mask = {.TYPE, .INO}
 			}
 			flags := linux.FD_Flags{.SYMLINK_NOFOLLOW, .NO_AUTOMOUNT}
 			errno = stat_entry(linux.statx, fd, cstring(&s.names[l.at]), flags, mask, &st)
@@ -173,6 +177,14 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 					filesystem,
 					on_btrfs,
 				)
+			}
+			// Only a mount can lead back to a directory already above it.
+			if !e.mount && (.MOUNT_ROOT in st.attributes || above != nil) {
+				entered: bool
+				e.mount, below, entered = enter(w, fd, above, st)
+				if !entered {
+					return nodes, bytes, false
+				}
 			}
 		case .Symlink:
 			e.symlink = true
@@ -224,6 +236,7 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 			if e.directory {
 				next.device, next.filesystem = child_device, child_filesystem
 				next.btrfs = child_btrfs
+				next.ancestors = below
 			}
 			append(&w.found, next)
 		}
@@ -382,7 +395,8 @@ UUID, from BTRFS_IOC_FS_INFO, is the same for every subvolume.
 A read-only btrfs subvolume is stopped at as a mount is: snapper's snapshots under
 /.snapshots are each a whole copy of the system, and walking them would charge the
 disk for every one. A bind mount of the same filesystem is walked as the directory
-it appears to be, so its files count wherever else they are also reached. An
+it appears to be, so its files count wherever else they are also reached, unless
+it shows a directory the walk is already inside (enter in mounts_linux.odin). An
 automount point is a mount without being opened, which would mount it.
 */
 @(private)
@@ -518,6 +532,11 @@ Scratch :: struct {
 	// reuse, taken when the first pool to search is met (btrfs_linux.odin).
 	pool:      ^Btrfs_Pool,
 	args:      ^btrfs.Search_Args,
+	// The Ancestors this worker made (mounts_linux.odin). Kept for the whole walk,
+	// not one directory: the directories found below one carry them down to
+	// whichever worker reads those, so they go with the scratch, once every worker
+	// has finished.
+	ancestry:  mem.Dynamic_Arena,
 	allocator: mem.Allocator,
 }
 
@@ -533,11 +552,14 @@ Dirent :: struct {
 
 @(private)
 scratch_make :: proc(allocator: mem.Allocator) -> Scratch {
-	return {
-		names = make([dynamic]u8, allocator),
-		listed = make([dynamic]Dirent, allocator),
+	s := Scratch {
+		names     = make([dynamic]u8, allocator),
+		listed    = make([dynamic]Dirent, allocator),
 		allocator = allocator,
 	}
+	// Takes no memory until the first Ancestor, which most walks never make.
+	mem.dynamic_arena_init(&s.ancestry, allocator, allocator)
+	return s
 }
 
 @(private)
@@ -545,4 +567,5 @@ scratch_destroy :: proc(s: ^Scratch) {
 	delete(s.names)
 	delete(s.listed)
 	free(s.args, s.allocator)
+	mem.dynamic_arena_destroy(&s.ancestry)
 }
