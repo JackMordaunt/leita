@@ -97,9 +97,9 @@ linked_paths :: proc(tree: ^scan.Tree) -> map[string]scan.File_Id {
 	return out
 }
 
-// A baseline reads back as the tree that was kept, with its cursor, and with the
-// name a file of two names was charged under, which an update needs to charge it
-// once beside a name it copies (walk.update).
+// A baseline reads back as the tree that was kept, with its cursor, its flags,
+// Shared among them, and the name a file of two names was charged under, which an
+// update needs to charge it once beside a name it copies (walk.update).
 @(test)
 test_a_baseline_reads_back_what_was_kept :: proc(t: ^testing.T) {
 	root := fixture(t, "keep")
@@ -114,6 +114,10 @@ test_a_baseline_reads_back_what_was_kept :: proc(t: ^testing.T) {
 	tree := read_tree(t, root)
 	defer scan.tree_destroy(&tree)
 	testing.expect_value(t, len(tree.linked), 1)
+	// What a btrfs walk as root marks a reflinked copy: expect_same then sees the
+	// flag come back.
+	ix, _ := scan.index_make(&tree, context.temp_allocator)
+	scan.node_mark(scan.node(&tree, scan.child_named(&tree, ix, tree.root, "a.txt")), {.Shared})
 
 	cursor := changes.Cursor {
 		source   = .Probe,

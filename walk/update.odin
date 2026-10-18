@@ -174,7 +174,7 @@ copy_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 	}
 	for c := u.index.first[d.base]; c != scan.NO_NODE; c = u.index.next[c] {
 		b := scan.node(base, c)
-		flags := scan.node_flags(b) & {.Directory, .Reparse, .Extra_Name, .Mount}
+		flags := scan.node_flags(b) & {.Directory, .Reparse, .Extra_Name, .Mount, .Shared}
 		name := scan.name_of(base, c)
 		disk := b.disk
 		file := flags & {.Directory, .Reparse} == {}
@@ -189,7 +189,9 @@ copy_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 				now, verdict := disk_of(path)
 				switch verdict {
 				case .Sized:
+					// st_blocks, not what the file holds alone, so no longer Shared.
 					disk = now
+					flags -= {.Shared}
 				case .Gone:
 					continue
 				case .Unknown:

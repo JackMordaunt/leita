@@ -29,8 +29,12 @@ written for this machine, little-endian:
 	each link    u32 node, u64 device, u64 inode, u64 upper
 
 Nodes are numbered afresh, used ones only, so a parent names the new number. The
-flags kept are the ones an update needs: what a node is, and Unread for a directory
-the scan could not open, which the update walks rather than copies (walk.update).
+flags kept are the ones an update needs: what a node is, Unread for a directory the
+scan could not open, which the update walks rather than copies (walk.update), and
+Shared for a btrfs file charged only what it does not share, so a tree read back,
+and an update copying from it, can still tell it from a file that shares nothing.
+The flags byte held every flag before Shared was kept, so a file written without it
+reads as one whose files share nothing, which is what it said.
 Roughly 15 bytes and the name a node: a home directory of 2.6 million is 70 to 80 MB.
 The links are scan.Tree.linked, the name each file with more than one was charged
 under and the file it names, which an update needs to charge such a file once
@@ -114,7 +118,7 @@ baseline_save :: proc(path, place: string, t: ^scan.Tree, cursor: changes.Cursor
 		put_u8(
 			&w,
 			transmute(u8)(scan.node_flags(n) &
-				{.Directory, .Reparse, .Extra_Name, .Mount, .Unread}),
+				{.Directory, .Reparse, .Extra_Name, .Mount, .Shared, .Unread}),
 		)
 		put_u64(&w, n.disk)
 		put_u16(&w, u16(len(name)))

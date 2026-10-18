@@ -443,3 +443,34 @@ test_an_update_charges_a_link_once_beside_a_copied_name :: proc(t: ^testing.T) {
 		}
 	}
 }
+
+// A file the base marks Shared, as a btrfs walk as root marks a reflinked copy, is
+// still Shared when an update copies it, with the size the base gave it. Before,
+// the copy dropped the flag, and the file read as one that shares nothing.
+@(test)
+test_an_update_keeps_a_copied_file_shared :: proc(t: ^testing.T) {
+	root := place(t, "shared")
+	defer os.remove_all(root)
+	base := read_tree(t, root)
+	defer scan.tree_destroy(&base)
+	scan.node_mark(scan.node(&base, at(&base, "still", "k.txt")), {.Shared})
+
+	u := Update {
+		base = &base,
+	}
+	got: scan.Tree
+	testing.expect_value(t, scan.tree_init(&got, 2), scan.Error.None)
+	defer scan.tree_destroy(&got)
+	testing.expect_value(t, update(root, &u, &got, Config{workers = 2}), Error.None)
+
+	k := at(&got, "still", "k.txt")
+	testing.expect(t, k != scan.NO_NODE, "k.txt was not copied")
+	if k != scan.NO_NODE {
+		testing.expect(
+			t,
+			.Shared in scan.node_flags(scan.node(&got, k)),
+			"k.txt is no longer Shared",
+		)
+	}
+	expect_same_shape(t, &got, &base)
+}
