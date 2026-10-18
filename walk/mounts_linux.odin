@@ -47,15 +47,64 @@ enter :: proc(
 		device = statx_device(st),
 		inode  = u64(st.ino),
 	}
-	if .MOUNT_ROOT not_in st.attributes {
-		return on_path(above, id), above, true
+	mounted := .MOUNT_ROOT in st.attributes
+	path := above
+	// Following links, the chain already holds every directory on the way down
+	// (follow_link).
+	if mounted && !w.follow {
+		path = climb(w, dir) or_return
 	}
-	path := climb(w, dir) or_return
-	if on_path(path, id) || walked_elsewhere(w, st) {
+	if on_path(path, id) || mounted && walked_elsewhere(w, st) {
 		return true, nil, true
+	}
+	if !mounted && !w.follow {
+		return false, path, true
 	}
 	below = push(w, id, path) or_return
 	return false, below, true
+}
+
+/*
+Whether a symlink the walk was told to follow is followed, and the chain the
+directory it leads to is read with.
+
+Nothing else stopped a loop of links but the length of a path: a/to_b leading to
+b and b/to_a back to a were read inside each other until the path passed what the
+kernel accepts, each directory at the bottom marked unread, and every second link
+in a directory doubled the reads at each level: the 13 entries of the loop test
+became 426 (2026-10-18). So while following links the walk keeps every directory
+on the way down, from the start's own ancestors (climb) on, and a link to one of
+them is recorded as the link it is and not followed, as find -L refuses one. A
+directory reached both by its name and through a link is still read at both, as
+following links has always counted it. A link statx cannot follow, or that leads
+to something other than a directory, is queued as before, and reading it says why
+it was not read (mark_unread).
+*/
+@(private)
+follow_link :: proc(
+	w: ^Worker,
+	dir: linux.Fd,
+	name: cstring,
+	above: ^Ancestor,
+) -> (
+	follow: bool,
+	below: ^Ancestor,
+	ok: bool,
+) {
+	st: linux.Statx
+	errno := stat_entry(linux.statx, dir, name, {.NO_AUTOMOUNT}, {.TYPE, .INO}, &st)
+	if errno != .NONE || !linux.S_ISDIR(st.mode) {
+		return true, above, true
+	}
+	id := File_Id {
+		device = statx_device(st),
+		inode  = u64(st.ino),
+	}
+	if on_path(above, id) {
+		return false, nil, true
+	}
+	below = push(w, id, above) or_return
+	return true, below, true
 }
 
 /*

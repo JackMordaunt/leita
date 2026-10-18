@@ -108,7 +108,42 @@ test_a_bind_of_a_walked_tree_is_counted_once :: proc(t: ^testing.T) {
 	testing.expectf(t, .Mount in again, "mnt/again is walked as well: %v", again)
 }
 
-// An empty directory for one bind test, under the temp directory.
+/*
+A loop of links ends when links are followed: a/to_b leads to b and b/to_a back to
+a, and a/up to the start. Each link is followed until it would lead to a
+directory already on the way down, which it then stays: a/to_b is read, and
+a/to_b/to_a is not, since a is above it.
+
+	a/f  a/up  a/to_b  a/to_b/g  a/to_b/to_a
+	b/g  b/to_a  b/to_a/f  b/to_a/up  b/to_a/to_b
+*/
+@(test)
+test_a_symlink_loop_is_followed_once :: proc(t: ^testing.T) {
+	base := bind_place(t, "links")
+	defer os.remove_all(base)
+	at :: proc(base, name: string) -> string {
+		return fmt.tprintf("%s/%s", base, name)
+	}
+	for dir in ([]string{"a", "b"}) {
+		testing.expect(t, os.make_directory(at(base, dir)) == nil)
+	}
+	testing.expect(t, os.write_entire_file(at(base, "a/f"), []byte{'x'}) == nil)
+	testing.expect(t, os.write_entire_file(at(base, "b/g"), []byte{'x'}) == nil)
+	testing.expect(t, symlink_directory("../b", at(base, "a/to_b")))
+	testing.expect(t, symlink_directory("../a", at(base, "b/to_a")))
+	testing.expect(t, symlink_directory("..", at(base, "a/up")))
+
+	tree := bind_walked(t, base, Config{follow = true})
+	defer scan.tree_destroy(&tree)
+	// The start, a and b, and the ten entries above.
+	testing.expect_value(t, tree.count, u32(13))
+	_, f := named_count(&tree, "f")
+	_, g := named_count(&tree, "g")
+	testing.expect_value(t, f, 2)
+	testing.expect_value(t, g, 2)
+}
+
+// An empty directory for one test, under the temp directory.
 @(private = "file")
 bind_place :: proc(t: ^testing.T, name: string) -> string {
 	dir, dir_err := os.temp_directory(context.temp_allocator)

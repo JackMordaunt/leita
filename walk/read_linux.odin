@@ -55,8 +55,16 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 		filesystem, on_btrfs = filesystem_of(fd)
 	}
 	// The directories this one lies under, kept only below a mount the walk entered
-	// (enter in mounts_linux.odin); nil on the path almost every directory takes.
+	// or while following links (mounts_linux.odin); nil on the path almost every
+	// directory takes.
 	above := d.ancestors
+	if above == nil && w.follow {
+		climbed, climbed_ok := climb(w, fd)
+		if !climbed_ok {
+			return 0, 0, false
+		}
+		above = climbed
+	}
 	// On btrfs, each regular file's extents are searched for through this
 	// directory's fd (see btrfs_linux.odin); nil when the search is off.
 	pool: ^Btrfs_Pool
@@ -148,6 +156,7 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 		index := first + kept
 		child_device, child_filesystem, child_btrfs := device, filesystem, on_btrfs
 		below := above
+		follow := true
 		asked := l.type == .REG || l.type == .UNKNOWN || l.type == .DIR
 		st: linux.Statx
 		errno := linux.Errno.NONE
@@ -188,6 +197,13 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 			}
 		case .Symlink:
 			e.symlink = true
+			if w.follow {
+				followed: bool
+				follow, below, followed = follow_link(w, fd, cstring(&s.names[l.at]), above)
+				if !followed {
+					return nodes, bytes, false
+				}
+			}
 		case .File:
 			if asked {
 				// Blocks are counted in 512 byte units whatever the filesystem
@@ -221,7 +237,7 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 		if !recorded {
 			return nodes, bytes, false
 		}
-		if descend {
+		if descend && follow {
 			child, join_err := join(d.path, name, w.allocator)
 			if join_err != nil {
 				w.err = .Out_Of_Memory
@@ -230,13 +246,13 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 			// A followed link may lead anywhere, so its directory learns its own
 			// device and filesystem when read.
 			next := Dir {
-				index = index,
-				path  = child,
+				index     = index,
+				path      = child,
+				ancestors = below,
 			}
 			if e.directory {
 				next.device, next.filesystem = child_device, child_filesystem
 				next.btrfs = child_btrfs
-				next.ancestors = below
 			}
 			append(&w.found, next)
 		}
