@@ -123,6 +123,21 @@ Tree :: struct {
 	// The name each file with more than one was charged under, as the walk found
 	// them; empty for a reader that keeps no file ids. Freed with the tree.
 	linked:     [dynamic]Link,
+	// Per-node measurements, keyed by the same index as `blocks`. A block exists
+	// only after some node in it was given a fact. Freed with the tree.
+	accounts:   [MAX_BLOCKS]^Account_Block,
+	rares:      [MAX_BLOCKS]^Rare_Block,
+	// Volume retention, published once (note_retention). retention_state is
+	// 0, claimed, or published. Fields are read only after published, so a
+	// reader never mixes two notes. Not a per-file held byte, and not a
+	// snapshot name: that field belongs to the Darwin acquisition card.
+	snapshots:       u8,
+	retention_state: u8,
+	purgeable:       u64,
+	purgeable_known: b32,
+	// Some charge in this tree is a scan-order first payer. freed_of does not
+	// treat that charge as exclusive or as a frees quantity.
+	scan_order: b32,
 }
 
 // Where a file's data lives, the same for every name it has. `upper` is the high half
@@ -192,6 +207,14 @@ tree_destroy :: proc(t: ^Tree) {
 	for i in 0 ..< t.committed >> BLOCK_SHIFT {
 		free(t.blocks[i], t.allocator)
 	}
+	for i in 0 ..< MAX_BLOCKS {
+		if t.accounts[i] != nil {
+			free(t.accounts[i], t.allocator)
+		}
+		if t.rares[i] != nil {
+			free(t.rares[i], t.allocator)
+		}
+	}
 	for &a in t.arenas {
 		if a.arena.curr_block != nil {
 			virtual.arena_destroy(&a.arena)
@@ -237,7 +260,11 @@ node :: proc(t: ^Tree, i: u32) -> ^Node {
 	if i >> BLOCK_SHIFT >= MAX_BLOCKS {
 		return nil
 	}
-	return &t.blocks[i >> BLOCK_SHIFT][i & (BLOCK_NODES - 1)]
+	b := t.blocks[i >> BLOCK_SHIFT]
+	if b == nil {
+		return nil
+	}
+	return &b[i & (BLOCK_NODES - 1)]
 }
 
 /*
@@ -446,6 +473,16 @@ unread :: proc(t: ^Tree) -> (count: u64, denied: bool) {
 // Whether some btrfs sizes in the tree are logical: read as root, they would be less.
 is_logical :: proc(t: ^Tree) -> bool {
 	return bool(sync.atomic_load(&t.logical))
+}
+
+// Say that some charge in this tree is a scan-order first payer, not exclusive.
+mark_scan_order :: proc(t: ^Tree) {
+	sync.atomic_store(&t.scan_order, true)
+}
+
+// Whether some charge in this tree is a scan-order first payer.
+is_scan_order :: proc(t: ^Tree) -> bool {
+	return bool(sync.atomic_load(&t.scan_order))
 }
 
 progress :: proc(t: ^Tree, nodes, bytes: u64) {
