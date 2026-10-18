@@ -108,11 +108,19 @@ charge_shared :: proc(item: []u8, e: ^Extents, owner: u64, c: ^Charge) -> Item_E
 		return err
 	}
 	if it.inline {
+		if !u64_fits(c.disk, it.disk) {
+			return .Overflow
+		}
 		c.disk += it.disk
 		return .None
 	}
 	if it.at == 0 {
 		return .None
+	}
+	// Refuse before claim. A wrapped add would record the extent as paid
+	// and then store a small total.
+	if !u64_fits(c.disk, it.disk) {
+		return .Overflow
 	}
 	first, other, claim_err := claim(e, it.at, owner)
 	if claim_err != nil {

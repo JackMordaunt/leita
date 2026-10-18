@@ -1,6 +1,7 @@
 package btrfs
 
 import "core:encoding/endian"
+import "core:math/bits"
 
 /*
 What btrfs charges a file for, read from its extent items rather than from
@@ -95,6 +96,8 @@ Item_Error :: enum {
 	Short,
 	Compression,
 	Out_Of_Memory,
+	// A size that does not fit in u64. The totals are left as they were.
+	Overflow,
 }
 
 // One file extent item, read: its header and, unless it is inline, where it lies.
@@ -150,7 +153,18 @@ charge :: proc(item: []u8, u: ^Usage, f: ^File) -> Item_Error {
 	}
 	c := it.compression
 	if it.inline {
-		// It belongs to this file alone.
+		// Checked before any write: a wrapped total would be a small number
+		// for a huge extent.
+		if !u64_fits(u.by[c].disk, it.disk) ||
+		   !u64_fits(u.by[c].uncompressed, it.ram) ||
+		   !u64_fits(u.by[c].referenced, it.ram) ||
+		   !u64_fits(u.inline, 1) ||
+		   !u64_fits(f.disk, it.disk) ||
+		   !u64_fits(f.uncompressed, it.ram) ||
+		   !u64_fits(f.referenced, it.ram) ||
+		   !u64_fits(f.charged, it.disk) {
+			return .Overflow
+		}
 		u.by[c].disk += it.disk
 		u.by[c].uncompressed += it.ram
 		u.by[c].referenced += it.ram
@@ -164,10 +178,26 @@ charge :: proc(item: []u8, u: ^Usage, f: ^File) -> Item_Error {
 	if it.at == 0 {
 		return .None
 	}
+	new_here := it.at not_in f.own
+	fresh := it.at not_in u.seen
+	if !u64_fits(u.refs, 1) ||
+	   !u64_fits(u.by[c].referenced, it.refers) ||
+	   !u64_fits(f.referenced, it.refers) {
+		return .Overflow
+	}
+	if new_here && (!u64_fits(f.disk, it.disk) || !u64_fits(f.uncompressed, it.ram)) {
+		return .Overflow
+	}
+	if fresh &&
+	   (!u64_fits(u.by[c].disk, it.disk) ||
+		   !u64_fits(u.by[c].uncompressed, it.ram) ||
+		   !u64_fits(u.extents, 1) ||
+		   !u64_fits(f.charged, it.disk)) {
+		return .Overflow
+	}
 	u.refs += 1
 	u.by[c].referenced += it.refers
 	f.referenced += it.refers
-	new_here := it.at not_in f.own
 	if new_here {
 		if _, _, _, map_err := map_entry(&f.own, it.at); map_err != nil {
 			return .Out_Of_Memory
@@ -175,7 +205,7 @@ charge :: proc(item: []u8, u: ^Usage, f: ^File) -> Item_Error {
 		f.disk += it.disk
 		f.uncompressed += it.ram
 	}
-	if it.at in u.seen {
+	if !fresh {
 		// Charged already: to an earlier file, which is sharing, or to this one
 		// through an earlier range, which is not.
 		if new_here {
@@ -191,4 +221,42 @@ charge :: proc(item: []u8, u: ^Usage, f: ^File) -> Item_Error {
 	u.extents += 1
 	f.charged += it.disk
 	return .None
+}
+
+// u64_fits reports whether dst+add stays in u64.
+@(private)
+u64_fits :: proc(dst, add: u64) -> bool {
+	_, wrapped := bits.overflowing_add(dst, add)
+	return !wrapped
+}
+
+// SEARCH_HEADER is how many bytes come off the front of one record before its body.
+SEARCH_HEADER :: 32
+
+// read_search_item splits one TREE_SEARCH_V2 record from the front of buf.
+// The length is checked by what remains after the header, not by adding it on.
+read_search_item :: proc(
+	buf: []u8,
+) -> (
+	rest: []u8,
+	offset: u64,
+	item_type: u32,
+	body: []u8,
+	ok: bool,
+) {
+	if len(buf) < SEARCH_HEADER {
+		return
+	}
+	offset, _ = endian.get_u64(buf[16:24], .Little)
+	item_type, _ = endian.get_u32(buf[24:28], .Little)
+	length, _ := endian.get_u32(buf[28:32], .Little)
+	remain := len(buf) - SEARCH_HEADER
+	if uint(length) > uint(remain) {
+		return
+	}
+	n := int(length)
+	body = buf[SEARCH_HEADER:][:n]
+	rest = buf[SEARCH_HEADER + n:]
+	ok = true
+	return
 }

@@ -176,6 +176,49 @@ test_shared_charge_pays_each_extent_once :: proc(t: ^testing.T) {
 	)
 }
 
+// Two extents of max(u64) bytes must not wrap the charged total to a small number.
+@(test)
+test_two_max_extents_do_not_wrap :: proc(t: ^testing.T) {
+	u: Usage
+	defer usage_destroy(&u)
+	f: File
+	defer file_destroy(&f)
+	first := item(EXTENT_REGULAR, 0, 0, 4096, max(u64), 0)
+	testing.expect_value(t, charge(first, &u, &f), Item_Error.None)
+	testing.expect_value(t, total(u).disk, max(u64))
+	second := item(EXTENT_REGULAR, 0, 0, 8192, max(u64), 0)
+	testing.expect_value(t, charge(second, &u, &f), Item_Error.Overflow)
+	testing.expect_value(t, total(u).disk, max(u64))
+
+	e: Extents
+	extents_init(&e)
+	defer extents_destroy(&e)
+	c: Charge
+	testing.expect_value(t, charge_shared(first, &e, 1, &c), Item_Error.None)
+	testing.expect_value(t, c.disk, max(u64))
+	testing.expect_value(t, charge_shared(second, &e, 2, &c), Item_Error.Overflow)
+	testing.expect_value(t, c.disk, max(u64))
+}
+
+@(test)
+test_read_search_item_stops_at_the_buffer :: proc(t: ^testing.T) {
+	short := make([]u8, SEARCH_HEADER, context.temp_allocator)
+	endian.put_u32(short[28:32], .Little, 1)
+	_, _, _, _, ok := read_search_item(short)
+	testing.expect(t, !ok, "a length past the buffer is not an item")
+
+	buf := make([]u8, SEARCH_HEADER + 4, context.temp_allocator)
+	endian.put_u64(buf[16:24], .Little, 9)
+	endian.put_u32(buf[24:28], .Little, 108)
+	endian.put_u32(buf[28:32], .Little, 4)
+	rest, offset, item_type, body, ok2 := read_search_item(buf)
+	testing.expect(t, ok2, "a header and its body")
+	testing.expect_value(t, offset, u64(9))
+	testing.expect_value(t, item_type, u32(108))
+	testing.expect_value(t, len(body), 4)
+	testing.expect_value(t, len(rest), 0)
+}
+
 /*
 Workers charging the same extents at once pay for each exactly once between them,
 whichever of them gets there first: what they are charged adds up to the extents'
