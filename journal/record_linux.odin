@@ -98,13 +98,13 @@ WAIT_MS :: 250
 When the loop last looked at the clock, by the wall clock and by CLOCK_MONOTONIC,
 which stops while the machine is suspended (clock_gettime(2)); ns.
 */
-@(private = "file")
+@(private)
 Clocks :: struct {
 	real: i64,
 	mono: i64,
 }
 
-@(private = "file")
+@(private)
 clocks_now :: proc() -> Clocks {
 	ts, _ := linux.clock_gettime(.MONOTONIC)
 	return {time.to_unix_nanoseconds(time.now()), i64(ts.time_sec) * 1e9 + i64(ts.time_nsec)}
@@ -141,6 +141,7 @@ Recorded_Filesystem :: struct {
 	log:      ^os.File,
 	path:     string,
 	buf:      [dynamic]byte, // records to append at the next write
+	last:     i64, // the time of the last record appended, which a Slept carries
 	end:      i64, // where the log's last whole record ends
 	broken:   bool, // a write lost records and its Overflow too: see write_log
 }
@@ -149,10 +150,15 @@ Recorded_Filesystem :: struct {
 @(private)
 Log_Writer :: #type proc(f: ^os.File, data: []byte) -> (n: int, err: os.Error)
 
+// Clock is what the recorder reads the time with, clocks_now; a test's sleeps.
+@(private)
+Clock :: #type proc() -> Clocks
+
 @(private)
 Recorder :: struct {
 	cfg:       Config,
 	write:     Log_Writer,
+	clock:     Clock,
 	fan:       linux.Fd,
 	mountinfo: linux.Fd,
 	own:       u64, // the log folder's hash: its own writes are not recorded
@@ -183,6 +189,7 @@ run :: proc(cfg: Config) -> (problem: string) {
 	r := Recorder {
 		cfg    = cfg,
 		write  = os.write,
+		clock  = clocks_now,
 		events = make([]byte, 256 * 1024),
 	}
 	defer recorder_destroy(&r)
@@ -229,44 +236,70 @@ run :: proc(cfg: Config) -> (problem: string) {
 // HEARTBEAT, a compaction each day, and the mounts again whenever they change.
 @(private = "file")
 loop :: proc(r: ^Recorder) {
-	last_flush, last_beat, last_compact := time.now(), time.now(), time.now()
-	looked := clocks_now()
+	turns := turns_begin(r)
 	for !sync.atomic_load(r.cfg.stop) {
 		fds := [2]linux.Poll_Fd{{fd = r.fan, events = {.IN}}, {fd = r.mountinfo, events = {.PRI}}}
 		n, _ := linux.poll(fds[:], WAIT_MS)
-		// Before anything is written: the Slept record must end the gap it explains.
-		clocks := clocks_now()
-		if (clocks.real - looked.real) - (clocks.mono - looked.mono) > i64(HEARTBEAT) {
-			mark_all(r, .Slept, u64(looked.real))
-		}
-		looked = clocks
-		if n > 0 && .IN in fds[0].revents {
-			read_events(r)
-		}
-		if n > 0 && fds[1].revents & {.PRI, .ERR} != {} {
-			flush(r)
-			sync_mounts(r)
-		}
-		now := time.now()
-		if time.diff(last_flush, now) >= FLUSH_EVERY {
-			flush(r)
-			last_flush = now
-		}
-		if time.diff(last_beat, now) >= HEARTBEAT {
-			flush(r)
-			mark_all(r, .Heartbeat)
-			last_beat = now
-		}
-		if time.diff(last_compact, now) >= COMPACT_EVERY {
-			for &fs in r.recorded {
-				compact_log(&fs)
-			}
-			last_compact = now
-		}
+		heard := n > 0 && .IN in fds[0].revents
+		moved := n > 0 && fds[1].revents & {.PRI, .ERR} != {}
+		take_turn(r, &turns, heard, moved)
 		free_all(context.temp_allocator)
 	}
 	read_events(r)
 	flush(r)
+}
+
+// What the loop keeps from one turn to the next: when it last looked at the clocks,
+// and when it last flushed, beat and compacted, by the wall clock; ns.
+@(private)
+Turns :: struct {
+	looked:    Clocks,
+	flushed:   i64,
+	beat:      i64,
+	compacted: i64,
+}
+
+@(private)
+turns_begin :: proc(r: ^Recorder) -> Turns {
+	at := r.clock()
+	return {looked = at, flushed = at.real, beat = at.real, compacted = at.real}
+}
+
+/*
+take_turn takes one turn of the loop, once poll has returned: events heard are read, and
+the mounts read again when they moved. The clocks are looked at before anything is
+written, since the Slept record must end the gap it explains.
+*/
+@(private)
+take_turn :: proc(r: ^Recorder, s: ^Turns, heard, moved: bool) {
+	clocks := r.clock()
+	if (clocks.real - s.looked.real) - (clocks.mono - s.looked.mono) > i64(HEARTBEAT) {
+		mark_all(r, .Slept)
+	}
+	s.looked = clocks
+	if heard {
+		read_events(r)
+	}
+	if moved {
+		flush(r)
+		sync_mounts(r)
+	}
+	now := clocks.real
+	if now - s.flushed >= i64(FLUSH_EVERY) {
+		flush(r)
+		s.flushed = now
+	}
+	if now - s.beat >= i64(HEARTBEAT) {
+		flush(r)
+		mark_all(r, .Heartbeat)
+		s.beat = now
+	}
+	if now - s.compacted >= i64(COMPACT_EVERY) {
+		for &fs in r.recorded {
+			compact_log(&fs)
+		}
+		s.compacted = now
+	}
 }
 
 @(private)
@@ -380,7 +413,7 @@ now, is let go as an unmounted one is, and the mounts are judged again.
 */
 @(private = "file")
 flush :: proc(r: ^Recorder) {
-	now := time.to_unix_nanoseconds(time.now())
+	now := r.clock().real
 	dropped := false
 	for i := len(r.recorded) - 1; i >= 0; i -= 1 {
 		fs := &r.recorded[i]
@@ -482,18 +515,21 @@ drop :: proc(r: ^Recorder, i: int) {
 
 /*
 mark_all appends a record of kind, carrying hash, to every log, and writes it. A
-broken log is begun again with a Start instead, which breaks every window across it
-as the record would have.
+Slept carries instead the time of the last record before it in that log: cover lets
+the gap after that record pass only when the Slept carries no later time, and the
+recorder ran from then until the machine slept (slept_from). A broken log is begun
+again with a Start instead, which breaks every window across it as the record would
+have.
 */
 @(private)
 mark_all :: proc(r: ^Recorder, kind: Kind, hash := u64(0)) {
-	now := time.to_unix_nanoseconds(time.now())
+	now := r.clock().real
 	for &fs in r.recorded {
 		if fs.broken {
 			restart_log(r, &fs, now)
 			continue
 		}
-		append_record(&fs, {kind, now, hash})
+		append_record(&fs, {kind, now, u64(fs.last) if kind == .Slept else hash})
 		write_log(r, &fs)
 	}
 }
@@ -505,6 +541,7 @@ append_record :: proc(fs: ^Recorded_Filesystem, rec: Record) {
 	buf: [RECORD_SIZE]byte
 	record_put(buf[:], rec)
 	append(&fs.buf, ..buf[:])
+	fs.last = rec.time
 }
 
 /*
@@ -527,7 +564,7 @@ write_log :: proc(r: ^Recorder, fs: ^Recorded_Filesystem) {
 	if put_records(r, fs) {
 		return
 	}
-	append_record(fs, {.Overflow, time.to_unix_nanoseconds(time.now()), 0})
+	append_record(fs, {.Overflow, r.clock().real, 0})
 	if !fs.broken && put_records(r, fs) {
 		return
 	}
@@ -749,7 +786,7 @@ start_recording :: proc(r: ^Recorder, m: Mount) -> (fs: Recorded_Filesystem, pro
 		forget(&fs)
 		return {}, "its log cannot be written"
 	}
-	append_record(&fs, {.Start, time.to_unix_nanoseconds(time.now()), generation()})
+	append_record(&fs, {.Start, r.clock().real, generation()})
 	write_log(r, &fs)
 	return fs, ""
 }
@@ -809,7 +846,7 @@ compact_log :: proc(fs: ^Recorded_Filesystem) {
 // stop_recording appends a Stop to fs's log: what happens next is not seen.
 @(private = "file")
 stop_recording :: proc(r: ^Recorder, fs: ^Recorded_Filesystem) {
-	append_record(fs, {.Stop, time.to_unix_nanoseconds(time.now()), 0})
+	append_record(fs, {.Stop, r.clock().real, 0})
 	write_log(r, fs)
 }
 

@@ -28,10 +28,10 @@ epoch), hash u64.
   only part of a write, as a full volume does, and records were.
 - Stop: the recorder stopped, or the filesystem went away.
 - Slept: the machine was suspended; time is when the recorder woke, and hash is the
-  time of its last look at the clock before, an i64 as a u64. The wall clock
-  (CLOCK_REALTIME) runs on through a suspend and CLOCK_MONOTONIC does not
-  (clock_gettime(2)), so a gap between them over HEARTBEAT says the machine slept.
-  It comes before any other record written after waking.
+  time of the last record it appended to this log before, an i64 as a u64. The
+  wall clock (CLOCK_REALTIME) runs on through a suspend and CLOCK_MONOTONIC does
+  not (clock_gettime(2)), so a gap between them over HEARTBEAT says the machine
+  slept. It comes before any other record written after waking.
 
 The recorder drops records older than RETENTION when it starts and once a day.
 
@@ -394,8 +394,15 @@ cover :: proc(records: []Record, from, to: i64) -> (end: i64, why: string) {
 	return prev.time, ""
 }
 
-// slept_from is when the machine went to sleep, by a Slept record: the recorder's
-// last look at the clock before.
+/*
+slept_from is when the recorder last wrote before the machine went to sleep, by a
+Slept record: the time of the last record it appended to the log before. From then
+until the machine slept the recorder was running, and what it heard in that time is
+recorded after the Slept: that rests on the assumption, untested, that fanotify's
+queue outlasts a suspend as its marks do (the package's doc). A Slept that carries a
+later time than the record before it in the log says a record the recorder appended
+is missing, and its gap is not covered.
+*/
 slept_from :: proc(r: Record) -> i64 {
 	return i64(r.hash)
 }

@@ -8,7 +8,7 @@ import "core:testing"
 import "core:time"
 
 // SEC is a second in ns, the unit the tests' records are written in.
-@(private = "file")
+@(private)
 SEC :: i64(time.Second)
 
 // T0 is when the tests' logs begin, ns since the epoch.
@@ -381,8 +381,9 @@ test_a_recording_let_go_while_mounted_is_judged_again :: proc(t: ^testing.T) {
 /*
 A machine asleep for an hour leaves a gap a Slept record explains: the window
 across it is covered, and names what changed on both sides. The same gap with no
-Slept, with a Slept that begins after the record before the gap, or with a Start
-after waking, as a recorder that died while the machine slept writes, is not.
+Slept, with a Slept that carries a later time than the record before it, as one
+does when a record the recorder appended is missing, or with a Start after waking,
+as a recorder that died while the machine slept writes, is not.
 */
 @(test)
 test_a_suspend_is_covered_only_by_a_slept_record :: proc(t: ^testing.T) {
@@ -392,7 +393,8 @@ test_a_suspend_is_covered_only_by_a_slept_record :: proc(t: ^testing.T) {
 		{{.Changed, T0 + HOUR + 1 * SEC, 2}},
 		beats(T0 + HOUR + 5 * SEC, T0 + HOUR + 45 * SEC),
 	)
-	slept := Record{.Slept, T0 + HOUR, u64(T0 + 20 * SEC)}
+	// What the recorder writes: the time of the last record before the Slept.
+	slept := Record{.Slept, T0 + HOUR, u64(T0 + 21 * SEC)}
 	from, to := T0 + 5 * SEC, T0 + HOUR + 50 * SEC
 
 	path := log_file(t, "slept", "/mnt/e", joined(before, {slept}, after))
@@ -402,7 +404,7 @@ test_a_suspend_is_covered_only_by_a_slept_record :: proc(t: ^testing.T) {
 	testing.expectf(t, why == "", "a suspend was not covered: %s", why)
 	testing.expect(t, 1 in w.hashes && 2 in w.hashes, "a change beside the suspend is missing")
 
-	late := Record{.Slept, T0 + HOUR, u64(T0 + 22 * SEC)}
+	lost := Record{.Slept, T0 + HOUR, u64(T0 + 22 * SEC)}
 	restarted := joined({{.Start, T0 + HOUR + 1 * SEC, 9}}, after)
 	Case :: struct {
 		name:    string,
@@ -411,7 +413,7 @@ test_a_suspend_is_covered_only_by_a_slept_record :: proc(t: ^testing.T) {
 	}
 	cases := []Case {
 		{"bare gap", joined(before, after), "the recorder missed a heartbeat"},
-		{"slept too late", joined(before, {late}, after), "the recorder missed a heartbeat"},
+		{"a record lost", joined(before, {lost}, after), "the recorder missed a heartbeat"},
 		{
 			"died asleep",
 			joined(before, {slept}, restarted),

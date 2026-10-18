@@ -27,6 +27,7 @@ recorder_with_log :: proc(t: ^testing.T, name: string) -> (r: Recorder) {
 	r = Recorder {
 		cfg = {logs = strings.clone(logs)},
 		write = os.write,
+		clock = clocks_now,
 		fan = -1,
 		mountinfo = -1,
 	}
@@ -166,4 +167,52 @@ test_a_log_that_takes_nothing_begins_again :: proc(t: ^testing.T) {
 	testing.expectf(t, slice.equal(kinds_of(records), want), "records %v", kinds_of(records))
 	_, why := window(fs.path, records[0].time, time.to_unix_nanoseconds(time.now()))
 	testing.expect_value(t, why, "the recorder started again since the place was last read")
+}
+
+// The test's clock, read on the test's thread: it reads what the test last set.
+@(private = "file", thread_local)
+set_clock: Clocks
+
+@(private = "file")
+test_clock :: proc() -> Clocks {
+	return set_clock
+}
+
+/*
+The recorder's own loop, turned with a clock that shows an hour's suspend after
+twelve seconds of recording, writes a Slept that carries the time of the last record
+before it, and the window across the suspend is covered. The turns are the loop's
+less its poll, which only waits.
+*/
+@(test)
+test_the_loop_writes_a_slept_cover_accepts :: proc(t: ^testing.T) {
+	r := recorder_with_log(t, "slept")
+	defer recorder_with_log_destroy(&r)
+	r.clock = test_clock
+	from := time.to_unix_nanoseconds(time.now())
+	set_clock = {from, 0}
+	mark_all(&r, .Start, 7)
+	turns := turns_begin(&r)
+	for s in 1 ..= 12 {
+		set_clock = {from + i64(s) * SEC, i64(s) * SEC}
+		take_turn(&r, &turns, false, false)
+	}
+	set_clock = {from + 3612 * SEC, 13 * SEC}
+	take_turn(&r, &turns, false, false)
+	set_clock = {from + 3614 * SEC, 15 * SEC}
+	take_turn(&r, &turns, false, false)
+
+	records, _ := records_of(t, r.recorded[0].path)
+	want := []Kind{.Start, .Heartbeat, .Slept, .Heartbeat}
+	testing.expectf(t, slice.equal(kinds_of(records), want), "records %v", kinds_of(records))
+	if len(records) != len(want) {
+		return
+	}
+	testing.expect_value(t, records[1].time, from + 10 * SEC)
+	testing.expect_value(t, records[2].time, from + 3612 * SEC)
+	testing.expect_value(t, slept_from(records[2]), records[1].time)
+	w, why := window(r.recorded[0].path, from, from + 3614 * SEC)
+	defer window_destroy(&w)
+	testing.expectf(t, why == "", "the suspend was not covered: %s", why)
+	testing.expect_value(t, w.end, from + 3612 * SEC)
 }
