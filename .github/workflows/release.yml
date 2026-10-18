@@ -272,11 +272,16 @@ jobs:
             esac
           fi
           # The Linux window must start where neither SDL3 nor libcurl is
-          # installed: neither may be among what it loads.
+          # installed: neither may be among what it loads. Nor may the
+          # command line, which opens libcurl only for leita update.
           if [ "$RUNNER_OS" = Linux ]; then
             ldd "build/release/app/Leita"
             if ldd "build/release/app/Leita" | grep -E 'libSDL3|libcurl'; then
               echo "::error::the window links a shared SDL3 or libcurl"
+              exit 1
+            fi
+            if ldd "build/release/leita" | grep -E 'libcurl'; then
+              echo "::error::the command line links a shared libcurl"
               exit 1
             fi
             echo "glibc needed: $(objdump -T build/release/app/Leita build/release/leita | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1)"

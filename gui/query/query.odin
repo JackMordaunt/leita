@@ -291,6 +291,41 @@ Licence_Result :: struct {
 	problem:    string,
 }
 
+// Update is where a check for a newer Leita stands, which About shows. Nothing
+// asks on its own: it is Idle until a person sends command.Check_Update.
+Update :: struct {}
+
+Update_State :: enum u8 {
+	Idle, // no check has been asked for
+	Checking,
+	Current, // this is the latest release
+	Available, // a newer release is out; latest says which
+	Applying, // downloading it, to replace this window
+	Applied, // replaced; the new one runs when Leita next starts
+	Failed, // problem says why
+}
+
+// Update_Problem is why a check or an update failed, for the window to word.
+Update_Problem :: enum u8 {
+	None,
+	No_Library, // libcurl is not on this system
+	Unreachable, // the release page could not be reached
+	Not_Published, // the release does not hold this window's build
+	Other, // detail says
+}
+
+Update_Result :: struct {
+	state:     Update_State,
+	latest:    string, // the release's version, "" when it did not say
+	// Available: this copy can be replaced in place. When not (a package, an
+	// AppImage, the installer's copy, Leita.app, a development build) the
+	// window sends the person to page instead.
+	can_apply: bool,
+	problem:   Update_Problem,
+	detail:    string, // English, from the update package, when problem is Other
+	page:      string, // where to download a release by hand
+}
+
 // Settings is what the person chose in an earlier run, for the window to open
 // as they left it.
 Settings :: struct {}

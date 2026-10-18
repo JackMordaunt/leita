@@ -8,10 +8,12 @@ Leita: see what is using the disk, as the scan finds it.
 	Leita journal ...      the change recorder's, as leita journal: the window runs
 	                       it under pkexec to turn the recorder on or off
 	Leita licence ...      the licence's, as leita licence
+	Leita update ...       looks for a newer release and installs it, as leita
+	                       update does, but replaces the window
 
 Leita takes the same arguments as leita, and launch decides which it is from
 them: alone or with one path it opens the window; with any argument that starts
-with "-", or with monitor, journal or licence, it is leita, whose exit code it
+with "-", or with monitor, journal, licence, history or update, it is leita, whose exit code it
 exits with. So a flag the window has no use for, --report say, still does what
 leita does, and -h is help rather than a folder named -h. A Mac with only the
 app can therefore run reports from the terminal: Leita ~ --report usage.pdf.
@@ -103,6 +105,8 @@ main :: proc() {
 	args := without_psn(os.args[1:])
 	if launch(args) == .Terminal {
 		attach_console()
+		// leita update replaces the file this is: the window's, not the command line's.
+		cli.running_as = .Window
 		code := cli.run(args)
 		free_all(context.temp_allocator)
 		os.exit(code)

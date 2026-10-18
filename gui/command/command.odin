@@ -49,6 +49,8 @@ Command :: union {
 	Watch,
 	Unwatch,
 	Recording,
+	Check_Update,
+	Apply_Update,
 }
 
 // Scan reads what is at path, calling off any scan still running.
@@ -189,6 +191,16 @@ Watch :: struct {
 Unwatch :: struct {
 	path: Text,
 }
+
+// Check_Update asks the release page whether a newer Leita is out, and says what
+// it found in query.Update. It is sent only when a person asks, from About;
+// nothing in Leita checks on its own.
+Check_Update :: struct {}
+
+// Apply_Update downloads the release's build of this window and replaces the
+// running file with it, when a check found one and this copy can be replaced in
+// place (query.Update_Result.can_apply); the new one runs on the next start.
+Apply_Update :: struct {}
 
 // Recording turns the recorder of changes on or off, on Linux: this binary's
 // `journal on` or `journal off`, under pkexec for the administrator's rights it

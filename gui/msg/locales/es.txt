@@ -25,6 +25,20 @@ free_personal_trial = Gratis para uso personal. {0}
 notices = Licencias de código abierto
 notices_intro = {0} está hecho con estos componentes, cada uno con su propia licencia.
 close = Cerrar
+check_updates = Buscar actualizaciones
+checking_updates = Buscando actualizaciones…
+update_current = Esta es la versión más reciente de {0}.
+update_available = La versión {1} de {0} está disponible.
+update_available_unknown = Hay una versión más reciente de {0} disponible.
+update_now = Actualizar
+download_update = Descargar la actualización
+updating = Actualizando…
+update_applied = Actualizado. Reinicie {0} para usar la nueva versión.
+update_no_curl = {0} necesita libcurl para buscar actualizaciones, y este sistema no la tiene. Instale el paquete curl o descargue la actualización de la página de la versión.
+update_unreachable = {0} no pudo conectar con la página de la versión. Compruebe la conexión.
+update_not_published = La última versión publicada no incluye una compilación de {0} para este sistema.
+update_failed = La actualización falló: {0}
+update_privacy = Solo cuando hace clic, {0} consulta a GitHub cuál es la última versión. No se envía nada sobre usted ni sus discos.
 
 # How the scan is going
 status_empty = Indique una carpeta para ver qué ocupa el disco.
