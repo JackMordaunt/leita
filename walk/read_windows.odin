@@ -146,6 +146,7 @@ Dir_Entry :: struct {
 	attributes: u32,
 	tag:        u32,
 	allocated:  i64,
+	length:     i64, // EndOfFile: the bytes of data, as against the space set aside for them
 	id:         [2]u64, // low half, high half
 	has_id:     bool,
 	name:       []u16,
@@ -162,6 +163,7 @@ entry_at :: proc(buf: []u64, at: int, listing: Listing) -> (l: Dir_Entry) {
 			attributes = info.file_attributes,
 			tag        = info.reparse_point_tag,
 			allocated  = info.allocation_size,
+			length     = info.end_of_file,
 			id         = info.file_id,
 			has_id     = true,
 			name       = ([^]u16)(
@@ -175,6 +177,7 @@ entry_at :: proc(buf: []u64, at: int, listing: Listing) -> (l: Dir_Entry) {
 			attributes = info.file_attributes,
 			tag        = info.ea_size,
 			allocated  = info.allocation_size,
+			length     = info.end_of_file,
 			name       = ([^]u16)(raw[FULL_DIR_NAME_OFFSET:])[:info.file_name_length / 2],
 		}
 	}
@@ -206,10 +209,13 @@ the macOS reader treats a mount point, so a scan stays on the volume it started 
 Any other reparse point, a cloud placeholder or a deduplicated file, is the file or
 directory it says it is, which is also how the MFT reader finds it.
 
-A file stored inside its MFT record is charged the bytes the system reports for it,
-which are its resident length. The MFT reader charges the same: its clusters belong
-to $MFT, but the length stays on the entry, or a directory of small files would
-read as empty. The two engines scan the same volume, so they must agree.
+A file stored inside its MFT record occupies no clusters of its own. The MFT reader
+charges it the length of its data, so a directory of small files does not read as
+empty, and this must charge the same number for the two engines to agree. NTFS
+allocates a non-resident stream in whole clusters, so an allocation that is not a
+whole number of them is a resident one. The system reports that allocation rounded
+up to 8 bytes (104 for 100 bytes of data, seen on windows-latest in the survey fill
+test), so the file is charged its EndOfFile instead, which is the 100.
 
 Not ok only when the name would not fit in memory.
 */
@@ -231,10 +237,11 @@ describe :: proc(dir: win.HANDLE, l: Dir_Entry, vol: Volume, s: ^Scratch) -> (e:
 		return e, true
 	}
 
-	allocated := l.allocated
+	allocated, length := l.allocated, l.length
 	if vol.hard_links {
 		if info, asked := standard_info(dir, l.name); asked {
 			allocated = i64(info.AllocationSize)
+			length = i64(info.EndOfFile)
 			// Without the file's id there is no telling its names apart from another
 			// file's, so it is charged as though it had one name.
 			if info.NumberOfLinks > 1 && l.has_id {
@@ -251,6 +258,9 @@ describe :: proc(dir: win.HANDLE, l: Dir_Entry, vol: Volume, s: ^Scratch) -> (e:
 		if occupied, asked := compressed_size(dir, l.name); asked {
 			allocated = occupied
 		}
+	}
+	if vol.ntfs && vol.cluster > 0 && u64(max(allocated, 0)) % vol.cluster != 0 {
+		allocated = length
 	}
 	e.disk = u64(max(allocated, 0))
 	return e, true
@@ -392,13 +402,16 @@ What a reader needs to know of the volume a directory is on, kept per worker by
 serial number, so it is asked once per volume rather than once per directory.
 
 `listing` starts at the extended class and falls back to the full one the first time
-the volume refuses it. `hard_links` is whether a file on it can have more than one
-name; FAT and exFAT cannot, and their files are never asked about one at a time.
+the volume refuses it. `cluster` is its allocation unit. `hard_links` is whether a
+file on it can have more than one name; FAT and exFAT cannot, and their files are
+never asked about one at a time.
 */
 @(private = "file")
 Volume :: struct {
 	serial:     u64,
+	cluster:    u64,
 	hard_links: bool,
+	ntfs:       bool,
 	listing:    Listing,
 }
 
@@ -465,6 +478,15 @@ volume_of :: proc(dir: win.HANDLE, s: ^Scratch) -> (index: int, ok: bool) {
 	if status >= 0 {
 		info := (^File_Fs_Attribute_Information)(&attribute)
 		v.hard_links = info.file_system_attributes & FILE_SUPPORTS_HARD_LINKS != 0
+		named := ([^]u16)(([^]u8)(&attribute)[size_of(File_Fs_Attribute_Information):])
+		name := named[:min(info.file_system_name_length / 2, 8)]
+		v.ntfs =
+			len(name) == 4 && name[0] == 'N' && name[1] == 'T' && name[2] == 'F' && name[3] == 'S'
+	}
+	size: File_Fs_Size_Information
+	status = NtQueryVolumeInformationFile(dir, &iosb, &size, size_of(size), .FileFsSizeInformation)
+	if status >= 0 {
+		v.cluster = u64(size.sectors_per_allocation_unit) * u64(size.bytes_per_sector)
 	}
 	if _, err := append(&s.volumes, v); err != nil {
 		return 0, false
@@ -636,8 +658,8 @@ File_Compression_Information :: struct {
 	reserved:               [3]u8,
 }
 
-// FILE_FS_VOLUME_INFORMATION and FILE_FS_ATTRIBUTE_INFORMATION from <ntifs.h>, each up
-// to the name that follows it.
+// FILE_FS_VOLUME_INFORMATION, FILE_FS_ATTRIBUTE_INFORMATION and
+// FILE_FS_SIZE_INFORMATION from <ntifs.h>, each up to the name that follows it.
 @(private = "file")
 File_Fs_Volume_Information :: struct {
 	volume_creation_time: i64,
@@ -654,8 +676,17 @@ File_Fs_Attribute_Information :: struct {
 }
 
 @(private = "file")
+File_Fs_Size_Information :: struct {
+	total_allocation_units:      i64,
+	available_allocation_units:  i64,
+	sectors_per_allocation_unit: u32,
+	bytes_per_sector:            u32,
+}
+
+@(private = "file")
 Fs_Information_Class :: enum i32 {
 	FileFsVolumeInformation    = 1,
+	FileFsSizeInformation      = 3,
 	FileFsAttributeInformation = 5,
 }
 
