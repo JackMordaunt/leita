@@ -13,7 +13,6 @@ import "jm:stream"
 
 import "../../history"
 import "../../home"
-import "../../human"
 import "../../reclaim"
 import "../../scan"
 import "../../survey"
@@ -392,7 +391,8 @@ newest_modification :: proc(path: string) -> (modified: i64, is_dir: bool) {
 
 // clean deletes for good each entry of c that Reclaim offered, and takes what went
 // out of the totals; anything else it was sent is refused. An entry partly deleted
-// stays in the tree, and only the space it gave back is counted freed.
+// stays in the tree. The audit records the size of what was unlinked. The
+// notice does not call that size space freed.
 clean :: proc(d: ^Desk, c: ^command.Clean, done: ^[dynamic]history.Action) {
 	s := d.scan
 	if s == nil || c.generation != d.generation || !s.grown {
@@ -400,7 +400,6 @@ clean :: proc(d: ^Desk, c: ^command.Clean, done: ^[dynamic]history.Action) {
 		return
 	}
 	deleted, failed, refused: int
-	freed: u64
 	who := home.user(context.temp_allocator)
 	for node in c.nodes[:min(c.count, len(c.nodes))] {
 		category, offered := d.reclaimable[node]
@@ -416,7 +415,6 @@ clean :: proc(d: ^Desk, c: ^command.Clean, done: ^[dynamic]history.Action) {
 			continue
 		}
 		left, gave, err := files.delete_tree(path)
-		freed += gave
 		if err != .None {
 			note(done, .Delete, path, why_left(err, left), gave, true)
 			failed += 1
@@ -427,10 +425,12 @@ clean :: proc(d: ^Desk, c: ^command.Clean, done: ^[dynamic]history.Action) {
 		delete_key(&d.reclaimable, node)
 		deleted += 1
 	}
+	// gave is what the delete measured as unlinked. It is not an exact reclaim,
+	// so the notice does not call it space freed.
 	if failed + refused > 0 {
-		tell(d, true, .Cleaned_Partly, deleted, human.bytes(freed), failed + refused)
+		tell(d, true, .Cleaned_Partly, deleted, failed + refused)
 	} else {
-		tell(d, false, .Cleaned, deleted, human.bytes(freed))
+		tell(d, false, .Cleaned, deleted)
 	}
 }
 
@@ -460,7 +460,6 @@ empty_trash :: proc(d: ^Desk, e: command.Entry, done: ^[dynamic]history.Action) 
 		return
 	}
 	failed := 0
-	freed: u64
 	it := survey.children(&s.roll, e.node)
 	children := make([dynamic]u32, context.temp_allocator)
 	for c in survey.next_child(&it) {
@@ -478,11 +477,12 @@ empty_trash :: proc(d: ^Desk, e: command.Entry, done: ^[dynamic]history.Action) 
 			// The freedesktop.org Trash keeps everything in its files and info
 			// directories; the Finder's holds what was trashed itself.
 			when ODIN_OS == .Darwin {
+				// held is the charged share. The audit records what the path
+				// held. The notice does not call that figure space freed.
 				size := held(s, c)
 				if err := os.remove(path); err == nil {
 					note(done, .Empty_Trash, path, "", size, false)
 					survey.forget(&s.roll, &s.tree, c)
-					freed += size
 				} else {
 					note(done, .Empty_Trash, path, fmt.tprint(err), size, true)
 					failed += 1
@@ -491,7 +491,6 @@ empty_trash :: proc(d: ^Desk, e: command.Entry, done: ^[dynamic]history.Action) 
 			continue
 		}
 		left, gave, err := files.delete_tree(path)
-		freed += gave
 		if err != .None {
 			// What was left is counted entry by entry; a tree refused whole is one.
 			failed += left if err == .Partly else 1
@@ -502,9 +501,9 @@ empty_trash :: proc(d: ^Desk, e: command.Entry, done: ^[dynamic]history.Action) 
 		survey.forget(&s.roll, &s.tree, c)
 	}
 	if failed > 0 {
-		tell(d, true, .Emptied_Partly, human.bytes(freed), failed)
+		tell(d, true, .Emptied_Partly, failed)
 	} else {
-		tell(d, false, .Emptied, human.bytes(freed))
+		tell(d, false, .Emptied)
 	}
 }
 
@@ -515,7 +514,6 @@ empty_trash :: proc(d: ^Desk, e: command.Entry, done: ^[dynamic]history.Action) 
 empty_recycle_bins :: proc(d: ^Desk, done: ^[dynamic]history.Action) {
 	s := d.scan
 	failed := 0
-	freed: u64
 	for node, path in d.recycle_paths {
 		runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
 		size, _, _ := files.recycle_bin_info(path)
@@ -525,7 +523,6 @@ empty_recycle_bins :: proc(d: ^Desk, done: ^[dynamic]history.Action) {
 			continue
 		}
 		note(done, .Empty_Trash, path, "", size, false)
-		freed += size
 		if node < s.roll.seen {
 			it := survey.children(&s.roll, node)
 			children := make([dynamic]u32, context.temp_allocator)
@@ -539,8 +536,8 @@ empty_recycle_bins :: proc(d: ^Desk, done: ^[dynamic]history.Action) {
 		delete_key(&d.reclaimable, node)
 	}
 	if failed > 0 {
-		tell(d, true, .Emptied_Partly, human.bytes(freed), failed)
+		tell(d, true, .Emptied_Partly, failed)
 	} else {
-		tell(d, false, .Emptied, human.bytes(freed))
+		tell(d, false, .Emptied)
 	}
 }

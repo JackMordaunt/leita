@@ -135,6 +135,17 @@ listing_empty = Nothing found here yet.
 # {0} how many more, {1} their size
 listing_more.one = and {0} smaller item, {1}
 listing_more = and {0} smaller items, {1} between them
+# {0} a length, when it differs from the charged size
+listing_length = size {0}
+# {0} an exact amount, when it differs from the charged size
+deleting_frees = deleting frees {0}
+deleting_unknown = deleting frees an unknown amount
+folder_charged = Charged share of this folder. Deleting it does not always free this much.
+snap_unchecked = Whether a snapshot retains deleted data was not checked. A charged size is not what deletion frees.
+snap_none = No snapshot was found. A charged size is still not what deletion frees.
+snap_present = A snapshot may still hold deleted data. A charged size is not what deletion frees.
+# {0} a size the volume may still purge
+purge_later = The volume may still purge {0} later.
 # {0} a file or folder's name
 share_of = {0} share
 largest_files = Largest files
@@ -224,7 +235,7 @@ looking = Looking
 reclaim_after_scan = Reclaim looks once the scan is done.
 reclaim_nothing = Nothing here is safe to reclaim.
 reclaim_explains = Reclaim finds what builds and tools made and will make again: installed dependencies, build output, caches.
-reclaim_total = {0} can be reclaimed here
+reclaim_total = {0} charged here. Deleting a folder does not always free that.
 # {0} how many folders, {1} their size
 reclaim_chosen.one = {1} in {0} folder chosen
 reclaim_chosen = {1} in {0} folders chosen
@@ -235,13 +246,13 @@ empty_trash = Empty Trash
 delete_title.one = Delete {0} folder for good?
 delete_title = Delete {0} folders for good?
 # {0} a size
-delete_body = This frees {0}. Nothing is moved to the Trash: each comes back by itself when the project is next built or installed, or the tool next runs.
+delete_body = How much disk space this frees is unknown. The {0} shown is the charged share, and another name or a snapshot can keep the data. Nothing is moved to the Trash: each comes back by itself when the project is next built or installed, or the tool next runs.
 # {0} how many more folders than the list shows
 delete_more.one = and {0} more folder
 delete_more = and {0} more folders
 delete = Delete
 empty_title = Empty the Trash?
-empty_body = {0} in the Trash will be deleted for good.
+empty_body = {0} in the Trash will be deleted for good. How much disk space that frees is unknown.
 empty = Empty
 # {0} when, as "3 days ago"
 modified_recent = Modified {0}, so likely in use
@@ -267,7 +278,7 @@ why_python = Made again by Python and its tools; a virtual environment is create
 why_package_cache = Downloaded again when a package is next needed.
 why_app_cache = Applications keep only what they can make again in their cache.
 why_device_support = Copied again from the device the next time Xcode connects to it.
-why_trash = Already deleted; emptying it frees the space for good.
+why_trash = Already deleted. Emptying it removes those copies. How much disk space that frees can be unknown.
 
 # Exporting a report
 export_report = Export report
@@ -349,19 +360,17 @@ made_up_open = Could not open it: this disk is made up, so its files are not on 
 top_trash = Could not move the top of the scan to the Trash from here
 top_rename = Could not rename the top of the scan from here
 clean_gone = Could not clean up: the scan it came from is gone
-# {0} how many folders, {1} the space freed
-cleaned.one = Deleted {0} folder and freed {1}
-cleaned = Deleted {0} folders and freed {1}
-# {0} how many folders, {1} the space freed, what was deleted of the rest included,
-# {2} how many folders are still there, whole or in part
-cleaned_partly.one = Deleted {0} folder and freed {1}; {2} could not be deleted in full
-cleaned_partly = Deleted {0} folders and freed {1}; {2} could not be deleted in full
+# {0} how many folders
+cleaned.one = Deleted {0} folder. How much disk space that frees is unknown.
+cleaned = Deleted {0} folders. How much disk space that frees is unknown.
+# {0} how many folders, {1} how many are still there, whole or in part
+cleaned_partly.one = Deleted {0} folder; {1} could not be deleted in full. How much disk space that frees is unknown.
+cleaned_partly = Deleted {0} folders; {1} could not be deleted in full. How much disk space that frees is unknown.
 empty_gone = Could not empty the Trash: the scan it came from is gone
 empty_not_trash = Could not empty the Trash: it is not the Trash Reclaim found
-# {0} the space freed
-emptied = Emptied the Trash and freed {0}
-# {0} the space freed, {1} how many files and folders are still there
-emptied_partly = Emptied the Trash and freed {0}; {1} could not be deleted
+emptied = Emptied the Trash. How much disk space that frees is unknown.
+# {0} how many files and folders are still there
+emptied_partly = Emptied the Trash. How much disk space that frees is unknown; {0} could not be deleted.
 export_unfinished = Could not export a report: the scan is not finished
 export_no_folder = Could not export a report: there is no Documents folder or home to save it in
 # {0} a path, {1} why

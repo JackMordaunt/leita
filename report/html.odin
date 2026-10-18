@@ -69,6 +69,15 @@ write_html :: proc(sb: ^strings.Builder, r: ^Report) {
 		strings.write_string(sb, note)
 		strings.write_string(sb, "</p>\n")
 	}
+	strings.write_string(
+		sb,
+		"<p class=\"note\">Charged is a share of allocated space. Exact reclaim is what deleting that one entry frees, when that is known, including zero. Unknown is not zero. Deleting a folder does not free the charged total of what it holds.</p>\n",
+	)
+	if acct, ok := r.accounting.?; ok {
+		strings.write_string(sb, "<p class=\"note\">")
+		html_text(sb, accounting_line(acct))
+		strings.write_string(sb, "</p>\n")
+	}
 	strings.write_string(sb, "</section>\n")
 	if retained, ok := r.retention.?; ok {
 		strings.write_string(sb, "<section>\n<h2>APFS local snapshots</h2>\n")
@@ -111,7 +120,7 @@ write_html :: proc(sb: ^strings.Builder, r: ^Report) {
 	strings.write_string(sb, "<section>\n<h2>By kind</h2>\n<table>\n<thead><tr>")
 	strings.write_string(
 		sb,
-		"<th>Kind</th><th class=\"num\">Files</th><th class=\"num\">Size</th><th class=\"share\">Share</th>",
+		"<th>Kind</th><th class=\"num\">Files</th><th class=\"num\">Charged</th><th class=\"share\">Share</th>",
 	)
 	strings.write_string(sb, "</tr></thead>\n<tbody>\n")
 	for kind in kinds.Kind {
@@ -139,7 +148,7 @@ write_html :: proc(sb: ^strings.Builder, r: ^Report) {
 		} else {
 			fmt.sbprintf(
 				sb,
-				"%s can be deleted without losing anything: each is made again by the tool that made it.",
+				"%s is the charged share of what can be deleted and made again. Deleting a folder does not always free that share.",
 				human.bytes(total),
 			)
 		}
@@ -153,7 +162,7 @@ write_html :: proc(sb: ^strings.Builder, r: ^Report) {
 			strings.write_string(sb, "</p>\n<table>\n<thead><tr><th class=\"rank\">#</th>")
 			strings.write_string(
 				sb,
-				"<th>Path</th><th class=\"num\">Size</th><th class=\"share\">Share</th></tr></thead>\n<tbody>\n",
+				"<th>Path</th><th class=\"num\">Charged</th><th class=\"share\">Share</th><th class=\"num\">Exact reclaim</th></tr></thead>\n<tbody>\n",
 			)
 			for c, i in g.items {
 				fmt.sbprintf(sb, "<tr><td class=\"rank\">%d</td><td class=\"path\">", i + 1)
@@ -161,6 +170,7 @@ write_html :: proc(sb: ^strings.Builder, r: ^Report) {
 				strings.write_string(sb, "</td>")
 				html_size(sb, c.bytes)
 				html_share(sb, r, c.bytes)
+				html_frees(sb, c.frees)
 				strings.write_string(sb, "</tr>\n")
 			}
 			strings.write_string(sb, "</tbody>\n</table>\n")
@@ -185,7 +195,7 @@ html_entries :: proc(sb: ^strings.Builder, r: ^Report, title: string, entries: [
 		sb,
 		"<table>\n<thead><tr><th class=\"rank\">#</th><th>Path</th><th>Kind</th>",
 	)
-	strings.write_string(sb, "<th class=\"num\">Size</th><th class=\"share\">Share</th>")
+	strings.write_string(sb, "<th class=\"num\">Charged</th><th class=\"share\">Share</th><th class=\"num\">Exact reclaim</th>")
 	if compared {
 		strings.write_string(sb, "<th class=\"num\">Change</th>")
 	}
@@ -196,6 +206,7 @@ html_entries :: proc(sb: ^strings.Builder, r: ^Report, title: string, entries: [
 		fmt.sbprintf(sb, "</td><td class=\"kind\">%s</td>", kinds.NAMES[e.kind])
 		html_size(sb, e.bytes)
 		html_share(sb, r, e.bytes)
+		html_frees(sb, e.frees)
 		if compared {
 			if delta, ok := change(e); ok {
 				class := "up" if delta > 0 else "down" if delta < 0 else "same"
@@ -233,6 +244,37 @@ html_fact :: proc(sb: ^strings.Builder, term, value, exact: string) {
 	strings.write_byte(sb, '>')
 	html_text(sb, value)
 	strings.write_string(sb, "</dd></div>\n")
+}
+
+@(private)
+html_frees :: proc(sb: ^strings.Builder, frees: Maybe(u64)) {
+	if n, ok := frees.?; ok {
+		html_size(sb, n)
+		return
+	}
+	strings.write_string(sb, "<td class=\"num\">unknown</td>")
+}
+
+// accounting_line is the snapshot and delayed-purge sentence. It names no
+// quantity as bytes a delete frees.
+@(private)
+accounting_line :: proc(a: Accounting) -> string {
+	line: string
+	switch a.snapshots {
+	case .None:
+		line = "No snapshot was found. A charged size is still not what deletion frees."
+	case .Present:
+		line = "A snapshot may still hold deleted data. A charged size is not what deletion frees."
+	case .Unchecked:
+		line = "Whether a snapshot retains deleted data was not checked. A charged size is not what deletion frees."
+	}
+	if n, ok := a.purgeable.?; ok {
+		return fmt.tprintf("%s The volume may still purge %s later.", line, human.bytes(n))
+	}
+	if a.scan_order || a.logical {
+		return fmt.tprintf("%s These charged sizes are estimates.", line)
+	}
+	return line
 }
 
 @(private)

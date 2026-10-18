@@ -75,6 +75,9 @@ Report :: struct {
 	// Whether the volume's space passes the limits asked for (threshold.odin),
 	// absent unless --warn-used, --fail-used or --min-free was.
 	thresholds:          Maybe(Threshold),
+	// What the scan knows about snapshots and delayed purge. Absent on a report
+	// built without a tree. It is not a frees quantity.
+	accounting:          Maybe(Accounting),
 	allocator:           mem.Allocator,
 }
 
@@ -97,13 +100,27 @@ Baseline :: struct {
 	bytes: u64,
 }
 
-// Entry is a directory or a file: its full path, what it holds on disk, what
-// it is, and what it held in the scan compared with, when that scan kept it.
+// Entry is a directory or a file: its full path, its charged share, what it
+// is, and what it held in the scan compared with, when that scan kept it.
+// frees is what deleting this one entry frees, when that is exact, including
+// 0. Nil when unknown or only an estimate. It is not a directory's charged total.
 Entry :: struct {
 	path:  string,
 	bytes: u64,
 	kind:  kinds.Kind,
 	was:   Maybe(u64),
+	frees: Maybe(u64),
+}
+
+// Accounting is what the scan measured about retention. snapshots Unchecked
+// means the scan did not look. purgeable is nil until a figure was stored.
+// scan_order and logical say the charged sizes are estimates. None of these
+// is a quantity deletion frees.
+Accounting :: struct {
+	snapshots:  scan.Snapshot_State,
+	purgeable:  Maybe(u64),
+	scan_order: bool,
+	logical:    bool,
 }
 
 Kind_Total :: struct {
@@ -120,7 +137,8 @@ Group :: struct {
 
 Candidate :: struct {
 	path:  string,
-	bytes: u64,
+	bytes: u64, // charged share of the candidate, not what deletion frees
+	frees: Maybe(u64), // exact reclaim of this one node, or nil
 }
 
 // Facts are what the caller knows of a scan that its tree does not say.
@@ -205,13 +223,13 @@ build :: proc(
 	r.started = facts.started
 	r.duration = facts.duration
 	r.space = facts.space
+	ret := scan.retention_of(t)
 	if scan.has_snapshot_volume(t) {
-		measured := scan.retention_of(t)
 		retained := Volume_Retention {
-			snapshots = measured.snapshots,
+			snapshots = ret.snapshots,
 		}
-		if measured.purgeable_known {
-			retained.purgeable = measured.purgeable
+		if ret.purgeable_known {
+			retained.purgeable = ret.purgeable
 		}
 		names := scan.snapshot_names_of(t)
 		retained.names = make([]string, len(names), allocator)
@@ -220,6 +238,15 @@ build :: proc(
 		}
 		r.retention = retained
 	}
+	acct := Accounting {
+		snapshots  = ret.snapshots,
+		scan_order = scan.is_scan_order(t),
+		logical    = scan.is_logical(t),
+	}
+	if ret.purgeable_known {
+		acct.purgeable = ret.purgeable
+	}
+	r.accounting = acct
 	if th, configured, _ := threshold_of(
 		r.space,
 		opt.warn_used,
@@ -311,6 +338,15 @@ build :: proc(
 				path  = scan.path(t, s.node, allocator),
 				bytes = s.bytes,
 				kind  = kind,
+			}
+			// A file's bytes are that node's charge, so its exact reclaim belongs
+			// on the row. A directory's bytes are the charged rollup, and
+			// freed_of is one node: copying it would call the folder's total
+			// exact, including an exact 0 for a second name.
+			if .Directory not_in flags {
+				if n, exact := scan.exact_frees(scan.freed_of(t, s.node)); exact {
+					out[i].frees = n
+				}
 			}
 			if prev != nil {
 				if was, kept := prev.entries[history.entry_path(t, top, s.node)]; kept {
@@ -504,7 +540,15 @@ candidates :: proc(
 			items    = make([]Candidate, j - i, allocator),
 		}
 		for c, k in found[i:j] {
-			g.items[k] = {strings.clone(c.path, allocator), c.bytes}
+			g.items[k] = {path = strings.clone(c.path, allocator), bytes = c.bytes}
+			// Candidates that are directories are charged by their rollup.
+			// Exact reclaim of the directory node is not that total.
+			n := scan.node(t, c.node)
+			if .Directory not_in scan.node_flags(n) {
+				if bytes, exact := scan.exact_frees(scan.freed_of(t, c.node)); exact {
+					g.items[k].frees = bytes
+				}
+			}
 			g.bytes += c.bytes
 		}
 		append(&groups, g)
