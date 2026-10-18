@@ -12,8 +12,9 @@
 #
 # What a release holds, for version v1.2.0:
 #   leita-v1.2.0-linux-amd64.tar.zst     both binaries, the window in app/,
-#   leita-v1.2.0-linux-arm64.tar.zst     for a person to download; app/ since
-#   leita-v1.2.0-windows-amd64.zip       macOS and Windows fold case, so
+#   leita-v1.2.0-linux-arm64.tar.zst     LICENSE.md and THIRD_PARTY.md, for
+#   leita-v1.2.0-windows-amd64.zip       a person to download; app/ since
+#                                        macOS and Windows fold case, so
 #                                        leita and Leita cannot share a
 #                                        directory. Windows's carries the
 #                                        window's SDL3.dll and accesskit.dll.
@@ -21,20 +22,30 @@
 #   leita-v1.2.0-linux-amd64.deb         both binaries for apt and dnf, with
 #   leita-v1.2.0-linux-amd64.rpm         the desktop entry, the icon and the
 #                                        recorder's unit (just package), and
-#                                        the same three for linux-arm64
+#                                        the same three for linux-arm64; each
+#                                        carries the notices in share/doc
 #   leita-v1.2.0-darwin-universal.dmg    Leita.app, the command line inside
-#                                        it, signed, notarised and stapled;
+#                                        it and the notices in its
+#                                        Contents/Resources, signed,
+#                                        notarised and stapled;
 #                                        -unsigned.dmg instead when the
 #                                        signing secrets are not set
 #   leita-<os>-<arch>[.exe]              each binary alone under a name no
 #   leita-window-<os>-<arch>[.exe]       release changes, which is what
 #                                        jm:selfupdate fetches from
-#                                        releases/latest/download (card 547),
+#                                        releases/latest/download (card 547).
+#   THIRD_PARTY.md                       once beside those binaries. The
+#                                        archives, packages and Leita.app
+#                                        each carry their own copy, and
+#                                        only one dist/ adds the loose
+#                                        file: the assemble job merges every
+#                                        dist/ into one directory.
 #   <binary>.zst, <binary>.<sha256>.patch
-#                                        and beside each, as brainfold
-#                                        publishes, its zstd-compressed form
-#                                        and a patch to it from each of the
-#                                        last PATCH_FROM releases
+#                                        beside each single binary, as
+#                                        brainfold publishes: its
+#                                        zstd-compressed form and a patch to
+#                                        it from each of the last PATCH_FROM
+#                                        releases
 #   sha256sums.txt, version.txt          over all of the above, the file a
 #                                        signature will cover
 #
@@ -250,10 +261,16 @@ jobs:
           mkdir -p dist
           cp "build/release/leita$LEITA_EXE" "dist/leita-$LEITA_TARGET$LEITA_EXE"
           cp "build/release/app/Leita$LEITA_EXE" "dist/leita-window-$LEITA_TARGET$LEITA_EXE"
+          # The notices travel with the licence. The archives are packed
+          # here; the packages and the macOS bundle take them from the tree.
+          # linux-amd64 also leaves one loose THIRD_PARTY.md in dist/, which
+          # becomes the copy beside the single binaries. Every dist/ is
+          # merged into one directory, so a second job must not add the file.
+          if [ "$LEITA_TARGET" = linux-amd64 ]; then cp THIRD_PARTY.md dist/; fi
           case "$LEITA_TARGET" in darwin-*) exit 0 ;; esac
           root="leita-$LEITA_VERSION-$LEITA_TARGET"
           mkdir -p "pack/$root/app"
-          cp "build/release/leita$LEITA_EXE" LICENSE.md "pack/$root/"
+          cp "build/release/leita$LEITA_EXE" LICENSE.md THIRD_PARTY.md "pack/$root/"
           cp "build/release/app/Leita$LEITA_EXE" "pack/$root/app/"
           if [ "$RUNNER_OS" = Windows ]; then
             cp build/release/app/SDL3.dll build/release/app/accesskit.dll "pack/$root/app/"
@@ -333,7 +350,7 @@ jobs:
     env:
       LEITA_VERSION: ${{ needs.plan.outputs.version }}
     steps:
-      # The justfile, the icon and tools/macos alone, for just bundle; the
+      # The justfile, the icon, tools/macos and the notices alone, for just bundle; the
       # binaries come from the build job, so no Odin and no jm.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -341,6 +358,8 @@ jobs:
             justfile
             branding/icon.png
             tools/macos
+            LICENSE.md
+            THIRD_PARTY.md
           sparse-checkout-cone-mode: false
           persist-credentials: false
       - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b # v3.1.0
@@ -372,7 +391,7 @@ jobs:
           set -euo pipefail
           just bundle dist/leita-window-darwin-universal dist/leita-darwin-universal
           app=build/release/Leita.app
-          for f in Info.plist MacOS/Leita Helpers/leita Resources/Leita.icns; do
+          for f in Info.plist MacOS/Leita Helpers/leita Resources/Leita.icns Resources/LICENSE.md Resources/THIRD_PARTY.md; do
             [ -s "$app/Contents/$f" ] || { echo "::error::$app has no Contents/$f"; exit 1; }
           done
           plutil -p "$app/Contents/Info.plist"
@@ -572,7 +591,10 @@ jobs:
         working-directory: assets
         run: |
           set -euo pipefail
-          sha256sum leita-* > sha256sums.txt
+          # leita-* is the binaries, the archives and their compressed forms.
+          # THIRD_PARTY.md is the loose copy beside the single binaries;
+          # without it here the signature would not cover that file.
+          sha256sum leita-* THIRD_PARTY.md > sha256sums.txt
           echo "$VERSION" > version.txt
           cat sha256sums.txt
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

@@ -201,6 +201,9 @@ bundle window="" cli="":
         sips -z $((size * 2)) $((size * 2)) branding/icon.png --out "build/release/{{gui}}.iconset/icon_${size}x${size}@2x.png" >/dev/null
     done
     iconutil -c icns build/release/{{gui}}.iconset -o "$app/Contents/Resources/{{gui}}.icns"
+    # The licence and the third-party notices travel with the app, sealed by
+    # the signature like the rest of Resources/.
+    install -m 644 LICENSE.md THIRD_PARTY.md "$app/Contents/Resources/"
     rm -rf build/release/{{gui}}.iconset
     echo "bundle: $app, version $number"
 
@@ -489,6 +492,8 @@ package-built:
     ln -s usr/bin/{{gui}} "$app/AppRun"
     cp packaging/linux/dev.mordaunt.Leita.desktop "$app/"
     cp branding/mark-light.svg "$app/dev.mordaunt.Leita.svg"
+    install -d "$app/usr/share/doc/leita"
+    install -m 644 LICENSE.md THIRD_PARTY.md "$app/usr/share/doc/leita/"
     cp branding/mark-light.svg "$app/usr/share/icons/hicolor/scalable/apps/dev.mordaunt.Leita.svg"
     cp packaging/linux/dev.mordaunt.Leita.metainfo.xml "$app/usr/share/metainfo/"
     ARCH=$m APPIMAGE_EXTRACT_AND_RUN=1 "$tools/appimagetool-{{appimagetool_ver}}-$m" --no-appstream \
@@ -527,7 +532,19 @@ install: (cli "release")
     else
         ln -sf {{bin}} "$dest/{{short}}"
     fi
+    # jm is Apache-2.0, and the other notices ask to travel with the binary.
+    # Nothing here used to copy them. A destination named bin is a prefix's
+    # bin directory, so the texts go in share/doc/leita beside it; anywhere
+    # else they sit next to the binary.
+    if [[ $(basename "$dest") == bin ]]; then
+        doc="$(dirname "$dest")/share/doc/leita"
+        mkdir -p "$doc"
+    else
+        doc=$dest
+    fi
+    install -m 644 LICENSE.md THIRD_PARTY.md "$doc/"
     echo "installed $dest/{{bin}} and $dest/{{short}}"
+    echo "notices in $doc"
 
 # An NTFS folder read from the MFT against a walk of it, from an elevated prompt
 # on Windows, optimised and without the sanitizer: just mft-bench 'C:\Windows'
