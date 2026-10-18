@@ -465,12 +465,24 @@ jobs:
           echo "$apps"
           grep -qF 'Librium.Leita' <<<"$apps" || echo "::warning::Get-StartApps does not list Librium.Leita: toasts will fall back to PowerShell's name"
 
-          # _?= keeps the uninstaller in place, so this waits for it.
-          "$dir\unins000.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /REMOVEDATA "_?=$dir"
+          # _?= keeps the uninstaller in place, but its process is still
+          # waited for here by name, since the checks below race it if it
+          # is not done: the files go before the last uninstall step runs.
+          "$dir\unins000.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /REMOVEDATA "/LOG=$(cygpath -w "$RUNNER_TEMP/uninstall.log")" "_?=$dir"
+          for _ in $(seq 60); do
+            running=$(tasklist /FI "IMAGENAME eq unins000.exe" 2>&1 || true)
+            grep -qi unins000 <<<"$running" || break
+            sleep 1
+          done
           [ ! -e /c/leita-setup-test/leita.exe ] || { echo "::error::the uninstaller left leita.exe"; exit 1; }
           [ ! -e "$shortcut" ] || { echo "::error::the uninstaller left the Start menu shortcut"; exit 1; }
-          if grep -qiF 'leita-setup-test' <<<"$(machine_path)"; then
+          after=$(machine_path)
+          if grep -qiF 'leita-setup-test' <<<"$after"; then
             echo "::error::the uninstaller left the install folder on the PATH"
+            echo "the machine Path it read:"
+            echo "$after"
+            echo "the uninstaller's log:"
+            cat "$RUNNER_TEMP/uninstall.log" || true
             exit 1
           fi
           rm -rf /c/leita-setup-test

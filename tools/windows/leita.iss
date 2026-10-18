@@ -118,26 +118,36 @@ begin
 end;
 
 // RemoveFromPath takes the install folder out of the machine's PATH, leaving
-// the rest of it as it was.
+// the rest of it as it was, and says in the uninstall log (/LOG) what it read
+// and wrote, since a PATH left behind is otherwise silent.
 procedure RemoveFromPath;
 var
   Path, Padded, Dir: string;
   At: Integer;
 begin
   if not RegQueryStringValue(HKLM, EnvironmentKey, 'Path', Path) then
+  begin
+    Log('RemoveFromPath: no machine Path value to read');
     Exit;
+  end;
   Dir := ExpandConstant('{app}');
   Padded := ';' + Path + ';';
   At := Pos(';' + Lowercase(Dir) + ';', Lowercase(Padded));
   if At = 0 then
+  begin
+    Log('RemoveFromPath: ' + Dir + ' is not in ' + Path);
     Exit;
+  end;
   // The semicolon before the folder goes with it; the one after stays.
   Delete(Padded, At, Length(Dir) + 1);
   if Length(Padded) <= 2 then
     Path := ''
   else
     Path := Copy(Padded, 2, Length(Padded) - 2);
-  RegWriteExpandStringValue(HKLM, EnvironmentKey, 'Path', Path);
+  if RegWriteExpandStringValue(HKLM, EnvironmentKey, 'Path', Path) then
+    Log('RemoveFromPath: wrote ' + Path)
+  else
+    Log('RemoveFromPath: could not write the machine Path');
 end;
 
 function HasSwitch(Name: string): Boolean;
@@ -172,10 +182,15 @@ var
 begin
   case CurUninstallStep of
     usUninstall:
-      // Before the files go: leita.exe takes its own task out of Task
-      // Scheduler, as it was put there, and records that monitoring is off.
-      if RemoveData then
-        Exec(ExpandConstant('{app}\leita.exe'), 'monitor off', '', SW_HIDE, ewWaitUntilTerminated, Code);
+      begin
+        // Taken off here as well as below, which only repeats it harmlessly:
+        // the folder is off the PATH as soon as its files start to go.
+        RemoveFromPath;
+        // Before the files go: leita.exe takes its own task out of Task
+        // Scheduler, as it was put there, and records that monitoring is off.
+        if RemoveData then
+          Exec(ExpandConstant('{app}\leita.exe'), 'monitor off', '', SW_HIDE, ewWaitUntilTerminated, Code);
+      end;
     usPostUninstall:
       begin
         RemoveFromPath;
