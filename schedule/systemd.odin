@@ -101,17 +101,17 @@ unit_paths :: proc(h: Host) -> (service, timer: string) {
 // install_units writes the service and the timer, then has systemd load them
 // and start the timer.
 @(private)
-install_units :: proc(h: Host, argv: []string) -> (problem: string, logged_in_only: bool) {
+install_units :: proc(h: Host, argv: []string) -> (problem: string, linger: Linger) {
 	if err := os.make_directory_all(h.units); err != nil && err != .Exist {
-		return fmt.tprintf("cannot make %s: %v", h.units, err), false
+		return fmt.tprintf("cannot make %s: %v", h.units, err), .Unknown
 	}
 	service, timer := unit_paths(h)
 	if err := os.write_entire_file(service, service_text(argv)); err != nil {
-		return fmt.tprintf("cannot write %s: %v", service, err), false
+		return fmt.tprintf("cannot write %s: %v", service, err), .Unknown
 	}
 	if err := os.write_entire_file(timer, timer_text()); err != nil {
 		os.remove(service)
-		return fmt.tprintf("cannot write %s: %v", timer, err), false
+		return fmt.tprintf("cannot write %s: %v", timer, err), .Unknown
 	}
 	steps := [][]string{systemctl("daemon-reload"), systemctl("enable", "--now", NAME + ".timer")}
 	for step in steps {
@@ -119,21 +119,32 @@ install_units :: proc(h: Host, argv: []string) -> (problem: string, logged_in_on
 			os.remove(service)
 			os.remove(timer)
 			h.run(systemctl("daemon-reload"), h.user)
-			return r.err, false
+			return r.err, .Unknown
 		}
 	}
-	return "", logged_in_only_systemd(h)
+	return "", linger_systemd(h)
 }
 
-// logged_in_only_systemd is whether the person's user timers run only while
-// they are logged in: they do unless loginctl says they linger.
+// linger_systemd reads loginctl's Linger property. Linger=no means the timer
+// runs only while the person is logged in, and Linger=yes means it keeps
+// running. Any other answer, a failure, or no login name is unknown, rather
+// than a claim that the timer runs while they are logged out.
 @(private)
-logged_in_only_systemd :: proc(h: Host) -> bool {
+linger_systemd :: proc(h: Host) -> Linger {
 	if h.login == "" {
-		return false
+		return .Unknown
 	}
 	r := h.run({"loginctl", "show-user", h.login, "-p", "Linger"}, h.user)
-	return r.ok && strings.trim_space(r.out) == "Linger=no"
+	if !r.ok {
+		return .Unknown
+	}
+	switch strings.trim_space(r.out) {
+	case "Linger=no":
+		return .While_Logged_In
+	case "Linger=yes":
+		return .Always
+	}
+	return .Unknown
 }
 
 // remove_units stops and disables the timer, deletes both units, and has

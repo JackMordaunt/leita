@@ -344,7 +344,7 @@ switch_on :: proc(c: Context, w: io.Writer) -> int {
 		return EXIT_FAILED
 	}
 	defer settings.close(&st)
-	problem, logged_in_only := schedule.install(c.host, c.argv)
+	problem, state := schedule.install(c.host, c.argv)
 	if problem != "" {
 		errorf(c, w, "cannot add the %s: %s", schedule.describe(c.host), problem)
 		return EXIT_FAILED
@@ -355,7 +355,8 @@ switch_on :: proc(c: Context, w: io.Writer) -> int {
 		return EXIT_FAILED
 	}
 	fmt.wprintfln(w, "monitoring is on: the %s runs it every hour", schedule.describe(c.host))
-	if logged_in_only {
+	switch state {
+	case .While_Logged_In:
 		notef(
 			c,
 			w,
@@ -363,6 +364,14 @@ switch_on :: proc(c: Context, w: io.Writer) -> int {
 			c.host.login,
 			c.host.login,
 		)
+	case .Unknown:
+		notef(
+			c,
+			w,
+			"The linger state is unknown, so it is not known whether " +
+			"scheduled scans run while you are logged out",
+		)
+	case .Always:
 	}
 	return 0
 }

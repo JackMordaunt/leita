@@ -116,9 +116,9 @@ a_systemd_timer_runs_the_monitor_hourly_and_catches_up :: proc(t: ^testing.T) {
 
 	testing.expect(t, !installed(h))
 	clear(&f.commands) // is-active, asked because the unit file is not there yet
-	problem, logged_in_only := install(h, ARGV)
+	problem, state := install(h, ARGV)
 	testing.expect_value(t, problem, "")
-	testing.expect(t, logged_in_only, "ann does not linger")
+	testing.expect_value(t, state, Linger.While_Logged_In)
 	testing.expect(t, installed(h))
 
 	service_path, timer_path := unit_paths(h)
@@ -170,6 +170,42 @@ a_timer_systemd_refuses_is_not_left_behind :: proc(t: ^testing.T) {
 	testing.expect(t, !installed(h))
 	service, _ := unit_paths(h)
 	testing.expect(t, !os.exists(service))
+}
+
+@(test)
+loginctl_failing_leaves_the_linger_state_unknown :: proc(t: ^testing.T) {
+	f: Fake
+	h := fake_host(t, &f, .Systemd)
+	defer os.remove_all(f.dir)
+	f.refuse = "loginctl"
+
+	problem, state := install(h, ARGV)
+	testing.expect_value(t, problem, "")
+	testing.expect_value(t, state, Linger.Unknown)
+	testing.expect_value(t, linger(h), Linger.Unknown)
+
+	f.refuse = ""
+	f.linger = "not a linger line"
+	testing.expect_value(t, linger(h), Linger.Unknown)
+	f.linger = "Linger=yes\n"
+	testing.expect_value(t, linger(h), Linger.Always)
+	h.login = ""
+	testing.expect_value(t, linger(h), Linger.Unknown)
+}
+
+@(test)
+monitoring_is_not_scheduled_as_root :: proc(t: ^testing.T) {
+	f: Fake
+	h := fake_host(t, &f, .Systemd)
+	defer os.remove_all(f.dir)
+	h.uid = "0"
+
+	problem, state := install(h, ARGV)
+	testing.expect_value(t, state, Linger.Unknown)
+	testing.expect(t, strings.contains(problem, "root"), problem)
+	service, _ := unit_paths(h)
+	testing.expect(t, !os.exists(service))
+	testing.expect_value(t, len(f.commands), 0)
 }
 
 @(test)
@@ -266,8 +302,12 @@ a_launchd_agent_runs_hourly_in_the_background :: proc(t: ^testing.T) {
 	h := fake_host(t, &f, .Launchd)
 	defer os.remove_all(f.dir)
 
-	problem, _ := install(h, {"/Applications/Leita.app/Contents/MacOS/Leita", "monitor", "run"})
+	problem, state := install(
+		h,
+		{"/Applications/Leita.app/Contents/MacOS/Leita", "monitor", "run"},
+	)
 	testing.expect_value(t, problem, "")
+	testing.expect_value(t, state, Linger.Always)
 	testing.expect(t, installed(h))
 	plist, _ := os.read_entire_file(agent_path(h), context.temp_allocator)
 	want := []string {

@@ -361,6 +361,7 @@ monitor_not_there = {0} non esiste e non può essere monitorato.
 monitor_cannot_schedule = Impossibile aggiungere il {0}: {1}
 monitor_cannot_unschedule = Impossibile rimuovere il {0}: {1}
 monitor_logged_in_only = Le scansioni pianificate vengono eseguite solo mentre {0} ha effettuato l'accesso. Per eseguirle sempre: loginctl enable-linger {0}
+monitor_linger_unknown = Lo stato di linger è sconosciuto, quindi non si sa se le scansioni pianificate continuano dopo la disconnessione.
 record_changes = Registra le modifiche mentre avvengono
 record_changes_explain = Su Linux, {0} può tenere traccia di quali cartelle cambiano, così una scansione legge solo quelle. Attivarlo installa un piccolo servizio di sistema, leita-journal, e richiede i diritti di amministratore; disattivarlo lo rimuove.
 record_changes_stopped = Il registratore è installato ma non è in esecuzione: systemctl status leita-journal.service spiega perché.

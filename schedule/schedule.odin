@@ -35,6 +35,15 @@ System :: enum u8 {
 	Launchd,
 }
 
+// Linger is whether a systemd user timer keeps running after the person logs
+// out. Unknown means that could not be read, which is not a claim that it
+// keeps running.
+Linger :: enum u8 {
+	Unknown,
+	While_Logged_In,
+	Always,
+}
+
 // SYSTEM is this machine's scheduler.
 when ODIN_OS == .Windows {
 	SYSTEM :: System.Task_Scheduler
@@ -121,29 +130,35 @@ run_command :: proc(argv: []string, _: rawptr) -> Outcome {
 /*
 install writes the entry that runs argv every hour to the host's scheduler and
 starts it, replacing one there before. It says why it could not, or "", and
-whether it runs only while the person is logged in: a systemd user timer does
-unless they linger (loginctl enable-linger).
+whether a systemd user timer keeps running after logout. uid 0 is refused:
+the entry would be installed for root. list and off are not, so one made by
+mistake can still be taken back.
 */
-install :: proc(h: Host, argv: []string) -> (problem: string, logged_in_only: bool) {
+install :: proc(h: Host, argv: []string) -> (problem: string, linger: Linger) {
 	assert(len(argv) > 0, "an entry runs a program")
+	if h.uid == "0" {
+		return "cannot schedule monitoring as root: it would be installed for root, not for you",
+			.Unknown
+	}
 	switch h.system {
 	case .Systemd:
 		return install_units(h, argv)
 	case .Task_Scheduler:
-		return install_task(h, argv), false
+		return install_task(h, argv), .Always
 	case .Launchd:
-		return install_agent(h, argv), false
+		return install_agent(h, argv), .Always
 	}
 	return
 }
 
-/*
-logged_in_only is whether the entry install writes runs only while the person
-is logged in, as install says after writing it: it is so whether or not one is
-written, so this answers before install has been asked.
-*/
-logged_in_only :: proc(h: Host) -> bool {
-	return h.system == .Systemd && logged_in_only_systemd(h)
+// linger is whether the entry keeps running after the person logs out. It
+// can be asked before install. Anything but a systemd user timer is Always,
+// so no logged-out warning is given for it.
+linger :: proc(h: Host) -> Linger {
+	if h.system != .Systemd {
+		return .Always
+	}
+	return linger_systemd(h)
 }
 
 // remove stops the entry and deletes it, and says why it could not, or "". An

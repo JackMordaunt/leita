@@ -201,6 +201,7 @@ on_hands_the_monitor_to_the_scheduler_and_off_takes_it_back :: proc(t: ^testing.
 	code, out := run_monitor(&b, "on")
 	testing.expect_value(t, code, 0)
 	testing.expect(t, strings.contains(out, "monitoring is on"), out)
+	testing.expect(t, strings.contains(out, "linger state is unknown"), out)
 	testing.expect(t, schedule.installed(b.c.host))
 	service, _ := os.read_entire_file(
 		join(b.c.host.units, "leita-monitor.service"),

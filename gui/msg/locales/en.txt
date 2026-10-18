@@ -388,6 +388,7 @@ monitor_not_there = {0} is not there to watch.
 monitor_cannot_schedule = Could not add the {0}: {1}
 monitor_cannot_unschedule = Could not remove the {0}: {1}
 monitor_logged_in_only = Scheduled scans run only while {0} is logged in. To run them always: loginctl enable-linger {0}
+monitor_linger_unknown = The linger state is unknown, so it is not known whether scheduled scans run while you are logged out.
 # The recorder of changes, on Linux only: {0} of record_changes_explain is the product's name; of record_changes_failed, why, in English.
 record_changes = Record changes as they happen
 record_changes_explain = On Linux, {0} can keep a log of which folders change, so a scan reads only those. Turning this on installs a small system service, leita-journal, and needs administrator rights; turning it off removes it.

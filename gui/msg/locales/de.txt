@@ -342,6 +342,7 @@ monitor_not_there = {0} existiert nicht und kann nicht überwacht werden.
 monitor_cannot_schedule = {0} konnte nicht hinzugefügt werden: {1}
 monitor_cannot_unschedule = {0} konnte nicht entfernt werden: {1}
 monitor_logged_in_only = Geplante Scans laufen nur, solange {0} angemeldet ist. Damit sie immer laufen: loginctl enable-linger {0}
+monitor_linger_unknown = Der Linger-Zustand ist unbekannt, daher ist nicht bekannt, ob geplante Scans laufen, während Sie abgemeldet sind.
 record_changes = Änderungen aufzeichnen, sobald sie geschehen
 record_changes_explain = {0} kann unter Linux mitschreiben, welche Ordner sich ändern, damit ein Scan nur diese liest. Einschalten installiert einen kleinen Systemdienst, leita-journal, und braucht Administratorrechte; Ausschalten entfernt ihn.
 record_changes_stopped = Der Aufzeichner ist installiert, läuft aber nicht: systemctl status leita-journal.service sagt, warum.

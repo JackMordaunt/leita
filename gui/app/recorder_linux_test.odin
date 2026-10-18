@@ -24,6 +24,9 @@ recorder_status_is_asked_when_monitoring_opens_and_kept :: proc(t: ^testing.T) {
 	}
 	defer delete(d.live)
 	d.monitoring.asked = true
+	// Unknown is the zero linger, and it would word a note this desk has no
+	// language for. Always is the answer that says nothing.
+	d.monitoring.linger = .Always
 	installed := journal.installed()
 	truth := Recorder_Status{installed, installed && journal.active()}
 	stale := Recorder_Status{!truth.installed, !truth.installed}

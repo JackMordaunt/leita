@@ -37,24 +37,25 @@ answer given every MONITOR_FRESH.
 Monitoring is the desk's part in monitoring: the scheduler it hands the monitor
 to, what that is to run, and how the last change asked for went.
 
-Whether scheduled scans would run only while the person is logged in is asked
-of the scheduler with the first answer and again whenever monitoring is turned
-on, and kept: the dialog's warning of it is there from its first frame and
-stays through every change, rather than arriving with the switch and leaving
-with the next place watched, each of which moved everything beneath it.
+Whether scheduled scans run only while the person is logged in, or that
+cannot be known, is asked of the scheduler with the first answer and again
+whenever monitoring is turned on, and kept: the dialog's warning of it is
+there from its first frame and stays through every change, rather than
+arriving with the switch and leaving with the next place watched, each of
+which moved everything beneath it.
 */
 Monitoring :: struct {
-	host:           schedule.Host,
-	own_host:       bool, // host was made by monitor_open, to be freed
-	argv:           []string,
-	scheduler:      string, // the host's describe, kept
-	paths:          monitor.Paths, // beside the history store, for a place's baseline
-	changed:        u32,
-	problem:        string,
-	logged_in_only: bool, // as the scheduler last said, once asked
-	asked:          bool,
-	answered:       time.Tick, // when a Monitor need was last answered on a tick
-	recorder:       Recorder_Status, // as last asked (recorder_refresh)
+	host:      schedule.Host,
+	own_host:  bool, // host was made by monitor_open, to be freed
+	argv:      []string,
+	scheduler: string, // the host's describe, kept
+	paths:     monitor.Paths, // beside the history store, for a place's baseline
+	changed:   u32,
+	problem:   string,
+	linger:    schedule.Linger, // as the scheduler last said, once asked
+	asked:     bool,
+	answered:  time.Tick, // when a Monitor need was last answered on a tick
+	recorder:  Recorder_Status, // as last asked (recorder_refresh)
 }
 
 // What the system said of the recorder of changes when last asked.
@@ -167,7 +168,7 @@ set_monitoring :: proc(d: ^Desk, c: command.Monitoring) {
 		monitor_settle(d, say(d, .Monitoring_Locked))
 		return
 	}
-	problem, logged_in_only := schedule.install(mo.host, mo.argv)
+	problem, state := schedule.install(mo.host, mo.argv)
 	if problem != "" {
 		monitor_settle(d, say(d, .Monitor_Cannot_Schedule, mo.scheduler, problem))
 		return
@@ -177,7 +178,7 @@ set_monitoring :: proc(d: ^Desk, c: command.Monitoring) {
 		monitor_settle(d, say(d, .Monitor_Unkept))
 		return
 	}
-	mo.logged_in_only, mo.asked = logged_in_only, true
+	mo.linger, mo.asked = state, true
 	monitor_settle(d, "")
 }
 
@@ -239,10 +240,14 @@ monitor_answer :: proc(d: ^Desk) -> query.Monitor_Result {
 		problem   = mo.problem,
 	}
 	if !mo.asked {
-		mo.logged_in_only, mo.asked = schedule.logged_in_only(mo.host), true
+		mo.linger, mo.asked = schedule.linger(mo.host), true
 	}
-	if mo.logged_in_only {
+	switch mo.linger {
+	case .While_Logged_In:
 		r.note = say(d, .Monitor_Logged_In_Only, mo.host.login)
+	case .Unknown:
+		r.note = say(d, .Monitor_Linger_Unknown)
+	case .Always:
 	}
 	recorder_answer(d, &r)
 	if d.settings == nil {

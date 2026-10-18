@@ -364,6 +364,7 @@ monitor_not_there = {0} n’existe pas et ne peut pas être surveillé.
 monitor_cannot_schedule = Impossible d’ajouter le {0} : {1}
 monitor_cannot_unschedule = Impossible de supprimer le {0} : {1}
 monitor_logged_in_only = Les analyses planifiées ne s’exécutent que lorsque {0} est connecté. Pour les exécuter toujours : loginctl enable-linger {0}
+monitor_linger_unknown = L’état linger est inconnu, donc on ne sait pas si les analyses planifiées continuent une fois la session fermée.
 record_changes = Enregistrer les changements au fil de l’eau
 record_changes_explain = Sous Linux, {0} peut noter quels dossiers changent, pour qu’une analyse ne lise que ceux-là. L’activer installe un petit service système, leita-journal, et demande les droits d’administrateur ; le désactiver le supprime.
 record_changes_stopped = L’enregistreur est installé mais ne s’exécute pas : systemctl status leita-journal.service indique pourquoi.

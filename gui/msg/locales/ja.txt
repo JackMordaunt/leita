@@ -324,6 +324,7 @@ monitor_not_there = {0} が存在しないため監視できません。
 monitor_cannot_schedule = {0} を追加できませんでした: {1}
 monitor_cannot_unschedule = {0} を削除できませんでした: {1}
 monitor_logged_in_only = 定期スキャンは {0} がログインしている間だけ実行されます。常に実行するには: loginctl enable-linger {0}
+monitor_linger_unknown = linger の状態が不明なため、ログアウト後も定期スキャンが実行されるかどうかは分かりません。
 record_changes = 変更をその場で記録
 record_changes_explain = Linux では、{0} はどのフォルダーが変わったかを記録し、スキャンでそのフォルダーだけを読み取れます。オンにすると小さなシステムサービス leita-journal をインストールし、管理者権限が必要です。オフにすると削除します。
 record_changes_stopped = 記録サービスはインストールされていますが実行されていません。理由は systemctl status leita-journal.service で確認できます。

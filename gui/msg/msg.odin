@@ -315,6 +315,7 @@ Msg :: enum u16 {
 	Monitor_Cannot_Schedule,
 	Monitor_Cannot_Unschedule,
 	Monitor_Logged_In_Only,
+	Monitor_Linger_Unknown,
 	Record_Changes,
 	Record_Changes_Explain,
 	Record_Changes_Stopped,
