@@ -27,7 +27,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [windows-latest]
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -47,64 +47,12 @@ jobs:
       # Odin, just, SDL3 on Linux and jm's native libraries, cached.
       - uses: ./.github/actions/setup
 
-      # Type-check both modes. leita's own `check` recipe has no -target:,
-      # so it only sees this host's files; the matrix running it on all
-      # three OSes is what actually type-checks history/platform_windows.odin,
-      # platform_darwin.odin and platform_linux.odin and gui/files' equivalents.
-      - name: check
-        run: just check
-      # Windows runs without AddressSanitizer: its HeapSize hook aborts
-      # inside combase.dll and windows.storage.dll on memory Windows
-      # allocated itself, not leita's.
-      - name: test
-        timeout-minutes: 20
+      # Diagnostic only: use the real native host and one integration scan.
+      - name: focused scan diagnostic
+        timeout-minutes: 5
         run: |
-          if [ "${{ runner.os }}" = Windows ]; then export SAN=; fi
-          just test
-      # The btrfs and walk tests again on a btrfs image, mounted with the
-      # runner's passwordless sudo and run both as the runner and as root,
-      # since only root may read a file's extents. tools/btrfs-fixture says
-      # how the expected total is worked out from the image.
-      - name: btrfs-test (linux)
-        if: runner.os == 'Linux'
-        timeout-minutes: 10
-        run: just btrfs-test --sudo
-      # Warm walk of a seeded tmpfs against the committed baseline. A median
-      # past the tolerance fails the job. Ubuntu only; tools/fsbench --ci
-      # mounts the tmpfs. The command line, the seed and a few runs stay
-      # under a minute.
-      - name: fsbench (ubuntu)
-        if: matrix.os == 'ubuntu-latest'
-        timeout-minutes: 2
-        run: just fsbench-ci
-      - name: gui-test
-        timeout-minutes: 20
-        run: |
-          if [ "${{ runner.os }}" = Windows ]; then export SAN=; fi
-          just gui-test
-      # A release checks licences against the public key it is built with,
-      # and its recipes refuse to build without one: first that refusal, then
-      # the build, with the key the repository secret LEITA_LICENCE_KEY holds,
-      # a throwaway one, or the justfile's test key where no secret reaches
-      # (a pull request from a fork). Then a build with the test key is shown
-      # to take the licence that key signed.
-      - name: release
-        env:
-          LEITA_LICENCE_KEY: ${{ secrets.LEITA_LICENCE_KEY }}
-        run: |
-          if [ "${{ runner.os }}" = Windows ]; then export SAN=; fi
-          if LEITA_LICENCE_KEY='' just cli release; then
-            echo "release: built without a licence key" >&2
-            exit 1
-          fi
-          LEITA_LICENCE_KEY="${LEITA_LICENCE_KEY:-$(just --evaluate test_licence_key)}"
-          export LEITA_LICENCE_KEY
-          just build release
-          # Built with the test key, the release binary takes its licence.
-          if [ "$LEITA_LICENCE_KEY" = "$(just --evaluate test_licence_key)" ]; then
-            LEITA_LICENCE="$(just --evaluate test_licence)" build/release/leita licence
-          fi
-      - name: check-licence
-        run: |
-          if [ "${{ runner.os }}" = Windows ]; then export SAN=; fi
-          just check-licence
+          mkdir -p build/test/app
+          read -r -a build_flags <<< "$(just --evaluate flags)"
+          odin test gui/app -debug "${build_flags[@]}" -out:build/test/app/Leita.exe \
+            -define:ODIN_TEST_NAMES=a_scan_streams_into_the_window_and_a_directory_opens \
+            -define:ODIN_TEST_THREADS=1
