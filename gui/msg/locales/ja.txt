@@ -25,6 +25,20 @@ free_personal_trial = 個人利用は無料です。{0}
 notices = オープンソースライセンス
 notices_intro = {0} は以下のコンポーネントで作られており、それぞれ独自のライセンスに従います。
 close = 閉じる
+check_updates = アップデートを確認
+checking_updates = アップデートを確認しています…
+update_current = {0} は最新バージョンです。
+update_available = {0} のバージョン {1} が利用できます。
+update_available_unknown = {0} の新しいバージョンが利用できます。
+update_now = アップデート
+download_update = アップデートをダウンロード
+updating = アップデート中…
+update_applied = アップデートしました。新しいバージョンを使うには {0} を再起動してください。
+update_no_curl = {0} がアップデートを確認するには libcurl が必要ですが、このシステムにはありません。curl パッケージをインストールするか、リリースページからアップデートをダウンロードしてください。
+update_unreachable = {0} はリリースページに接続できませんでした。接続を確認してください。
+update_not_published = 最新のリリースに、このシステム向けの {0} のビルドがありません。
+update_failed = アップデートに失敗しました: {0}
+update_privacy = クリックしたときだけ、{0} は GitHub に最新のリリースを問い合わせます。あなたやディスクに関する情報は送信されません。
 
 # How the scan is going
 status_empty = ディレクトリを指定すると、ディスクを使っているものを表示します。

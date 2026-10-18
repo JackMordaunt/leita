@@ -62,6 +62,7 @@ import "../../search"
 import "../../settings"
 import "../../survey"
 import "../../synth"
+import "../../update"
 import "../../walk"
 import "../command"
 import "../files"
@@ -86,6 +87,7 @@ Query :: union {
 	query.Settings,
 	query.Search,
 	query.Monitor,
+	query.Update,
 }
 
 // Need_Event is a need appearing or going, as the main thread hands it on.
@@ -103,6 +105,7 @@ Desk_In :: union {
 	command.Command,
 	Tick,
 	Activated,
+	Updated,
 	Finished_Pass,
 	Open_Failure,
 }
@@ -173,8 +176,18 @@ Desk :: struct {
 	client:          ^http.Client,
 	activate_url:    string,
 	activations:     ^stream.Port(Activated),
-	activating:      bool, // When leita first ran here, the start of the evaluation (licence.first_use).
-	first_use:       time.Time,
+	activating:      bool,
+	// Updates (update.odin): the release to ask, "" for update's own; the
+	// last check or update, and what it found; the thread one is on, and the
+	// port it answers through.
+	update_base:      string,
+	update_state:     query.Update_State,
+	update_result:    update.Result,
+	update_can_apply: bool,
+	update_thread:    ^thread.Thread,
+	updates:          ^stream.Port(Updated),
+	// When leita first ran here, the start of the evaluation (licence.first_use).
+	first_use:        time.Time,
 	// Searching (search.odin): each live Search need's finding, each pass out
 	// on the workers by the finding it is for (nil once halted), the workers,
 	// the port passes come back through, and what describing a hit works in.
@@ -193,6 +206,7 @@ Host :: struct {
 	cmd_port:      stream.Port(command.Command),
 	need_port:     stream.Port(Need_Event),
 	act_port:      stream.Port(Activated),
+	update_port:   stream.Port(Updated),
 	searched:      stream.Port(Finished_Pass),
 	open_failures: stream.Port(Open_Failure),
 	opening:       sync.Wait_Group,
@@ -227,6 +241,7 @@ init :: proc(
 	reports := "",
 	licence_key: []byte = nil,
 	activate_url := "",
+	release_base := "",
 	thumbs := "",
 	scheduler: ^schedule.Host = nil,
 	monitor_argv: []string = nil,
@@ -257,6 +272,7 @@ init :: proc(
 		licence_key,
 		activate_url,
 	)
+	update_open(&h.desk, release_base)
 	monitor_open(&h.desk, kept, scheduler, monitor_argv)
 
 	p := stream.make_pipeline(allocator, cap = 64)
@@ -272,6 +288,9 @@ init :: proc(
 	activations: stream.Stream(Activated)
 	activations, h.act_port = stream.port(p, Activated, name = "activations")
 	h.desk.activations = &h.act_port
+	updates: stream.Stream(Updated)
+	updates, h.update_port = stream.port(p, Updated, name = "updates")
+	h.desk.updates = &h.update_port
 	searched: stream.Stream(Finished_Pass)
 	searched, h.searched = stream.port(p, Finished_Pass, cap = 256, name = "searched")
 	open_failures: stream.Stream(Open_Failure)
@@ -284,6 +303,7 @@ init :: proc(
 			stream.transform(commands, command_in),
 			stream.transform(clock, tick_in),
 			stream.transform(activations, activated_in),
+			stream.transform(updates, updated_in),
 			stream.transform(searched, finished_in),
 			stream.transform(open_failures, open_failure_in),
 		},
@@ -309,6 +329,7 @@ data_host :: proc(h: ^Host) -> ui.Data_Host {
 // scan and frees everything.
 stop :: proc(h: ^Host) {
 	licence_stop(&h.desk)
+	update_stop(&h.desk)
 	thumbs_cancel(h)
 	stream.stop(h.p)
 	thread.join(h.pool)
@@ -342,6 +363,7 @@ stop :: proc(h: ^Host) {
 	history_close(&h.desk)
 	settings_close(&h.desk)
 	licence_close(&h.desk)
+	update_close(&h.desk)
 	monitor_close(&h.desk)
 	ui.inbox_destroy(&h.inbox)
 }
@@ -374,6 +396,8 @@ on_need :: proc(user: rawptr, need: ui.Need, added: bool) {
 		q, _ = ui.need_as(need, query.Search)
 	case ui.need_is(need, query.Monitor):
 		q = query.Monitor{}
+	case ui.need_is(need, query.Update):
+		q = query.Update{}
 	case ui.need_is(need, query.Thumb):
 		thumb_follow(h, need, added)
 		return
@@ -460,6 +484,10 @@ activated_in :: proc(a: Activated) -> Desk_In {
 	return a
 }
 
+updated_in :: proc(u: Updated) -> Desk_In {
+	return u
+}
+
 // desk_step is the desk: one need, command or tick at a time, on the desk thread.
 desk_step :: proc(d: ^Desk, v: Desk_In) {
 	v := v
@@ -529,6 +557,15 @@ desk_step :: proc(d: ^Desk, v: Desk_In) {
 		case command.Recording:
 			set_recording(d, c)
 			answer_all(d)
+		case command.Check_Update:
+			update_begin(d, false)
+			answer_all(d)
+		case command.Apply_Update:
+			// Only what a check found, and what can be replaced in place.
+			if d.update_state == .Available && d.update_can_apply {
+				update_begin(d, true)
+			}
+			answer_all(d)
 		case command.Locate,
 		     command.Open,
 		     command.Trash,
@@ -551,6 +588,9 @@ desk_step :: proc(d: ^Desk, v: Desk_In) {
 		}
 	case Activated:
 		take_activation(d, &e)
+		answer_all(d)
+	case Updated:
+		take_update(d, &e)
 		answer_all(d)
 	case Finished_Pass:
 		take_pass(d, e.pass)
@@ -754,6 +794,8 @@ answer :: proc(d: ^Desk, key: ui.Need_Key, q: Query) {
 		}
 	case query.Monitor:
 		put(d, key, monitor_answer(d))
+	case query.Update:
+		put(d, key, update_answer(d))
 	}
 }
 

@@ -29,6 +29,20 @@ free_personal_trial = Free for personal use. {0}
 notices = Open-source licences
 notices_intro = {0} is built on these components, each under its own licence.
 close = Close
+check_updates = Check for updates
+checking_updates = Checking for updates…
+update_current = This is the latest version of {0}.
+update_available = Version {1} of {0} is available.
+update_available_unknown = A newer version of {0} is available.
+update_now = Update
+download_update = Download the update
+updating = Updating…
+update_applied = Updated. Restart {0} to use the new version.
+update_no_curl = {0} needs libcurl to check for updates, and this system has none. Install the curl package, or download the update from the release page.
+update_unreachable = {0} could not reach the release page. Check the connection.
+update_not_published = The latest release has no build of {0} for this system.
+update_failed = The update failed: {0}
+update_privacy = Only when you click, {0} asks GitHub for the latest release. Nothing about you or your disks is sent.
 
 # How the scan is going
 status_empty = Name a directory to see what is using the disk.

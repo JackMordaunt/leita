@@ -22,7 +22,7 @@ Each release is one section.
 - `--warn-used`, `--fail-used` and `--min-free` make leita exit with a code a script can act on.
 - `LEITA_SYNTHETIC` scans a made-up disk, so a demo shows no one's real files.
 - On Windows, an elevated scan reads the Master File Table.
-- `leita update` finds and installs a newer release when you ask, and `leita update --check` says whether there is one. Nothing checks on its own, and the only request is the download.
+- `leita update` finds and installs a newer release when you ask, and `leita update --check` says whether there is one; About has Check for updates, with Update or Download beside the result. Nothing checks on its own, and the only request is the download.
 - On macOS 11 or later, Leita comes as Leita.app in a disk image, signed and notarised, with the `leita` command inside it.
 
 **Changed**

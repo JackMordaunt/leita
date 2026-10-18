@@ -22,6 +22,20 @@ free_personal_trial = 개인 용도로는 무료입니다. {0}
 notices = 오픈 소스 라이선스
 notices_intro = {0}은(는) 다음 구성 요소로 만들어졌으며, 각각 고유한 라이선스를 따릅니다.
 close = 닫기
+check_updates = 업데이트 확인
+checking_updates = 업데이트를 확인하는 중…
+update_current = {0} 앱이 최신 버전입니다.
+update_available = {0} 앱의 {1} 버전을 사용할 수 있습니다.
+update_available_unknown = {0} 앱의 새 버전을 사용할 수 있습니다.
+update_now = 업데이트
+download_update = 업데이트 다운로드
+updating = 업데이트하는 중…
+update_applied = 업데이트했습니다. 새 버전을 사용하려면 {0} 앱을 다시 시작하세요.
+update_no_curl = {0} 앱이 업데이트를 확인하려면 libcurl이 필요하지만 이 시스템에는 없습니다. curl 패키지를 설치하거나, 릴리스 페이지에서 업데이트를 다운로드하세요.
+update_unreachable = {0} 앱이 릴리스 페이지에 연결할 수 없습니다. 연결을 확인하세요.
+update_not_published = 최신 릴리스에는 이 시스템용 {0} 빌드가 없습니다.
+update_failed = 업데이트에 실패했습니다: {0}
+update_privacy = 클릭할 때만 {0} 앱이 GitHub에 최신 릴리스를 문의합니다. 사용자나 디스크에 관한 정보는 전송되지 않습니다.
 
 # How the scan is going
 status_empty = 디스크를 무엇이 사용하는지 보려면 디렉터리를 지정하세요.

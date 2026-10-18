@@ -7,6 +7,7 @@ import "jm:ui/primer"
 import tok "jm:ui/primer/tokens"
 
 import "../../version"
+import "../command"
 import mark "../mark"
 import "../notices"
 import "../query"
@@ -16,7 +17,9 @@ About: About in the settings menu opens a dialog that says what this is and
 whose: the mark and the name, the version, the business that makes it, what
 it is for, the licence it runs under as the licence dialog says it, where to
 read more, and a link to the licences of what it is built on, which opens a
-dialog of every component's notice in its place.
+dialog of every component's notice in its place. Under the version it offers
+to check for updates, but only when asked: nothing in Leita checks on its own,
+and the one request a check makes is the one its line below the button says.
 */
 
 // BUSINESS is who makes and sells leita, as LICENSE.md names the Licensor.
@@ -57,6 +60,7 @@ about_dialog :: proc(gtx: ^ui.Ctx, m: ^Model) {
 				)
 			}
 		}
+		update_check(gtx)
 		primer.text(gtx, tr(.Tagline), weight = .Semibold)
 		primer.text(gtx, tr(.Explainer))
 		if line := licence_line(gtx); line != "" {
@@ -79,6 +83,81 @@ about_dialog :: proc(gtx: ^ui.Ctx, m: ^Model) {
 	if close {
 		m.about_open = false
 	}
+}
+
+/*
+update_check is the Check for updates button and what the host found. It sends
+command.Check_Update when clicked and at no other time. A newer release is
+offered as Update, which replaces this window's own file, when the host says this
+copy can be replaced in place, and otherwise as Download, which opens the
+release page: the installer, the dmg, a package manager's file or an AppImage
+is not Leita's to overwrite.
+*/
+@(private)
+update_check :: proc(gtx: ^ui.Ctx) {
+	r, _ := ui.need(gtx, query.Update{}, query.Update_Result)
+	state := r.state if r != nil else query.Update_State.Idle
+	busy := state == .Checking || state == .Applying
+	if ui.row(gtx, gap = 8, align = .Center) {
+		if primer.button(gtx, tr(.Check_Updates), size = .Small, inactive = busy) && !busy {
+			ui.command(gtx, command.Command(command.Check_Update{}))
+		}
+		if state == .Available {
+			if r.can_apply {
+				if primer.button(gtx, tr(.Update_Now), .Primary, .Small) {
+					ui.command(gtx, command.Command(command.Apply_Update{}))
+				}
+			} else if primer.button(gtx, tr(.Download_Update), .Primary, .Small, trailing = .Link_External) {
+				ui.open_url(gtx, r.page)
+			}
+		}
+	}
+	if line := update_line(gtx, r); line != "" {
+		primer.text(gtx, line, .Small, color = primer.color(.Fg_Color_Muted))
+	}
+	primer.text(
+		gtx,
+		trf(gtx, .Update_Privacy, version.PRODUCT),
+		.Small,
+		color = primer.color(.Fg_Color_Muted),
+	)
+}
+
+// update_line says where the check stands, "" until one is asked for.
+@(private)
+update_line :: proc(gtx: ^ui.Ctx, r: ^query.Update_Result) -> string {
+	if r == nil {
+		return ""
+	}
+	switch r.state {
+	case .Idle:
+		return ""
+	case .Checking:
+		return tr(.Checking_Updates)
+	case .Current:
+		return trf(gtx, .Update_Current, version.PRODUCT)
+	case .Available:
+		if r.latest == "" {
+			return trf(gtx, .Update_Available_Unknown, version.PRODUCT)
+		}
+		return trf(gtx, .Update_Available, version.PRODUCT, r.latest)
+	case .Applying:
+		return tr(.Updating)
+	case .Applied:
+		return trf(gtx, .Update_Applied, version.PRODUCT)
+	case .Failed:
+		switch r.problem {
+		case .No_Library:
+			return trf(gtx, .Update_No_Curl, version.PRODUCT)
+		case .Unreachable:
+			return trf(gtx, .Update_Unreachable, version.PRODUCT)
+		case .Not_Published:
+			return trf(gtx, .Update_Not_Published, version.PRODUCT)
+		case .None, .Other:
+			return trf(gtx, .Update_Failed, r.detail)
+		}
+	}
+	return ""
 }
 
 // notices_dialog is the licences of what leita is built on: each component's

@@ -24,6 +24,20 @@ free_personal_trial = 个人使用免费。{0}
 notices = 开源许可证
 notices_intro = {0} 基于以下组件构建，每个组件均遵循其自身的许可证。
 close = 关闭
+check_updates = 检查更新
+checking_updates = 正在检查更新…
+update_current = 这是 {0} 的最新版本。
+update_available = {0} 的 {1} 版本可用。
+update_available_unknown = {0} 有更新的版本可用。
+update_now = 更新
+download_update = 下载更新
+updating = 正在更新…
+update_applied = 已更新。请重新启动 {0} 以使用新版本。
+update_no_curl = {0} 需要 libcurl 才能检查更新，但此系统中没有。请安装 curl 软件包，或从发布页面下载更新。
+update_unreachable = {0} 无法连接到发布页面。请检查网络连接。
+update_not_published = 最新发布版本中没有适用于此系统的 {0} 构建。
+update_failed = 更新失败：{0}
+update_privacy = 仅在您点击时，{0} 才会向 GitHub 查询最新版本。不会发送任何关于您或您的磁盘的信息。
 
 # How the scan is going
 status_empty = 输入一个目录，查看磁盘空间被什么占用。

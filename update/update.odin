@@ -298,6 +298,24 @@ apply :: proc(cfg: Config) -> (r: Result) {
 	return finish(&r, .Applied, .None, "updated via %s", selfupdate.VIA_NAMES[route.via])
 }
 
+// why_not is why cfg's executable is not to be replaced in place, Dev_Build or
+// an install_reason, .None when it is: what a window asks to choose between
+// installing the update and sending a person to RELEASE_PAGE.
+why_not :: proc(cfg: Config) -> Reason {
+	if is_development(cfg.version) {
+		return .Dev_Build
+	}
+	exe := cfg.exe
+	if exe == "" {
+		p, err := os.get_executable_path(context.temp_allocator)
+		if err != nil {
+			return .Cannot_Replace
+		}
+		exe = p
+	}
+	return install_reason(exe)
+}
+
 // install_reason is why the executable at exe is not to be replaced, .None
 // when it is.
 install_reason :: proc(exe: string) -> Reason {

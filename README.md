@@ -151,7 +151,7 @@ writes it for a program.
   for nothing on its own. It reaches the network in two cases, each started
   by you. Adding a licence key in the window sends one POST to
   `https://mordaunt.dev/leita/activate`; the body holds the key and nothing
-  else. `leita update` downloads files from
+  else. `leita update`, and Check for updates in About, download files from
   the latest release on GitHub, `releases/latest/download`: a GET for
   `sha256sums.txt`, `version.txt` and, if you ask for the update, the new
   program. Both requests carry the User-Agent `leita/<version>` and nothing
@@ -222,7 +222,10 @@ exits 0 when they match, 2 when a newer one is out and 1 when it could not
 ask. `leita update` downloads the new build of the program you ran (a patch
 from your build when the release has one), checks it against the sha256 the
 release publishes, and replaces the program; run it again to use the new one.
-The old program stays beside it as `leita.old`.
+The old program stays beside it as `leita.old`. In the window, About has Check
+for updates; a newer release is offered as Update, which replaces the window
+the same way, or as Download, the release page, for a copy that is not replaced
+in place.
 
 A copy a package manager, an AppImage or the Windows installer put there, and
 a copy inside `Leita.app`, is not replaced in place: `leita update` says

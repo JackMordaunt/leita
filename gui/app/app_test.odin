@@ -5,7 +5,9 @@ import "base:runtime"
 
 import "core:crypto"
 import "core:crypto/ed25519"
+import "core:crypto/hash"
 import "core:encoding/base64"
+import "core:encoding/hex"
 import "core:encoding/json"
 import "core:fmt"
 import "core:log"
@@ -37,6 +39,7 @@ import "../../monitor"
 import "../../scan"
 import "../../schedule"
 import "../../settings"
+import "../../update"
 import "../command"
 import "../msg"
 import "../query"
@@ -69,6 +72,7 @@ rig_open :: proc(
 	reports := "",
 	licence_key: []byte = nil,
 	activate_url := "",
+	release_base := "",
 	made_up := false,
 	scheduler: ^schedule.Host = nil,
 	monitor_argv: []string = nil,
@@ -89,6 +93,7 @@ rig_open :: proc(
 		reports = reports,
 		licence_key = licence_key,
 		activate_url = activate_url,
+		release_base = release_base,
 		scheduler = scheduler,
 		monitor_argv = monitor_argv,
 	)
@@ -3283,4 +3288,71 @@ monitoring_warns_of_running_only_while_logged_in_from_the_start :: proc(t: ^test
 	hand_on(&r)
 	testing.expect(t, settle(&r, "Not scanned yet"), "the place scanned is watched")
 	testing.expect(t, ui.probe_tagged(&r.p, note), "the warning stays as a place is watched")
+}
+
+// publish_release writes a release as release.yml does for update.asset(.Window):
+// the build, its sha256 and the version, in dir.
+@(private = "file")
+publish_release :: proc(t: ^testing.T, dir, build, version: string) {
+	name := update.asset(.Window)
+	testing.expect(t, name != "", "a release is built for this platform")
+	testing.expect(t, os.make_directory(dir) == nil, "could not make the release")
+	digest := hash.hash_string(.SHA256, build, context.temp_allocator)
+	sums := fmt.tprintf("%s  %s\n", string(hex.encode(digest, context.temp_allocator)), name)
+	testing.expect(t, os.write_entire_file(fmt.tprintf("%s/%s", dir, name), build) == nil)
+	testing.expect(t, os.write_entire_file(fmt.tprintf("%s/sha256sums.txt", dir), sums) == nil)
+	testing.expect(t, os.write_entire_file(fmt.tprintf("%s/version.txt", dir), version) == nil)
+}
+
+// About asks the release nothing until Check for updates is clicked, then reads
+// it where the host was told and says what it holds. This test window is a
+// development build, which is never replaced in place, so a newer release is
+// offered as Download, the release page, and Update is not offered. A release
+// that cannot be reached says so.
+@(test)
+about_checks_the_release_on_request_only :: proc(t: ^testing.T) {
+	root := fixture(t, "update")
+	defer os.remove_all(root)
+	release := fmt.tprintf("%s-release", root)
+	defer os.remove_all(release)
+	publish_release(t, release, "a newer window", "v9.9.9\n")
+
+	r: Rig
+	rig_open(&r, root, release_base = release)
+	defer rig_close(&r)
+	testing.expect(t, settle(&r, "Done"))
+	testing.expect(t, choose(&r, "About Leita"))
+	ui.probe_advance(&r.p, 10, 1.0 / 60)
+	hand_on(&r)
+	testing.expect(t, settle(&r, "Check for updates"), "About offers the check")
+	// Given time to have asked, it has not.
+	for _ in 0 ..< 20 {
+		ui.probe_advance(&r.p, 5, 1.0 / 60)
+		time.sleep(5 * time.Millisecond)
+	}
+	testing.expect(t, !ui.probe_tagged(&r.p, "Version v9.9.9 of Leita is available."), "nothing checked on its own")
+	testing.expect(t, !ui.probe_tagged(&r.p, "Checking for updates…"))
+
+	testing.expect(t, ui.probe_click_top(&r.p, "Check for updates"))
+	hand_on(&r)
+	testing.expect(t, settle(&r, "Version v9.9.9 of Leita is available."), "the newer release is named")
+	testing.expect(t, settle(&r, "Download the update"), "a development build is sent to the release page")
+	testing.expect(t, !ui.probe_tagged(&r.p, "Update"), "and is not offered an update in place")
+
+	// The same release when this window's own build is the release's: current.
+	exe, exe_err := os.get_executable_path(context.temp_allocator)
+	testing.expect(t, exe_err == nil)
+	body, read_err := os.read_entire_file(exe, context.temp_allocator)
+	testing.expect(t, read_err == nil)
+	os.remove_all(release)
+	publish_release(t, release, string(body), "v1.0.0\n")
+	testing.expect(t, ui.probe_click_top(&r.p, "Check for updates"))
+	hand_on(&r)
+	testing.expect(t, settle(&r, "This is the latest version of Leita."), "this build is the release's")
+
+	// No release at that base: the failure is said, not a crash or a hang.
+	os.remove_all(release)
+	testing.expect(t, ui.probe_click_top(&r.p, "Check for updates"))
+	hand_on(&r)
+	testing.expect(t, settle(&r, "The latest release has no build of Leita for this system."))
 }
