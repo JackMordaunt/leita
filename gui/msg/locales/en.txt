@@ -420,3 +420,11 @@ alerting = Alert
 
 # Monitoring, with scheduled scans off: {0} is where the system keeps the schedule, as monitoring_through.
 monitoring_through_off = Would run every hour by the {0}.
+
+# History, the record of what was deleted, moved to the Trash or renamed. {0} of history_failed is the reason; of history_renamed, the new name.
+history = History
+history_empty = Nothing has been deleted, moved to the Trash or renamed yet. Each such change appears here, newest first, whether it worked or not.
+history_unavailable = The record cannot be shown: the file that holds it could not be opened.
+history_failed = Failed: {0}
+history_renamed = renamed to {0}
+copy_path = Copy path

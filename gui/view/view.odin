@@ -233,6 +233,8 @@ Model :: struct {
 	drawn:            bool, // a frame is done: no licence answer now means locked (unlocked)
 	buy_url:          string,
 	about_open:       bool, // the About dialog (about.odin)
+	record_open:      bool, // the History dialog (record.odin)
+	record_list:      ui.List_State,
 	notices_open:     bool, // the licences of what leita is built on (about.odin)
 	// The language in use and its text, whether the submenu of languages is open,
 	// and the language the host was last told (language.odin).
@@ -379,6 +381,7 @@ view :: proc(gtx: ^ui.Ctx, user: rawptr) {
 		if term := search_term(m); term != "" {
 			search_results(gtx, m, term)
 			dialogs(gtx, m)
+			record_dialog(gtx, m)
 			monitor_dialog(gtx, m)
 			return
 		}
@@ -389,6 +392,7 @@ view :: proc(gtx: ^ui.Ctx, user: rawptr) {
 	export_dialog(gtx, m, prog)
 	licence_dialog(gtx, m)
 	about_dialog(gtx, m)
+	record_dialog(gtx, m)
 	notices_dialog(gtx, m)
 	monitor_dialog(gtx, m)
 }

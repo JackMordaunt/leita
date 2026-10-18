@@ -81,6 +81,7 @@ Query :: union {
 	query.Rings,
 	query.Reclaim,
 	query.History,
+	query.Record,
 	query.Licence,
 	query.Settings,
 	query.Search,
@@ -363,6 +364,8 @@ on_need :: proc(user: rawptr, need: ui.Need, added: bool) {
 		q, _ = ui.need_as(need, query.Rings)
 	case ui.need_is(need, query.History):
 		q, _ = ui.need_as(need, query.History)
+	case ui.need_is(need, query.Record):
+		q = query.Record{}
 	case ui.need_is(need, query.Licence):
 		q = query.Licence{}
 	case ui.need_is(need, query.Settings):
@@ -739,6 +742,8 @@ answer :: proc(d: ^Desk, key: ui.Need_Key, q: Query) {
 		put(d, key, rings(d, q))
 	case query.History:
 		put(d, key, history_answer(d, q))
+	case query.Record:
+		put(d, key, record_answer(d))
 	case query.Licence:
 		put(d, key, licence_answer(d))
 	case query.Settings:

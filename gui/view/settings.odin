@@ -44,8 +44,9 @@ recall_settings :: proc(gtx: ^ui.Ctx, m: ^Model) {
 /*
 settings_menu is the gear at the end of the toolbar and the menu it opens, which
 holds everything the bar does but search: Export, Stop or Rescan, Monitoring,
-the licence, the language, the theme and About. Kept in one menu, the bar is the
-location and the gear whatever the window's width or the scan's state.
+History, the licence, the language, the theme and About. Kept in one menu, the
+bar is the location and the gear whatever the window's width or the scan's
+state.
 
 A choice that opens a dialog waits for the menu to hand focus back to the gear,
 which it does the frame after it closes: opened at once, the dialog would lose
@@ -72,6 +73,8 @@ settings_menu :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result) {
 			monitor_show(m, prog)
 		case .Licence:
 			licence_show(m)
+		case .History:
+			m.record_open = true
 		case .About:
 			m.about_open = true
 		}
@@ -97,6 +100,9 @@ settings_menu :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result) {
 	}
 	if primer.action_menu_item(&menu, tr(.Monitoring), leading = .Pulse) {
 		m.settings_dialog = .Monitoring
+	}
+	if primer.action_menu_item(&menu, tr(.History), leading = .History) {
+		m.settings_dialog = .History
 	}
 	primer.action_menu_divider(&menu)
 	if licence_item(gtx, &menu) {
@@ -124,5 +130,6 @@ Settings_Dialog :: enum u8 {
 	Export,
 	Monitoring,
 	Licence,
+	History,
 	About,
 }

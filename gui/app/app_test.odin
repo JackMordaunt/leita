@@ -31,6 +31,7 @@ import "jm:ui/primer"
 import "jm:ui/render"
 
 import "../../changes"
+import "../../history"
 import "../../licence"
 import "../../monitor"
 import "../../scan"
@@ -610,6 +611,38 @@ a_rename_is_kept_in_the_audit_trail :: proc(t: ^testing.T) {
 	testing.expect_value(t, sqlite3.integer(rows, 4), 0)
 	testing.expect(t, !sqlite3.next(&rows), "and nothing else")
 	testing.expect(t, sqlite3.finish(&rows) == nil)
+}
+
+// History in the settings menu opens the record the store holds, newest first,
+// with the reason a deletion failed.
+@(test)
+history_in_the_settings_menu_lists_what_the_store_recorded :: proc(t: ^testing.T) {
+	root := fixture(t, "record")
+	defer os.remove_all(root)
+	kept := fmt.tprintf("%s-kept/history.db", root)
+	defer os.remove_all(fmt.tprintf("%s-kept", root))
+	st: history.Store
+	testing.expect(t, history.open(&st, kept) == nil)
+	done := []history.Action {
+		{1_800_000_000, .Delete, "/gone/old", "", 5 << 20, false},
+		{1_800_000_100, .Delete, "/gone/new", "permission denied", 7 << 20, true},
+	}
+	testing.expect(t, history.record(&st, done) == nil)
+	history.close(&st)
+
+	r: Rig
+	rig_open(&r, root, kept)
+	defer rig_close(&r)
+	testing.expect(t, settle(&r, "Done"))
+
+	testing.expect(t, choose(&r, "History"), "the menu has History")
+	ui.probe_advance(&r.p, 10, 1.0 / 60)
+	hand_on(&r)
+	testing.expect(t, settle(&r, "/gone/new"), "the newest is listed")
+	testing.expect(t, settle(&r, "/gone/old"), "and the older")
+	testing.expect(t, settle(&r, "Failed: permission denied"), "with why it failed")
+	newest, oldest := ui.probe_bounds(&r.p, "/gone/new"), ui.probe_bounds(&r.p, "/gone/old")
+	testing.expect(t, newest.y < oldest.y, "newest first")
 }
 
 @(test)

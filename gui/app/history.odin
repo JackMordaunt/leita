@@ -160,3 +160,32 @@ history_answer :: proc(d: ^Desk, q: query.History) -> query.History_Result {
 	r.snapshots = earlier[:]
 	return r
 }
+
+// record_answer is the audit trail, the newest RECORD_LIMIT of it. A rename that
+// went through keeps its new name where a failed one keeps its reason.
+record_answer :: proc(d: ^Desk) -> query.Record_Result {
+	if d.history == nil {
+		return {}
+	}
+	done, err := history.actions(d.history, limit = query.RECORD_LIMIT)
+	if err != nil {
+		fmt.eprintln("leita: could not read the audit trail:", err)
+		return {}
+	}
+	actions := make([]query.Action, len(done), context.temp_allocator)
+	for a, i in done {
+		actions[i] = {
+			taken  = a.taken,
+			path   = a.path,
+			bytes  = a.bytes,
+			failed = a.failed,
+		}
+		switch {
+		case a.failed:
+			actions[i].why = a.detail
+		case a.kind == .Rename:
+			actions[i].renamed_to = a.detail
+		}
+	}
+	return {kept = true, actions = actions}
+}

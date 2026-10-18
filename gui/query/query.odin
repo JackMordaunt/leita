@@ -247,6 +247,32 @@ Reclaim_Result :: struct {
 // RECLAIM_RECENT_DAYS is how recently touched a candidate is left unchosen.
 RECLAIM_RECENT_DAYS :: 7
 
+/*
+Record is what leita changed on disk at the person's request, newest first: the
+audit trail the History dialog lists. It is the same record leita history
+prints.
+*/
+Record :: struct {}
+
+// RECORD_LIMIT is the most actions a Record_Result carries: the newest.
+RECORD_LIMIT :: 1000
+
+// Action is one change leita made, or tried to: when, in Unix seconds, the path,
+// what it held, and how it went.
+Action :: struct {
+	taken:      i64,
+	path:       string,
+	bytes:      u64,
+	failed:     bool,
+	why:        string, // when it failed; "" if it did not or no reason is known
+	renamed_to: string, // for a rename that went through
+}
+
+Record_Result :: struct {
+	kept:    bool, // whether there is a record at all: the store could be opened
+	actions: []Action,
+}
+
 // Licence is the licence leita runs under, and how the last one offered went.
 Licence :: struct {}
 

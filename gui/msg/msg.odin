@@ -341,6 +341,12 @@ Msg :: enum u16 {
 	Alerts_None,
 	Alerting,
 	Monitoring_Through_Off,
+	History,
+	History_Empty,
+	History_Unavailable,
+	History_Failed,
+	History_Renamed,
+	Copy_Path,
 }
 
 // OFFERED are the languages the window offers, in the order its menu lists

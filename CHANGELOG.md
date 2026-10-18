@@ -11,7 +11,7 @@ Each release is one section.
 - The window and the `leita` command, also installed as `le`, scan a drive or a folder and draw it as a sunburst, a treemap or an icicle while the scan is still running.
 - A finished scan can be saved as a PDF, HTML, CSV or JSON report, and the text of a PDF can be searched.
 - A licence is checked on the machine, and the only network use is sending a key once to fetch it.
-- Reclaim lists build output, downloaded packages, application caches and the Trash that can be removed and made again, including the usual caches on a Mac, and logs each deletion; `leita history` prints that log, newest first, or as JSON.
+- Reclaim lists build output, downloaded packages, application caches and the Trash that can be removed and made again, including the usual caches on a Mac, and logs each deletion; History in the window's settings menu and `leita history` list that log, newest first.
 - Every finished scan is kept, and scanning the same place again marks what grew and what shrank and reads only what changed.
 - On macOS and Windows a second scan uses the system's change journal, and on Linux it uses each folder's modification time.
 - On Linux, `leita journal on` (or Record changes in Monitoring) installs the root service leita-journal, which for 30 days logs a hash of each changed folder and when it changed, never the name, does not cover btrfs subvolumes yet, and is removed by `leita journal off`.
