@@ -188,6 +188,26 @@ fill_aur() {
     __VERSION__ "$version"
 }
 
+fill_scoop() {
+  local file_zip sum_zip suffix
+  file_zip=$(pick_one \
+    "leita-v${version}-windows-amd64.zip" \
+    "leita-v${version}-windows-amd64-unsigned.zip")
+  sum_zip=$(require_sum "$file_zip")
+  # The zip's own name carries -unsigned before the certificate exists.
+  # The directory inside it does not: release.yml packs leita-<version>-windows-amd64
+  # and only the file name gains the suffix.
+  suffix=
+  case $file_zip in
+    *-unsigned.zip) suffix=-unsigned ;;
+  esac
+  subst "${here}/scoop/leita.json" "${OUT}/scoop/leita.json" \
+    __ZIP_SUFFIX__ "$suffix" \
+    __SUM_ZIP__ "$sum_zip" \
+    __VERSION__ "$version"
+}
+
 fill_winget
 fill_homebrew
 fill_aur
+fill_scoop

@@ -1054,3 +1054,17 @@ jobs:
           git -C "$dir" -c user.name='Jack Mordaunt' -c user.email='jackmordaunt.dev@gmail.com' \
             commit -m "leita-bin: ${VERSION#v}"
           git -C "$dir" push origin HEAD:master
+      # Scoop extras is a pull request, not a push. The bucket is
+      # github.com/ScoopInstaller/Extras, the file is bucket/leita.json, and
+      # a maintainer reviews it. There is no token; this artifact is the
+      # file to add. checkver names the GitHub repository because the
+      # homepage is the product site, so the string form of checkver, which
+      # reads the homepage, would look in the wrong place. autoupdate reads
+      # the hash from that release's sha256sums.txt. The zip has one top
+      # directory, so extract_dir is what makes the bin paths leita.exe and
+      # app/Leita.exe.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: scoop-${{ needs.plan.outputs.version }}
+          path: manifests-out/scoop/leita.json
+          if-no-files-found: error
