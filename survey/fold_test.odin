@@ -1,6 +1,7 @@
 package survey
 
 import "core:fmt"
+import "core:log"
 import "core:os"
 import "core:testing"
 
@@ -83,19 +84,46 @@ a_folded_update_matches_the_serial_rollup :: proc(t: ^testing.T) {
 a_walk_past_the_charge_cap_keeps_the_serial_rollup :: proc(t: ^testing.T) {
 	// The file is 65 edges down. rollup_advance stops at 64 ancestors, so a
 	// subtree total would disagree and the walk must not install one.
+	log.info("deep fold: preparing fixture")
 	root := make_chain(t, "deep", 65)
-	defer os.remove_all(root)
+	defer {
+		log.info("deep fold: starting cleanup")
+		remove_chain(root, 65)
+		testing.expect(t, !os.exists(root), "deep fixture remains after cleanup")
+		log.info("deep fold: cleanup finished")
+	}
+	log.info("deep fold: starting folded walk")
 	tree := read_at(t, root, true, false)
+	log.info("deep fold: folded walk finished")
 	defer scan.tree_destroy(&tree)
 	testing.expect(t, tree.folded == nil, "a walk past the cap published totals")
 
+	log.info("deep fold: starting plain walk")
 	plain := read_at(t, root, false, false)
+	log.info("deep fold: plain walk finished")
 	defer scan.tree_destroy(&plain)
 	fold_roll, plain_roll: Rollup
 	defer rollup_destroy(&fold_roll)
 	defer rollup_destroy(&plain_roll)
 	rollup_advance(&fold_roll, &tree)
 	rollup_advance(&plain_roll, &plain)
+	testing.expect_value(t, scan.slots(&tree), u32(66))
+	testing.expect_value(t, scan.slots(&plain), u32(66))
+	leaf := find_named(&tree, "f")
+	testing.expect(t, leaf != scan.NO_NODE, "the deep file was not read")
+	if leaf == scan.NO_NODE {
+		return
+	}
+	charged := scan.node(&tree, leaf).disk
+	testing.expect(t, charged > 0, "the deep file was not charged")
+	last := leaf
+	for _ in 0 ..< 64 {
+		last = scan.node(&tree, last).parent
+	}
+	testing.expect_value(t, total(&fold_roll, last), charged)
+	testing.expect_value(t, total(&plain_roll, last), charged)
+	testing.expect_value(t, total(&fold_roll, tree.root), u64(0))
+	testing.expect_value(t, total(&plain_roll, plain.root), u64(0))
 	testing.expect_value(t, scan.slots(&tree), scan.slots(&plain))
 	for i in 0 ..< scan.slots(&tree) {
 		if total(&fold_roll, i) != total(&plain_roll, i) {
@@ -313,7 +341,7 @@ make_chain :: proc(t: ^testing.T, name: string, depth: int) -> string {
 	dir, dir_err := os.temp_directory(context.temp_allocator)
 	testing.expect(t, dir_err == nil, "no temp directory")
 	root := fmt.tprintf("%s/leita_fold_%s", dir, name)
-	os.remove_all(root)
+	remove_chain(root, depth)
 	testing.expect(t, os.make_directory(root) == nil, "could not make the root")
 	cur := root
 	for _ in 1 ..< depth {
@@ -322,6 +350,22 @@ make_chain :: proc(t: ^testing.T, name: string, depth: int) -> string {
 	}
 	write_file(t, fmt.tprintf("%s/f", cur), 7)
 	return root
+}
+
+// This fixture has a known shape. Remove it directly so cleanup needs no
+// recursive directory listing or Windows shell operation.
+@(private = "file")
+remove_chain :: proc(root: string, depth: int) {
+	cur := root
+	for _ in 1 ..< depth {
+		cur = fmt.tprintf("%s/n", cur)
+	}
+	os.remove(fmt.tprintf("%s/f", cur))
+	for _ in 1 ..< depth {
+		os.remove(cur)
+		cur = cur[:len(cur) - 2]
+	}
+	os.remove(root)
 }
 
 @(private = "file")
