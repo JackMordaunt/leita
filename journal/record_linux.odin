@@ -454,7 +454,7 @@ resolve :: proc(r: ^Recorder, fs: ^Recorded_Filesystem, now: i64) -> bool {
 		if dir < 0 {
 			fsid: [2]i32
 			err: linux.Errno
-			dir, fsid, err = open_point(fs.point)
+			dir, fsid, err = open_point(fs.point, fs.mount_id)
 			if err != .NONE || fsid != fs.fsid {
 				return false
 			}
@@ -485,22 +485,43 @@ open_point opens the mount point at point to resolve handles through, and says
 which filesystem it holds. The descriptor is -1 when err is not .NONE. It is not
 O_PATH: through an O_PATH descriptor open_by_handle_at resolved no handle on Linux
 7.0.14 (2026-10-13), and the log held no Changed record.
+
+The recorder runs as root, and anyone who owns a folder above a mount point can
+swap what the path leads to. So the last step follows no link, and the directory
+opened must be on the mount whose id mountinfo gave, by statx(2), or err is EXDEV.
 */
-@(private = "file")
-open_point :: proc(point: string) -> (dir: linux.Fd, fsid: [2]i32, err: linux.Errno) {
+@(private)
+open_point :: proc(point: string, mount_id: int) -> (dir: linux.Fd, fsid: [2]i32, err: linux.Errno) {
 	dir, err = linux.open(
 		strings.clone_to_cstring(point, context.temp_allocator),
-		{.DIRECTORY, .CLOEXEC},
+		{.DIRECTORY, .NOFOLLOW, .CLOEXEC},
 	)
 	if err != .NONE {
 		return -1, {}, err
 	}
+	err = check_mount(dir, mount_id)
 	st: linux.Stat_FS
-	if err = linux.fstatfs(dir, &st); err != .NONE {
+	if err == .NONE {
+		err = linux.fstatfs(dir, &st)
+	}
+	if err != .NONE {
 		linux.close(dir)
 		return -1, {}, err
 	}
 	return dir, st.fsid, .NONE
+}
+
+// check_mount says .NONE when dir is on the mount mount_id names, and EXDEV when not.
+@(private = "file")
+check_mount :: proc(dir: linux.Fd, mount_id: int) -> linux.Errno {
+	st: linux.Statx
+	if err := linux.statx(dir, "", {.EMPTY_PATH}, {.MNT_ID}, &st); err != .NONE {
+		return err
+	}
+	if .MNT_ID not_in st.mask || int(st.mnt_id) != mount_id {
+		return .EXDEV
+	}
+	return .NONE
 }
 
 // drop stops recording r.recorded[i] and forgets it, so its device is judged again.
@@ -677,7 +698,7 @@ is listed in the status once, by the first mount of it tried.
 */
 @(private = "file")
 try_mount :: proc(r: ^Recorder, m: Mount, mounts: []Mount) {
-	try, why := judge(m)
+	try, why := judge(m, r.cfg.only)
 	if !try {
 		if why != "" {
 			verdicts_skip(&r.verdicts, m, why)
@@ -769,7 +790,7 @@ start_recording :: proc(r: ^Recorder, m: Mount) -> (fs: Recorded_Filesystem, pro
 	if len(m.point) > PATH_MAX {
 		return {}, "its mount point is longer than a log's header holds"
 	}
-	dir, fsid, err := open_point(m.point)
+	dir, fsid, err := open_point(m.point, m.id)
 	if err != .NONE {
 		return {}, fmt.tprintf("cannot open it: %v", err)
 	}

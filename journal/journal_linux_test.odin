@@ -227,3 +227,39 @@ test_a_place_is_on_its_own_mount :: proc(t: ^testing.T) {
 	_, ok3 := mount_of("/no/such/leita/place", context.temp_allocator)
 	testing.expect(t, !ok3, "a place that is not there has a mount")
 }
+
+/*
+A mount point opens only as a directory reached without a link in its last step,
+and only on the mount it was named for: a link swapped in for the point, or a
+directory on another mount, is refused, and no descriptor is left open.
+*/
+@(test)
+test_a_mount_point_opens_only_as_itself :: proc(t: ^testing.T) {
+	dir, _ := os.temp_directory(context.temp_allocator)
+	cdir := strings.clone_to_cstring(dir, context.temp_allocator)
+	st: linux.Statx
+	testing.expect_value(t, linux.statx(linux.AT_FDCWD, cdir, {}, {.MNT_ID}, &st), linux.Errno.NONE)
+	id := int(st.mnt_id)
+
+	fd, fsid, err := open_point(dir, id)
+	testing.expect_value(t, err, linux.Errno.NONE)
+	if err == .NONE {
+		linux.close(fd)
+	}
+	want, _ := fsid_of(dir)
+	testing.expect_value(t, fsid, want)
+
+	fd, _, err = open_point(dir, id + 1)
+	testing.expect_value(t, err, linux.Errno.EXDEV)
+	testing.expect_value(t, fd, linux.Fd(-1))
+
+	link, _ := filepath.join({dir, "leita_journal_point_link"}, context.temp_allocator)
+	os.remove(link)
+	testing.expect(t, os.symlink(dir, link) == nil, "could not make the link")
+	defer os.remove(link)
+	// open(2) gives ELOOP for a link O_NOFOLLOW meets; Linux 7.2.5 checked
+	// O_DIRECTORY first and said ENOTDIR (2026-10-18).
+	fd, _, err = open_point(link, id)
+	testing.expectf(t, err == .ELOOP || err == .ENOTDIR, "a link opened: %v", err)
+	testing.expect_value(t, fd, linux.Fd(-1))
+}

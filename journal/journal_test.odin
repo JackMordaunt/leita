@@ -310,6 +310,42 @@ test_mounts_are_read_and_judged :: proc(t: ^testing.T) {
 }
 
 /*
+A FUSE filesystem, whatever its kind, is not tried unless its mount point is listed,
+and says why; sshfs is a network one, and fusectl one not worth listing.
+*/
+@(test)
+test_fuse_is_skipped_unless_listed :: proc(t: ^testing.T) {
+	text :=
+		"60 36 0:60 / /run/user/1000/doc rw - fuse.portal portal rw,user_id=1000\n" +
+		"61 36 8:33 / /media/win rw - fuseblk /dev/sdc1 rw,user_id=0\n" +
+		"62 36 0:62 / /mnt/fuse rw - fuse myfs rw,user_id=1000\n" +
+		"63 36 0:63 / /mnt/ssh rw - fuse.sshfs host:/ rw,user_id=1000\n" +
+		"64 36 0:64 / /sys/fs/fuse/connections rw - fusectl fusectl rw\n"
+	mounts := mounts_parse(text)
+	defer mounts_destroy(mounts)
+	testing.expect_value(t, len(mounts), 5)
+	fuse :: "a FUSE filesystem, whose program could keep the recorder waiting"
+	want := []string {
+		fuse,
+		fuse,
+		fuse,
+		"a network filesystem, which another machine can change",
+		"",
+	}
+	for m, i in mounts {
+		try, why := judge(m)
+		testing.expectf(t, !try, "%s: tried", m.point)
+		testing.expectf(t, why == want[i], "%s: why %q", m.point, why)
+	}
+	for m in mounts[:3] {
+		try, why := judge(m, {m.point})
+		testing.expectf(t, try && why == "", "%s listed: not tried, %q", m.point, why)
+	}
+	try, _ := judge(mounts[0], {"/mnt/fuse"})
+	testing.expect(t, !try, "a FUSE mount was tried when another was listed")
+}
+
+/*
 What the recorder does with each mount table, less the marks: forget what has gone
 or changed, then judge each mount not tried yet, recording what judge allows. It
 returns the mounts tried this time, by point.

@@ -149,10 +149,15 @@ NETWORK := [?]string {
 
 /*
 judge is whether the recorder should try to mark m's filesystem: every local one
-that can change. When it should not, why says so for the status, or is "" for a
-filesystem not worth listing (proc, tmpfs and the like).
+that can change, less FUSE filesystems whose mount point is not in `only`. When it
+should not, why says so for the status, or is "" for a filesystem not worth listing
+(proc, tmpfs and the like).
+
+A FUSE filesystem answers through a program, often one a user runs, that can stop
+answering: the recorder, opening its mount point to resolve what changed, would
+wait on it, and record no other filesystem while it waited.
 */
-judge :: proc(m: Mount) -> (try: bool, why: string) {
+judge :: proc(m: Mount, only: []string = nil) -> (try: bool, why: string) {
 	for t in PSEUDO {
 		if m.fstype == t {
 			return false, ""
@@ -162,6 +167,10 @@ judge :: proc(m: Mount) -> (try: bool, why: string) {
 		if m.fstype == t {
 			return false, "a network filesystem, which another machine can change"
 		}
+	}
+	fuse := m.fstype == "fuse" || m.fstype == "fuseblk" || strings.has_prefix(m.fstype, "fuse.")
+	if fuse && !listed(only, m.point) {
+		return false, "a FUSE filesystem, whose program could keep the recorder waiting"
 	}
 	options := m.super
 	for o in strings.split_iterator(&options, ",") {

@@ -5,12 +5,13 @@ Linux does not.
 
 The recorder (`leita journal run`, record_linux.odin) runs as a system service that
 `leita journal on` installs and nothing else does. It marks every local filesystem
-with fanotify (FAN_MARK_FILESYSTEM, which needs CAP_SYS_ADMIN: fanotify_mark(2)),
-collects the distinct directories that events name, and once a second resolves each
-and appends one Changed record for it to the filesystem's log. A C prototype of
-this loop, on ext4 under Linux 7.0.14 (aarch64, 2026-10-13), lost no event while
-four kernel trees were unpacked and deleted at once, 194,000 events a second at the
-peak, and used 0.013% of a core idle over 300 s.
+but FUSE ones, whose program could keep it waiting (judge), with fanotify
+(FAN_MARK_FILESYSTEM, which needs CAP_SYS_ADMIN: fanotify_mark(2)), collects the
+distinct directories that events name, and once a second resolves each through the
+filesystem's mount point and appends one Changed record for it to the filesystem's
+log. A C prototype of this loop, on ext4 under Linux 7.0.14 (aarch64, 2026-10-13),
+lost no event while four kernel trees were unpacked and deleted at once, 194,000
+events a second at the peak, and used 0.013% of a core idle over 300 s.
 
 # The log
 
