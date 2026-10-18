@@ -21,7 +21,10 @@
 #                                        and fails the build without them.
 #   leita-v1.2.0-windows-amd64-setup.exe the same files as an installer: Program
 #                                        Files, a Start menu entry, an optional
-#                                        PATH entry, an uninstaller
+#                                        PATH entry, an uninstaller; the zip and
+#                                        the installer end -unsigned before the
+#                                        extension when the signing secrets are
+#                                        not set
 #   leita-v1.2.0-linux-amd64.AppImage    the window as one file to run
 #   leita-v1.2.0-linux-amd64.deb         both binaries for apt and dnf, with
 #   leita-v1.2.0-linux-amd64.rpm         the desktop entry, the icon and the
@@ -59,9 +62,10 @@
 # A tag with a pre-release suffix (v1.0.0-rc1) is published as a draft
 # pre-release, for a person to look over and publish; any other tag is
 # published at once. The universal job signs and notarises Leita.app when
-# the MACOS_* secrets are set. Other signing is left to the cards that own
-# it: the Windows executables (card 541) and sha256sums.txt.sig
-# (jm:selfupdate, card 547).
+# the MACOS_* secrets are set, and the Windows job signs leita.exe, Leita.exe
+# and the installer when the WINDOWS_SIGN_* secrets are (see "windows signing
+# plan" below). Other signing is left to the card that owns it:
+# sha256sums.txt.sig (jm:selfupdate, card 547).
 #
 # The Linux window carries SDL3 inside it and opens libcurl only to activate
 # a licence, so it needs nothing a stock desktop lacks but glibc and
@@ -258,6 +262,85 @@ jobs:
           fi
           if [ "$RUNNER_OS" = macOS ]; then otool -L "build/release/app/Leita"; fi
 
+      # Authenticode signing, so a downloaded exe is not an unknown
+      # publisher's: Jack's decision (card 541) is an OV code-signing
+      # certificate whose key lives in a cloud HSM. One route is chosen from
+      # the secrets, by tools/windows/sign.sh:
+      #   WINDOWS_SIGN_AKV_URL, _CERT, _TENANT, _CLIENT_ID, _CLIENT_SECRET
+      #     all five: the certificate is in Azure Key Vault (Premium or
+      #     Managed HSM) and AzureSignTool signs through the vault, so the
+      #     key never reaches the runner. AzureSignTool is the common route
+      #     for an OV certificate whose key is in a cloud HSM (DigiCert
+      #     KeyLocker's smctl is the other, and is not wired here).
+      #   WINDOWS_SIGN_CERT_THUMBPRINT
+      #     a certificate already in the runner's personal store, as a
+      #     hardware vendor's client leaves one: signtool signs with it.
+      # With none set, as on a fork or before the certificate is bought, the
+      # build ships unsigned under a notice, and the zip and installer carry
+      # -unsigned in their names. Both routes, or some but not all of the
+      # five, are a mistake, and fail. The update binaries keep the names
+      # jm:selfupdate fetches, signed or not. Each file is timestamped, so
+      # its signature outlives the certificate, and verified with
+      # signtool verify /pa, as Windows judges it.
+      - name: windows signing plan
+        if: runner.os == 'Windows'
+        id: signplan
+        env:
+          WINDOWS_SIGN_CERT_THUMBPRINT: ${{ secrets.WINDOWS_SIGN_CERT_THUMBPRINT }}
+          WINDOWS_SIGN_AKV_URL: ${{ secrets.WINDOWS_SIGN_AKV_URL }}
+          WINDOWS_SIGN_AKV_CERT: ${{ secrets.WINDOWS_SIGN_AKV_CERT }}
+          WINDOWS_SIGN_AKV_TENANT: ${{ secrets.WINDOWS_SIGN_AKV_TENANT }}
+          WINDOWS_SIGN_AKV_CLIENT_ID: ${{ secrets.WINDOWS_SIGN_AKV_CLIENT_ID }}
+          WINDOWS_SIGN_AKV_CLIENT_SECRET: ${{ secrets.WINDOWS_SIGN_AKV_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          akv=0
+          for name in WINDOWS_SIGN_AKV_URL WINDOWS_SIGN_AKV_CERT WINDOWS_SIGN_AKV_TENANT WINDOWS_SIGN_AKV_CLIENT_ID WINDOWS_SIGN_AKV_CLIENT_SECRET; do
+            if [ -n "${!name}" ]; then akv=$((akv + 1)); fi
+          done
+          if [ "$akv" != 0 ] && [ "$akv" != 5 ]; then
+            echo "::error::$akv of the 5 WINDOWS_SIGN_AKV_* secrets are set; set all or none"
+            exit 1
+          fi
+          if [ "$akv" = 5 ] && [ -n "$WINDOWS_SIGN_CERT_THUMBPRINT" ]; then
+            echo "::error::both WINDOWS_SIGN_CERT_THUMBPRINT and the WINDOWS_SIGN_AKV_* secrets are set; choose one route"
+            exit 1
+          fi
+          route=none
+          if [ "$akv" = 5 ]; then route=akv; elif [ -n "$WINDOWS_SIGN_CERT_THUMBPRINT" ]; then route=store; fi
+          if [ "$route" = none ]; then
+            echo "::notice::no WINDOWS_SIGN_* secrets: leita.exe, Leita.exe and the installer are not signed, and the archive and installer ship as -unsigned; SmartScreen will warn"
+            echo "LEITA_UNSIGNED=-unsigned" >> "$GITHUB_ENV"
+          fi
+          echo "route=$route" >> "$GITHUB_OUTPUT"
+          echo "signing route: $route"
+      # Pinned by version and by the SHA-256 of the release asset, which
+      # was computed from the download itself (GitHub's digest agrees).
+      - name: AzureSignTool
+        if: steps.signplan.outputs.route == 'akv'
+        env:
+          AZURESIGNTOOL_VERSION: v7.0.1
+          AZURESIGNTOOL_SHA256: dc85a3f24bcd5978c63fcfd167a9b41313af9116722b99b831400f05f387fcba
+        run: |
+          set -euo pipefail
+          tool="$RUNNER_TEMP/AzureSignTool.exe"
+          curl -fsSL --max-time 120 -o "$tool" "https://github.com/vcsjones/AzureSignTool/releases/download/$AZURESIGNTOOL_VERSION/AzureSignTool-x64.exe"
+          echo "$AZURESIGNTOOL_SHA256  $tool" | sha256sum -c -
+          echo "AZURESIGNTOOL=$tool" >> "$GITHUB_ENV"
+      # The two executables, before they are copied into the archive, the
+      # installer and the update names.
+      - name: sign leita.exe and Leita.exe
+        if: steps.signplan.outputs.route != 'none' && runner.os == 'Windows'
+        env:
+          WINDOWS_SIGN_CERT_THUMBPRINT: ${{ secrets.WINDOWS_SIGN_CERT_THUMBPRINT }}
+          WINDOWS_SIGN_AKV_URL: ${{ secrets.WINDOWS_SIGN_AKV_URL }}
+          WINDOWS_SIGN_AKV_CERT: ${{ secrets.WINDOWS_SIGN_AKV_CERT }}
+          WINDOWS_SIGN_AKV_TENANT: ${{ secrets.WINDOWS_SIGN_AKV_TENANT }}
+          WINDOWS_SIGN_AKV_CLIENT_ID: ${{ secrets.WINDOWS_SIGN_AKV_CLIENT_ID }}
+          WINDOWS_SIGN_AKV_CLIENT_SECRET: ${{ secrets.WINDOWS_SIGN_AKV_CLIENT_SECRET }}
+          ROUTE: ${{ steps.signplan.outputs.route }}
+        run: tools/windows/sign.sh "$ROUTE" build/release/leita.exe build/release/app/Leita.exe
+
       # Each binary under its update name, and on Linux and Windows the
       # archive a person downloads. macOS's go to the universal job as they
       # are. cp fails on a missing DLL, as the justfile's gui recipe does.
@@ -287,12 +370,13 @@ jobs:
             else
               echo "::notice::no THIRD_PARTY.md yet (card 545): the archive goes without it"
             fi
-            (cd pack && 7z a -tzip -bso0 -bsp0 "../dist/$root.zip" "$root")
+            zip="dist/$root${LEITA_UNSIGNED:-}.zip"
+            (cd pack && 7z a -tzip -bso0 -bsp0 "../$zip" "$root")
             # What a person unzips: the window must have both DLLs beside it.
-            listing=$(7z l -ba "dist/$root.zip")
+            listing=$(7z l -ba "$zip")
             listing=${listing//\\//}
             for f in leita.exe LICENSE.md app/Leita.exe app/SDL3.dll app/accesskit.dll; do
-              grep -qF "$root/$f" <<<"$listing" || { echo "::error::$root.zip lacks $f"; exit 1; }
+              grep -qF "$root/$f" <<<"$listing" || { echo "::error::$zip lacks $f"; exit 1; }
             done
           else
             command -v zstd >/dev/null || sudo apt-get install -y --no-install-recommends zstd
@@ -309,9 +393,6 @@ jobs:
       # PATH names the folder; uninstalled, all of that is gone again.
       - name: installer (windows)
         if: runner.os == 'Windows'
-        env:
-          # Git Bash would rewrite /VERYSILENT and the like as paths.
-          MSYS_NO_PATHCONV: 1
         run: |
           set -euo pipefail
           iscc=""
@@ -320,23 +401,40 @@ jobs:
           done
           [ -n "$iscc" ] || { echo "::error::Inno Setup 6 is not on this runner image"; exit 1; }
           root="leita-$LEITA_VERSION-$LEITA_TARGET"
-          name="$root-setup"
+          name="$root-setup${LEITA_UNSIGNED:-}"
           # The file's version resource takes four numbers: v1.2.0-rc1 is
           # 1.2.0.0, and a bare commit, g and its hash, is 0.0.0.0.
           number=0.0.0
           v=${LEITA_VERSION#v}
           if [[ $v =~ ^[0-9]+(\.[0-9]+){0,2} ]]; then number=${BASH_REMATCH[0]}; fi
           while [ "$(tr -cd . <<<"$number" | wc -c)" -lt 3 ]; do number+=.0; done
-          mkdir -p build/installer
-          LEITA_PACK=$(cygpath -w "$PWD/pack/$root") LEITA_NUMBER=$number \
+          # Git Bash would rewrite ISCC's /Q as a path.
+          MSYS_NO_PATHCONV=1 LEITA_PACK=$(cygpath -w "$PWD/pack/$root") LEITA_NUMBER=$number \
             LEITA_OUT=$(cygpath -w "$PWD/dist") LEITA_OUTNAME=$name \
             "$iscc" /Q tools/windows/leita.iss
-          setup="dist/$name.exe"
-          [ -s "$setup" ] || { echo "::error::Inno Setup wrote no $setup"; exit 1; }
-
+          [ -s "dist/$name.exe" ] || { echo "::error::Inno Setup wrote no dist/$name.exe"; exit 1; }
+      - name: sign the installer
+        if: steps.signplan.outputs.route != 'none' && runner.os == 'Windows'
+        env:
+          WINDOWS_SIGN_CERT_THUMBPRINT: ${{ secrets.WINDOWS_SIGN_CERT_THUMBPRINT }}
+          WINDOWS_SIGN_AKV_URL: ${{ secrets.WINDOWS_SIGN_AKV_URL }}
+          WINDOWS_SIGN_AKV_CERT: ${{ secrets.WINDOWS_SIGN_AKV_CERT }}
+          WINDOWS_SIGN_AKV_TENANT: ${{ secrets.WINDOWS_SIGN_AKV_TENANT }}
+          WINDOWS_SIGN_AKV_CLIENT_ID: ${{ secrets.WINDOWS_SIGN_AKV_CLIENT_ID }}
+          WINDOWS_SIGN_AKV_CLIENT_SECRET: ${{ secrets.WINDOWS_SIGN_AKV_CLIENT_SECRET }}
+          ROUTE: ${{ steps.signplan.outputs.route }}
+        run: tools/windows/sign.sh "$ROUTE" "dist/leita-$LEITA_VERSION-$LEITA_TARGET-setup.exe"
+      - name: installer on a clean system (windows)
+        if: runner.os == 'Windows'
+        env:
+          # Git Bash would rewrite /VERYSILENT and the like as paths.
+          MSYS_NO_PATHCONV: 1
+        run: |
+          set -euo pipefail
+          setup="dist/leita-$LEITA_VERSION-$LEITA_TARGET-setup${LEITA_UNSIGNED:-}.exe"
           dir='C:\leita-setup-test'
           machine_path() { reg query 'HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment' /v Path; }
-          "$setup" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=build/installer/install.log "/DIR=$dir" /TASKS=addtopath
+          "$setup" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART "/LOG=$(cygpath -w "$RUNNER_TEMP/install.log")" "/DIR=$dir" /TASKS=addtopath
           for f in leita.exe LICENSE.md app/Leita.exe app/SDL3.dll app/accesskit.dll unins000.exe; do
             [ -f "/c/leita-setup-test/$f" ] || { echo "::error::the installer left no $f"; exit 1; }
           done
