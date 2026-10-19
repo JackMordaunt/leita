@@ -15,10 +15,11 @@ candidates.
 Under the user's home, the caches of tools known to make them again, a few package
 managers' download caches, Xcode's build output and device symbols, the
 simulator's cache, and the Trash are candidates by where they are, as is the
-user's Trash on an external volume. A cache is offered by its name, from a list:
-anything can write under ~/.cache, so a name not on the list proves nothing.
-macOS's places, those under Library, are looked for only on a Mac: a Library
-under a Linux home is someone's own folder.
+user's Trash on an external volume and, on Windows, a folder this package
+matches as `<drive>\$Recycle.Bin\<SID>`. A cache is offered by its name,
+from a list: anything can write under ~/.cache, so a name not on the list proves
+nothing. macOS's places, those under Library, are looked for only on a Mac: a
+Library under a Linux home is someone's own folder.
 
 A match is not looked inside: what it holds goes with it. Nothing inside a .git
 directory, and nothing under a directory of the system or its programs, is ever a
@@ -29,6 +30,8 @@ The package knows the scan only through a Source, so it is tested over trees
 made in memory.
 */
 package reclaim
+
+import "base:runtime"
 
 import "core:mem"
 import "core:os"
@@ -159,12 +162,16 @@ RULES := [?]Rule {
 }
 
 // TRASH is the user's Trash, relative to the home directory: the Finder's on
-// macOS, the freedesktop.org one elsewhere.
+// macOS, the freedesktop.org one elsewhere. On Windows this package does not
+// look under home for it; volume_trash matches `$Recycle.Bin\<SID>`.
 when ODIN_OS == .Darwin {
 	TRASH :: ".Trash"
 } else {
 	TRASH :: ".local/share/Trash"
 }
+
+// RECYCLE_DIR is the folder name this package matches on a Windows volume.
+RECYCLE_DIR :: "$Recycle.Bin"
 
 // HOME_PLACES are candidates by where they are, relative to the home directory.
 // A place for darwin is looked for only on a Mac.
@@ -554,7 +561,14 @@ place_of :: proc(f: ^Finder, path: string) -> (Category, bool) {
 		return {}, false
 	}
 	for place in HOME_PLACES {
-		if (!place.darwin || f.platform == .Darwin) && same(rel, place.path, f.platform) {
+		if place.darwin && f.platform != .Darwin {
+			continue
+		}
+		// HOME_PLACES TRASH is skipped on Windows; volume_trash matches the bin.
+		if f.platform == .Windows && same(place.path, TRASH, f.platform) {
+			continue
+		}
+		if same(rel, place.path, f.platform) {
 			return place.category, true
 		}
 	}
@@ -589,11 +603,163 @@ cache_for :: proc(f: ^Finder, caches: []Cache, name: string) -> (Category, bool)
 	return {}, false
 }
 
+// Recycle_Bin is one volume's Recycle Bin as the caller named it: the volume
+// root (`C:\`), the user's folder there, and what it holds.
+Recycle_Bin :: struct {
+	volume: string,
+	path:   string,
+	bytes:  u64,
+}
+
+/*
+overlay_recycle_bins takes find's candidates and the Recycle Bins the shell named,
+overlays each found Recycle Bin's size with the shell's, and appends a Bin that
+find did not see, so a scan of a home still offers the Recycle Bin. node_for
+numbers a Bin that was not in the tree. found is kept when nothing is appended;
+injected paths are cloned into allocator.
+*/
+overlay_recycle_bins :: proc(
+	found: []Candidate,
+	bins: []Recycle_Bin,
+	uid: string,
+	node_for: proc(volume: string) -> u32,
+	allocator := context.allocator,
+) -> []Candidate {
+	if len(bins) == 0 {
+		return found
+	}
+	for &c in found {
+		if !is_recycle_bin(c.path, uid) {
+			continue
+		}
+		runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+		vol := recycle_bin_volume(c.path, context.temp_allocator)
+		for b in bins {
+			if same_drive(vol, b.volume) {
+				c.bytes = b.bytes
+				break
+			}
+		}
+	}
+	out := make([dynamic]Candidate, allocator)
+	append(&out, ..found)
+	added := false
+	for b in bins {
+		if b.bytes == 0 {
+			continue
+		}
+		already := false
+		for c in found {
+			runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+			if is_recycle_bin(c.path, uid) &&
+			   same_drive(recycle_bin_volume(c.path, context.temp_allocator), b.volume) {
+				already = true
+				break
+			}
+		}
+		if already {
+			continue
+		}
+		append(
+			&out,
+			Candidate{node_for(b.volume), strings.clone(b.path, allocator), b.bytes, .Trash},
+		)
+		added = true
+	}
+	if !added {
+		delete(out)
+		return found
+	}
+	return out[:]
+}
+
+// recycle_bin_path is the user's Recycle Bin on volume: `C:\$Recycle.Bin\<SID>`.
+recycle_bin_path :: proc(volume, sid: string, allocator := context.allocator) -> string {
+	vol := strings.trim_right(volume, `\/`)
+	return strings.concatenate({vol, `\`, RECYCLE_DIR, `\`, sid}, allocator)
+}
+
+// recycle_bin_volume is the `X:\` root of a Recycle Bin path, or "".
+recycle_bin_volume :: proc(path: string, allocator := context.allocator) -> string {
+	p := strings.trim_right(path, `\/`)
+	start := 0
+	for i in 0 ..= len(p) {
+		at_end := i == len(p)
+		if !at_end && strings.index_byte(`\/`, p[i]) < 0 {
+			continue
+		}
+		if same(p[start:i], RECYCLE_DIR, .Windows) {
+			vol := p[:start]
+			if vol == "" {
+				return ""
+			}
+			if strings.index_byte(`\/`, vol[len(vol) - 1]) < 0 {
+				return strings.concatenate({vol, `\`}, allocator)
+			}
+			return strings.clone(vol, allocator)
+		}
+		start = i + 1
+	}
+	return ""
+}
+
+// same_drive is whether a and b name the same Windows volume, trailing slash or not.
+@(private)
+same_drive :: proc(a, b: string) -> bool {
+	return same(strings.trim_right(a, `\/`), strings.trim_right(b, `\/`), .Windows)
+}
+
+// recycle_bin_node is a node id for a Recycle Bin that is not in the scan tree,
+// one per drive letter, above any tree's.
+recycle_bin_node :: proc(volume: string) -> u32 {
+	letter: byte = 'c'
+	for i in 0 ..< len(volume) {
+		c := fold(volume[i])
+		if c >= 'a' && c <= 'z' {
+			letter = c
+			break
+		}
+	}
+	return max(u32) - u32(letter - 'a')
+}
+
+// is_recycle_bin is whether path is this user's Recycle Bin folder on a volume:
+// `<drive>\$Recycle.Bin\<sid>`, and not a file inside it.
+is_recycle_bin :: proc(path, sid: string) -> bool {
+	if sid == "" || path == "" {
+		return false
+	}
+	p := strings.trim_right(path, `\/`)
+	if len(p) < len(sid) + 1 {
+		return false
+	}
+	if !same(p[len(p) - len(sid):], sid, .Windows) {
+		return false
+	}
+	if strings.index_byte(`\/`, p[len(p) - len(sid) - 1]) < 0 {
+		return false
+	}
+	head := p[:len(p) - len(sid) - 1]
+	if len(head) < len(RECYCLE_DIR) + 1 {
+		return false
+	}
+	if !same(head[len(head) - len(RECYCLE_DIR):], RECYCLE_DIR, .Windows) {
+		return false
+	}
+	return strings.index_byte(`\/`, head[len(head) - len(RECYCLE_DIR) - 1]) >= 0
+}
+
 // volume_trash is whether path is the user's Trash on another volume:
-// /Volumes/<volume>/.Trashes/<uid>.
+// /Volumes/<volume>/.Trashes/<uid> on a Mac, <drive>\$Recycle.Bin\<SID> on Windows.
 @(private)
 volume_trash :: proc(f: ^Finder, path: string) -> bool {
-	if f.uid == "" || !strings.has_prefix(path, VOLUMES) {
+	if f.uid == "" {
+		return false
+	}
+	if f.platform == .Windows {
+		return is_recycle_bin(path, f.uid)
+	}
+	if !strings.has_prefix(path, VOLUMES) {
 		return false
 	}
 	rest := path[len(VOLUMES):]

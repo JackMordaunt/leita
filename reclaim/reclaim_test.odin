@@ -338,6 +338,118 @@ the_users_trash_on_another_volume_is_found :: proc(t: ^testing.T) {
 	testing.expect_value(t, len(none), 0)
 }
 
+SID :: "S-1-5-21-1-2-3-1001"
+
+// The Recycle Bin is this user's folder on each volume, not the freedesktop.org
+// Trash under home, and not another account's folder beside it.
+@(test)
+the_recycle_bin_on_each_volume_is_this_users :: proc(t: ^testing.T) {
+	tree: Fake
+	defer fake_destroy(&tree)
+	root := fake_add(&tree, 0, `C:\`, true)
+	fake_path(&tree, root, "$Recycle.Bin/" + SID + "/$R0")
+	fake_path(&tree, root, "$Recycle.Bin/S-1-5-18/system")
+	fake_path(&tree, root, "Users/ann/.local/share/Trash/files")
+	make_output(&tree, root, "Users/ann/src/web", "package.json", "node_modules")
+	ann := home.User{`C:\Users\ann`, SID}
+	found := find(fake_source(&tree), root, `C:\`, ann, platform = .Windows)
+	defer candidates_destroy(found)
+	want := []string{`C:\$Recycle.Bin\` + SID, `C:\Users\ann\src\web\node_modules`}
+	got := found_paths(found)
+	testing.expectf(t, slice.equal(got, want), "found\n%v\nwant\n%v", got, want)
+	for c in found {
+		if strings.contains(c.path, RECYCLE_DIR) {
+			testing.expect_value(t, c.category, Category.Trash)
+		}
+	}
+
+	home_dir := fake_path(&tree, root, "Users/ann")
+	below := find(fake_source(&tree), home_dir, `C:\Users\ann`, ann, platform = .Windows)
+	defer candidates_destroy(below)
+	testing.expect(
+		t,
+		slice.equal(found_paths(below), []string{`C:\Users\ann\src\web\node_modules`}),
+		"the Recycle Bin is not under home",
+	)
+
+	none := find(
+		fake_source(&tree),
+		root,
+		`C:\`,
+		home.User{`C:\Users\ann`, ""},
+		platform = .Windows,
+	)
+	defer candidates_destroy(none)
+	testing.expect(
+		t,
+		slice.equal(found_paths(none), []string{`C:\Users\ann\src\web\node_modules`}),
+	)
+}
+
+@(test)
+recycle_bin_paths_are_the_sid_folder_on_the_volume :: proc(t: ^testing.T) {
+	testing.expect(t, is_recycle_bin(`C:\$Recycle.Bin\` + SID, SID))
+	testing.expect(t, is_recycle_bin(`c:/$recycle.bin/` + SID, SID))
+	testing.expect(t, !is_recycle_bin(`C:\$Recycle.Bin\` + SID + `\old`, SID), "a file inside")
+	testing.expect(t, !is_recycle_bin(`C:\$Recycle.Bin\S-1-5-18`, SID), "another account")
+	testing.expect(t, !is_recycle_bin(`C:\$Recycle.Bin`, SID), "the bin itself")
+	testing.expect(t, !is_recycle_bin(`C:\Users\ann\` + SID, SID), "the SID as a name")
+	testing.expect(t, !is_recycle_bin(`C:\$Recycle.Bin\` + SID, ""), "no SID")
+	testing.expect_value(
+		t,
+		recycle_bin_path(`C:\`, SID, context.temp_allocator),
+		`C:\$Recycle.Bin\` + SID,
+	)
+	testing.expect_value(
+		t,
+		recycle_bin_volume(`C:\$Recycle.Bin\` + SID, context.temp_allocator),
+		`C:\`,
+	)
+	testing.expect_value(t, recycle_bin_node(`C:\`), max(u32) - u32('c' - 'a'))
+	testing.expect_value(t, recycle_bin_node(`D:`), max(u32) - u32('d' - 'a'))
+}
+
+// A Recycle Bin find did not visit is still offered, at the shell's size; one it
+// did visit takes that size in place of the tree's.
+@(test)
+a_recycle_bin_outside_the_scan_is_still_offered :: proc(t: ^testing.T) {
+	found := []Candidate{{1, strings.clone(`C:\Users\ann\web\node_modules`), 100, .Dependencies}}
+	bins := []Recycle_Bin{{`C:\`, recycle_bin_path(`C:\`, SID, context.temp_allocator), 4096}}
+	got := overlay_recycle_bins(found, bins, SID, recycle_bin_node)
+	defer candidates_destroy(got)
+	testing.expect_value(t, len(got), 2)
+	testing.expect_value(t, got[1].path, `C:\$Recycle.Bin\` + SID)
+	testing.expect_value(t, got[1].bytes, 4096)
+	testing.expect_value(t, got[1].category, Category.Trash)
+	testing.expect_value(t, got[1].node, recycle_bin_node(`C:\`))
+
+	seen := make([]Candidate, 1)
+	seen[0] = {7, strings.clone(`C:\$Recycle.Bin\` + SID), 12, .Trash}
+	sized := overlay_recycle_bins(seen, bins, SID, recycle_bin_node)
+	defer candidates_destroy(sized)
+	testing.expect_value(t, len(sized), 1)
+	testing.expect_value(t, sized[0].node, 7)
+	testing.expect_value(t, sized[0].bytes, 4096)
+
+	empty := make([]Candidate, 1)
+	empty[0] = {1, strings.clone(`C:\web\node_modules`), 100, .Dependencies}
+	none := overlay_recycle_bins(
+		empty,
+		{{`C:\`, `C:\$Recycle.Bin\` + SID, 0}},
+		SID,
+		recycle_bin_node,
+	)
+	defer candidates_destroy(none)
+	testing.expect_value(t, len(none), 1)
+	testing.expect_value(t, none[0].node, 1)
+	testing.expect_value(t, none[0].path, `C:\web\node_modules`)
+	testing.expect_value(t, none[0].bytes, 100)
+	testing.expect_value(t, none[0].category, Category.Dependencies)
+	for c in none {
+		testing.expect(t, !is_recycle_bin(c.path, SID), "a zero-byte bin is not injected")
+	}
+}
+
 // project makes a directory at path under from holding the file marker, as a
 // project's manifest, and returns it.
 @(private)

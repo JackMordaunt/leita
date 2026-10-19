@@ -45,6 +45,8 @@ Each release is one section.
 
 **Fixed**
 
+- On Windows, Reclaim offers the Recycle Bin and emptying it is recorded.
+
 - A scan says how many folders it could not read.
 - The largest files in a report stay inside the folder that was scanned.
 - A copied file keeps its size when it cannot be measured again, including when the change journal is in use.

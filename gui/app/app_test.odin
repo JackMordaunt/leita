@@ -1694,7 +1694,50 @@ reclaim_counts_a_partial_delete_as_what_went :: proc(t: ^testing.T) {
 }
 
 @(test)
+reclaim_offers_the_recycle_bin :: proc(t: ^testing.T) {
+	when ODIN_OS == .Windows {
+		// The Recycle Bin is not under the fixture home. Offer it from the
+		// shell's size after putting one file there; never empty the runner's
+		// own bin.
+		root := projects(t, "reclaim_recycle")
+		defer os.remove_all(root)
+		gone := fmt.tprintf("%s/old.bin", root)
+		body := make([]byte, 16 * 1024, context.temp_allocator)
+		testing.expect(t, os.write_entire_file(gone, body) == nil)
+		testing.expect(t, recycle_a_file(gone), "moved to the Recycle Bin")
+		record, file := recycled(root, "old.bin")
+		defer {
+			if record != "" {
+				os.remove(record)
+			}
+			if file != "" {
+				os.remove(file)
+			}
+		}
+		testing.expect(t, os.exists(file), "in the Recycle Bin")
+
+		sync.guard(&trash_env)
+		profile := strings.clone(
+			os.get_env("USERPROFILE", context.temp_allocator),
+			context.temp_allocator,
+		)
+		testing.expect(t, os.set_env("USERPROFILE", root) == nil)
+		defer os.set_env("USERPROFILE", profile)
+
+		r: Rig
+		rig_open(&r, root)
+		defer rig_close(&r)
+		testing.expect(t, settle(&r, "Done"))
+		testing.expect(t, ui.probe_click(&r.p, "Reclaim"))
+		press_and_hand_on(&r)
+		testing.expect(t, settle(&r, "Empty Trash"), "the Recycle Bin is offered")
+		testing.expect(t, !ui.probe_tagged(&r.p, "All Trash"), "as a button, not a row")
+	}
+}
+
+@(test)
 reclaim_empties_the_trash_it_found :: proc(t: ^testing.T) {
+	when ODIN_OS != .Windows {
 	// The home, and so its Trash, is the test's own.
 	root := projects(t, "reclaim_trash")
 	defer os.remove_all(root)
@@ -1756,6 +1799,7 @@ reclaim_empties_the_trash_it_found :: proc(t: ^testing.T) {
 	testing.expect(t, !os.exists(fmt.tprintf("%s/%s", root, RECORD)))
 	testing.expect(t, os.exists(fmt.tprintf("%s/%s", root, TRASH)), "the Trash stays")
 	testing.expect(t, os.exists(fmt.tprintf("%s/web/node_modules", root)), "cleaning is separate")
+	}
 }
 
 // tagged_from is the first name tagged that starts with prefix, cloned since the
