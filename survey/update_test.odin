@@ -26,7 +26,7 @@ A place on disk to keep and update, its paths spelt as the platform spells them.
 fixture :: proc(t: ^testing.T, name: string) -> string {
 	dir, dir_err := os.temp_directory(context.temp_allocator)
 	testing.expect(t, dir_err == nil, "no temp directory")
-	root := join(strings.trim_right(dir, `\/`), fmt.tprintf("leita_survey_%s", name))
+	root := join(strings.trim_right(dir, `\/`), fmt.tprintf("leita_survey_%s_%d", name, os.get_pid()))
 	os.remove_all(root)
 	testing.expect(t, os.make_directory(root) == nil, "could not make the root")
 	testing.expect(t, os.make_directory(join(root, "sub")) == nil, "could not make sub")
@@ -105,7 +105,7 @@ linked_paths :: proc(tree: ^scan.Tree) -> map[string]scan.File_Id {
 test_a_baseline_reads_back_what_was_kept :: proc(t: ^testing.T) {
 	root := fixture(t, "keep")
 	defer os.remove_all(root)
-	file := join(root, "..", "leita_survey_keep.tree")
+	file := fmt.tprintf("%s.tree", root)
 	defer os.remove(file)
 	testing.expect(
 		t,
@@ -180,7 +180,7 @@ baseline, and no temporary file.
 test_baselines_saved_at_once_leave_a_whole_one :: proc(t: ^testing.T) {
 	root := fixture(t, "race")
 	defer os.remove_all(root)
-	dir := join(root, "..", "leita_survey_race_kept")
+	dir := fmt.tprintf("%s_kept", root)
 	os.remove_all(dir)
 	testing.expect(t, os.make_directory(dir) == nil, "could not make the folder")
 	defer os.remove_all(dir)
@@ -340,7 +340,7 @@ to ten seconds.
 test_a_fill_with_a_baseline_updates_the_place :: proc(t: ^testing.T) {
 	root := fixture(t, "fill")
 	defer os.remove_all(root)
-	file := join(root, "..", "leita_survey_fill.tree")
+	file := fmt.tprintf("%s.tree", root)
 	defer os.remove(file)
 	target, choice, err := scan.resolve(root)
 	testing.expect_value(t, err, scan.Error.None)
@@ -403,7 +403,7 @@ test_a_fill_with_a_baseline_updates_the_place :: proc(t: ^testing.T) {
 test_a_fill_asked_whole_reads_whole_and_keeps :: proc(t: ^testing.T) {
 	root := fixture(t, "whole")
 	defer os.remove_all(root)
-	file := join(root, "..", "leita_survey_whole.tree")
+	file := fmt.tprintf("%s.tree", root)
 	defer os.remove(file)
 	target, choice, err := scan.resolve(root)
 	testing.expect_value(t, err, scan.Error.None)
@@ -452,7 +452,7 @@ when ODIN_OS == .Linux {
 		// This test exercises Linux's folder-time probe and small-file slices.
 		root := fixture(t, "turn")
 		defer os.remove_all(root)
-		file := join(root, "..", "leita_survey_turn.tree")
+		file := fmt.tprintf("%s.tree", root)
 		defer os.remove(file)
 		target, choice, err := scan.resolve(root)
 		testing.expect_value(t, err, scan.Error.None)
@@ -557,7 +557,7 @@ Kept_Node :: struct {
 keep_nodes :: proc(t: ^testing.T, name, place: string, root: u32, nodes: []Kept_Node) -> string {
 	dir, dir_err := os.temp_directory(context.temp_allocator)
 	testing.expect(t, dir_err == nil, "no temp directory")
-	path := join(strings.trim_right(dir, `\/`), name)
+	path := join(strings.trim_right(dir, `\/`), fmt.tprintf("%s_%d", name, os.get_pid()))
 	size := len(BASELINE_MAGIC) + CURSOR_SIZE + 4 + len(place) + 8 + 4 // 4: no links
 	for n in nodes {
 		size += 15 + len(n.name)
@@ -596,7 +596,7 @@ keep_nodes :: proc(t: ^testing.T, name, place: string, root: u32, nodes: []Kept_
 test_a_count_the_file_cannot_hold_reserves_nothing :: proc(t: ^testing.T) {
 	root := fixture(t, "huge")
 	defer os.remove_all(root)
-	file := join(root, "..", "leita_survey_huge.tree")
+	file := fmt.tprintf("%s.tree", root)
 	defer os.remove(file)
 	tree := read_tree(t, root)
 	defer scan.tree_destroy(&tree)

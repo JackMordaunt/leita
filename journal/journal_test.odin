@@ -21,7 +21,7 @@ T0 :: i64(1_760_000_000) * SEC
 log_file :: proc(t: ^testing.T, name, mount: string, records: []Record) -> string {
 	dir, _ := os.temp_directory(context.temp_allocator)
 	path, _ := filepath.join(
-		{dir, fmt.tprintf("leita_journal_%s.log", name)},
+		{dir, fmt.tprintf("leita_journal_%s_%d.log", name, os.get_pid())},
 		context.temp_allocator,
 	)
 	b := make([dynamic]byte, context.temp_allocator)

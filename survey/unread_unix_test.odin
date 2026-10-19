@@ -34,7 +34,7 @@ test_a_baseline_does_not_keep_an_unread_directory_as_empty :: proc(t: ^testing.T
 	}
 	dir, dir_err := os.temp_directory(context.temp_allocator)
 	testing.expect(t, dir_err == nil, "no temp directory")
-	root := fmt.tprintf("%s/leita_survey_unread", strings.trim_right(dir, "/"))
+	root := fmt.tprintf("%s/leita_survey_unread_%d", strings.trim_right(dir, "/"), os.get_pid())
 	locked := fmt.tprintf("%s/locked", root)
 	os.chmod(locked, {.Read_User, .Write_User, .Execute_User})
 	os.remove_all(root)
@@ -46,7 +46,7 @@ test_a_baseline_does_not_keep_an_unread_directory_as_empty :: proc(t: ^testing.T
 	testing.expect(t, os.chmod(locked, {}) == nil, "could not lock the directory")
 	defer os.chmod(locked, {.Read_User, .Write_User, .Execute_User})
 
-	file := fmt.tprintf("%s/../leita_survey_unread.tree", root)
+	file := fmt.tprintf("%s.tree", root)
 	defer os.remove(file)
 	target, choice, err := scan.resolve(root)
 	testing.expect_value(t, err, scan.Error.None)
@@ -125,7 +125,7 @@ test_a_baseline_keeps_a_directory_whose_entries_were_not_asked :: proc(t: ^testi
 	}
 	dir, dir_err := os.temp_directory(context.temp_allocator)
 	testing.expect(t, dir_err == nil, "no temp directory")
-	root := fmt.tprintf("%s/leita_survey_listing", strings.trim_right(dir, "/"))
+	root := fmt.tprintf("%s/leita_survey_listing_%d", strings.trim_right(dir, "/"), os.get_pid())
 	listing := fmt.tprintf("%s/listing", root)
 	searchable := os.Permissions{.Read_User, .Write_User, .Execute_User}
 	os.chmod(listing, searchable)
@@ -149,7 +149,7 @@ test_a_baseline_keeps_a_directory_whose_entries_were_not_asked :: proc(t: ^testi
 	big := fmt.tprintf("%s/big.bin", listing)
 	testing.expect(t, big not_in seen(&first), "a file statx could not size was recorded")
 
-	file := fmt.tprintf("%s/../leita_survey_listing.tree", root)
+	file := fmt.tprintf("%s.tree", root)
 	defer os.remove(file)
 	testing.expect(t, baseline_save(file, root, &first, {}), "the baseline was not kept")
 	base: scan.Tree

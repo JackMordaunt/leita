@@ -40,7 +40,7 @@ test_walk_charges_btrfs_extents_or_says_why :: proc(t: ^testing.T) {
 	if dir == "" {
 		temp, temp_err := os.temp_directory(context.temp_allocator)
 		testing.expect(t, temp_err == nil, "no temp directory")
-		dir = fmt.tprintf("%s/leita_walk_btrfs", temp)
+		dir = fmt.tprintf("%s/leita_walk_btrfs_%d", temp, os.get_pid())
 		os.remove_all(dir)
 		testing.expect(t, os.make_directory(dir) == nil, "could not make the directory")
 		data := make([]u8, 64 * 1024, context.temp_allocator)
@@ -235,7 +235,7 @@ stand_in_directory :: proc(
 ) {
 	temp, temp_err := os.temp_directory(context.temp_allocator)
 	testing.expect(t, temp_err == nil, "no temp directory")
-	dir = fmt.tprintf("%s/%s", temp, name)
+	dir = fmt.tprintf("%s/%s_%d", temp, name, os.get_pid())
 	os.remove_all(dir)
 	testing.expect(t, os.make_directory_all(dir) == nil, "could not make the directory")
 	inodes = make([]u64, len(files), context.temp_allocator)
@@ -476,7 +476,7 @@ test_a_hard_link_is_charged_its_extents_once_across_workers :: proc(t: ^testing.
 	EXTENT :: 65536
 	temp, temp_err := os.temp_directory(context.temp_allocator)
 	testing.expect(t, temp_err == nil, "no temp directory")
-	root := fmt.tprintf("%s/leita_walk_btrfs_links", temp)
+	root := fmt.tprintf("%s/leita_walk_btrfs_links_%d", temp, os.get_pid())
 	defer os.remove_all(root)
 	inode, blocks := make_linked_directories(t, root, DIRS, 1)
 	linked_inode, linked_extent = inode, {1 << 20, EXTENT}
@@ -502,7 +502,7 @@ test_a_hard_link_read_from_disk_is_charged_once_across_workers :: proc(t: ^testi
 		testing.expect(t, cwd_err == nil, "no working directory")
 		scratch = fmt.tprintf("%s/build", cwd)
 	}
-	root := fmt.tprintf("%s/leita_walk_links", scratch)
+	root := fmt.tprintf("%s/leita_walk_links_%d", scratch, os.get_pid())
 	defer os.remove_all(root)
 	_, blocks := make_linked_directories(t, root, DIRS, 256 * 1024)
 

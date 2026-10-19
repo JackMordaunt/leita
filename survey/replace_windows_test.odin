@@ -17,7 +17,7 @@ replacing it. What os.rename, through MoveFileExW, makes of the same is logged.
 test_a_baseline_held_open_is_replaced :: proc(t: ^testing.T) {
 	dir, dir_err := os.temp_directory(context.temp_allocator)
 	testing.expect(t, dir_err == nil, "no temp directory")
-	root := fmt.tprintf(`%s\leita_survey_replace`, strings.trim_right(dir, `\/`))
+	root := fmt.tprintf(`%s\leita_survey_replace_%d`, strings.trim_right(dir, `\/`), os.get_pid())
 	os.remove_all(root)
 	testing.expect(t, os.make_directory(root) == nil, "could not make the folder")
 	defer os.remove_all(root)

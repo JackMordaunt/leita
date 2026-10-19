@@ -91,7 +91,7 @@ complete :: proc(r: ^query.Search_Result) -> bool {
 search_fixture :: proc(t: ^testing.T, name: string) -> string {
 	dir, _ := os.temp_directory(context.temp_allocator)
 	info, _ := os.stat(dir, context.temp_allocator)
-	root := fmt.tprintf("%s/leita_search_%s", info.fullpath, name)
+	root := fmt.tprintf("%s/leita_search_%s_%d", info.fullpath, name, os.get_pid())
 	os.remove_all(root)
 	for d in ([]string{"", "/src", "/main"}) {
 		testing.expect(t, os.make_directory(fmt.tprintf("%s%s", root, d)) == nil)

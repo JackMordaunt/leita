@@ -22,7 +22,7 @@ stand_in :: proc(t: ^testing.T, bin, name: string) {
 @(private = "file")
 bin_fixture :: proc(t: ^testing.T, name: string) -> string {
 	base, _ := os.temp_directory(context.temp_allocator)
-	bin := fmt.tprintf("%s/leita_open_%s", base, name)
+	bin := fmt.tprintf("%s/leita_open_%s_%d", base, name, os.get_pid())
 	os.remove_all(bin)
 	testing.expect(t, os.make_directory(bin) == nil)
 	return bin

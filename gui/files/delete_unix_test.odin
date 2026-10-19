@@ -1,6 +1,7 @@
 #+build linux, darwin
 package leita_files
 
+import "core:fmt"
 import "core:log"
 import "core:os"
 import "core:strings"
@@ -23,7 +24,10 @@ a_partial_delete_says_so_and_counts_only_what_went :: proc(t: ^testing.T) {
 		return
 	}
 	base, _ := os.temp_directory(context.temp_allocator)
-	root := strings.concatenate({base, "/leita_files_partly"}, context.temp_allocator)
+	root := strings.concatenate(
+		{base, fmt.tprintf("/leita_files_partly_%d", os.get_pid())},
+		context.temp_allocator,
+	)
 	tree := strings.concatenate({root, "/tree"}, context.temp_allocator)
 	at :: proc(dir, name: string) -> string {
 		return strings.concatenate({dir, name}, context.temp_allocator)

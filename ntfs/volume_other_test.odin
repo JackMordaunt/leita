@@ -17,7 +17,7 @@ image :: proc(t: ^testing.T, size: int) -> (path: string, content: []byte) {
 	}
 	dir, dir_err := os.temp_directory(context.temp_allocator)
 	testing.expect(t, dir_err == nil, "no temp directory")
-	path = fmt.tprintf("%s/leita_volume_%d.img", dir, size)
+	path = fmt.tprintf("%s/leita_volume_%d_%d.img", dir, size, os.get_pid())
 	testing.expect(t, os.write_entire_file(path, content) == nil, "could not write the image")
 	return
 }

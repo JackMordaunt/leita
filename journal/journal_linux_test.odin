@@ -21,7 +21,10 @@ survey's test_the_recorder_names_exactly_what_changed, which only root runs.
 @(private = "file")
 recorder_with_log :: proc(t: ^testing.T, name: string) -> (r: Recorder) {
 	dir, _ := os.temp_directory(context.temp_allocator)
-	logs, _ := filepath.join({dir, fmt.tprintf("leita_recorder_%s", name)}, context.temp_allocator)
+	logs, _ := filepath.join(
+		{dir, fmt.tprintf("leita_recorder_%s_%d", name, os.get_pid())},
+		context.temp_allocator,
+	)
 	os.remove_all(logs)
 	testing.expect(t, os.make_directory_all(logs) == nil, "could not make the logs folder")
 	r = Recorder {
@@ -253,7 +256,10 @@ test_a_mount_point_opens_only_as_itself :: proc(t: ^testing.T) {
 	testing.expect_value(t, err, linux.Errno.EXDEV)
 	testing.expect_value(t, fd, linux.Fd(-1))
 
-	link, _ := filepath.join({dir, "leita_journal_point_link"}, context.temp_allocator)
+	link, _ := filepath.join(
+		{dir, fmt.tprintf("leita_journal_point_link_%d", os.get_pid())},
+		context.temp_allocator,
+	)
 	os.remove(link)
 	testing.expect(t, os.symlink(dir, link) == nil, "could not make the link")
 	defer os.remove(link)

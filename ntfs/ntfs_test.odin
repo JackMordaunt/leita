@@ -910,7 +910,7 @@ test_short_bitmap_still_reads_the_tail :: proc(t: ^testing.T) {
 
 	dir, dir_err := os.temp_directory(context.temp_allocator)
 	testing.expect(t, dir_err == nil, "no temp directory")
-	path := fmt.tprintf("%s/leita_ntfs_short_bitmap.img", dir)
+	path := fmt.tprintf("%s/leita_ntfs_short_bitmap_%d.img", dir, os.get_pid())
 	testing.expect(t, os.write_entire_file(path, img) == nil, "could not write the image")
 	defer os.remove(path)
 

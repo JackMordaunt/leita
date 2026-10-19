@@ -11,7 +11,7 @@ import "core:testing"
 fresh :: proc(t: ^testing.T, name: string) -> string {
 	dir, dir_err := os.temp_directory(context.temp_allocator)
 	testing.expect(t, dir_err == nil, "no temp directory")
-	root := fmt.tprintf(`%s\leita_changes_%s`, strings.trim_right(dir, `\/`), name)
+	root := fmt.tprintf(`%s\leita_changes_%s_%d`, strings.trim_right(dir, `\/`), name, os.get_pid())
 	os.remove_all(root)
 	testing.expect(t, os.make_directory(root) == nil, "could not make the root")
 	return root
@@ -143,7 +143,8 @@ test_a_drive_place_is_its_root :: proc(t: ^testing.T) {
 	named := false
 	for p in set.shallow {
 		rest, inside := under(drive, p)
-		named ||= inside && strings.has_suffix(rest, `leita_changes_usn_drive`)
+		named ||=
+			inside && strings.has_suffix(rest, fmt.tprintf(`leita_changes_usn_drive_%d`, os.get_pid()))
 	}
 	testing.expectf(t, named, "the temp directory is not named: %v", set.shallow)
 }

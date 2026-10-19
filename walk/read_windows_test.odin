@@ -332,7 +332,10 @@ only :: proc(t: ^testing.T, tree: ^scan.Tree, name: string) -> ^scan.Node {
 fresh_root :: proc(t: ^testing.T, name: string) -> string {
 	dir, dir_err := os.temp_directory(context.temp_allocator)
 	testing.expect(t, dir_err == nil, "no temp directory")
-	root := join_path(strings.trim_right(dir, `\/`), fmt.tprintf("leita_walk_win_%s", name))
+	root := join_path(
+		strings.trim_right(dir, `\/`),
+		fmt.tprintf("leita_walk_win_%s_%d", name, os.get_pid()),
+	)
 	remove_tree(root)
 	make_dir(t, root)
 	return root

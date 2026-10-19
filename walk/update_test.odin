@@ -21,7 +21,7 @@ A place to update.
 place :: proc(t: ^testing.T, name: string) -> string {
 	dir, dir_err := os.temp_directory(context.temp_allocator)
 	testing.expect(t, dir_err == nil, "no temp directory")
-	root := fmt.tprintf("%s/leita_update_%s", dir, name)
+	root := fmt.tprintf("%s/leita_update_%s_%d", dir, name, os.get_pid())
 	os.remove_all(root)
 	for sub in ([]string{"", "/sub", "/sub/deep", "/still"}) {
 		testing.expect(t, os.make_directory(fmt.tprintf("%s%s", root, sub)) == nil, "no directory")
@@ -427,7 +427,7 @@ test_an_update_charges_a_link_once_beside_a_copied_name :: proc(t: ^testing.T) {
 	}
 	dir, dir_err := os.temp_directory(context.temp_allocator)
 	testing.expect(t, dir_err == nil, "no temp directory")
-	root := fmt.tprintf("%s/leita_update_copied_link", dir)
+	root := fmt.tprintf("%s/leita_update_copied_link_%d", dir, os.get_pid())
 	os.remove_all(root)
 	defer os.remove_all(root)
 	for sub in ([]string{"", "/a", "/b"}) {
