@@ -15,6 +15,8 @@ import "jm:path"
 import "jm:selfupdate"
 import "jm:zstd"
 
+import "../licence"
+
 // The tests run the package under the runner's tracking allocator on purpose:
 // a leak in it fails the test. The helpers' scratch goes on the temp allocator.
 
@@ -225,12 +227,15 @@ a_signed_release_must_verify_when_a_key_is_set :: proc(t: ^testing.T) {
 	defer os.remove_all(f.root)
 	cfg := config(f)
 	cfg.public_key = f.key[:]
-	testing.expect_value(t, check(cfg).outcome, Outcome.Available)
+	r := check(cfg)
+	testing.expect_value(t, r.outcome, Outcome.Available)
+	_, stamped := released(&r)
+	testing.expect(t, !stamped, "a signed release with no released.txt authenticates no instant")
 
 	// The sums changed after they were signed.
 	ta := context.temp_allocator
 	testing.expect_value(t, path.write(path.join(f.release, "sha256sums.txt", allocator = ta), strings.concatenate({sha256("evil"), "  ", ASSET, "\n"}, ta)), nil)
-	r := apply(cfg)
+	r = apply(cfg)
 	testing.expect_value(t, r.outcome, Outcome.Failed)
 	testing.expect_value(t, r.reason, Reason.Bad_Signature)
 	testing.expect_value(t, read(f.exe), "old build")
@@ -242,6 +247,49 @@ a_signed_release_must_verify_when_a_key_is_set :: proc(t: ^testing.T) {
 	write_sums(t, &f, {{ASSET, sha256("new build")}})
 	os.remove(path.join(f.release, "sha256sums.txt.sig", allocator = ta))
 	testing.expect_value(t, check(config(f)).outcome, Outcome.Available)
+}
+
+// A signed released.txt is the instant licence.pro_entitled compares with
+// paidThrough. The same file, unsigned, or changed after the signature, is not.
+@(test)
+a_signed_release_stamp_is_the_paid_through_cutoff :: proc(t: ^testing.T) {
+	f := fixture(t, "old build", "new build", "v1.1.0")
+	defer os.remove_all(f.root)
+	stamp := "2026-10-19T12:00:00Z"
+	ta := context.temp_allocator
+	released_body := strings.concatenate({stamp, "\n"}, ta)
+	testing.expect_value(t, path.write(path.join(f.release, RELEASED_FILE, allocator = ta), released_body), nil)
+	write_sums(t, &f, {{ASSET, sha256("new build")}, {RELEASED_FILE, sha256(released_body)}})
+
+	cfg := config(f)
+	cfg.public_key = f.key[:]
+	r := check(cfg)
+	testing.expect_value(t, r.outcome, Outcome.Available)
+	at, ok := released(&r)
+	testing.expect(t, ok && at == stamp, "the signed stamp is the instant")
+
+	l := licence.Licence {
+		format       = .Annual,
+		features     = licence.FEATURES_PRO,
+		paid_through = at,
+	}
+	testing.expect(t, licence.pro_entitled(l, at), "a release at paidThrough is Pro")
+	testing.expect(t, !licence.pro_entitled(l, "2026-10-19T12:00:01Z"), "one second later is Free")
+
+	// The file changed after the sums were signed. The asset is still good.
+	later := "2026-10-19T12:00:01Z\n"
+	testing.expect_value(t, path.write(path.join(f.release, RELEASED_FILE, allocator = ta), later), nil)
+	r = check(cfg)
+	testing.expect_value(t, r.outcome, Outcome.Available)
+	_, ok = released(&r)
+	testing.expect(t, !ok, "a stamp that no longer matches its signed hash is not authenticated")
+
+	// Restored, and still listed, but the sums were not signed for this check.
+	testing.expect_value(t, path.write(path.join(f.release, RELEASED_FILE, allocator = ta), released_body), nil)
+	r = check(config(f))
+	testing.expect_value(t, r.outcome, Outcome.Available)
+	_, ok = released(&r)
+	testing.expect(t, !ok, "an unsigned manifest does not authenticate the stamp")
 }
 
 @(test)

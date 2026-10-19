@@ -63,8 +63,16 @@
 #   leita-<version>.cdx.json             CycloneDX 1.5 for this build: leita,
 #                                        the Odin pin, jm's commit, and the
 #                                        notices' components
-#   sha256sums.txt, version.txt          over all of the above, the file a
-#                                        signature will cover
+#   released.txt                         this release's instant, the
+#                                        canonical UTC form and one LF,
+#                                        chosen once in the plan job and
+#                                        compiled into each binary as
+#                                        LEITA_RELEASED
+#   sha256sums.txt, version.txt          sha256sums.txt over all of the
+#                                        above, including released.txt.
+#                                        version.txt names the version and
+#                                        is not hashed. A signature will
+#                                        cover the sums.
 #
 # A tag with a pre-release suffix (v1.0.0-rc1) is published as a draft
 # pre-release, for a person to look over and publish; any other tag is
@@ -117,6 +125,7 @@ jobs:
       dry_run: ${{ steps.plan.outputs.dry_run }}
       prerelease: ${{ steps.plan.outputs.prerelease }}
       test_key: ${{ steps.plan.outputs.test_key }}
+      released: ${{ steps.plan.outputs.released }}
     steps:
       # The justfile alone, for the test key a release must not carry.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -148,6 +157,13 @@ jobs:
           fi
           prerelease=false
           if [[ $version == *-* ]]; then prerelease=true; fi
+          # One instant for every binary's LEITA_RELEASED and for released.txt,
+          # so a licence's paid-through compares the same stamp the sums cover.
+          released=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          if ! [[ $released =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]Z$ ]]; then
+            echo "::error::released stamp $released is not YYYY-MM-DDTHH:MM:SSZ"
+            exit 1
+          fi
           test_key=$(sed -n 's/^test_licence_key *:= *"\([0-9a-fA-F]*\)".*/\1/p' justfile)
           [ -n "$test_key" ] || { echo "::error::no test_licence_key in the justfile"; exit 1; }
           # A release built without the real key takes no licence, and one
@@ -169,8 +185,9 @@ jobs:
             echo "dry_run=$dry_run"
             echo "prerelease=$prerelease"
             echo "test_key=$test_key"
+            echo "released=$released"
           } >> "$GITHUB_OUTPUT"
-          echo "version $version, dry run $dry_run, pre-release $prerelease"
+          echo "version $version, dry run $dry_run, pre-release $prerelease, released $released"
 
   # Each target on a runner of its own architecture. Odin can cross-compile,
   # but the window links native libraries built per target, and Linux on
@@ -208,6 +225,7 @@ jobs:
         shell: bash
     env:
       LEITA_VERSION: ${{ needs.plan.outputs.version }}
+      LEITA_RELEASED: ${{ needs.plan.outputs.released }}
       # Prefixed, since make and cargo, which the setup action runs, read
       # TARGET from the environment themselves.
       LEITA_TARGET: ${{ matrix.target }}
@@ -759,6 +777,7 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       VERSION: ${{ needs.plan.outputs.version }}
+      RELEASED: ${{ needs.plan.outputs.released }}
       # How many earlier releases a tag publishes patches from. Pre-releases
       # count too, once published: a machine on an rc updates by patch like
       # any other. Drafts are not listed, since nobody runs one.
@@ -845,7 +864,14 @@ jobs:
           # and the SBOM. THIRD_PARTY.md is the loose copy beside the
           # single binaries; without it here the signature would not cover
           # that file.
-          sha256sum leita-* THIRD_PARTY.md > sha256sums.txt
+          # The instant the plan job compiled into the binaries. 20 bytes and
+          # one LF, and the sums cover it, so a signature covers it too.
+          printf '%s\n' "$RELEASED" > released.txt
+          if [ "$(wc -c < released.txt)" -ne 21 ]; then
+            echo "::error::released.txt is not the 20-byte instant and a newline"
+            exit 1
+          fi
+          sha256sum leita-* THIRD_PARTY.md released.txt > sha256sums.txt
           echo "$VERSION" > version.txt
           cat sha256sums.txt
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

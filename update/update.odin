@@ -9,7 +9,8 @@ the person, the machine or the disks.
 A release is the files release.yml publishes, served under one base path as
 jm:selfupdate lays them out: each binary alone under a name no release changes
 (leita-linux-amd64, leita-window-windows-amd64.exe), its .zst and a patch from
-each of the last few releases, sha256sums.txt over all of them, and version.txt.
+each of the last few releases, sha256sums.txt over all of them, version.txt
+and released.txt.
 An update exists when the published hash of this binary's asset differs from
 the hash of the running executable, unless version.txt names the version
 already running; no version is compared as greater or less. It is installed by
@@ -28,6 +29,13 @@ only when sha256sums.txt.sig verifies, and an update fails without it. Until
 then the hashes prove a download arrived whole from the host, not who put it
 there.
 
+released.txt is that release's instant, the canonical UTC form and one line
+feed, and it is listed in the sums. It counts only when a signing key is set
+and the signature verifies, and then only when the file's hash is the one the
+sums name. An unsigned manifest does not make a release Pro-eligible. A later
+release still installs; licence.pro_entitled decides whether it runs Pro, from
+this stamp, and a missing stamp is not a reason to refuse the download.
+
 The executable is replaced the way selfupdate does: the running file is renamed
 to <exe>.old and the new one moved in (selfupdate.swap, whose comment holds why:
 a running executable can be renamed on every platform but overwritten not on
@@ -42,12 +50,15 @@ line inside the bundle are replaced together, by the dmg.
 */
 package update
 
+import "core:crypto/hash"
+import "core:encoding/hex"
 import "core:fmt"
 import "core:io"
 import "core:os"
 import "core:strings"
 import "core:time"
 
+import "../licence"
 import "jm:http"
 import "jm:selfupdate"
 
@@ -71,6 +82,10 @@ sha256sums.txt.sig (and tests/sign it with the key they make). HOOK: this is
 the one place to turn signature checking on.
 */
 SIGNING_KEY :: ""
+
+// RELEASED_FILE is the release's instant: 20 bytes, YYYY-MM-DDTHH:MM:SSZ, and
+// one LF. The release workflow writes it and lists it in sha256sums.txt.
+RELEASED_FILE :: "released.txt"
 
 // SUMS_CAP is the most of sha256sums.txt read; a larger file fails.
 SUMS_CAP :: 64 * 1024
@@ -197,16 +212,18 @@ Reason :: enum {
 	Cannot_Replace,
 }
 
-// Result is returned by value; message and latest read its inline buffers.
+// Result is returned by value; message, latest and released read its buffers.
 Result :: struct {
-	outcome:     Outcome,
-	reason:      Reason,
+	outcome:      Outcome,
+	reason:       Reason,
 	// The route an Applied update took.
-	via:         selfupdate.Via,
-	message_buf: [384]byte,
-	message_len: int,
-	latest_buf:  [selfupdate.VERSION_CAP]byte,
-	latest_len:  int,
+	via:          selfupdate.Via,
+	message_buf:  [384]byte,
+	message_len:  int,
+	latest_buf:   [selfupdate.VERSION_CAP]byte,
+	latest_len:   int,
+	released_buf: [20]byte, // canonical instant, when released_ok
+	released_ok:  bool,
 }
 
 // message says what happened, in English, for the command line.
@@ -217,6 +234,16 @@ message :: proc(r: ^Result) -> string {
 // latest is the release's version from version.txt, "" when it was not read.
 latest :: proc(r: ^Result) -> string {
 	return string(r.latest_buf[:r.latest_len])
+}
+
+// released is the candidate release's authenticated instant. ok is false when
+// the manifest was unsigned, or the stamp was missing, tampered or not the
+// canonical form: nothing there is a paid-through cutoff.
+released :: proc(r: ^Result) -> (at: string, ok: bool) {
+	if !r.released_ok {
+		return
+	}
+	return string(r.released_buf[:]), true
 }
 
 // not_replaceable says whether reason is that this copy is not one to replace,
@@ -396,6 +423,11 @@ inspect :: proc(cfg: Config, r: ^Result) -> (rel: Release, ok: bool) {
 	if !signed_ok(cfg, rel.sums, r) {
 		return
 	}
+	// Unsigned sums never grant a stamp, even when released.txt matches a hash
+	// they happen to list. signed_ok has already accepted a configured key.
+	if signing_configured(cfg) {
+		read_released(cfg, selfupdate.fixed_string(rel.sums), r)
+	}
 	ver: selfupdate.Fixed(selfupdate.VERSION_CAP)
 	if fetch(cfg, selfupdate.VERSION_FILE, selfupdate.fixed_writer(&ver)) == .Ok {
 		r.latest_len = copy(r.latest_buf[:], strings.trim_space(selfupdate.fixed_string(&ver)))
@@ -446,6 +478,43 @@ signed_ok :: proc(cfg: Config, sums: ^selfupdate.Fixed(SUMS_CAP), r: ^Result) ->
 		return false
 	}
 	return true
+}
+
+// signing_configured reports whether this check requires a signature. The
+// stamp is read only then.
+@(private)
+signing_configured :: proc(cfg: Config) -> bool {
+	return len(cfg.public_key) != 0 || SIGNING_KEY != ""
+}
+
+// read_released sets r's stamp when released.txt is the canonical instant, its
+// hash is the one the signed sums name, and nothing else. A missing or wrong
+// file leaves the outcome alone.
+@(private)
+read_released :: proc(cfg: Config, sums: string, r: ^Result) {
+	stamp: selfupdate.Fixed(32)
+	if fetch(cfg, RELEASED_FILE, selfupdate.fixed_writer(&stamp)) != .Ok {
+		return
+	}
+	body := selfupdate.fixed_bytes(&stamp)
+	if len(body) != 21 || body[20] != '\n' {
+		return
+	}
+	published, found := selfupdate.published_hash_lookup(sums, RELEASED_FILE)
+	if !found {
+		return
+	}
+	digest := hash.hash_string(.SHA256, string(body), context.temp_allocator)
+	got := hex.encode(digest, context.temp_allocator)
+	if !strings.equal_fold(string(got), published) {
+		return
+	}
+	at := string(body[:20])
+	if !licence.instant_ok(at) {
+		return
+	}
+	copy(r.released_buf[:], at)
+	r.released_ok = true
 }
 
 @(private)
