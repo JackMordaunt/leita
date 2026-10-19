@@ -13,13 +13,12 @@ otherwise the process's own passwd entry (sudo(8) sets SUDO_USER as it starts
 a command). SUDO_USER is believed only as root: anyone can set it, and a process
 not running as root that believed it would look for another user's places. Run
 as root, it is trusted as said. Windows has no sudo: the profile directory, and
-no id.
+the account's SID string.
 */
 package home
 
 // User is the person whose places Reclaim offers. uid is the user id as a
-// decimal string, as a volume's .Trashes names its per-user Trash; "" where
-// there is none.
+// decimal string or a Windows SID string; "" where there is none.
 User :: struct {
 	dir: string,
 	uid: string,

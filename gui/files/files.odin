@@ -6,7 +6,8 @@ acts on a path and reports an Error; deciding whether to ask is the caller's.
 Targets are Linux, macOS and Windows. On Linux the Trash is the freedesktop.org one
 in the user's home; the file manager is asked over D-Bus through the freedesktop.org
 FileManager1 interface, with xdg-open on the folder as the fallback. On macOS both go
-through the Finder: NSFileManager's Trash, and open -R to show an entry.
+through the Finder: NSFileManager's Trash, and open -R to show an entry. On Windows
+this package calls SHQueryRecycleBinW and SHEmptyRecycleBinW.
 */
 package leita_files
 
@@ -22,6 +23,14 @@ import "core:time"
 import "core:unicode"
 
 import "jm:timefmt"
+
+// Recycle_Bin is one volume's Recycle Bin as this package reports it.
+Recycle_Bin :: struct {
+	volume: string, // `C:\` root this package passes to the shell
+	path:   string, // `C:\$Recycle.Bin\<SID>`
+	bytes:  u64,
+	items:  u64,
+}
 
 Error :: enum u8 {
 	None,

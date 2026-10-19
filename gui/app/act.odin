@@ -1,7 +1,10 @@
 package leita_app
 
+import "base:runtime"
+
 import "core:fmt"
 import "core:os"
+import "core:strings"
 import "core:sync"
 import "core:thread"
 import "core:time"
@@ -283,7 +286,27 @@ reclaim_answer :: proc(d: ^Desk, q: query.Reclaim) -> (r: query.Reclaim_Result) 
 		context.temp_allocator,
 		.Darwin if synthetic else reclaim.HOST,
 	)
+	if !synthetic {
+		bins := files.recycle_bins(who.uid, context.temp_allocator)
+		if len(bins) > 0 {
+			offers := make([]reclaim.Recycle_Bin, len(bins), context.temp_allocator)
+			for b, i in bins {
+				offers[i] = {b.volume, b.path, b.bytes}
+			}
+			found = reclaim.overlay_recycle_bins(
+				found,
+				offers,
+				who.uid,
+				reclaim.recycle_bin_node,
+				context.temp_allocator,
+			)
+		}
+	}
 	clear(&d.reclaimable)
+	for _, path in d.recycle_paths {
+		delete(path)
+	}
+	clear(&d.recycle_paths)
 	now := time.time_to_unix(time.now())
 	groups := make([dynamic]query.Reclaim_Group, context.temp_allocator)
 	for category in reclaim.Category {
@@ -298,11 +321,16 @@ reclaim_answer :: proc(d: ^Desk, q: query.Reclaim) -> (r: query.Reclaim_Result) 
 				continue
 			}
 			modified, is_dir := synth.modified(c.path), true
+			recycle := reclaim.is_recycle_bin(c.path, who.uid)
 			if !synthetic {
 				if refused_as_root(c.path, who) {
 					continue
 				}
 				modified, is_dir = newest_modification(c.path)
+			}
+			if recycle {
+				is_dir = true
+				d.recycle_paths[c.node] = strings.clone(c.path)
 			}
 			if !is_dir {
 				continue
@@ -422,6 +450,10 @@ empty_trash :: proc(d: ^Desk, e: command.Entry, done: ^[dynamic]history.Action) 
 		tell(d, true, .Empty_Not_Trash)
 		return
 	}
+	if _, recycle := d.recycle_paths[e.node]; recycle {
+		empty_recycle_bins(d, done)
+		return
+	}
 	failed := 0
 	freed: u64
 	it := survey.children(&s.roll, e.node)
@@ -463,6 +495,43 @@ empty_trash :: proc(d: ^Desk, e: command.Entry, done: ^[dynamic]history.Action) 
 		}
 		note(done, .Empty_Trash, path, "", gave, false)
 		survey.forget(&s.roll, &s.tree, c)
+	}
+	if failed > 0 {
+		tell(d, true, .Emptied_Partly, human.bytes(freed), failed)
+	} else {
+		tell(d, false, .Emptied, human.bytes(freed))
+	}
+}
+
+// empty_recycle_bins empties each Recycle Bin Reclaim offered, through the
+// shell, and records each volume in the audit trail. The tree's children of a
+// Bin that was in the scan are forgotten once the shell has taken them.
+@(private)
+empty_recycle_bins :: proc(d: ^Desk, done: ^[dynamic]history.Action) {
+	s := d.scan
+	failed := 0
+	freed: u64
+	for node, path in d.recycle_paths {
+		runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+		size, _, _ := files.recycle_bin_info(path)
+		if err := files.empty_recycle_bin(path); err != .None {
+			note(done, .Empty_Trash, path, files.describe(err), size, true)
+			failed += 1
+			continue
+		}
+		note(done, .Empty_Trash, path, "", size, false)
+		freed += size
+		if node < s.roll.seen {
+			it := survey.children(&s.roll, node)
+			children := make([dynamic]u32, context.temp_allocator)
+			for c in survey.next_child(&it) {
+				append(&children, c)
+			}
+			for c in children {
+				survey.forget(&s.roll, &s.tree, c)
+			}
+		}
+		delete_key(&d.reclaimable, node)
 	}
 	if failed > 0 {
 		tell(d, true, .Emptied_Partly, human.bytes(freed), failed)

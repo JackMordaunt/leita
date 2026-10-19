@@ -141,47 +141,50 @@ Scan :: struct {
 // Desk is the stage pinned to the desk thread: the current scan and every live
 // need, so each tick can answer them all again.
 Desk :: struct {
-	inbox:           ^ui.Inbox,
-	wake:            proc(),
-	generation:      u32,
-	scan:            ^Scan,
-	live:            map[ui.Need_Key]Query,
-	notice:          query.Notice, // its text owned
-	words:           ^msg.Strings, // what the host says, in the window's language (words.odin)
+	inbox:            ^ui.Inbox,
+	wake:             proc(),
+	generation:       u32,
+	scan:             ^Scan,
+	live:             map[ui.Need_Key]Query,
+	notice:           query.Notice, // its text owned
+	words:            ^msg.Strings, // what the host says, in the window's language (words.odin)
 	// What Reclaim last offered, by node: Clean deletes only these.
-	reclaimable:     map[u32]reclaim.Category,
+	reclaimable:      map[u32]reclaim.Category,
+	// Recycle Bin paths Reclaim last offered, by node: Empty Trash asks the
+	// shell, never delete_tree. A node not in the scan tree is recycle_bin_node.
+	recycle_paths:    map[u32]string,
 	// The scans kept (history.odin), nil when none are, and the path of the store
 	// opened, whose folder holds each place's baseline; the snapshot this scan was
 	// kept as, the one it is compared with, and what each node held in that.
-	history:         ^history.Store,
-	history_path:    string,
-	snapshot:        i64,
-	compared:        query.Snapshot,
-	was:             map[u32]u64,
+	history:          ^history.Store,
+	history_path:     string,
+	snapshot:         i64,
+	compared:         query.Snapshot,
+	was:              map[u32]u64,
 	// What the person chose, kept between runs (settings.odin); nil when not.
-	settings:        ^settings.Store,
+	settings:         ^settings.Store,
 	// Where reports are exported to when the window names no file, and where
 	// its save dialog opens: files.reports_folder unless init was given one, ""
 	// for neither; and each one saved, by the notice that said so (export.odin).
-	reports:         string,
-	saved:           map[u32]string,
+	reports:          string,
+	saved:            map[u32]string,
 	// A report is being written, for Progress to say so while the desk is busy.
-	exporting:       bool,
+	exporting:        bool,
 	// The licence in use (licence.odin), where it is kept, the key it is checked
 	// against, and how the last one the window offered went.
-	licence:         licence.Licence,
-	licensed:        bool,
-	licence_path:    string,
-	licence_key:     []byte, // into licence_built, or the caller's
-	licence_built:   [32]byte,
-	licence_offered: u32,
-	licence_problem: string, // Exchanging a key for its licence: the client, started on the first key,
+	licence:          licence.Licence,
+	licensed:         bool,
+	licence_path:     string,
+	licence_key:      []byte, // into licence_built, or the caller's
+	licence_built:    [32]byte,
+	licence_offered:  u32,
+	licence_problem:  string, // Exchanging a key for its licence: the client, started on the first key,
 	// where it sends to, the port its answer comes back through, and whether one
 	// is under way.
-	client:          ^http.Client,
-	activate_url:    string,
-	activations:     ^stream.Port(Activated),
-	activating:      bool,
+	client:           ^http.Client,
+	activate_url:     string,
+	activations:      ^stream.Port(Activated),
+	activating:       bool,
 	// Updates (update.odin): the release to ask, "" for update's own; the
 	// last check or update, and what it found; the thread one is on, and the
 	// port it answers through.
@@ -196,16 +199,16 @@ Desk :: struct {
 	// Searching (search.odin): each live Search need's finding, each pass out
 	// on the workers by the finding it is for (nil once halted), the workers,
 	// the port passes come back through, and what describing a hit works in.
-	findings:        map[ui.Need_Key]^Finding,
-	passes:          map[^search.Pass]^Finding,
-	workers:         ^stream.Workers,
-	searched:        ^stream.Port(Finished_Pass),
-	open_failures:   ^stream.Port(Open_Failure), // act.odin's open_entry
-	opening:         ^sync.Wait_Group, // the entries open_entry is opening
-	recordings:      ^stream.Port(Recorder_Change), // recorder_linux.odin's set_recording
-	recording:       ^sync.Wait_Group, // the change it is running, if any
-	scratch:         ^search.Scratch,
-	monitoring:      Monitoring, // monitor.odin
+	findings:         map[ui.Need_Key]^Finding,
+	passes:           map[^search.Pass]^Finding,
+	workers:          ^stream.Workers,
+	searched:         ^stream.Port(Finished_Pass),
+	open_failures:    ^stream.Port(Open_Failure), // act.odin's open_entry
+	opening:          ^sync.Wait_Group, // the entries open_entry is opening
+	recordings:       ^stream.Port(Recorder_Change), // recorder_linux.odin's set_recording
+	recording:        ^sync.Wait_Group, // the change it is running, if any
+	scratch:          ^search.Scratch,
+	monitoring:       Monitoring, // monitor.odin
 }
 
 Host :: struct {
@@ -374,6 +377,10 @@ stop :: proc(h: ^Host) {
 	stream.destroy(h.p)
 	delete(h.desk.live)
 	delete(h.desk.reclaimable)
+	for _, path in h.desk.recycle_paths {
+		delete(path)
+	}
+	delete(h.desk.recycle_paths)
 	delete(h.desk.notice.text)
 	free(h.desk.words)
 	delete(h.desk.reports)

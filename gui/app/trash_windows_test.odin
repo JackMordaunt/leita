@@ -8,6 +8,8 @@ import "core:path/filepath"
 import "core:strings"
 import "core:unicode/utf16"
 
+import "../files"
+
 /*
 recycled finds what the Recycle Bin holds of dir's entry name: the $I record
 saying where it was, and the $R file itself beside it, or "" for both. The Bin
@@ -74,4 +76,8 @@ recorded :: proc(path: string) -> string {
 	out := make([]byte, 4 * len(units), context.temp_allocator)
 	n := utf16.decode_to_utf8(out, units)
 	return string(out[:n])
+}
+
+recycle_a_file :: proc(path: string) -> bool {
+	return files.trash(path) == .None
 }
