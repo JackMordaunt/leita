@@ -117,11 +117,9 @@ LICENCE_ERRORS := [licence.Error]msg.Msg {
 // TIER_TITLES are the tiers as the window shows them.
 @(rodata)
 TIER_TITLES := [licence.Tier]msg.Msg {
-	.Supporter  = .Tier_Supporter,
-	.Office     = .Tier_Office,
-	.Team       = .Tier_Team,
-	.Site       = .Tier_Site,
-	.Multi_Site = .Tier_Multi_Site,
+	.Personal     = .Tier_Personal,
+	.Professional = .Tier_Professional,
+	.Organisation = .Tier_Organisation,
 }
 
 // REPORT_ERRORS say why a report could not be written, as a clause.

@@ -2581,7 +2581,7 @@ Signer :: struct {
 }
 
 @(private = "file")
-TERMS :: `{"licensee": "Acme Ltd", "tier": "team", "order": "ord_7", "issued": "2026-10-11"}`
+TERMS :: `{"v":1,"id":"ord_7","email":"ada@example.com","scope":"professional","features":"pro","paidThrough":"2027-10-19T00:00:00Z","issued":"2026-10-11T00:00:00Z"}`
 
 @(private = "file")
 signer_make :: proc(t: ^testing.T) -> (s: Signer) {
@@ -2660,16 +2660,16 @@ a_licence_is_checked_kept_and_read_back :: proc(t: ^testing.T) {
 			t,
 			settle(
 				&r,
-				"That is not a licence key: paste the key from your receipt, or a licence beginning leita1.",
+				"That is not a licence key: paste the key from your receipt, or a licence beginning leita.",
 			),
 			"what is neither a key nor a licence says why",
 		)
-		offer(t, &r, "leita1.e30=.AAAA")
+		offer(t, &r, "leita.e30=.AAAA")
 		testing.expect(
 			t,
 			settle(
 				&r,
-				"The licence is not a Leita licence; paste the whole line, from leita1. to its end.",
+				"The licence is not a Leita licence; paste the whole line, from leita. to its end.",
 			),
 			"a broken licence says why",
 		)
@@ -2679,8 +2679,8 @@ a_licence_is_checked_kept_and_read_back :: proc(t: ^testing.T) {
 		testing.expect(t, ui.probe_pick(&r.p, file))
 		ui.probe_frame(&r.p)
 		hand_on(&r)
-		testing.expect(t, settle(&r, "Licensed to Acme Ltd"), "the licence from the file is taken")
-		testing.expect(t, settle(&r, "Team, up to 50 people · order ord_7 · issued 2026-10-11"))
+		testing.expect(t, settle(&r, "Licensed to ada@example.com"), "the licence from the file is taken")
+		testing.expect(t, settle(&r, "Professional · order ord_7 · issued 2026-10-11T00:00:00Z"))
 		testing.expect(t, os.exists(fmt.tprintf("%s/licence", data)), "and kept")
 	}
 
@@ -2690,7 +2690,7 @@ a_licence_is_checked_kept_and_read_back :: proc(t: ^testing.T) {
 	defer rig_close(&r)
 	testing.expect(t, settle(&r, "Done"))
 	open_licence(t, &r, "Licence")
-	testing.expect(t, settle(&r, "Licensed to Acme Ltd"), "the licence kept is read back")
+	testing.expect(t, settle(&r, "Licensed to ada@example.com"), "the licence kept is read back")
 }
 
 // answer_activate answers /activate as the licence server does: the licence for the one
@@ -2702,16 +2702,18 @@ answer_activate :: proc(conn: ^loopback.Conn, req: loopback.Request) {
 	case req.method == "POST" &&
 	     req.path == "/activate" &&
 	     strings.contains(req.body, `"key":"LEITA-SOLD"`):
+		// The JSON object is joined around the line.
+		body := strings.concatenate({`{"licence":"`, s.line, `"}`}, context.temp_allocator)
 		loopback.send(
 			conn,
 			fmt.tprintf(
-				"HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n%s\n",
-				len(s.line) + 1,
-				s.line,
+				"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n%s",
+				len(body),
+				body,
 			),
 		)
 	case req.path == "/activate":
-		refusal := "This licence key is not one the shop sold.\nmore detail"
+		refusal := `{"error":"unknown","message":"This licence key is not one the shop sold.\nmore detail"}`
 		loopback.send(
 			conn,
 			fmt.tprintf(
@@ -2788,11 +2790,35 @@ a_licence_key_is_exchanged_for_its_licence :: proc(t: ^testing.T) {
 	testing.expect(t, !r.h.desk.licensed)
 
 	offer(t, &r, "LEITA-SOLD")
-	testing.expect(t, settle(&r, "Licensed to Acme Ltd"), "the key brings back its licence")
+	testing.expect(t, settle(&r, "Licensed to ada@example.com"), "the key brings back its licence")
 	kept, read_err := os.read_entire_file(fmt.tprintf("%s/licence", data), context.temp_allocator)
 	testing.expect(t, read_err == nil, "which is kept")
 	testing.expect_value(t, strings.trim_space(string(kept)), s.line)
 	testing.expect_value(t, ui.text_string(&r.m.licence_text), "")
+}
+
+// LEITA_ACTIVATE_URL replaces the whole default. An explicit URL outranks it,
+// which is what the other tests pass, so this one can set the variable without
+// sending their keys elsewhere.
+@(test)
+leita_activate_url_replaces_the_default :: proc(t: ^testing.T) {
+	was, had := os.lookup_env(ACTIVATE_ENV, context.temp_allocator)
+	defer {
+		if had {
+			os.set_env(ACTIVATE_ENV, was)
+		} else {
+			os.unset_env(ACTIVATE_ENV)
+		}
+	}
+	os.unset_env(ACTIVATE_ENV)
+	testing.expect_value(t, activate_endpoint(""), ACTIVATE_URL)
+	explicit := "http://explicit.example/leita/activate"
+	testing.expect_value(t, activate_endpoint(explicit), explicit)
+
+	sandbox := "http://sandbox.example/leita/activate"
+	testing.expect(t, os.set_env(ACTIVATE_ENV, sandbox) == nil)
+	testing.expect_value(t, activate_endpoint(""), sandbox)
+	testing.expect_value(t, activate_endpoint(explicit), explicit)
 }
 
 // For thirty days from when leita first ran here, reports and change tracking

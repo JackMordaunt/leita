@@ -277,7 +277,7 @@ trial_left = You can try reports and change tracking for {0} more days.
 buy_licence = Buy a licence
 replace_licence = Replace the licence
 add_a_licence = Add a licence
-licence_caption = The licence key from your receipt, or a licence beginning leita1.
+licence_caption = The licence key from your receipt, or a licence beginning leita.
 licence_key = Licence key
 licence_to_add = Licence to add
 # {0} the product's name
@@ -288,21 +288,19 @@ trial_ended_body = Scanning, the charts and Reclaim stay free for personal use. 
 reports_locked = Exporting reports needs a licence now the 30-day trial has ended.
 # {0} the product's name
 change_locked = Seeing what changed since the last scan needs a licence now the 30-day trial has ended. {0} still keeps every scan, so it is all there once you add one.
-tier_supporter = Supporter
-tier_office = Office, up to 10 people
-tier_team = Team, up to 50 people
-tier_site = Site
-tier_multi_site = Multi-site
+tier_personal = Personal
+tier_professional = Professional
+tier_organisation = Organisation
 # Why a licence was not taken; {0} the product's name where named
 licence_not_valid = The licence is not valid.
 licence_no_key = The licence cannot be checked: this build of {0} takes no licences.
-licence_malformed = The licence is not a {0} licence; paste the whole line, from leita1. to its end.
+licence_malformed = The licence is not a {0} licence; paste the whole line, from leita. to its end.
 licence_newer = The licence is for a newer {0}; update {0} to use it.
 licence_signature = The licence is not one Librium signed, or has been changed.
 licence_terms_missing = The licence does not say who it is for or what it covers.
 licence_unreadable = The licence file could not be read.
 licence_unwritable = The licence could not be saved.
-not_a_key = That is not a licence key: paste the key from your receipt, or a licence beginning leita1.
+not_a_key = That is not a licence key: paste the key from your receipt, or a licence beginning leita.
 cannot_connect = {0} could not start a connection to fetch the licence.
 no_curl = {0} needs libcurl to fetch the licence, and this system has none. Install the curl package, or open the licence file from your receipt instead.
 server_slow = The licence server did not answer in time; try again.
