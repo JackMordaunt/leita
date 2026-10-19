@@ -3,6 +3,7 @@ package leita_cli
 import "core:crypto"
 import "core:crypto/ed25519"
 import "core:encoding/base64"
+import "core:encoding/hex"
 import "core:fmt"
 import "core:os"
 import "core:strings"
@@ -32,7 +33,10 @@ signer :: proc() -> (s: Signer) {
 @(private = "file")
 mint :: proc(s: ^Signer, terms: string) -> string {
 	signed := strings.concatenate(
-		{licence.PREFIX, base64.encode(transmute([]byte)terms, allocator = context.temp_allocator)},
+		{
+			licence.PREFIX,
+			base64.encode(transmute([]byte)terms, allocator = context.temp_allocator),
+		},
 		context.temp_allocator,
 	)
 	sig: [ed25519.SIGNATURE_SIZE]byte
@@ -44,7 +48,7 @@ mint :: proc(s: ^Signer, terms: string) -> string {
 }
 
 @(private = "file")
-TERMS :: `{"licensee": "Acme Ltd", "tier": "office", "order": "ord_1", "issued": "2026-10-11"}`
+TERMS :: #load("../licence/testdata/sample.json", string)
 
 // A data folder for one test, and the history store in it.
 @(private = "file")
@@ -65,7 +69,7 @@ licence_says :: proc(c: Licence_Context, args: ..string) -> (int, string) {
 }
 
 // leita licence add keeps a licence where the window keeps its own, leita
-// licence shows whose it is and that it does not expire, and leita licence
+// licence shows whose it is and the paid-through date, and leita licence
 // remove forgets it, after which the trial is all there is.
 @(test)
 a_licence_is_added_shown_and_removed :: proc(t: ^testing.T) {
@@ -77,16 +81,23 @@ a_licence_is_added_shown_and_removed :: proc(t: ^testing.T) {
 		key  = s.pub[:],
 		now  = time.unix(1_800_000_000, 0),
 	}
+	beside := fmt.tprintf("%s/data/licence", dir)
 	kept_at := licence.path_beside(kept, context.temp_allocator)
+	testing.expect_value(t, kept_at, beside)
+	testing.expect(t, kept_at != kept)
 
 	code, said := licence_says(c, "add", mint(&s, TERMS))
 	testing.expect_value(t, code, EXIT_OK)
-	testing.expect(t, strings.contains(said, "licensed to Acme Ltd, Office, up to 10 people"), said)
+	testing.expect(
+		t,
+		strings.contains(said, "licensed to ada@example.com, Professional; paid through 2027-10-19T00:00:00Z"),
+		said,
+	)
 	testing.expect(t, os.exists(kept_at), "it is kept beside the history store")
 
 	code, said = licence_says(c)
 	testing.expect_value(t, code, EXIT_OK)
-	for want in ([]string{"to Acme Ltd", "Office, up to 10 people", "ord_1, issued 2026-10-11", "expires    never"}) {
+	for want in ([]string{"ada@example.com", "Professional", "ord_1, issued 2026-10-19T12:00:00Z", "2027-10-19T00:00:00Z", "no release stamp", "runs Free"}) {
 		testing.expectf(t, strings.contains(said, want), "%q is not in %q", want, said)
 	}
 
@@ -154,13 +165,11 @@ leita_licence_holds_a_licence_for_one_run :: proc(t: ^testing.T) {
 
 	licensee, unlocked, problem = monitor.licence_beside(kept, line, month, s.pub[:])
 	testing.expect(t, unlocked, "LEITA_LICENCE unlocks this run")
-	testing.expect_value(t, licensee, "Acme Ltd")
+	testing.expect_value(t, licensee, "ada@example.com")
 	testing.expect_value(t, problem, "")
-	testing.expect(
-		t,
-		!os.exists(licence.path_beside(kept, context.temp_allocator)),
-		"and keeps nothing",
-	)
+	beside := fmt.tprintf("%s/data/licence", dir)
+	testing.expect_value(t, licence.path_beside(kept, context.temp_allocator), beside)
+	testing.expect(t, !os.exists(beside), "and keeps nothing")
 
 	licensee, unlocked, problem = monitor.licence_beside(kept, "leita1.x.y", month, s.pub[:])
 	testing.expect(t, !unlocked && licensee == "", "a bad one unlocks nothing")
@@ -169,4 +178,36 @@ leita_licence_holds_a_licence_for_one_run :: proc(t: ^testing.T) {
 	code, said := licence_says({kept = kept, given = line, key = s.pub[:], now = month})
 	testing.expect_value(t, code, EXIT_OK)
 	testing.expect(t, strings.contains(said, "LEITA_LICENCE, for this run"), said)
+}
+
+VECTOR_1  :: #load("../licence/testdata/throwaway/vector-1.line", string)
+THROW_PUB :: #load("../licence/testdata/throwaway/ed25519.public.hex", string)
+
+// A published line is kept and says who it is for and the paid-through date.
+// This build has no release stamp, so Pro stays off.
+@(test)
+a_line_names_its_paid_through_date :: proc(t: ^testing.T) {
+	raw, ok := hex.decode(transmute([]byte)strings.trim_space(THROW_PUB), context.temp_allocator)
+	testing.expect(t, ok && len(raw) == ed25519.PUBLIC_KEY_SIZE)
+	key: [ed25519.PUBLIC_KEY_SIZE]byte
+	copy(key[:], raw)
+	dir, kept := data_folder(t)
+	defer os.remove_all(dir)
+	c := Licence_Context {
+		kept = kept,
+		key  = key[:],
+		now  = time.unix(1_800_000_000, 0),
+	}
+	code, said := licence_says(c, "add", strings.trim_space(VECTOR_1))
+	testing.expect_value(t, code, EXIT_OK)
+	testing.expect(t, strings.contains(said, "ada@example.com"), said)
+	testing.expect(t, strings.contains(said, "Personal"), said)
+	testing.expect(t, strings.contains(said, "paid through 2027-10-19T00:00:00Z"), said)
+	testing.expect(t, !strings.contains(said, "does not expire"), said)
+
+	code, said = licence_says(c)
+	testing.expect_value(t, code, EXIT_OK)
+	for want in ([]string{"ada@example.com", "Personal", "2027-10-19T00:00:00Z", "no release stamp", "runs Free"}) {
+		testing.expectf(t, strings.contains(said, want), "%q is not in %q", want, said)
+	}
 }

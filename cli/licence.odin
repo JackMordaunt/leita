@@ -19,34 +19,33 @@ keeps its own, beside the history store, so each sees what the other added.
 LEITA_LICENCE holds one for a single run instead, as in a container, where
 nothing is kept between runs.
 
-A licence is the line beginning leita1., or the file from the receipt that
+A licence is the line beginning leita., or the file from the receipt that
 holds it. A licence key from the receipt is exchanged for its licence by the
 window alone: leita licence sends nothing anywhere.
 */
 
 LICENCE_USAGE :: `leita licence — the licence leita runs under.
 
-  leita licence             whose licence leita runs under, its tier, and that it does
-                            not expire; without one, how long the trial has left
+  leita licence             whose licence leita runs under, and its tier; without one,
+                            how long the trial has left
   leita licence add LICENCE check a licence and keep it beside leita's data, where
-                            the window finds it too: the line beginning leita1., or
+                            the window finds it too: the line beginning leita., or
                             the file from your receipt that holds it
   leita licence remove      forget the licence kept here
   LEITA_LICENCE=LICENCE     run under LICENCE, the line, for one run in place of the
                             one kept: for a server or a container that keeps nothing
 
 Reports, change tracking and scheduled scans need a licence once the 30-day trial
-has ended; scanning never does. A licence does not expire.
+has ended; scanning never does. A line keeps Pro for a release made at or before
+the paid-through date it carries, and a later release runs Free.
 `
 
 // TIER_TITLES are the tiers as the command line names them, as the window does.
 @(rodata)
 TIER_TITLES := [licence.Tier]string {
-	.Supporter  = "Supporter",
-	.Office     = "Office, up to 10 people",
-	.Team       = "Team, up to 50 people",
-	.Site       = "Site",
-	.Multi_Site = "Multi-site",
+	.Personal     = "Personal",
+	.Professional = "Professional",
+	.Organisation = "Organisation",
 }
 
 /*
@@ -105,7 +104,16 @@ show_licence :: proc(c: Licence_Context, w: io.Writer) -> int {
 		label_to(w, "licensed", "to %s", l.licensee)
 		label_to(w, "tier", "%s", TIER_TITLES[l.tier])
 		label_to(w, "order", "%s, issued %s", l.order, l.issued)
-		label_to(w, "expires", "never")
+		label_to(w, "paid", "%s", l.paid_through)
+		at, stamped := licence.this_release()
+		switch {
+		case licence.pro_entitled(l, at):
+			label_to(w, "pro", "this release is included")
+		case !stamped:
+			label_to(w, "pro", "this build has no release stamp, so it runs Free")
+		case:
+			label_to(w, "pro", "this release is after the paid-through date, so it runs Free")
+		}
 		if from == .Env {
 			label_to(w, "from", "%s, for this run", licence.ENV)
 		}
@@ -151,7 +159,7 @@ add_licence :: proc(c: Licence_Context, offered: string, w: io.Writer) -> int {
 	text = strings.trim_space(text)
 	if !strings.has_prefix(text, "leita") || !strings.contains_rune(text, '.') {
 		say_error(
-			"that is not a licence: give the line beginning leita1., or the file from your receipt that holds it; a licence key is exchanged for its licence in Leita, the window",
+			"that is not a licence: give the line beginning leita., or the file from your receipt that holds it; a licence key is exchanged for its licence in Leita, the window",
 		)
 		return EXIT_ERROR
 	}
@@ -165,7 +173,13 @@ add_licence :: proc(c: Licence_Context, offered: string, w: io.Writer) -> int {
 		say_error("%s", licence.describe(err))
 		return EXIT_ERROR
 	}
-	fmt.wprintfln(w, "added the licence: licensed to %s, %s; it does not expire", human.shown(l.licensee), TIER_TITLES[l.tier])
+	fmt.wprintfln(
+		w,
+		"added the licence: licensed to %s, %s; paid through %s",
+		human.shown(l.licensee),
+		TIER_TITLES[l.tier],
+		l.paid_through,
+	)
 	return EXIT_OK
 }
 

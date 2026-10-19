@@ -27,3 +27,9 @@ NAME :: "leita"
 // binary: set with -define:LEITA_SHORT=x from the justfile's short, so -h
 // names what install put on PATH.
 SHORT :: #config(LEITA_SHORT, "le")
+
+// RELEASED is this build's authenticated release instant, the canonical UTC
+// form YYYY-MM-DDTHH:MM:SSZ, set with -define:LEITA_RELEASED= by the release
+// that wrote released.txt. Empty on a development build, which a licence
+// line does not entitle.
+RELEASED :: #config(LEITA_RELEASED, "")

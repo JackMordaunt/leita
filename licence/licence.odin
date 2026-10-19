@@ -4,25 +4,20 @@ and the buyer pastes into leita, or opens as a file. leita checks it here,
 offline, against the public key it was built with, and never asks anyone else:
 nothing about the buyer or the machine leaves it.
 
-A licence is one line of text:
+A line is leita., the payload in standard base64, and the Ed25519 signature
+of everything before the second dot, as licence/FORMAT.md in this directory
+specifies. This package only checks lines. A line grants Pro on a release
+whose authenticated instant is at or before paidThrough, and a later release
+runs Free. A draft prefix, leita1. or leita2., is not a line this build reads.
 
-	leita1.<payload>.<signature>
-
-payload is the licence's terms as JSON in standard base64, and signature the
-Ed25519 signature, in standard base64, of everything before the second dot. The
-server that sells leita mints them; this package only checks them.
-
-	{"licensee": "Acme Ltd", "tier": "office", "order": "…", "issued": "2026-10-11"}
-
-A licence does not expire. The one in use is kept as a file of its own in
-leita's data folder, beside the history store.
+The one in use is kept as a file of its own in leita's data folder, beside
+the history store.
 */
 package leita_licence
 
 import "core:crypto/ed25519"
 import "core:encoding/base64"
 import "core:encoding/hex"
-import "core:encoding/json"
 import "core:fmt"
 import "core:os"
 import "core:path/filepath"
@@ -30,39 +25,45 @@ import "core:strconv"
 import "core:strings"
 import "core:time"
 
-// PREFIX begins every licence of this format, and names the format's version.
-PREFIX :: "leita1."
+import "../version"
+
+// PREFIX begins a licence line. The dot is part of the prefix: the signed
+// bytes start with it.
+PREFIX :: "leita."
+
+// FEATURES_PRO is the only feature set a line may name. Scope does not change it.
+FEATURES_PRO :: "pro"
 
 // KEY is the public key licences are checked against, in hex, set with
 // -define:LEITA_LICENCE_KEY=<hex>. A build without one takes no licence, so the
 // justfile's release recipes refuse to build without it.
 KEY :: #config(LEITA_LICENCE_KEY, "")
 
-// Tier is what a licence was bought for, as the price list sells them.
+// Tier is the permitted use a licence was bought for. All three grant the same
+// Pro feature set.
 Tier :: enum u8 {
-	Supporter, // an individual's, for the paid features at home
-	Office, // an organisation of up to 10 people, one site
-	Team, // up to 50 people, one site
-	Site, // anyone at one site
-	Multi_Site, // anyone at any of its sites
+	Personal, // one person, noncommercial use
+	Professional, // one commercial operator
+	Organisation, // one organisation, internal use
 }
 
-// TIER_NAMES are the tiers as a licence's payload names them.
-TIER_NAMES := [Tier]string {
-	.Supporter  = "supporter",
-	.Office     = "office",
-	.Team       = "team",
-	.Site       = "site",
-	.Multi_Site = "multi_site",
+// Format is which line a checked licence came from. None is the zero value,
+// and it entitles nothing. Annual is the one format: a paid-through cutoff.
+Format :: enum u8 {
+	None,
+	Annual,
 }
 
 // Licence is a licence's terms, once its signature is checked. Its strings are
 // owned; destroy frees them.
 Licence :: struct {
-	licensee: string, // who it was sold to, person or organisation
-	tier:     Tier,
-	order:    string, // the order it was sold in, as the seller numbers them
-	issued:   string, // the day it was signed, YYYY-MM-DD
+	licensee:     string, // the licensee's email
+	tier:         Tier,
+	order:        string, // the licence id
+	issued:       string, // the canonical instant the line was signed
+	format:       Format,
+	features:     string, // the feature set id; owned, always FEATURES_PRO when checked
+	paid_through: string, // the canonical paid-through instant
 }
 
 Error :: enum u8 {
@@ -104,68 +105,346 @@ check :: proc(
 		return {}, .No_Key
 	}
 	text := strings.trim_space(pasted)
-	if !strings.has_prefix(text, PREFIX) {
-		// leita2. and on are a later format; anything else is not a licence.
-		if strings.has_prefix(text, "leita") && strings.index_byte(text, '.') > 0 {
-			return {}, .Version
-		}
+	if strings.has_prefix(text, PREFIX) {
+		return check_annual(text, &pub, allocator)
+	}
+	// leita1., leita2., and a later leitaN. are formats this build does not read.
+	if strings.has_prefix(text, "leita") && strings.index_byte(text, '.') > 0 {
+		return {}, .Version
+	}
+	return {}, .Malformed
+}
+
+// check_annual reads a leita. line. The signature is checked before the
+// payload is read, and the payload must be the canonical encoding
+// licence/FORMAT.md's "Canonical payload" section names: a signature over any
+// other bytes does not make them terms.
+@(private)
+check_annual :: proc(
+	text: string,
+	pub: ^ed25519.Public_Key,
+	allocator := context.allocator,
+) -> (
+	l: Licence,
+	err: Error,
+) {
+	signed, payload_b64, sig_b64, split := signed_parts(text, PREFIX)
+	if split != .None {
+		return {}, split
+	}
+	if !b64_std_ok(payload_b64) || !b64_std_ok(sig_b64) {
 		return {}, .Malformed
 	}
-	cut := strings.last_index_byte(text, '.')
-	if cut <= len(PREFIX) {
-		return {}, .Malformed
-	}
-	signed, encoded_sig := text[:cut], text[cut + 1:]
-	encoded_terms := signed[len(PREFIX):]
-	if strings.index_byte(encoded_terms, '.') >= 0 {
-		return {}, .Malformed
-	}
-	sig, serr := base64.decode(encoded_sig, allocator = context.temp_allocator)
+	sig, serr := base64.decode(sig_b64, allocator = context.temp_allocator)
 	if serr != nil || len(sig) != ed25519.SIGNATURE_SIZE {
 		return {}, .Malformed
 	}
-	if !ed25519.verify(&pub, transmute([]byte)signed, sig) {
+	if !ed25519.verify(pub, transmute([]byte)signed, sig) {
 		return {}, .Signature
 	}
-	raw, terr := base64.decode(encoded_terms, allocator = context.temp_allocator)
-	if terr != nil {
-		return {}, .Malformed
-	}
-
-	Terms :: struct {
-		licensee, tier, order, issued: string,
-	}
-	terms: Terms
-	if json.unmarshal(raw, &terms, allocator = context.temp_allocator) != nil {
+	raw, terr := base64.decode(payload_b64, allocator = context.temp_allocator)
+	if terr != nil || len(raw) == 0 {
 		return {}, .Terms
 	}
-	tier, known := tier_of(terms.tier)
-	if !known || strings.trim_space(terms.licensee) == "" || terms.order == "" {
+	id, email, scope, features, paid, issued, ok := annual_fields(string(raw))
+	tier, known := scope_of(scope)
+	if !ok ||
+	   !known ||
+	   features != FEATURES_PRO ||
+	   !instant_ok(paid) ||
+	   !instant_ok(issued) ||
+	   !id_ok(id) ||
+	   !email_ok(email) {
 		return {}, .Terms
 	}
 	return {
-			licensee = strings.clone(strings.trim_space(terms.licensee), allocator),
+			licensee = strings.clone(email, allocator),
 			tier = tier,
-			order = strings.clone(terms.order, allocator),
-			issued = strings.clone(terms.issued, allocator),
+			order = strings.clone(id, allocator),
+			issued = strings.clone(issued, allocator),
+			format = .Annual,
+			features = strings.clone(FEATURES_PRO, allocator),
+			paid_through = strings.clone(paid, allocator),
 		},
 		.None
 }
 
-// tier_of is the tier name names, as a payload does.
-tier_of :: proc(name: string) -> (Tier, bool) {
-	for n, t in TIER_NAMES {
-		if n == name {
-			return t, true
+// signed_parts splits text, which starts with prefix, into the signed message
+// and the two base64 sections. The signed message is everything before the
+// second dot.
+@(private)
+signed_parts :: proc(text, prefix: string) -> (signed, payload_b64, sig_b64: string, err: Error) {
+	rest := text[len(prefix):]
+	dot := strings.index_byte(rest, '.')
+	if dot <= 0 || strings.index_byte(rest[dot + 1:], '.') >= 0 {
+		return {}, {}, {}, .Malformed
+	}
+	return text[:len(prefix) + dot], rest[:dot], rest[dot + 1:], .None
+}
+
+// b64_std_ok reports whether s is standard base64 with padding, and no other alphabet.
+@(private)
+b64_std_ok :: proc(s: string) -> bool {
+	if len(s) == 0 || len(s) % 4 != 0 {
+		return false
+	}
+	for c, i in s {
+		switch c {
+		case 'A' ..= 'Z', 'a' ..= 'z', '0' ..= '9', '+', '/':
+		case '=':
+			if i < len(s) - 2 {
+				return false
+			}
+		case:
+			return false
 		}
 	}
+	return true
+}
+
+// annual_fields reads a canonical payload. ok is false unless every byte was
+// the fixed skeleton with a string in each place.
+@(private)
+annual_fields :: proc(
+	body: string,
+) -> (
+	id, email, scope, features, paid, issued: string,
+	ok: bool,
+) {
+	i: int
+	i, ok = take_literal(body, 0, `{"v":1,"id":`)
+	if !ok {
+		return
+	}
+	id, i, ok = take_token(body, i)
+	if !ok {
+		return
+	}
+	i, ok = take_literal(body, i, `,"email":`)
+	if !ok {
+		return
+	}
+	email, i, ok = take_token(body, i)
+	if !ok {
+		return
+	}
+	i, ok = take_literal(body, i, `,"scope":`)
+	if !ok {
+		return
+	}
+	scope, i, ok = take_token(body, i)
+	if !ok {
+		return
+	}
+	i, ok = take_literal(body, i, `,"features":`)
+	if !ok {
+		return
+	}
+	features, i, ok = take_token(body, i)
+	if !ok {
+		return
+	}
+	i, ok = take_literal(body, i, `,"paidThrough":`)
+	if !ok {
+		return
+	}
+	paid, i, ok = take_token(body, i)
+	if !ok {
+		return
+	}
+	i, ok = take_literal(body, i, `,"issued":`)
+	if !ok {
+		return
+	}
+	issued, i, ok = take_token(body, i)
+	if !ok {
+		return
+	}
+	i, ok = take_literal(body, i, `}`)
+	if !ok || i != len(body) {
+		ok = false
+	}
+	return
+}
+
+@(private)
+take_literal :: proc(s: string, i: int, lit: string) -> (n: int, ok: bool) {
+	end := i + len(lit)
+	if end > len(s) || s[i:end] != lit {
+		return i, false
+	}
+	return end, true
+}
+
+// take_token reads a JSON string that contains no escape. The canonical
+// payload never needs one.
+@(private)
+take_token :: proc(s: string, i: int) -> (val: string, n: int, ok: bool) {
+	if i >= len(s) || s[i] != '"' {
+		return
+	}
+	j := i + 1
+	for j < len(s) {
+		c := s[j]
+		if c == '\\' || c < 0x20 {
+			return
+		}
+		if c == '"' {
+			return s[i + 1:j], j + 1, true
+		}
+		j += 1
+	}
+	return
+}
+
+@(private)
+id_ok :: proc(s: string) -> bool {
+	if len(s) < 1 || len(s) > 64 {
+		return false
+	}
+	for c in s {
+		switch c {
+		case 'A' ..= 'Z', 'a' ..= 'z', '0' ..= '9', '_', '-':
+		case:
+			return false
+		}
+	}
+	return true
+}
+
+@(private)
+email_ok :: proc(s: string) -> bool {
+	if len(s) < 3 || len(s) > 254 {
+		return false
+	}
+	at := -1
+	for ch, i in s {
+		if ch < 0x21 || ch > 0x7E || ch == '"' || ch == '\\' {
+			return false
+		}
+		if ch == '@' {
+			if at >= 0 {
+				return false
+			}
+			at = i
+		}
+	}
+	return at > 0 && at < len(s) - 1
+}
+
+// scope_of is the permitted use a line names.
+@(private)
+scope_of :: proc(name: string) -> (Tier, bool) {
+	switch name {
+	case "personal":
+		return .Personal, true
+	case "professional":
+		return .Professional, true
+	case "organisation":
+		return .Organisation, true
+	}
 	return {}, false
+}
+
+/*
+instant_ok reports whether s is the canonical UTC instant, YYYY-MM-DDTHH:MM:SSZ.
+No fraction, no offset, no leap second. Year is 2020 through 9999, and the
+day has to be a real one, 29 February only in a leap year. The text is the
+value. It is fixed width, so it sorts in time order, which a time.Time
+cannot: core:time.Time is i64 nanoseconds from 1970, so it ends in 2262, and this profile runs to 9999.
+*/
+instant_ok :: proc(s: string) -> bool {
+	if len(s) != 20 ||
+	   s[4] != '-' ||
+	   s[7] != '-' ||
+	   s[10] != 'T' ||
+	   s[13] != ':' ||
+	   s[16] != ':' ||
+	   s[19] != 'Z' {
+		return false
+	}
+	for i in 0 ..< 20 {
+		switch i {
+		case 4, 7, 10, 13, 16, 19:
+		case:
+			if s[i] < '0' || s[i] > '9' {
+				return false
+			}
+		}
+	}
+	year := instant_n(s, 0) * 100 + instant_n(s, 2)
+	month := instant_n(s, 5)
+	day := instant_n(s, 8)
+	hour := instant_n(s, 11)
+	minute := instant_n(s, 14)
+	second := instant_n(s, 17)
+	if year < 2020 || year > 9999 || hour > 23 || minute > 59 || second > 59 {
+		return false
+	}
+	return day_ok(year, month, day)
+}
+
+@(private)
+instant_n :: proc(s: string, i: int) -> int {
+	return int(s[i] - '0') * 10 + int(s[i + 1] - '0')
+}
+
+@(private)
+day_ok :: proc(year, month, day: int) -> bool {
+	if month < 1 || month > 12 || day < 1 {
+		return false
+	}
+	days := [12]int{31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}
+	if month == 2 && year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) {
+		return day <= 29
+	}
+	return day <= days[month - 1]
+}
+
+// this_release is the authenticated instant compiled into this build, when
+// version.RELEASED is the canonical form. A development build has none.
+this_release :: proc() -> (at: string, ok: bool) {
+	if !instant_ok(version.RELEASED) {
+		return "", false
+	}
+	return version.RELEASED, true
+}
+
+/*
+pro_entitled reports whether l gives Pro to the release stamped at release_at.
+release_at is a canonical instant, or "" when the build has no authenticated
+stamp. A line does when its feature set is pro and release_at is at or before
+paid_through, including equal. A line does not entitle a build with no stamp.
+*/
+pro_entitled :: proc(l: Licence, release_at: string) -> bool {
+	switch l.format {
+	case .None:
+		return false
+	case .Annual:
+		if l.features != FEATURES_PRO || !instant_ok(l.paid_through) || !instant_ok(release_at) {
+			return false
+		}
+		return release_at <= l.paid_through
+	}
+	return false
+}
+
+/*
+pro_for_this_build reports whether l gives Pro to the release compiled into
+this binary. Feature gates ask this. unlocked, below, is the older question
+and does not apply the cutoff.
+*/
+pro_for_this_build :: proc(l: Licence) -> bool {
+	at, _ := this_release()
+	return pro_entitled(l, at)
 }
 
 destroy :: proc(l: ^Licence, allocator := context.allocator) {
 	delete(l.licensee, allocator)
 	delete(l.order, allocator)
 	delete(l.issued, allocator)
+	delete(l.features, allocator)
+	delete(l.paid_through, allocator)
 	l^ = {}
 }
 
@@ -204,8 +483,9 @@ FIRST_USE :: "first-use"
 // ago that the trial is over.
 TRIAL_OVER :: time.Time{}
 
-// unlocked is whether the paid features work at now: under a licence, or in the
-// trial that began at first.
+// unlocked is whether the paid features work at now under the rule the existing
+// call sites ask: a line that verified, or the trial that began at first. It
+// does not apply the paid-through cutoff; pro_for_this_build does.
 unlocked :: proc(licensed: bool, first, now: time.Time) -> bool {
 	return licensed || days_left(first, now) > 0
 }
@@ -471,7 +751,9 @@ describe :: proc(err: Error) -> string {
 	case .No_Key:
 		return "this build of leita takes no licences"
 	case .Malformed:
-		return "it is not a leita licence; give the whole line, from leita1. to its end, or the file holding it"
+		return(
+			"it is not a leita licence; give the whole line, from leita. to its end, or the file holding it" \
+		)
 	case .Version:
 		return "it is a licence for a newer leita; update leita to use it"
 	case .Signature:

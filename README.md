@@ -313,10 +313,12 @@ computer, your own studies, and unpaid hobby or open-source work.
 days from the first time you run leita, so you can try them first.
 
 Without the window, `leita licence add FILE` keeps the licence file from your
-receipt (or the line in it beginning `leita1.`), and `leita licence` shows whose
-it is, its tier, and that it does not expire, or how long the trial has left
-when there is none. `leita licence remove` forgets the one kept here. For a
-single run, as in a container, set `LEITA_LICENCE` to that line instead.
+receipt (or the line in it beginning `leita.`), and `leita licence` shows whose
+it is and its tier. A line keeps Pro for a release made at or before the
+paid-through date it carries, and a later release runs Free. With no licence,
+it says how long the trial has left. `leita licence remove` forgets the one
+kept here. For a single run, as in a container, set `LEITA_LICENCE` to that
+line instead.
 
 **An organisation may evaluate leita for 30 days, then needs a licence for any
 use.** That covers businesses, sole traders, schools, charities and government.

@@ -3,6 +3,7 @@ package leita_licence
 import "core:crypto"
 import "core:crypto/ed25519"
 import "core:encoding/base64"
+import "core:encoding/hex"
 import "core:fmt"
 import "core:os"
 import "core:path/filepath"
@@ -38,7 +39,7 @@ mint :: proc(s: ^Signer, terms: string) -> string {
 	)
 }
 
-TERMS :: `{"licensee": "Acme Ltd", "tier": "office", "order": "ord_1", "issued": "2026-10-11"}`
+TERMS :: #load("testdata/sample.json", string)
 
 @(test)
 a_signed_licence_reads_back_its_terms :: proc(t: ^testing.T) {
@@ -49,10 +50,12 @@ a_signed_licence_reads_back_its_terms :: proc(t: ^testing.T) {
 	)
 	defer destroy(&l)
 	testing.expect_value(t, err, Error.None)
-	testing.expect_value(t, l.licensee, "Acme Ltd")
-	testing.expect_value(t, l.tier, Tier.Office)
+	testing.expect_value(t, l.licensee, "ada@example.com")
+	testing.expect_value(t, l.tier, Tier.Professional)
 	testing.expect_value(t, l.order, "ord_1")
-	testing.expect_value(t, l.issued, "2026-10-11")
+	testing.expect_value(t, l.issued, "2026-10-19T12:00:00Z")
+	testing.expect_value(t, l.format, Format.Annual)
+	testing.expect_value(t, l.paid_through, "2027-10-19T00:00:00Z")
 }
 
 @(test)
@@ -73,7 +76,7 @@ changed_terms_break_the_signature :: proc(t: ^testing.T) {
 			PREFIX,
 			base64.encode(
 				transmute([]byte)string(
-					`{"licensee": "Acme Ltd", "tier": "multi_site", "order": "ord_1"}`,
+					`{"v":1,"id":"ord_9","email":"ada@example.com","scope":"professional","features":"pro","paidThrough":"2027-10-19T00:00:00Z","issued":"2026-10-19T12:00:00Z"}`,
 				),
 				allocator = context.temp_allocator,
 			),
@@ -94,13 +97,15 @@ what_is_not_a_licence_says_so :: proc(t: ^testing.T) {
 	} {
 		{"", .Malformed},
 		{"hello", .Malformed},
-		{"leita1.", .Malformed},
-		{"leita1.abc", .Malformed},
-		{"leita1..", .Malformed},
-		{"leita1.a.b.c", .Malformed},
-		{"leita1.e30=.not-base64!", .Malformed},
-		{"leita1.e30=.AAAA", .Malformed},
+		{"leita.", .Malformed},
+		{"leita.abc", .Malformed},
+		{"leita..", .Malformed},
+		{"leita.a.b.c", .Malformed},
+		{"leita.e30=.not-base64!", .Malformed},
+		{"leita.e30=.AAAA", .Malformed},
+		{"leita1.e30=.AAAA", .Version},
 		{"leita2.e30=.AAAA", .Version},
+		{"leita3.e30=.AAAA", .Version},
 	}
 	for c in cases {
 		_, err := check(c.text, s.pub[:])
@@ -111,7 +116,7 @@ what_is_not_a_licence_says_so :: proc(t: ^testing.T) {
 @(test)
 signed_terms_must_name_a_licensee_tier_and_order :: proc(t: ^testing.T) {
 	s := signer()
-	for terms in ([]string{`{"tier": "office", "order": "ord_1"}`, `{"licensee": " ", "tier": "office", "order": "ord_1"}`, `{"licensee": "Acme", "tier": "galaxy", "order": "ord_1"}`, `{"licensee": "Acme", "tier": "office"}`, `not json`}) {
+	for terms in ([]string{`{"v":1,"email":"ada@example.com","scope":"professional","features":"pro","paidThrough":"2027-10-19T00:00:00Z","issued":"2026-10-19T12:00:00Z"}`, `{"v":1,"id":"ord_1","email":"not-an-email","scope":"professional","features":"pro","paidThrough":"2027-10-19T00:00:00Z","issued":"2026-10-19T12:00:00Z"}`, `{"v":1,"id":"ord_1","email":"ada@example.com","scope":"office","features":"pro","paidThrough":"2027-10-19T00:00:00Z","issued":"2026-10-19T12:00:00Z"}`, `not json`}) {
 		_, err := check(mint(&s, terms), s.pub[:])
 		testing.expectf(t, err == .Terms, "%s: %v", terms, err)
 	}
@@ -140,7 +145,7 @@ a_saved_licence_reads_back :: proc(t: ^testing.T) {
 	l, cerr := check(got, s.pub[:])
 	defer destroy(&l)
 	testing.expect_value(t, cerr, Error.None)
-	testing.expect_value(t, l.licensee, "Acme Ltd")
+	testing.expect_value(t, l.licensee, "ada@example.com")
 
 	_, gone := read(path_beside(kept, context.temp_allocator)[:len(path) - 1])
 	testing.expect_value(t, gone, Error.Unreadable)
@@ -350,7 +355,7 @@ the_licence_in_use_is_the_one_given_or_else_the_one_kept :: proc(t: ^testing.T) 
 	testing.expect_value(t, from, Source.None)
 	testing.expect_value(t, err, Error.None)
 
-	_, kerr := keep(path, "leita1.e30=.AAAA", s.pub[:], context.temp_allocator)
+	_, kerr := keep(path, "leita.e30=.AAAA", s.pub[:], context.temp_allocator)
 	testing.expect_value(t, kerr, Error.Malformed)
 	testing.expect(t, !os.exists(path), "what does not check is not kept")
 	_, kerr = keep(path, mint(&s, TERMS), s.pub[:], context.temp_allocator)
@@ -359,12 +364,12 @@ the_licence_in_use_is_the_one_given_or_else_the_one_kept :: proc(t: ^testing.T) 
 	l: Licence
 	l, from, err = in_use(path, "", s.pub[:])
 	testing.expect_value(t, from, Source.Kept)
-	testing.expect_value(t, l.licensee, "Acme Ltd")
+	testing.expect_value(t, l.licensee, "ada@example.com")
 
-	given := mint(&s, `{"licensee": "Ops Team", "tier": "team", "order": "ord_2"}`)
+	given := mint(&s, `{"v":1,"id":"ord_2","email":"ops@example.com","scope":"organisation","features":"pro","paidThrough":"2028-01-01T00:00:00Z","issued":"2026-10-19T12:00:00Z"}`)
 	l, from, err = in_use(path, given, s.pub[:])
 	testing.expect_value(t, from, Source.Env)
-	testing.expect_value(t, l.licensee, "Ops Team")
+	testing.expect_value(t, l.licensee, "ops@example.com")
 	_, from, err = in_use(path, "not a licence", s.pub[:])
 	testing.expect_value(t, from, Source.Env)
 	testing.expect_value(t, err, Error.Malformed)
@@ -380,4 +385,162 @@ the_licence_in_use_is_the_one_given_or_else_the_one_kept :: proc(t: ^testing.T) 
 	testing.expect_value(t, from, Source.None)
 	was, _ = forget(path)
 	testing.expect(t, !was, "nothing to forget")
+}
+
+THROW_PUB  :: #load("testdata/throwaway/ed25519.public.hex", string)
+VECTOR_1   :: #load("testdata/throwaway/vector-1.line", string)
+VECTOR_2   :: #load("testdata/throwaway/vector-2.line", string)
+FORMAT_DOC :: #load("FORMAT.md", string)
+
+throwaway_key :: proc(t: ^testing.T) -> [ed25519.PUBLIC_KEY_SIZE]byte {
+	raw, ok := hex.decode(transmute([]byte)strings.trim_space(THROW_PUB), context.temp_allocator)
+	testing.expect(t, ok && len(raw) == ed25519.PUBLIC_KEY_SIZE)
+	key: [ed25519.PUBLIC_KEY_SIZE]byte
+	copy(key[:], raw)
+	return key
+}
+
+// The lines FORMAT.md publishes verify under the throwaway key, and the
+// document carries the same bytes the files do.
+@(test)
+the_published_vectors_verify :: proc(t: ^testing.T) {
+	key := throwaway_key(t)
+	testing.expect(t, strings.contains(FORMAT_DOC, strings.trim_space(VECTOR_1)))
+	testing.expect(t, strings.contains(FORMAT_DOC, strings.trim_space(VECTOR_2)))
+
+	l, err := check("\n" + VECTOR_1, key[:])
+	defer destroy(&l)
+	testing.expect_value(t, err, Error.None)
+	testing.expect_value(t, l.format, Format.Annual)
+	testing.expect_value(t, l.licensee, "ada@example.com")
+	testing.expect_value(t, l.tier, Tier.Personal)
+	testing.expect_value(t, l.order, "lic_7f3a9c2e1b")
+	testing.expect_value(t, l.features, FEATURES_PRO)
+	testing.expect_value(t, l.issued, "2026-10-19T12:00:00Z")
+	testing.expect_value(t, l.paid_through, "2027-10-19T00:00:00Z")
+
+	l2, err2 := check(VECTOR_2, key[:])
+	defer destroy(&l2)
+	testing.expect_value(t, err2, Error.None)
+	testing.expect_value(t, l2.tier, Tier.Organisation)
+	testing.expect_value(t, l2.licensee, "ops@northwind.example")
+	testing.expect_value(t, l2.order, "lic_org_4401")
+}
+
+// A release at paidThrough is Pro; one second later is Free. No stamp is not Pro.
+@(test)
+pro_stops_at_the_paid_through_instant :: proc(t: ^testing.T) {
+	key := throwaway_key(t)
+	l, err := check(VECTOR_1, key[:])
+	defer destroy(&l)
+	testing.expect_value(t, err, Error.None)
+	at := "2027-10-19T00:00:00Z"
+	later := "2027-10-19T00:00:01Z"
+	testing.expect(t, pro_entitled(l, at))
+	testing.expect(t, !pro_entitled(l, later))
+	testing.expect(t, !pro_entitled(l, ""))
+	// This binary is a development build: no compiled stamp, so the line is not Pro.
+	testing.expect(t, !pro_for_this_build(l))
+	testing.expect(t, !pro_entitled({}, later))
+}
+
+@(test)
+a_tampered_or_noncanonical_line_is_not_pro :: proc(t: ^testing.T) {
+	key := throwaway_key(t)
+	line := strings.trim_space(VECTOR_1)
+	// Flip one character of the signature, clear of the padding.
+	cut := strings.last_index_byte(line, '.')
+	flipped := strings.concatenate({line[:cut + 1], "W", line[cut + 2:]}, context.temp_allocator)
+	_, err := check(flipped, key[:])
+	testing.expect_value(t, err, Error.Signature)
+
+	s := signer()
+	spaced := `{"v":1, "id":"lic_x","email":"ada@example.com","scope":"personal","features":"pro","paidThrough":"2027-10-19T00:00:00Z","issued":"2026-10-19T12:00:00Z"}`
+	_, err = check(mint(&s, spaced), s.pub[:])
+	testing.expect_value(t, err, Error.Terms)
+
+	bad_day := `{"v":1,"id":"lic_x","email":"ada@example.com","scope":"professional","features":"pro","paidThrough":"2027-02-29T00:00:00Z","issued":"2026-10-19T12:00:00Z"}`
+	_, err = check(mint(&s, bad_day), s.pub[:])
+	testing.expect_value(t, err, Error.Terms)
+
+	office := `{"v":1,"id":"lic_x","email":"ada@example.com","scope":"office","features":"pro","paidThrough":"2027-10-19T00:00:00Z","issued":"2026-10-19T12:00:00Z"}`
+	_, err = check(mint(&s, office), s.pub[:])
+	testing.expect_value(t, err, Error.Terms)
+
+	pro, perr := check(
+		mint(
+			&s,
+			`{"v":1,"id":"lic_pro","email":"ada@example.com","scope":"professional","features":"pro","paidThrough":"2027-10-19T00:00:00Z","issued":"2026-10-19T12:00:00Z"}`,
+		),
+		s.pub[:],
+	)
+	defer destroy(&pro)
+	testing.expect_value(t, perr, Error.None)
+	testing.expect_value(t, pro.tier, Tier.Professional)
+
+	other := `{"v":1,"id":"lic_x","email":"ada@example.com","scope":"personal","features":"plus","paidThrough":"2027-10-19T00:00:00Z","issued":"2026-10-19T12:00:00Z"}`
+	_, err = check(mint(&s, other), s.pub[:])
+	testing.expect_value(t, err, Error.Terms)
+
+	// A payload whose version is not 1 is signed and still not terms.
+	_, err = check(
+		mint(
+			&s,
+			`{"v":2,"id":"lic_x","email":"ada@example.com","scope":"personal","features":"pro","paidThrough":"2027-10-19T00:00:00Z","issued":"2026-10-19T12:00:00Z"}`,
+		),
+		s.pub[:],
+	)
+	testing.expect_value(t, err, Error.Terms)
+}
+
+// A signed draft line, prefix leita1., is not this format and grants nothing.
+@(test)
+a_leita1_prefix_grants_nothing :: proc(t: ^testing.T) {
+	s := signer()
+	body := `{"licensee":"Ada","tier":"supporter","order":"ord_9","issued":"2026-10-11"}`
+	signed := strings.concatenate(
+		{"leita1.", base64.encode(transmute([]byte)body, allocator = context.temp_allocator)},
+		context.temp_allocator,
+	)
+	sig: [ed25519.SIGNATURE_SIZE]byte
+	ed25519.sign(&s.priv, transmute([]byte)signed, sig[:])
+	line := strings.concatenate(
+		{signed, ".", base64.encode(sig[:], allocator = context.temp_allocator)},
+		context.temp_allocator,
+	)
+	l, err := check(line, s.pub[:])
+	testing.expect_value(t, err, Error.Version)
+	testing.expect_value(t, l.format, Format.None)
+	testing.expect(t, !pro_entitled(l, "2026-10-20T00:00:00Z"))
+	testing.expect(t, !pro_for_this_build(l))
+}
+
+// The profile runs to year 9999, past the end of time.Time. A release this
+// program can name is still at or before that cutoff.
+@(test)
+a_paid_through_past_2262_still_covers_an_earlier_release :: proc(t: ^testing.T) {
+	s := signer()
+	body := `{"v":1,"id":"lic_far","email":"ada@example.com","scope":"personal","features":"pro","paidThrough":"9999-12-31T23:59:59Z","issued":"2020-02-29T00:00:00Z"}`
+	l, err := check(mint(&s, body), s.pub[:])
+	defer destroy(&l)
+	testing.expect_value(t, err, Error.None)
+	testing.expect(t, pro_entitled(l, "2262-04-11T23:47:16Z"))
+	testing.expect(t, pro_entitled(l, "9999-12-31T23:59:59Z"))
+	testing.expect(t, !pro_entitled(l, ""))
+}
+
+@(test)
+the_instant_is_a_real_utc_day :: proc(t: ^testing.T) {
+	testing.expect(t, instant_ok("2020-02-29T00:00:00Z"))
+	testing.expect(t, instant_ok("9999-12-31T23:59:59Z"))
+	testing.expect(t, !instant_ok("2019-01-01T00:00:00Z"))
+	testing.expect(t, !instant_ok("2027-02-29T00:00:00Z"))
+	testing.expect(t, !instant_ok("2100-02-29T00:00:00Z"))
+	testing.expect(t, !instant_ok("2027-13-01T00:00:00Z"))
+	testing.expect(t, !instant_ok("2027-10-19T24:00:00Z"))
+	testing.expect(t, !instant_ok("2027-10-19T23:60:00Z"))
+	testing.expect(t, !instant_ok("2027-10-19T23:59:60Z"))
+	testing.expect(t, !instant_ok("2027-10-19t00:00:00Z"))
+	testing.expect(t, !instant_ok("2027-10-19T00:00:00z"))
+	testing.expect(t, !instant_ok("2027-10-19T00:00:00+00:00"))
 }
