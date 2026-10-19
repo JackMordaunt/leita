@@ -56,9 +56,14 @@ jm    := env("JM", root / "jm")
 version := env("LEITA_VERSION", `git describe --tags --dirty 2>/dev/null || { h=$(git describe --always --dirty 2>/dev/null) && echo "g$h"; } || echo dev`)
 # The year of this build, for the copyright line. LEITA_YEAR=<n> sets it.
 year := env("LEITA_YEAR", `date +%Y`)
+# This build's authenticated release instant, YYYY-MM-DDTHH:MM:SSZ, the same
+# text the release writes to released.txt. Empty on a development build, which
+# a licence line does not entitle. LEITA_RELEASED=<instant> sets it.
+released := env("LEITA_RELEASED", "")
+released_define := if released == "" { "" } else { " -define:LEITA_RELEASED=" + released }
 # check_flags is what odin check takes; flags adds the macOS minimum, which
 # only build, run and test accept.
-check_flags := "-vet -strict-style -collection:jm=" + jm + " -define:LEITA_VERSION=" + version + " -define:LEITA_SHORT=" + short + " -define:LEITA_YEAR=" + year
+check_flags := "-vet -strict-style -collection:jm=" + jm + " -define:LEITA_VERSION=" + version + " -define:LEITA_SHORT=" + short + " -define:LEITA_YEAR=" + year + released_define
 flags := check_flags + minos
 # macOS 11.0 is the oldest Odin targets, and jm builds its native libraries
 # for it. Without the flag a binary carries the building Mac's own version as
@@ -117,8 +122,8 @@ sdl3_link := if os() == "linux" { "-extra-linker-flags:\"-L" + sdl3_dir + "\"" }
 # A key and a licence it signed, for tests and CI alone. Its private half was
 # thrown away once it had signed test_licence, so no one can sign another: a
 # build with it takes this licence and no other. Never a release's key.
-test_licence_key := "e83dc875975880f373348c2eccbf6b5c719736abf15727e77f3968c0c6644553"
-test_licence     := "leita1.eyJsaWNlbnNlZSI6ICJMZWl0YSB0ZXN0IGtleSIsICJ0aWVyIjogInN1cHBvcnRlciIsICJvcmRlciI6ICJ0ZXN0IiwgImlzc3VlZCI6ICIyMDI2LTEwLTE3In0=.LbCdZ5rVE+RbchkATmwkKC0DGIo8Sp6MK+n4KnIM9ACXFZDBF0Q3N1kHeQUW6kIhLSTwFgpP0rC9qL5bh7XiBg=="
+test_licence_key := "88c75c5976728b7e57a6fe3a5a0bd898abfc79bfce9257ea9ce32c41d6acc20f"
+test_licence     := "leita.eyJ2IjoxLCJpZCI6InRlc3QiLCJlbWFpbCI6InRlc3RAbGVpdGEuZXhhbXBsZSIsInNjb3BlIjoicGVyc29uYWwiLCJmZWF0dXJlcyI6InBybyIsInBhaWRUaHJvdWdoIjoiOTk5OS0xMi0zMVQyMzo1OTo1OVoiLCJpc3N1ZWQiOiIyMDI2LTEwLTE3VDAwOjAwOjAwWiJ9.QdzfxSW5ivSRjgF7+MwQj1nE0EZjeeBX2Eb+Mo9UxT6UND4ZacO/rwNJQZ9eZugVq/Ycm+C7m84V8Uk/GjtZBg=="
 
 # `just` alone lists the recipes.
 default:
