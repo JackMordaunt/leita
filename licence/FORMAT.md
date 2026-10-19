@@ -1,4 +1,4 @@
-# leita licence line, format 2
+# leita licence line
 
 This is the contract for a licence line the activation server mints and the
 app verifies offline. It is byte-exact on purpose: two implementations that
@@ -7,25 +7,26 @@ were signed with the throwaway key in `licence/testdata/throwaway/`. That key
 is a test fixture. It is not the release key, and a release build does not
 embed it.
 
-The server mints format 2 only. The app still verifies format 1 lines that
-were already issued; see "Format 1" below. An invalid, tampered, or
+There is one line format. The prefix is `leita.` and the format version lives
+in the payload as `v`. Draft prefixes `leita1.` and `leita2.` were never
+issued to a customer. A verifier rejects them. An invalid, tampered, or
 unverified line grants no Pro. Free use and records already on disk stay
 available. Nothing in this file revokes a line that already verified.
 
 ## Line
 
-A format 2 line is one line of ASCII:
+A line is one line of ASCII:
 
 ```
-leita2.<payload-b64>.<sig-b64>
+leita.<payload-b64>.<sig-b64>
 ```
 
-`leita2.` is the format prefix, seven bytes, including the dot. Exactly one
+`leita.` is the format prefix, six bytes, including the dot. Exactly one
 more dot follows, the separator before the signature. The payload and the
 signature are standard base64 (below) and neither alphabet contains `.`, so
 a line contains exactly two dots.
 
-The signature is computed over the bytes of `leita2.<payload-b64>`: everything
+The signature is computed over the bytes of `leita.<payload-b64>`: everything
 before the second dot, and not over the raw payload. Those bytes are the
 signed message.
 
@@ -40,10 +41,10 @@ The payload is UTF-8 JSON with no BOM, no insignificant whitespace, and the
 seven keys in this order, each exactly once:
 
 ```
-{"v":2,"id":"<id>","email":"<email>","scope":"<scope>","features":"<features>","paidThrough":"<paidThrough>","issued":"<issued>"}
+{"v":1,"id":"<id>","email":"<email>","scope":"<scope>","features":"<features>","paidThrough":"<paidThrough>","issued":"<issued>"}
 ```
 
-`v` is the JSON number `2`: one byte, `0x32`, no sign, no fraction, no
+`v` is the JSON number `1`: one byte, `0x31`, no sign, no fraction, no
 exponent. Every other value is a JSON string. The characters allowed in those
 strings cannot be `"` or `\`, so a canonical string is `"`, then the raw
 bytes, then `"`. No `\u` escapes, no escaped solidus, no extra spaces around
@@ -53,17 +54,19 @@ A verifier that parses JSON and then accepts the values is not enough. Decode
 the payload and require the decoded bytes to equal the canonical encoding of
 the fields, rebuilt in the form above. Key order, whitespace, escapes,
 duplicate keys, and extra keys all fail that comparison. The signature can be
-valid over a non-canonical payload; the verifier still rejects it.
+valid over a non-canonical payload; the verifier still rejects it. A payload
+whose `v` is not `1` is rejected the same way. A later incompatible change
+uses a higher `v`, which this verifier does not accept.
 
 ## Fields
 
 | Key | JSON type | Meaning |
 | --- | --- | --- |
-| `v` | number `2` | Format version inside the payload. A prefix of `leita2.` with any other `v` is rejected. |
+| `v` | number `1` | Format version inside the payload. Any other value is rejected. |
 | `id` | string | Licence id. 1 to 64 bytes from `A-Za-z0-9_-`. Opaque, stable, chosen by the server. Not a Polar product id. |
 | `email` | string | Licensee email, as the buyer wrote it. No case folding, no Unicode normalisation. 3 to 254 bytes. Each byte is printable ASCII `0x21`–`0x7E` except `"` (`0x22`) and `\` (`0x5C`). Exactly one `@`, and it is neither the first nor the last byte. |
 | `scope` | string | Permitted use. Exactly one of `personal`, `professional`, `organisation`. The spelling is `organisation`. |
-| `features` | string | Feature set id. Format 2 defines one id, `pro`: tracking, automation, and Pro report workflows. Any other value is rejected. Scope does not change the feature set. |
+| `features` | string | Feature set id. This format defines one id, `pro`: tracking, automation, and Pro report workflows. Any other value is rejected. Scope does not change the feature set. |
 | `paidThrough` | string | Paid-through instant. The canonical UTC profile below. |
 | `issued` | string | Instant the line was signed. The same profile. |
 
@@ -104,23 +107,31 @@ Ed25519ph and not Ed25519ctx.
 - Private key: the 32-byte seed. Go `ed25519.NewKeyFromSeed`. Not the
   64-byte expanded key, and not PKCS8 or PEM.
 - Public key: 32 raw bytes. The release build takes it as 64 hex characters
-  (`LEITA_LICENCE_KEY`), either case. The vectors below use lowercase hex.
+  (`LEITA_LICENCE_KEY`), either case, compiled in. The vectors below use
+  lowercase hex. There is no environment variable that replaces it at run
+  time.
 - Signature: 64 raw bytes, then standard base64. Not ASN.1.
 
-The signed message is the exact ASCII bytes of `leita2.` concatenated with
+The signed message is the exact ASCII bytes of `leita.` concatenated with
 the payload's base64 text. Verify those bytes. Do not verify the decoded
 JSON, and do not verify a buffer that still has the signature suffix.
+
+A release build embeds the production public key only. Sandbox lines are
+signed with a different key, so they fail in a release build. A development
+build compiled with the sandbox public key accepts them.
+`LEITA_ACTIVATE_URL` for that build is
+`https://mordaunt.dev/leita/sandbox/activate`.
 
 ## Verification
 
 1. Trim leading and trailing Unicode whitespace.
-2. Require the prefix `leita2.`. Another `leita<digit>.` prefix is a
-   different format (format 1 is accepted by the app; anything else is an
-   unknown format). A line that does not start with `leita` is malformed.
+2. Require the prefix `leita.`. Any other prefix that starts with `leita`
+   and contains a dot (`leita1.`, `leita2.`, a later `leita<digit>.`) is an
+   unknown format. A line that does not start with `leita` is malformed.
 3. Split on the only remaining dot. Reject any other count.
 4. Base64-decode the payload and the signature as above. The signature must
    be 64 bytes.
-5. Verify Ed25519 over `leita2.<payload-b64>` with the build's public key.
+5. Verify Ed25519 over `leita.<payload-b64>` with the build's public key.
    A bad signature stops here. The payload is not interpreted.
 6. Require the decoded payload to be the canonical encoding, and each field
    to match the table. Failure here is a terms failure: signed, but not a
@@ -132,15 +143,15 @@ different build; that is the app's existing behaviour for a key mismatch.
 
 ## What Pro the line grants
 
-The tier names a permitted use. All three scopes grant the same `pro` feature
-set.
+The scope names a permitted use. All three scopes grant the same `pro`
+feature set.
 
 Compare instants, not local clocks, download dates, or the subscription's
 current billing state. A release is Pro-eligible when its authenticated
 release instant is less than or equal to `paidThrough`. Equal is eligible.
 The release stays eligible offline after cancellation. A release whose
 instant is later runs Free and still opens records. A build with no
-authenticated release instant is not eligible under a format 2 line.
+authenticated release instant is not eligible.
 
 The release instant is the 20-byte profile, once, for that release:
 
@@ -159,33 +170,6 @@ The release instant is the 20-byte profile, once, for that release:
   embedded instant. It is the copy of `released.txt` from the release that
   built it.
 
-Format 1 has no `paidThrough`. A format 1 line that verifies keeps the rights
-it already had, on every build, with no cutoff.
-
-## Format 1
-
-Already issued lines stay valid. The server does not mint new ones.
-
-```
-leita1.<payload-b64>.<sig-b64>
-```
-
-The signed message is `leita1.<payload-b64>`, same splitting and Ed25519
-rules as format 2. The payload is JSON, standard base64, but it is not
-canonical: the signature covers whatever bytes the original issuer encoded,
-and the verifier does not rebuild them. The object carries these strings:
-
-| Key | Meaning |
-| --- | --- |
-| `licensee` | Who it was sold to, after trimming surrounding whitespace. Empty is rejected. |
-| `tier` | Exactly one of `supporter`, `office`, `team`, `site`, `multi_site`. |
-| `order` | The seller's order id. Empty is rejected. |
-| `issued` | The day it was signed, kept as text. Historical lines use `YYYY-MM-DD`. |
-
-No `paidThrough`, no feature set, no format version field. The prefix is the
-version. Unknown tier names are rejected. A format 1 line does not become a
-format 2 line and is not rewritten on activation.
-
 ## Activation
 
 The app exchanges a licence key for a line. It sends nothing else about the
@@ -198,9 +182,9 @@ POST /leita/activate
 
 The production URL is `https://mordaunt.dev/leita/activate`.
 `LEITA_ACTIVATE_URL`, when set to a non-empty string, replaces that URL
-entirely, including the path. It is how the sandbox is pointed at another
-host. An explicit URL the app was given outranks the variable, and the
-variable outranks the production URL.
+entirely, including the path. The sandbox URL is
+`https://mordaunt.dev/leita/sandbox/activate`. An explicit URL the app was
+given outranks the variable, and the variable outranks the production URL.
 
 Request headers:
 
@@ -231,7 +215,7 @@ Success, HTTP 200:
 {"licence":"<line>"}
 ```
 
-`<line>` is a format 2 line, JSON-string-escaped per RFC 8259. Format 2's
+`<line>` is a licence line, JSON-string-escaped per RFC 8259. This format's
 alphabet needs no escapes. The app verifies the line offline against the
 public key it was built with. A 200 whose body is not this object, or whose
 line does not verify, grants nothing.
@@ -284,25 +268,25 @@ trailing LF. The payload files have none. The line files have one trailing LF.
 Payload, 160 bytes:
 
 ```
-{"v":2,"id":"lic_7f3a9c2e1b","email":"ada@example.com","scope":"personal","features":"pro","paidThrough":"2027-10-19T00:00:00Z","issued":"2026-10-19T12:00:00Z"}
+{"v":1,"id":"lic_7f3a9c2e1b","email":"ada@example.com","scope":"personal","features":"pro","paidThrough":"2027-10-19T00:00:00Z","issued":"2026-10-19T12:00:00Z"}
 ```
 
 Payload base64:
 
 ```
-eyJ2IjoyLCJpZCI6ImxpY183ZjNhOWMyZTFiIiwiZW1haWwiOiJhZGFAZXhhbXBsZS5jb20iLCJzY29wZSI6InBlcnNvbmFsIiwiZmVhdHVyZXMiOiJwcm8iLCJwYWlkVGhyb3VnaCI6IjIwMjctMTAtMTlUMDA6MDA6MDBaIiwiaXNzdWVkIjoiMjAyNi0xMC0xOVQxMjowMDowMFoifQ==
+eyJ2IjoxLCJpZCI6ImxpY183ZjNhOWMyZTFiIiwiZW1haWwiOiJhZGFAZXhhbXBsZS5jb20iLCJzY29wZSI6InBlcnNvbmFsIiwiZmVhdHVyZXMiOiJwcm8iLCJwYWlkVGhyb3VnaCI6IjIwMjctMTAtMTlUMDA6MDA6MDBaIiwiaXNzdWVkIjoiMjAyNi0xMC0xOVQxMjowMDowMFoifQ==
 ```
 
 Signature, 64 bytes, hex:
 
 ```
-54337fdfce114b44fcbd11b508611cfd829080679e3a3e808c769187edd6465e13fb620eb4ff6c40c09f75f25d7b0d7fe0bdbd1ebaf0e138a2a03d8e11e8bd09
+fceceee1c8f94636822903a9707a2fdce17b7031bfe9cd48bc4ec2f5888f7027d0cdc70a26f2f0f967666111ec43a23d832abfed0027de83e20be844169f360a
 ```
 
 Line:
 
 ```
-leita2.eyJ2IjoyLCJpZCI6ImxpY183ZjNhOWMyZTFiIiwiZW1haWwiOiJhZGFAZXhhbXBsZS5jb20iLCJzY29wZSI6InBlcnNvbmFsIiwiZmVhdHVyZXMiOiJwcm8iLCJwYWlkVGhyb3VnaCI6IjIwMjctMTAtMTlUMDA6MDA6MDBaIiwiaXNzdWVkIjoiMjAyNi0xMC0xOVQxMjowMDowMFoifQ==.VDN/384RS0T8vRG1CGEc/YKQgGeeOj6AjHaRh+3WRl4T+2IOtP9sQMCfdfJdew1/4L29Hrrw4TiioD2OEei9CQ==
+leita.eyJ2IjoxLCJpZCI6ImxpY183ZjNhOWMyZTFiIiwiZW1haWwiOiJhZGFAZXhhbXBsZS5jb20iLCJzY29wZSI6InBlcnNvbmFsIiwiZmVhdHVyZXMiOiJwcm8iLCJwYWlkVGhyb3VnaCI6IjIwMjctMTAtMTlUMDA6MDA6MDBaIiwiaXNzdWVkIjoiMjAyNi0xMC0xOVQxMjowMDowMFoifQ==./Ozu4cj5RjaCKQOpcHov3OF7cDG/6c1IvE7C9YiPcCfQzccKJvLw+WdmYRHsQ6I9gyq/7QAn3oPiC+hEFp82Cg==
 ```
 
 `paidThrough` is `2027-10-19T00:00:00Z`. A release stamped at that instant is
@@ -313,25 +297,25 @@ eligible. A release stamped `2027-10-19T00:00:01Z` is not.
 Payload, 168 bytes:
 
 ```
-{"v":2,"id":"lic_org_4401","email":"ops@northwind.example","scope":"organisation","features":"pro","paidThrough":"2028-01-01T00:00:00Z","issued":"2027-01-01T00:00:00Z"}
+{"v":1,"id":"lic_org_4401","email":"ops@northwind.example","scope":"organisation","features":"pro","paidThrough":"2028-01-01T00:00:00Z","issued":"2027-01-01T00:00:00Z"}
 ```
 
 Payload base64:
 
 ```
-eyJ2IjoyLCJpZCI6ImxpY19vcmdfNDQwMSIsImVtYWlsIjoib3BzQG5vcnRod2luZC5leGFtcGxlIiwic2NvcGUiOiJvcmdhbmlzYXRpb24iLCJmZWF0dXJlcyI6InBybyIsInBhaWRUaHJvdWdoIjoiMjAyOC0wMS0wMVQwMDowMDowMFoiLCJpc3N1ZWQiOiIyMDI3LTAxLTAxVDAwOjAwOjAwWiJ9
+eyJ2IjoxLCJpZCI6ImxpY19vcmdfNDQwMSIsImVtYWlsIjoib3BzQG5vcnRod2luZC5leGFtcGxlIiwic2NvcGUiOiJvcmdhbmlzYXRpb24iLCJmZWF0dXJlcyI6InBybyIsInBhaWRUaHJvdWdoIjoiMjAyOC0wMS0wMVQwMDowMDowMFoiLCJpc3N1ZWQiOiIyMDI3LTAxLTAxVDAwOjAwOjAwWiJ9
 ```
 
 Signature, 64 bytes, hex:
 
 ```
-6c8cfd804dae96505dc7ca03231b7c59eecff49232371d21689e3a05a1d7748a010afe5033b25042c580be719b679cf9a0494b304223b7753a39bfb0e052340a
+fdd5c5d652f9d0d92bd35f9ab57f119be4f5a583d9e06af2be3bf3e644bb054b1e763126d8f02917f61e59f1ce544927c38302eb9161d92bf4bf08f934112308
 ```
 
 Line:
 
 ```
-leita2.eyJ2IjoyLCJpZCI6ImxpY19vcmdfNDQwMSIsImVtYWlsIjoib3BzQG5vcnRod2luZC5leGFtcGxlIiwic2NvcGUiOiJvcmdhbmlzYXRpb24iLCJmZWF0dXJlcyI6InBybyIsInBhaWRUaHJvdWdoIjoiMjAyOC0wMS0wMVQwMDowMDowMFoiLCJpc3N1ZWQiOiIyMDI3LTAxLTAxVDAwOjAwOjAwWiJ9.bIz9gE2ullBdx8oDIxt8We7P9JIyNx0haJ46BaHXdIoBCv5QM7JQQsWAvnGbZ5z5oElLMEIjt3U6Ob+w4FI0Cg==
+leita.eyJ2IjoxLCJpZCI6ImxpY19vcmdfNDQwMSIsImVtYWlsIjoib3BzQG5vcnRod2luZC5leGFtcGxlIiwic2NvcGUiOiJvcmdhbmlzYXRpb24iLCJmZWF0dXJlcyI6InBybyIsInBhaWRUaHJvdWdoIjoiMjAyOC0wMS0wMVQwMDowMDowMFoiLCJpc3N1ZWQiOiIyMDI3LTAxLTAxVDAwOjAwOjAwWiJ9./dXF1lL50Nkr01+atX8Rm+T1pYPZ4Gryvjvz5kS7BUsedjEm2PApF/YeWfHOVEknw4MC65Fh2Sv0vwj5NBEjCA==
 ```
 
 `scope` is `organisation`. The same encoding with `scope` set to
