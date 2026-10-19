@@ -45,6 +45,8 @@ resolve :: proc(
 	if is_drive_spec(path) {
 		path = strings.concatenate({path[:1], `:\`}, context.temp_allocator)
 	}
+	// Expand 8.3 components so the target is stored under its long name.
+	path = long_name(path)
 	wpath := win.utf8_to_wstring(path, context.temp_allocator)
 
 	attrs := win.GetFileAttributesW(wpath)
@@ -115,6 +117,31 @@ resolve :: proc(
 	// The mount point answered everything above; nothing has touched the volume
 	// itself. Whether that opens is what decides the reader.
 	return t, choose(t, can_open(t.volume)), .None
+}
+
+// long_name is path with 8.3 components expanded, or path when GetLongPathNameW
+// yields nothing.
+@(private)
+long_name :: proc(path: string) -> string {
+	wpath := win.utf8_to_wstring(path, context.temp_allocator)
+	buf: [win.MAX_PATH]u16
+	n := win.GetLongPathNameW(wpath, win.wstring(&buf[0]), len(buf))
+	if n == 0 {
+		return path
+	}
+	wide: win.wstring
+	if int(n) < len(buf) {
+		wide = win.wstring(&buf[0])
+	} else {
+		owned := make([]u16, int(n), context.temp_allocator)
+		n = win.GetLongPathNameW(wpath, win.wstring(raw_data(owned)), n)
+		if n == 0 {
+			return path
+		}
+		wide = win.wstring(raw_data(owned))
+	}
+	long, err := win.wstring_to_utf8(wide, int(n), context.temp_allocator)
+	return long if err == nil else path
 }
 
 @(private)
