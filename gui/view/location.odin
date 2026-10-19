@@ -21,9 +21,10 @@ The steps sit in a window onto them that shows the deepest, letting the top
 fade off its left edge, and that scrolls sideways under the wheel or a trackpad
 with no bar.
 
-A click on the bar's empty end, or Cmd/Ctrl+L, turns it into a field holding the path:
-Enter scans what it holds, Escape or a click away puts the steps back. With no
-scan yet, or one that failed, it is the field.
+A click on the bar's empty end, on the current step, or Cmd/Ctrl+L, turns it into a
+field holding the path: Enter scans what it holds, Escape or a click away puts the
+steps back. With no scan yet, or one that failed, it is the field. A path that fills
+the bar has no empty end; a click on the current step is then what still opens it.
 */
 
 // LOCATION_HEIGHT is the bar's height, Primer's medium control.
@@ -147,7 +148,7 @@ an edge the steps run past. The strip is laid out here rather than as a row of
 widgets, since a row gives what it cannot fit no width at all, and the bar has to
 know how long the strip is to scroll it. Each step takes the pointer through an
 area of its own; the well beneath takes the wheel, and a press on its empty end
-opens the field.
+or on the current step opens the field.
 */
 @(private)
 trail :: proc(gtx: ^ui.Ctx, m: ^Model, steps: []Step, here: string, loc := #caller_location) {
@@ -238,6 +239,8 @@ trail :: proc(gtx: ^ui.Ctx, m: ^Model, steps: []Step, here: string, loc := #call
 		if c.clicked {
 			switch {
 			case s.current:
+				// Already here: a full bar has no empty end, so this click opens the field.
+				edit_location(m, here)
 			case s.inside:
 				open(m, s.node)
 			case:

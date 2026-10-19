@@ -9,6 +9,7 @@ import "jm:ui/primer"
 import "jm:ui/render"
 
 import "../command"
+import "../query"
 
 @(private = "file")
 Location_Rig :: struct {
@@ -35,6 +36,50 @@ location_open :: proc(r: ^Location_Rig) {
 location_close :: proc(r: ^Location_Rig) {
 	render.headless_destroy(&r.h)
 	model_destroy(&r.m)
+}
+
+@(private = "file")
+LONG_DIR :: "directory_with_a_very_long_name"
+
+// location_trail_open is the bar at rest on a finished scan whose crumbs fill it.
+@(private = "file")
+location_trail_open :: proc(r: ^Location_Rig, crumbs: []query.Crumb, size: ops.Size = {640, 700}) {
+	model_init(&r.m, crumbs[0].name)
+	r.m.settings_read = true
+	fonts := []ops.Font_Ref {
+		{0, ui.default_font(), 400},
+		{1, ui.default_font(), 500},
+		{2, ui.default_font(), 600},
+		{3, ui.default_font(), 400},
+	}
+	render.headless_init(&r.h, view, &r.m, size, fonts)
+	p := &r.h.p
+	ui.probe_deliver(
+		p,
+		query.Progress{},
+		query.Progress_Result{generation = 1, state = .Done, target = crumbs[0].name},
+	)
+	ui.probe_deliver(
+		p,
+		query.Rings{generation = 1, dir = query.ROOT},
+		query.Rings_Result{generation = 1, dir = 1, crumbs = crumbs, bytes = 100, was = -1},
+	)
+	ui.probe_frame(p)
+	ui.probe_frame(p)
+}
+
+@(private = "file")
+full_crumbs :: proc() -> []query.Crumb {
+	top := strings.concatenate(
+		{"/scanroot/", LONG_DIR, "_aaa/", LONG_DIR, "_bbb/", LONG_DIR, "_ccc"},
+		context.temp_allocator,
+	)
+	crumbs := make([]query.Crumb, 4, context.temp_allocator)
+	crumbs[0] = {1, top}
+	crumbs[1] = {2, strings.concatenate({LONG_DIR, "_ddd"}, context.temp_allocator)}
+	crumbs[2] = {3, strings.concatenate({LONG_DIR, "_eee"}, context.temp_allocator)}
+	crumbs[3] = {4, strings.concatenate({LONG_DIR, "_fff"}, context.temp_allocator)}
+	return crumbs
 }
 
 // A path longer than a command can carry is not sent, which would scan an
@@ -82,4 +127,60 @@ a_frame_leaves_no_scheme_behind :: proc(t: ^testing.T) {
 	ui.probe_frame(&r.h.p)
 	testing.expect(t, primer.scheme() != &r.m.scheme, "the scheme is not the Model's")
 	testing.expect_value(t, primer.theme(), primer.Theme.Light)
+}
+
+// A path that fills the bar has no empty end to click: a click on the well, or
+// on the current step, opens the field. A click on another step still navigates,
+// and Ctrl+L still opens the field.
+@(test)
+a_full_location_bar_opens_on_a_click :: proc(t: ^testing.T) {
+	r: Location_Rig
+	location_trail_open(&r, full_crumbs())
+	defer location_close(&r)
+	p := &r.h.p
+
+	current := strings.concatenate({LONG_DIR, "_fff"}, context.temp_allocator)
+	parent := strings.concatenate({LONG_DIR, "_eee"}, context.temp_allocator)
+	bar := ui.probe_bounds(p, "Location")
+	testing.expect(t, bar.w > 0, "the bar is drawn")
+	deepest := ui.probe_bounds(p, current)
+	testing.expect(t, deepest.w > 0, "the deepest step is shown")
+	root := ui.probe_bounds(p, "scanroot")
+	testing.expectf(
+		t,
+		root.x < bar.x,
+		"the top has scrolled off: scanroot at %v, bar from %v",
+		root.x,
+		bar.x,
+	)
+	testing.expect(t, !r.m.editing, "the bar is the steps")
+
+	ui.probe_click_at(p, {bar.x + bar.w - 3, bar.y + bar.h / 2})
+	testing.expect(t, r.m.editing, "a click on the full bar opens the field")
+	testing.expect(
+		t,
+		strings.contains(ui.text_string(&r.m.path), current),
+		"holding the path shown",
+	)
+
+	ui.probe_key(p, .Escape)
+	ui.probe_frame(p)
+	testing.expect(t, !r.m.editing, "Escape puts the steps back")
+
+	testing.expect(t, ui.probe_click(p, current), "the current step")
+	testing.expect(t, r.m.editing, "opens the field, already being here")
+	testing.expect_value(t, r.m.dir, query.ROOT)
+	ui.probe_frame(p)
+
+	ui.probe_key(p, .Escape)
+	ui.probe_frame(p)
+	testing.expect(t, !r.m.editing, "Escape puts the steps back")
+	testing.expect(t, ui.probe_click(p, parent), "a step that is not current")
+	testing.expect_value(t, r.m.dir, u32(3))
+	testing.expect(t, !r.m.editing, "navigates rather than opening the field")
+
+	r.m.dir = query.ROOT
+	ui.probe_frame(p)
+	ui.probe_key(p, .L, {ui.SHORTCUT})
+	testing.expect(t, r.m.editing, "Ctrl+L still opens the field")
 }
