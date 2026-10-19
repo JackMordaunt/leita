@@ -24,7 +24,7 @@ a_slashed_path_resolves_with_backslashes :: proc(t: ^testing.T) {
 	dir, err := os.temp_directory(context.temp_allocator)
 	testing.expect(t, err == nil, "no temp directory")
 	dir = strings.trim_right(dir, `\/`)
-	root := fmt.tprintf(`%s\leita_resolve_slashes`, dir)
+	root := fmt.tprintf(`%s\leita_resolve_slashes_%d`, dir, os.get_pid())
 	os.remove_all(root)
 	testing.expect(t, os.make_directory(root) == nil, "could not make the root")
 	defer os.remove_all(root)

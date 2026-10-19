@@ -23,7 +23,7 @@ test_measure_reads_or_says_why :: proc(t: ^testing.T) {
 		testing.expect(t, temp_err == nil, "no temp directory")
 		dir = temp
 	}
-	path := fmt.tprintf("%s/leita_btrfs_measure", dir)
+	path := fmt.tprintf("%s/leita_btrfs_measure_%d", dir, os.get_pid())
 	defer os.remove(path)
 	data := make([]u8, 256 * 1024, context.temp_allocator)
 	for &b, i in data {

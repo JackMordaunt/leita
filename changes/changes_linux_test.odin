@@ -16,7 +16,7 @@ import "../journal"
 no_logs :: proc(t: ^testing.T, name: string) -> string {
 	dir, _ := os.temp_directory(context.temp_allocator)
 	logs, _ := filepath.join(
-		{dir, fmt.tprintf("leita_changes_logs_%s", name)},
+		{dir, fmt.tprintf("leita_changes_logs_%s_%d", name, os.get_pid())},
 		context.temp_allocator,
 	)
 	os.remove_all(logs)
@@ -94,8 +94,14 @@ test_a_linux_cursor_rescans_a_filesystem_made_anew :: proc(t: ^testing.T) {
 @(test)
 test_a_directory_renamed_onto_the_place_rescans :: proc(t: ^testing.T) {
 	dir, _ := os.temp_directory(context.temp_allocator)
-	place, _ := filepath.join({dir, "leita_changes_renamed_place"}, context.temp_allocator)
-	other, _ := filepath.join({dir, "leita_changes_renamed_other"}, context.temp_allocator)
+	place, _ := filepath.join(
+		{dir, fmt.tprintf("leita_changes_renamed_place_%d", os.get_pid())},
+		context.temp_allocator,
+	)
+	other, _ := filepath.join(
+		{dir, fmt.tprintf("leita_changes_renamed_other_%d", os.get_pid())},
+		context.temp_allocator,
+	)
 	os.remove_all(place)
 	os.remove_all(other)
 	testing.expect(t, os.make_directory(place) == nil, "could not make the place")

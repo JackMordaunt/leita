@@ -109,7 +109,7 @@ a_report_of_a_directory_reads_back :: proc(t: ^testing.T) {
 	info, stat_err := os.stat(dir, context.temp_allocator)
 	testing.expect(t, stat_err == nil, "the temp directory is not there")
 	dir = strings.trim_right(info.fullpath, `/\`)
-	root := fmt.tprintf("%s%sleita_report_cli", dir, scan.SEPARATOR)
+	root := fmt.tprintf("%s%sleita_report_cli_%d", dir, scan.SEPARATOR, os.get_pid())
 	os.remove_all(root)
 	defer os.remove_all(root)
 	testing.expect(t, os.make_directory(root) == nil, "could not make the root")
@@ -158,7 +158,7 @@ a_report_of_a_directory_reads_back :: proc(t: ^testing.T) {
 a_pdf_report_is_written_on_its_paper :: proc(t: ^testing.T) {
 	dir, dir_err := os.temp_directory(context.temp_allocator)
 	testing.expect(t, dir_err == nil, "no temp directory")
-	root := fmt.tprintf("%s/leita_report_pdf", dir)
+	root := fmt.tprintf("%s/leita_report_pdf_%d", dir, os.get_pid())
 	os.remove_all(root)
 	defer os.remove_all(root)
 	testing.expect(t, os.make_directory(root) == nil, "could not make the root")
@@ -217,7 +217,7 @@ its "thresholds" member stays null, since none was asked for.
 no_threshold_flags_leaves_the_exit_code_unchanged :: proc(t: ^testing.T) {
 	dir, dir_err := os.temp_directory(context.temp_allocator)
 	testing.expect(t, dir_err == nil, "no temp directory")
-	root := fmt.tprintf("%s/leita_threshold_unconfigured", dir)
+	root := fmt.tprintf("%s/leita_threshold_unconfigured_%d", dir, os.get_pid())
 	os.remove_all(root)
 	defer os.remove_all(root)
 	testing.expect(t, os.make_directory(root) == nil, "could not make the root")
@@ -291,7 +291,7 @@ exit_code_reads_a_verdict_back :: proc(t: ^testing.T) {
 a_report_after_the_trial_needs_a_licence :: proc(t: ^testing.T) {
 	// A real directory, so only the lock can stop the report.
 	tmp, _ := os.temp_directory(context.temp_allocator)
-	root := fmt.tprintf("%s/leita_locked_cli", tmp)
+	root := fmt.tprintf("%s/leita_locked_cli_%d", tmp, os.get_pid())
 	os.remove_all(root)
 	testing.expect(t, os.make_directory(root) == nil)
 	defer os.remove_all(root)
@@ -304,11 +304,12 @@ a_report_after_the_trial_needs_a_licence :: proc(t: ^testing.T) {
 
 // A directory under the temp folder for one test, empty, and its history store
 // beside it rather than in it, so the store is not part of what is scanned.
+// The name carries this process's id so two test runs do not share the path.
 @(private)
 fresh :: proc(t: ^testing.T, name: string) -> (root, store: string) {
 	dir, dir_err := os.temp_directory(context.temp_allocator)
 	testing.expect(t, dir_err == nil, "no temp directory")
-	root = fmt.tprintf("%s/%s", dir, name)
+	root = fmt.tprintf("%s/%s_%d", dir, name, os.get_pid())
 	store = fmt.tprintf("%s.history/history.db", root)
 	os.remove_all(root)
 	os.remove_all(filepath.dir(store))
@@ -656,7 +657,7 @@ the_summary_shows_a_hostile_name_without_its_controls :: proc(t: ^testing.T) {
 @(private)
 capture_stdout :: proc(t: ^testing.T, opt: Options) -> (out: string, code: int) {
 	dir, _ := os.temp_directory(context.temp_allocator)
-	path := fmt.tprintf("%s/leita_hostile_stdout", dir)
+	path := fmt.tprintf("%s/leita_hostile_stdout_%d", dir, os.get_pid())
 	defer os.remove(path)
 	file, err := os.create(path)
 	if !testing.expect(t, err == nil, "could not make a file to capture standard output") {

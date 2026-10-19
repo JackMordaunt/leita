@@ -11,7 +11,7 @@ import "core:time"
 prune_fixture :: proc(t: ^testing.T, name: string) -> string {
 	dir, dir_err := os.temp_directory(context.temp_allocator)
 	testing.expect(t, dir_err == nil, "no temp directory")
-	folder := fmt.tprintf("%s/leita_gui_thumbs_%s", dir, name)
+	folder := fmt.tprintf("%s/leita_gui_thumbs_%s_%d", dir, name, os.get_pid())
 	os.remove_all(folder)
 	testing.expect(t, os.make_directory(folder) == nil, "could not make the folder")
 
@@ -104,7 +104,7 @@ match it.
 a_file_touched_since_the_snapshot_is_no_longer_unmoved :: proc(t: ^testing.T) {
 	dir, dir_err := os.temp_directory(context.temp_allocator)
 	testing.expect(t, dir_err == nil, "no temp directory")
-	path := fmt.tprintf("%s/leita_gui_thumbs_race.png", dir)
+	path := fmt.tprintf("%s/leita_gui_thumbs_race_%d.png", dir, os.get_pid())
 	defer os.remove(path)
 	testing.expect(t, os.write_entire_file(path, []byte{1, 2, 3, 4}) == nil)
 	old := time.time_add(time.now(), -(40 * 24 * time.Hour))

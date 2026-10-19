@@ -22,7 +22,7 @@ other order. tmpfs, where the temp directory usually is, lists the newest first.
 test_entries_are_read_in_inode_order :: proc(t: ^testing.T) {
 	dir, dir_err := os.temp_directory(context.temp_allocator)
 	testing.expect(t, dir_err == nil, "no temp directory")
-	root := fmt.tprintf("%s/leita_walk_inodes", dir)
+	root := fmt.tprintf("%s/leita_walk_inodes_%d", dir, os.get_pid())
 	os.remove_all(root)
 	defer os.remove_all(root)
 	testing.expect(t, os.make_directory(root) == nil, "could not make the root")
@@ -161,7 +161,7 @@ test_the_walk_stays_on_one_filesystem_but_not_one_device :: proc(t: ^testing.T) 
 		testing.expect(t, cwd_err == nil, "no working directory")
 		scratch = fmt.tprintf("%s/build", cwd)
 	}
-	root := fmt.tprintf("%s/leita_walk_subvolumes", scratch)
+	root := fmt.tprintf("%s/leita_walk_subvolumes_%d", scratch, os.get_pid())
 	defer remove_subvolumes(root)
 	remove_subvolumes(root)
 	testing.expect(t, os.make_directory_all(root) == nil, "could not make the root")
@@ -347,7 +347,7 @@ listing_place :: proc(t: ^testing.T, name: string) -> (root: string, ok: bool) {
 	}
 	dir, dir_err := os.temp_directory(context.temp_allocator)
 	testing.expect(t, dir_err == nil, "no temp directory")
-	root = fmt.tprintf("%s/leita_walk_%s", dir, name)
+	root = fmt.tprintf("%s/leita_walk_%s_%d", dir, name, os.get_pid())
 	let_search(root)
 	os.remove_all(root)
 	testing.expect(t, os.make_directory(root) == nil, "could not make the root")

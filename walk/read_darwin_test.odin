@@ -227,7 +227,7 @@ test_a_malformed_entry_is_refused :: proc(t: ^testing.T) {
 fresh_root :: proc(t: ^testing.T, name: string) -> string {
 	dir, dir_err := os.temp_directory(context.temp_allocator)
 	testing.expect(t, dir_err == nil, "no temp directory")
-	root := fmt.tprintf("%s/leita_walk_darwin_%s", dir, name)
+	root := fmt.tprintf("%s/leita_walk_darwin_%s_%d", dir, name, os.get_pid())
 	os.remove_all(root)
 	testing.expect(t, os.make_directory(root) == nil, "could not make the root")
 	return root

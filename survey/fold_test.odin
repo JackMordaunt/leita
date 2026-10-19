@@ -36,8 +36,8 @@ a_followed_link_folded_matches_the_serial_rollup :: proc(t: ^testing.T) {
 	}
 	dir, dir_err := os.temp_directory(context.temp_allocator)
 	testing.expect(t, dir_err == nil, "no temp directory")
-	outside := fmt.tprintf("%s/leita_fold_outside", dir)
-	root := fmt.tprintf("%s/leita_fold_follow", dir)
+	outside := fmt.tprintf("%s/leita_fold_outside_%d", dir, os.get_pid())
+	root := fmt.tprintf("%s/leita_fold_follow_%d", dir, os.get_pid())
 	os.remove_all(outside)
 	os.remove_all(root)
 	defer os.remove_all(outside)
@@ -263,7 +263,7 @@ read_at :: proc(t: ^testing.T, root: string, fold, follow: bool) -> scan.Tree {
 make_sample :: proc(t: ^testing.T, name: string) -> string {
 	dir, dir_err := os.temp_directory(context.temp_allocator)
 	testing.expect(t, dir_err == nil, "no temp directory")
-	root := fmt.tprintf("%s/leita_fold_%s", dir, name)
+	root := fmt.tprintf("%s/leita_fold_%s_%d", dir, name, os.get_pid())
 	os.remove_all(root)
 	testing.expect(t, os.make_directory(root) == nil, "could not make the root")
 
@@ -312,7 +312,7 @@ reveal :: proc(root: string) {
 make_chain :: proc(t: ^testing.T, name: string, depth: int) -> string {
 	dir, dir_err := os.temp_directory(context.temp_allocator)
 	testing.expect(t, dir_err == nil, "no temp directory")
-	root := fmt.tprintf("%s/leita_fold_%s", dir, name)
+	root := fmt.tprintf("%s/leita_fold_%s_%d", dir, name, os.get_pid())
 	os.remove_all(root)
 	testing.expect(t, os.make_directory(root) == nil, "could not make the root")
 	cur := root

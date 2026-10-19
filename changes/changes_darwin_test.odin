@@ -13,7 +13,7 @@ import "core:time"
 fresh :: proc(t: ^testing.T, name: string) -> string {
 	dir, dir_err := os.temp_directory(context.temp_allocator)
 	testing.expect(t, dir_err == nil, "no temp directory")
-	root := fmt.tprintf("%s/leita_changes_%s", strings.trim_right(dir, "/"), name)
+	root := fmt.tprintf("%s/leita_changes_%s_%d", strings.trim_right(dir, "/"), name, os.get_pid())
 	os.remove_all(root)
 	testing.expect(t, os.make_directory(root) == nil, "could not make the root")
 	return root

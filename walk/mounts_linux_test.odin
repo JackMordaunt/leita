@@ -148,7 +148,7 @@ test_a_symlink_loop_is_followed_once :: proc(t: ^testing.T) {
 bind_place :: proc(t: ^testing.T, name: string) -> string {
 	dir, dir_err := os.temp_directory(context.temp_allocator)
 	testing.expect(t, dir_err == nil, "no temp directory")
-	base := fmt.tprintf("%s/leita_walk_binds_%s", dir, name)
+	base := fmt.tprintf("%s/leita_walk_binds_%s_%d", dir, name, os.get_pid())
 	os.remove_all(base)
 	testing.expect(t, os.make_directory(base) == nil, "could not make the base")
 	return base

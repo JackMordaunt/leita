@@ -329,9 +329,10 @@ under :: proc(dir: string, names: ..string) -> string {
 	return strings.to_string(sb)
 }
 
+// The name carries this process's id so two test runs do not share the path.
 @(private = "file")
 fixture :: proc(t: ^testing.T, name: string) -> string {
-	root := under(scratch(t), fmt.tprintf("leita_gui_%s", name))
+	root := under(scratch(t), fmt.tprintf("leita_gui_%s_%d", name, os.get_pid()))
 	os.remove_all(root)
 
 	write :: proc(t: ^testing.T, path: string, size: int) {
@@ -1029,7 +1030,7 @@ the_location_bar_walks_the_path_and_scans_above_it :: proc(t: ^testing.T) {
 	defer rig_close(&r)
 	testing.expect(t, settle(&r, "Done"))
 	testing.expect(t, settle(&r, "arc photos"))
-	testing.expect(t, settle(&r, "leita_gui_bar"), "the scan's top is a step")
+	testing.expect(t, settle(&r, filepath.base(root)), "the scan's top is a step")
 	above := filepath.dir(root)
 	testing.expect(t, settle(&r, filepath.base(above)), "and so is the directory above it")
 
@@ -1038,7 +1039,7 @@ the_location_bar_walks_the_path_and_scans_above_it :: proc(t: ^testing.T) {
 	press_and_hand_on(&r)
 	testing.expect(t, settle(&r, "photos"), "photos is a step now")
 	testing.expect(t, settle(&r, "270.3 kB in 2 items"))
-	testing.expect(t, ui.probe_click(&r.p, "leita_gui_bar"))
+	testing.expect(t, ui.probe_click(&r.p, filepath.base(root)))
 	press_and_hand_on(&r)
 	testing.expect(t, settle(&r, "274.4 kB in 2 items"), "the top's step opened the top")
 
@@ -1071,7 +1072,7 @@ the_location_bar_edits_into_a_field_and_back :: proc(t: ^testing.T) {
 	// scan that finishes before the first settle sends nothing to draw one.
 	ui.probe_advance(&r.p, 30, 1.0 / 60)
 	testing.expect(t, settle(&r, "Done"))
-	testing.expect(t, settle(&r, "leita_gui_edit"))
+	testing.expect(t, settle(&r, filepath.base(root)))
 
 	// The bar's empty end opens the field, focused, holding the path.
 	bar := ui.probe_bounds(&r.p, "Location")
@@ -1086,7 +1087,7 @@ the_location_bar_edits_into_a_field_and_back :: proc(t: ^testing.T) {
 	ui.probe_key(&r.p, .Escape)
 	press_and_hand_on(&r)
 	testing.expect(t, !r.m.editing, "Escape closes the field")
-	testing.expect(t, settle(&r, "leita_gui_edit"))
+	testing.expect(t, settle(&r, filepath.base(root)))
 
 	// Enter scans what the field holds.
 	ui.probe_click_at(&r.p, {bar.x + bar.w - 20, bar.y + bar.h / 2})
@@ -1224,7 +1225,7 @@ hovering_a_contents_row_lights_its_arc_and_its_box :: proc(t: ^testing.T) {
 	testing.expect(t, settle(&r, "274.4 kB in 2 items"))
 
 	// The info block says what the chart has lit, the same as pointing at it.
-	said := "4.1 kB · 1.5% of leita_gui_link"
+	said := fmt.tprintf("4.1 kB · 1.5%% of %s", filepath.base(root))
 	testing.expect(t, !ui.probe_tagged(&r.p, said), "nothing is lit yet")
 	row := ui.probe_bounds(&r.p, "notes.txt")
 	ui.probe_move(&r.p, row.x + 24, row.y + row.h / 2)
@@ -1300,7 +1301,7 @@ colouring_by_type_names_the_kind :: proc(t: ^testing.T) {
 	row := ui.probe_bounds(&r.p, "notes.txt")
 	ui.probe_move(&r.p, row.x + 24, row.y + row.h / 2)
 	ui.probe_advance(&r.p, 3, 1.0 / 60)
-	said := "4.1 kB · 1.5% of leita_gui_kinds · Text"
+	said := fmt.tprintf("4.1 kB · 1.5%% of %s · Text", filepath.base(root))
 	testing.expect(t, ui.probe_tagged(&r.p, said), "the info block names the kind")
 }
 
@@ -1319,7 +1320,7 @@ hovering_a_largest_file_lights_its_arc :: proc(t: ^testing.T) {
 	testing.expect(t, settle(&r, under(root, "photos", "big.raw")))
 
 	// big.raw is in the largest files, and in the second ring, under photos.
-	said := "262.1 kB · 95.5% of leita_gui_lfh"
+	said := fmt.tprintf("262.1 kB · 95.5%% of %s", filepath.base(root))
 	testing.expect(t, !ui.probe_tagged(&r.p, said))
 	row := ui.probe_bounds(&r.p, "big.raw")
 	ui.probe_move(&r.p, row.x + 24, row.y + row.h / 2)
@@ -1528,7 +1529,10 @@ opening_a_directory_never_blanks_the_panels :: proc(t: ^testing.T) {
 		// The pointer rests where it clicked, on photos, which the block describes.
 		testing.expect(
 			t,
-			ui.probe_tagged(&r.p, "270.3 kB · 98.5% of leita_gui_steady_open · click to open"),
+			ui.probe_tagged(
+				&r.p,
+				fmt.tprintf("270.3 kB · 98.5%% of %s · click to open", filepath.base(root)),
+			),
 			"the info block keeps its text",
 		)
 		testing.expect(
@@ -1566,7 +1570,7 @@ A directory of projects, made fresh:
 */
 @(private = "file")
 projects :: proc(t: ^testing.T, name: string) -> string {
-	root := under(scratch(t), fmt.tprintf("leita_gui_%s", name))
+	root := under(scratch(t), fmt.tprintf("leita_gui_%s_%d", name, os.get_pid()))
 	os.remove_all(root)
 	for d in ([]string{"", "web", "web/node_modules", "web/node_modules/lib", "rust", "rust/target", "plain", "plain/build"}) {
 		testing.expectf(
@@ -1832,12 +1836,12 @@ tagged_from :: proc(r: ^Rig, prefix: string) -> string {
 @(test)
 a_rescan_is_compared_with_the_scan_before :: proc(t: ^testing.T) {
 	dir, _ := os.temp_directory(context.temp_allocator)
-	root := fmt.tprintf("%s/leita_gui_compare", dir)
-	kept := fmt.tprintf("%s/leita_gui_compare_kept/history.db", dir)
+	root := fmt.tprintf("%s/leita_gui_compare_%d", dir, os.get_pid())
+	kept := fmt.tprintf("%s/leita_gui_compare_kept_%d/history.db", dir, os.get_pid())
 	os.remove_all(root)
-	os.remove_all(fmt.tprintf("%s/leita_gui_compare_kept", dir))
+	os.remove_all(fmt.tprintf("%s/leita_gui_compare_kept_%d", dir, os.get_pid()))
 	defer os.remove_all(root)
-	defer os.remove_all(fmt.tprintf("%s/leita_gui_compare_kept", dir))
+	defer os.remove_all(fmt.tprintf("%s/leita_gui_compare_kept_%d", dir, os.get_pid()))
 	write :: proc(t: ^testing.T, path: string, size: int) {
 		body := make([]byte, size, context.temp_allocator)
 		slice.fill(body, 'x')
@@ -1908,7 +1912,7 @@ arcs.
 big_fixture :: proc(t: ^testing.T, name: string) -> string {
 	dir, dir_err := os.temp_directory(context.temp_allocator)
 	testing.expect(t, dir_err == nil, "no temp directory")
-	root := fmt.tprintf("%s/leita_gui_%s", dir, name)
+	root := fmt.tprintf("%s/leita_gui_%s_%d", dir, name, os.get_pid())
 	os.remove_all(root)
 	body := make([]byte, 4096, context.temp_allocator)
 	slice.fill(body, 'x')
@@ -1966,7 +1970,7 @@ a_big_chart_says_only_its_top_layer :: proc(t: ^testing.T) {
 		t,
 		said_after(
 			said,
-			`tree "Sunburst of leita_gui_big_chart, 2.9 MB, 10 items" at`,
+			fmt.tprintf(`tree "Sunburst of %s, 2.9 MB, 10 items" at`, filepath.base(root)),
 			`  tree item "a`,
 		),
 		"the chart counts its top layer:\n%s",
@@ -2014,8 +2018,12 @@ each_chart_is_a_tree_a_screen_reader_walks :: proc(t: ^testing.T) {
 
 	// Each chart is a tree named for what it shows, its top layer the directory's
 	// own entries: photos, closed, so big.raw within it is not said, then notes.txt.
-	photos := `  tree item "photos, 270.3 kB, 98.5% of leita_gui_said" level 1 expandable at`
-	notes := `  tree item "notes.txt, 4.1 kB, 1.5% of leita_gui_said" level 1 at`
+	top := filepath.base(root)
+	photos := fmt.tprintf(
+		`  tree item "photos, 270.3 kB, 98.5%% of %s" level 1 expandable at`,
+		top,
+	)
+	notes := fmt.tprintf(`  tree item "notes.txt, 4.1 kB, 1.5%% of %s" level 1 at`, top)
 	for chart in ([?]string{"Sunburst", "Treemap", "Icicle"}) {
 		if chart != "Sunburst" {
 			testing.expect(t, ui.probe_click(&r.p, chart))
@@ -2023,7 +2031,7 @@ each_chart_is_a_tree_a_screen_reader_walks :: proc(t: ^testing.T) {
 			ui.probe_advance(&r.p, 60, 1.0 / 60)
 		}
 		said := ui.probe_semantics(&r.p, context.temp_allocator)
-		tree := fmt.tprintf(`tree "%s of leita_gui_said, 274.4 kB, 2 items" at`, chart)
+		tree := fmt.tprintf(`tree "%s of %s, 274.4 kB, 2 items" at`, chart, top)
 		testing.expectf(
 			t,
 			said_after(said, tree, photos, notes),
@@ -2037,7 +2045,10 @@ each_chart_is_a_tree_a_screen_reader_walks :: proc(t: ^testing.T) {
 	testing.expect(t, ui.probe_click(&r.p, "Type"))
 	press_and_hand_on(&r)
 	ui.probe_advance(&r.p, 3, 1.0 / 60)
-	kind := `  tree item "notes.txt, 4.1 kB, 1.5% of leita_gui_said, Text" level 1 at`
+	kind := fmt.tprintf(
+		`  tree item "notes.txt, 4.1 kB, 1.5%% of %s, Text" level 1 at`,
+		top,
+	)
 	said := ui.probe_semantics(&r.p, context.temp_allocator)
 	testing.expectf(t, said_after(said, kind), "notes.txt says its kind:\n%s", said)
 
@@ -2045,7 +2056,10 @@ each_chart_is_a_tree_a_screen_reader_walks :: proc(t: ^testing.T) {
 	row := ui.probe_bounds(&r.p, "notes.txt")
 	ui.probe_move(&r.p, row.x + 24, row.y + row.h / 2)
 	ui.probe_advance(&r.p, 3, 1.0 / 60)
-	lit := `  tree item "notes.txt, 4.1 kB, 1.5% of leita_gui_said, Text" level 1 selected at`
+	lit := fmt.tprintf(
+		`  tree item "notes.txt, 4.1 kB, 1.5%% of %s, Text" level 1 selected at`,
+		top,
+	)
 	said = ui.probe_semantics(&r.p, context.temp_allocator)
 	testing.expectf(t, said_after(said, lit), "the lit entry is selected:\n%s", said)
 
@@ -2055,7 +2069,10 @@ each_chart_is_a_tree_a_screen_reader_walks :: proc(t: ^testing.T) {
 	row = ui.probe_bounds(&r.p, "big.raw")
 	ui.probe_move(&r.p, row.x + 24, row.y + row.h / 2)
 	ui.probe_advance(&r.p, 3, 1.0 / 60)
-	hidden := `  tree item "photos, 270.3 kB, 98.5% of leita_gui_said, Folder" level 1 selected expandable at`
+	hidden := fmt.tprintf(
+		`  tree item "photos, 270.3 kB, 98.5%% of %s, Folder" level 1 selected expandable at`,
+		top,
+	)
 	said = ui.probe_semantics(&r.p, context.temp_allocator)
 	testing.expectf(t, said_after(said, hidden), "the folder it is in is selected:\n%s", said)
 }
@@ -2220,7 +2237,10 @@ export_writes_a_report_of_each_format :: proc(t: ^testing.T) {
 		}
 		testing.expectf(
 			t,
-			strings.has_prefix(path, under(reports, "leita-report-leita_gui_export-")),
+			strings.has_prefix(
+				path,
+				under(reports, fmt.tprintf("leita-report-%s-", filepath.base(root))),
+			),
 			"%s is in the folder, named for the target",
 			path,
 		)
@@ -2304,7 +2324,7 @@ the_export_dialog_saves_a_report_where_chosen_and_offers_locate :: proc(t: ^test
 	testing.expect_value(t, q.start, reports)
 	testing.expectf(
 		t,
-		strings.has_prefix(q.name, "leita-report-leita_gui_export_dialog-") &&
+		strings.has_prefix(q.name, fmt.tprintf("leita-report-%s-", filepath.base(root))) &&
 		strings.has_suffix(q.name, ".html"),
 		"%s is named for the target and the format",
 		q.name,
@@ -2433,7 +2453,10 @@ export_is_busy_until_it_is_saved_or_fails :: proc(t: ^testing.T) {
 	if testing.expect_value(t, len(listed), 1) {
 		testing.expectf(
 			t,
-			strings.has_prefix(listed[0].name, "leita-report-leita_gui_export_busy-"),
+			strings.has_prefix(
+				listed[0].name,
+				fmt.tprintf("leita-report-%s-", filepath.base(root)),
+			),
 			"%s is named for the target in the reports folder",
 			listed[0].name,
 		)
@@ -3064,7 +3087,7 @@ a_search_hit_opens_as_the_system_would :: proc(t: ^testing.T) {
 	}
 	dir, _ := os.temp_directory(context.temp_allocator)
 	info, _ := os.stat(dir, context.temp_allocator)
-	root := fmt.tprintf("%s/leita_open_hit", info.fullpath)
+	root := fmt.tprintf("%s/leita_open_hit_%d", info.fullpath, os.get_pid())
 	os.remove_all(root)
 	testing.expect(t, os.make_directory(root) == nil)
 	defer os.remove_all(root)
