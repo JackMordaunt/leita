@@ -11,7 +11,7 @@
 
 <p align="center">See what is filling any drive the moment you open it, then hand the answer on as a report.</p>
 
-<p align="center"><b>Free to scan and clean up for personal use</b> · reports with a licence · source published · no telemetry · Linux, Windows and macOS</p>
+<p align="center"><b>Free to scan and clean up, for everyone</b> · Pro for comparisons, schedules and client reports · source published · no telemetry · Linux, Windows and macOS</p>
 
 <p align="center">
   <a href="branding/demo.mp4"><img src="branding/demo-poster.png" style="border-radius: 12px; box-shadow: 0 22px 70px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(0, 0, 0, 0.12);" alt="leita scanning a disk: the sunburst, treemap and icicle views fill in as the scan runs, in the light theme and then the dark" width="900"></a>
@@ -36,13 +36,17 @@ file is charged what it occupies, not its length.
 
 ## Reports that make the case
 
-Turn any scan into a report from **Export** in the settings menu: **PDF** for the person who signs
-off on a new disk, **HTML** to share, **CSV** for a spreadsheet, **JSON** for
-your own tools. Each report lists the largest folders and files, and how full
-the disk is. It lists what can be cleaned up when you ask it to.
+Turn any scan into a file from **Export** in the settings menu. **CSV** and
+**JSON** of the current scan are free. **PDF**, for the person who signs off
+on a new disk, and **HTML**, to share, are Pro reports. Each lists the largest
+folders and files, and how full the disk is. It lists what can be cleaned up
+when you ask it to.
 
-Reports need a licence. The first 30 days are a free trial. A report made
-with no licence ends with: Unlicensed copy made during the 30-day trial.
+A CSV or JSON of the current scan, written with no licence and no earlier scan
+attached, ends with: Free export of the current scan. When an earlier scan is
+kept and not compared, the CSV says so. A PDF or HTML made during the 30-day
+Pro evaluation, with no licence, ends with: Unlicensed copy made during the
+30-day Pro evaluation.
 
 A PDF embeds the glyphs it draws. It takes a sans font from the machine when
 that font may be embedded, and otherwise Liberation Sans, which leita carries,
@@ -86,8 +90,9 @@ recorded. btrfs subvolumes are not recorded yet, and a scan there asks each
 folder as before. A scan on Linux says which it used: "(recorded changes)" or
 "(folder times)".
 
-In the window, seeing what changed needs a licence once the trial has ended.
-The snapshots are kept either way.
+In the window, and on the command line, seeing what changed needs Pro once the
+30-day evaluation has ended. The snapshots are kept either way, and so is the
+log of what leita deleted.
 
 ## Scheduled scans
 
@@ -120,7 +125,8 @@ the scan it first appears, and again only after it has cleared:
 leita monitor add D: --warn-used 80 --fail-used 95 --min-free 20GB --full-within 14 --growth
 ```
 
-Scheduled scans and their alerts need a licence, with the same 30-day trial.
+Scheduled scans and their alerts need Pro, with the same 30-day evaluation.
+Turning them off, and removing a place, does not.
 
 ## Free up space, safely
 
@@ -306,26 +312,37 @@ plain there too.
 
 ## Licensing
 
-**Scanning, the charts and Reclaim are free for personal use**: your own
-computer, your own studies, and unpaid hobby or open-source work.
+**Scanning, charts, search, safe cleanup, the deletion log, and a CSV or JSON
+of the current scan are free for everyone**, including an organisation.
 
-**Reports, change tracking and monitoring need a licence.** They work for 30
-days from the first time you run leita, so you can try them first.
+**Pro** compares scans and growth, runs scheduled scans and their alerts, and
+writes PDF and HTML reports. It works for 30 days from the first time you run
+leita, so you can try it. That evaluation is not a paid year of updates.
+
+A licence is one of three, and each one unlocks the same Pro features. They
+differ in who may use them:
+
+| Licence | A year | Who |
+| --- | ---: | --- |
+| Personal | $39 | One person, noncommercial use |
+| Professional | $99 | One commercial operator, including work on client machines |
+| Organisation | $499 | One organisation, internal use at all its locations |
+
+A paid year includes the versions released during it. Cancelling renewal keeps
+Pro in those versions after the year ends. A later version runs as Free until
+another year is paid. A licence you already have keeps the rights it was sold
+with, and it does not expire.
 
 Without the window, `leita licence add FILE` keeps the licence file from your
 receipt (or the line in it beginning `leita.`), and `leita licence` shows whose
-it is and its tier. A line keeps Pro for a release made at or before the
-paid-through date it carries, and a later release runs Free. With no licence,
-it says how long the trial has left. `leita licence remove` forgets the one
+it is, its tier and the paid-through date. A line keeps Pro for a release made
+at or before that date, and a later release runs Free. With no licence, it says
+how long the Pro evaluation has left. `leita licence remove` forgets the one
 kept here. For a single run, as in a container, set `LEITA_LICENCE` to that
 line instead.
 
-**An organisation may evaluate leita for 30 days, then needs a licence for any
-use.** That covers businesses, sole traders, schools, charities and government.
-
 To add a licence, choose **Licence** in the settings menu and paste the licence
-key from your receipt. What counts as personal use, and the rest of the terms, are in
-[LICENSE.md](LICENSE.md).
+key from your receipt. The terms are in [LICENSE.md](LICENSE.md).
 
 ## Build from source
 

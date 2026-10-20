@@ -26,46 +26,48 @@ educational institution; a charity or non-profit; and any club, society or
 association, whether or not incorporated. Its funding, size and purpose do not
 matter.
 
-**Personal Use** means use by an individual, personally, on a device they own
-or control, for purposes that are predominantly outside any trade, business,
-craft, profession or employment and not on behalf of any Organisation.
-Personal Use includes:
+**Free** means use of the Software without a Key. Free includes a complete
+on-demand scan, its charts and search, safe manual cleanup, the readable log
+of that cleanup, a CSV or JSON export of the current scan, and opening scans
+and reports already saved.
 
-- (a) a student's own study, coursework and research on their own device;
-- (b) maintaining one's own device, even if it is also used for work, provided
-  the use is not part of one's duties or at an Organisation's direction; and
-- (c) unpaid hobby and open-source work not done for or funded by an
-  Organisation.
+**Pro** means the paid feature set: comparing scans and growth over time,
+scheduled scans and recurring delivery, reusable client and reporting
+profiles, customised client and before-after reports, and consolidated
+analysis across machines.
 
-Use at the direction of an Organisation, as part of duties to one, or on
-equipment or data an Organisation manages, is not Personal Use.
+**Key** means a signed licence issued by the Licensor through the Reseller. A
+Key unlocks Pro for one of the scopes in §3. It does not expire. A Key issued
+before these scopes were named keeps the rights it was sold with.
 
-**Key** means a signed licence file issued by the Licensor that unlocks
-features marked as paid.
+**Personal** means use of Pro by one person, noncommercial use.
 
-**Commercial Licence** means a paid licence for the Software bought through
-the Reseller, on the terms and for the scope stated when it is bought.
+**Professional** means use of Pro by one commercial operator, including work
+on client machines.
 
-## 2. Personal Use
+## 2. Free use
 
-If you are an individual, the Licensor grants you a free, non-exclusive,
-non-transferable, worldwide licence to use, copy, modify (subject to §6) and
-build the Software for Personal Use. The licence is personal to you. You must
-exercise it yourself, and it does not extend to anyone acting for you for
-payment or in the course of their trade.
+The Licensor grants you a free, non-exclusive, non-transferable, worldwide
+licence to use, copy, modify (subject to §6) and build the Software for Free
+use. You may be an individual or an Organisation. The Software is licensed,
+not sold. You may make back-up copies.
 
-Features marked as paid require a Key. The Software is licensed, not sold. You
-may make back-up copies.
+Pro requires a Key for the scope in §3 that covers how you use it. Free use
+does not.
 
-An Organisation may not buy an individual licence or Key for an individual,
-or reimburse one to them.
+## 3. Pro
 
-## 3. Use by an Organisation
+A Key unlocks Pro for the scope named when it is bought. Personal,
+Professional and Organisation scopes unlock the same Pro features. They
+differ only in who may use them.
 
-This licence does not extend to use by, for or on behalf of an Organisation
-without a Commercial Licence. That includes use by its employees, contractors,
-students or volunteers acting in that role. It applies to every kind of
-Organisation, including governments, schools, universities and charities.
+- **Personal.** One person, noncommercial use.
+- **Professional.** One commercial operator, including work on client
+  machines.
+- **Organisation.** One organisation, internal use at all its locations.
+
+A Personal Key is for that one person. An Organisation does not become
+entitled to Pro by buying, holding or reimbursing a Personal Key.
 
 **US Government end users.** The Software is "commercial computer software"
 under FAR 12.212 and DFARS 227.7202. It is licensed to US Government end users
@@ -73,24 +75,27 @@ on these terms, as customarily provided to the public. Nothing in this licence
 requires the Government to indemnify the Licensor, or binds it to arbitration,
 a limitation period or a non-federal governing law.
 
-## 4. Evaluation
+A paid year includes the versions of the Software released during that year.
+Cancelling renewal stops the next year. It does not remove Pro from a version
+released while the year was paid. A later version runs under §2 until another
+year is paid. The evaluation in §4 is not a paid year and does not buy updates.
 
-An Organisation may read, build, test and run the Software for up to 30 days
-to decide whether to buy a Commercial Licence. The evaluation is limited to
-that decision and must not be part of the Organisation's ordinary operations.
-Each Organisation gets one evaluation period. After it, the Organisation must
-buy a Commercial Licence or stop using the Software.
+## 4. Evaluation of Pro
 
-## 5. Service providers
+You may use Pro for 30 days from the first time the Software runs, to decide
+whether to buy a Key. The evaluation is of Pro only. Free use under §2
+continues after it, whether you are an individual or an Organisation. The
+evaluation cannot be turned into a paid year.
 
-A person who uses the Software for a fee, or in the course of their trade, on
-another person's device or data, or on their behalf, needs a Commercial
-Licence for that use. That includes repair, IT support, data recovery,
-consulting and managed services. It applies whether the person served is an
-individual or an Organisation, and whatever device is used.
+## 5. Work on someone else's machine
 
-If the Software is left on, or run for, a client Organisation's devices or
-data for the client's own use, the client also needs a Commercial Licence.
+Use of Pro for a fee, or in the course of a trade, on another person's device
+or data, or on their behalf, is Professional use and needs a Professional Key.
+That includes repair, IT support, data recovery, consulting and managed
+services. It applies whether the person served is an individual or an
+Organisation, and whatever device is used.
+
+Free use under §2 does not need that Key.
 
 ## 6. Redistribution and integrity
 
@@ -123,7 +128,7 @@ licence to the contribution. The licence is worldwide, non-exclusive,
 royalty-free and irrevocable, and lasts for the full term of copyright. It
 lets Librium LLC reproduce, adapt, translate, distribute, make available to
 the public and sublicense the contribution, in any medium now known, under
-this licence, under Commercial Licences sold for a fee, or under open-source
+this licence, under paid licences, or under open-source
 licences. You also grant a licence, for the same purposes, under any patent
 claims you own that the contribution necessarily infringes.
 
@@ -150,8 +155,8 @@ and their licences, and travels with the Software.
 If you materially breach this licence and do not cure the breach within 30
 days of written notice, your rights under it end. If you breach it again after
 curing, your rights may end on notice, without a further cure period.
-Sections 6, 8, 9, 11, 12 and 13 survive termination. A Commercial Licence may
-carry its own termination terms.
+Sections 6, 8, 9, 11, 12 and 13 survive termination. A Key may carry its own
+termination terms.
 
 ## 11. Warranty
 
@@ -228,8 +233,7 @@ infringement occurs. Either party may bring an individual claim in a
 small-claims court where it lives or does business.
 
 (e) If a court finds any part of this licence unenforceable, the rest remains
-in force. A Commercial Licence's terms prevail over this licence where they
-conflict.
+in force. A Key's terms prevail over this licence where they conflict.
 
 ## 14. Export and sanctions
 
