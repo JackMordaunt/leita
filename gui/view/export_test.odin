@@ -20,6 +20,9 @@ Export_Case :: struct {
 @(private = "file")
 export_frame :: proc(gtx: ^ui.Ctx, user: rawptr) {
 	c := (^Export_Case)(user)
+	// The window asks for the licence every frame, as view does, so a test can
+	// say whether Pro is on before Export opens.
+	_, _ = ui.need(gtx, query.Licence{}, query.Licence_Result)
 	scheme := primer.theme_scheme(.Light)
 	primer.use(&scheme, .Light)
 	defer primer.use(nil) // scheme is this frame's own
@@ -62,12 +65,16 @@ export_asks_for_a_format_and_sends_it :: proc(t: ^testing.T) {
 	testing.expect(t, !c.m.export_open, "a scan still running cannot be exported")
 	testing.expect(t, ui.probe_click(&h.p, "Settings"), "the menu closes")
 
+	// Pro is on, so the dialog keeps the PDF it was opened on. No answer is the
+	// locked state, which would start on CSV.
+	ui.probe_deliver(&h.p, query.Licence{}, query.Licence_Result{unlocked = true})
+	ui.probe_frame(&h.p)
 	c.prog.state = .Done
 	ui.probe_frame(&h.p)
 	testing.expect(t, choose(&h.p, &c.m, "Export"))
 	ui.probe_advance(&h.p, 10, 1.0 / 60)
 	testing.expect(t, c.m.export_open, "a finished scan can")
-	testing.expect(t, ui.probe_tagged(&h.p, "Pages to print or attach to a ticket"), "PDF first")
+	testing.expect(t, ui.probe_tagged(&h.p, "A Pro report: pages to print or attach to a ticket"), "PDF first")
 
 	testing.expect(t, ui.probe_click(&h.p, "JSON"))
 	testing.expect(t, ui.probe_click(&h.p, "Include Reclaim candidates"))

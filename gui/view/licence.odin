@@ -12,7 +12,7 @@ import "../query"
 
 /*
 The licence. Licence in the settings menu opens a dialog that says whose licence leita
-runs under, or that it runs free for personal use with a link to buy one. The
+runs under, or that scanning and cleanup are free, with a link to buy Pro. The
 key from the shop's receipt is pasted into its field, or a licence itself, or a
 licence is opened from a file; the host exchanges a key for its licence, checks
 the licence, and the dialog shows the licence it now runs under, or why it would
@@ -29,11 +29,7 @@ BUY_URL :: "https://mordaunt.dev/leita/buy"
 licence_item :: proc(gtx: ^ui.Ctx, menu: ^primer.Action_Menu) -> bool {
 	r, _ := ui.need(gtx, query.Licence{}, query.Licence_Result)
 	licensed := r != nil && r.licensed
-	return primer.action_menu_item(
-		menu,
-		tr(.Licence),
-		leading = .Verified if licensed else .Key,
-	)
+	return primer.action_menu_item(menu, tr(.Licence), leading = .Verified if licensed else .Key)
 }
 
 // licence_show opens the licence dialog, saying why first when a paid feature
@@ -47,8 +43,9 @@ licence_show :: proc(m: ^Model, why: Maybe(msg.Msg) = nil) {
 }
 
 /*
-unlocked is whether the paid features work, as the host last said: under a
-licence, or in the trial. On the first frame, before the host can have said,
+unlocked is whether Pro works, as the host last said: this build's
+paid-through grant, or the 30-day evaluation. On the first frame, before the
+host can have said,
 they do, so the window does not open on a lock it then takes away. After it, no
 answer means locked: a host that never answers must not leave them open.
 */

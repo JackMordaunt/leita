@@ -166,3 +166,47 @@ about_checks_for_updates_on_request_and_shows_the_result :: proc(t: ^testing.T) 
 	ui.probe_advance(&h.p, 2, 1.0 / 60)
 	testing.expect(t, ui.probe_tagged(&h.p, "The update failed: cannot move the file aside"), "an error the window has no words for is said as it was")
 }
+
+// About names the free boundary: once the Pro evaluation has ended, scanning
+// and a current-scan export stay free; while it runs, the line says so.
+@(test)
+about_says_disk_work_stays_free :: proc(t: ^testing.T) {
+	m: Model
+	defer model_destroy(&m)
+	fonts := []ops.Font_Ref {
+		{0, ui.default_font(), 400},
+		{1, ui.default_font(), 500},
+		{2, ui.default_font(), 600},
+		{3, ui.default_font(), 400},
+	}
+	h: render.Headless
+	render.headless_init(&h, about_frame, &m, {900, 700}, fonts)
+	defer render.headless_destroy(&h)
+
+	testing.expect(t, choose(&h.p, &m, "About Leita"))
+	ui.probe_advance(&h.p, 10, 1.0 / 60)
+	ui.probe_deliver(&h.p, query.Licence{}, query.Licence_Result{unlocked = false})
+	ui.probe_advance(&h.p, 2, 1.0 / 60)
+	testing.expect(
+		t,
+		ui.probe_tagged(&h.p, "Free to scan, chart, search, clean up and export this scan."),
+		"after the evaluation, disk work stays free",
+	)
+	testing.expect(t, !ui.probe_tagged(&h.p, "You can try Pro"), "and the evaluation is not still running")
+
+	ui.probe_deliver(&h.p, query.Licence{}, query.Licence_Result{unlocked = true, trial_left = 12})
+	ui.probe_advance(&h.p, 2, 1.0 / 60)
+	testing.expect(
+		t,
+		ui.probe_tagged(
+			&h.p,
+			"Free to scan, chart, search, clean up and export this scan. You can try Pro for 12 more days.",
+		),
+		"the evaluation is named on the same line",
+	)
+	testing.expect(
+		t,
+		!ui.probe_tagged(&h.p, "Free to scan, chart, search, clean up and export this scan."),
+		"the ended line is replaced while the evaluation runs",
+	)
+}

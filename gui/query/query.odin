@@ -291,7 +291,7 @@ Licence_Result :: struct {
 	order:      string,
 	issued:     string, // YYYY-MM-DD
 	activating: bool, // a licence key is out being exchanged for its licence
-	unlocked:   bool, // the paid features work: licensed, or in the trial
+	unlocked:   bool, // Pro works: this build's paid-through grant, or the evaluation
 	trial_left: int, // whole days of the trial left, 0 once it is over
 	// The last licence offered (command.Add_Licence): offered moves on with each,
 	// and problem says why it was not taken, "" when it was.

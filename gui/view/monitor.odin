@@ -15,15 +15,15 @@ import "../msg"
 import "../query"
 
 /*
-Monitoring, a paid feature. Monitoring in the settings menu opens a dialog with one switch,
+Monitoring, a Pro feature. Monitoring in the settings menu opens a dialog with one switch,
 Scheduled scans, that hands the monitor to the system's scheduler or takes it
 back, then the places watched, each with how often it is scanned and how its
 last scan went, and a field to watch another, which opens holding the place
-scanned now. Once the trial is over without a licence, the dialog says so and
-only lets monitoring be turned off and places removed.
+scanned now. Once the Pro evaluation is over without a licence, the dialog says
+so and only lets monitoring be turned off and places removed.
 
 On Linux a second switch, Record changes as they happen, turns the recorder of
-changes on or off (package journal). It is not a paid feature: it makes every
+changes on or off (package journal). It is not Pro: it makes every
 scan of a place read before faster, monitored or not.
 */
 
@@ -147,9 +147,9 @@ monitor_dialog :: proc(gtx: ^ui.Ctx, m: ^Model) {
 			primer.text(gtx, tr(.Watched_None), color = primer.color(.Fg_Color_Muted))
 		}
 		for w, i in r.watched {
-			watched_row(gtx, m, r, w, i)
+			watched_row(gtx, m, r, w, i, locked)
 			if m.limits_open && m.limits_place == w.place {
-				limits_editor(gtx, m, r, w)
+				limits_editor(gtx, m, r, w, locked)
 			}
 		}
 		watch_field(gtx, m, r, locked)
@@ -207,6 +207,7 @@ watched_row :: proc(
 	r: ^query.Monitor_Result,
 	w: query.Watched_Place,
 	i: int,
+	locked: bool,
 ) {
 	s := ui.scope_open(gtx, u64(i + 1))
 	defer ui.scope_close(&s)
@@ -231,7 +232,9 @@ watched_row :: proc(
 			&at,
 			size = .Small,
 			name = trf(gtx, .Schedule_Of, safe(gtx, w.place)),
-		) {
+			state = .Disabled if locked else .Live,
+		) &&
+		   !locked {
 			c := watch_of(w)
 			c.every = u8(at)
 			send_monitor(gtx, m, r, c)
@@ -242,7 +245,9 @@ watched_row :: proc(
 			trf(gtx, .Limits_Of, safe(gtx, w.place)),
 			.Invisible,
 			size = .Small,
-		) {
+			state = .Disabled if locked else .Live,
+		) &&
+		   !locked {
 			limits_show(m, w)
 		}
 		if primer.icon_button(
@@ -374,7 +379,13 @@ LIMIT_FIELD :: f32(120)
 // limits_editor is what w's scans are checked against, as fields to change:
 // each empty for none, saved together.
 @(private)
-limits_editor :: proc(gtx: ^ui.Ctx, m: ^Model, r: ^query.Monitor_Result, w: query.Watched_Place) {
+limits_editor :: proc(
+	gtx: ^ui.Ctx,
+	m: ^Model,
+	r: ^query.Monitor_Result,
+	w: query.Watched_Place,
+	locked: bool,
+) {
 	ui.inset(gtx, {left = 16})
 	ui.column(gtx, gap = 12, align = .Fill)
 	primer.text(gtx, trf(gtx, .Limits_Of, safe(gtx, w.place)), weight = .Semibold)
@@ -408,7 +419,14 @@ limits_editor :: proc(gtx: ^ui.Ctx, m: ^Model, r: ^query.Monitor_Result, w: quer
 		if primer.button(gtx, tr(.Cancel), size = .Small) {
 			m.limits_open = false
 		}
-		if primer.button(gtx, tr(.Save), .Primary, size = .Small) {
+		if primer.button(
+			   gtx,
+			   tr(.Save),
+			   .Primary,
+			   size = .Small,
+			   state = .Disabled if locked else .Live,
+		   ) &&
+		   !locked {
 			c, ok := limits_read(m, w)
 			m.limits_bad = !ok
 			if ok {

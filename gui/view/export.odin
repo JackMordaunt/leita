@@ -43,14 +43,21 @@ export_item :: proc(menu: ^primer.Action_Menu, m: ^Model, prog: ^query.Progress_
 	)
 }
 
-// export_show opens the export dialog, or the licence dialog saying why not.
+// export_show opens the export dialog. A CSV or JSON of this scan is free, so
+// the dialog opens with no licence; a locked window starts on CSV rather than
+// on a PDF or HTML report it will refuse.
 @(private)
 export_show :: proc(gtx: ^ui.Ctx, m: ^Model) {
-	if unlocked(gtx, m) {
-		m.export_open = true
-	} else {
-		licence_show(m, msg.Msg.Reports_Locked)
+	if !unlocked(gtx, m) && !basic_export(m.export_format) {
+		m.export_format = .Csv
 	}
+	m.export_open = true
+}
+
+// basic_export is a CSV or JSON of this scan, which does not need Pro.
+@(private)
+basic_export :: proc(format: command.Export_Format) -> bool {
+	return format == .Csv || format == .Json
 }
 
 // exporting is whether a report asked for is still being written: while the
@@ -135,6 +142,13 @@ export_dialog :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result) {
 		m.export_open = false
 	}
 	if export {
+		// PDF and HTML are Pro. Refusing here, before the save dialog, is what
+		// the person sees; the host refuses the same command if it arrives anyway.
+		if !unlocked(gtx, m) && !basic_export(m.export_format) {
+			m.export_open = false
+			licence_show(m, msg.Msg.Reports_Locked)
+			return
+		}
 		m.export_open = false
 		m.export_picking = true
 		name := strings.concatenate(

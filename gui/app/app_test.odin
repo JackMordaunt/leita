@@ -1629,7 +1629,11 @@ reclaim_offers_only_what_rebuilds_and_deletes_what_is_chosen :: proc(t: ^testing
 	press_and_hand_on(&r)
 	testing.expect(t, settle(&r, WEB_NODE_MODULES), "node_modules beside package.json")
 	testing.expect(t, settle(&r, RUST_TARGET), "target beside Cargo.toml")
-	testing.expect(t, !ui.probe_tagged(&r.p, "plain" + scan.SEPARATOR + "build"), "a build folder of no project")
+	testing.expect(
+		t,
+		!ui.probe_tagged(&r.p, "plain" + scan.SEPARATOR + "build"),
+		"a build folder of no project",
+	)
 	testing.expect(t, !ui.probe_tagged(&r.p, "Sunburst chart"), "the chart is put away")
 	// target was touched today, so only node_modules starts chosen.
 	testing.expect(t, settle(&r, "65.5 kB in 1 folder chosen"), "the recent one starts unchosen")
@@ -1658,7 +1662,10 @@ reclaim_offers_only_what_rebuilds_and_deletes_what_is_chosen :: proc(t: ^testing
 		count      = 1,
 	}
 	stream.port_send(r.h.cmd_port, command.Command(forged))
-	testing.expect(t, settle(&r, "Deleted 0 folders and freed 0 B; 1 could not be deleted in full"))
+	testing.expect(
+		t,
+		settle(&r, "Deleted 0 folders and freed 0 B; 1 could not be deleted in full"),
+	)
 	testing.expect(t, os.exists(fmt.tprintf("%s/plain/build/out.o", root)), "nothing went")
 }
 
@@ -1742,67 +1749,75 @@ reclaim_offers_the_recycle_bin :: proc(t: ^testing.T) {
 @(test)
 reclaim_empties_the_trash_it_found :: proc(t: ^testing.T) {
 	when ODIN_OS != .Windows {
-	// The home, and so its Trash, is the test's own.
-	root := projects(t, "reclaim_trash")
-	defer os.remove_all(root)
-	// A trashed file and what records it: the freedesktop.org Trash keeps the file
-	// in files and a record in info; the Finder's keeps the file itself, and here
-	// a trashed folder stands in for the record. The record is a block long: NTFS
-	// keeps a file of a few bytes inside its MFT record, taking no space of its own.
-	when ODIN_OS == .Darwin {
-		TRASH  :: ".Trash"
-		FILE   :: TRASH + "/old.bin"
-		RECORD :: TRASH + "/folder"
-		DIRS   :: []string{TRASH, RECORD}
-	} else {
-		TRASH  :: ".local/share/Trash"
-		FILE   :: TRASH + "/files/old.bin"
-		RECORD :: TRASH + "/info"
-		DIRS   :: []string{".local", ".local/share", TRASH, TRASH + "/files", RECORD}
-	}
-	for d in DIRS {
-		testing.expect(t, os.make_directory(fmt.tprintf("%s/%s", root, d)) == nil)
-	}
-	old := make([]byte, 16 * 1024, context.temp_allocator)
-	testing.expect(t, os.write_entire_file(fmt.tprintf("%s/%s", root, FILE), old) == nil)
-	testing.expect(
-		t,
-		os.write_entire_file(fmt.tprintf("%s/%s/old.bin.trashinfo", root, RECORD), old[:4096]) ==
-		nil,
-	)
-	sync.guard(&trash_env)
-	// What package home reads the home from: Windows names a profile, not HOME.
-	HOME :: "USERPROFILE" when ODIN_OS == .Windows else "HOME"
-	home := strings.clone(os.get_env(HOME, context.temp_allocator), context.temp_allocator)
-	testing.expect(t, os.set_env(HOME, root) == nil)
-	defer os.set_env(HOME, home)
+		// The home, and so its Trash, is the test's own.
+		root := projects(t, "reclaim_trash")
+		defer os.remove_all(root)
+		// A trashed file and what records it: the freedesktop.org Trash keeps the file
+		// in files and a record in info; the Finder's keeps the file itself, and here
+		// a trashed folder stands in for the record. The record is a block long: NTFS
+		// keeps a file of a few bytes inside its MFT record, taking no space of its own.
+		when ODIN_OS == .Darwin {
+			TRASH  :: ".Trash"
+			FILE   :: TRASH + "/old.bin"
+			RECORD :: TRASH + "/folder"
+			DIRS   :: []string{TRASH, RECORD}
+		} else {
+			TRASH  :: ".local/share/Trash"
+			FILE   :: TRASH + "/files/old.bin"
+			RECORD :: TRASH + "/info"
+			DIRS   :: []string{".local", ".local/share", TRASH, TRASH + "/files", RECORD}
+		}
+		for d in DIRS {
+			testing.expect(t, os.make_directory(fmt.tprintf("%s/%s", root, d)) == nil)
+		}
+		old := make([]byte, 16 * 1024, context.temp_allocator)
+		testing.expect(t, os.write_entire_file(fmt.tprintf("%s/%s", root, FILE), old) == nil)
+		testing.expect(
+			t,
+			os.write_entire_file(
+				fmt.tprintf("%s/%s/old.bin.trashinfo", root, RECORD),
+				old[:4096],
+			) ==
+			nil,
+		)
+		sync.guard(&trash_env)
+		// What package home reads the home from: Windows names a profile, not HOME.
+		HOME :: "USERPROFILE" when ODIN_OS == .Windows else "HOME"
+		home := strings.clone(os.get_env(HOME, context.temp_allocator), context.temp_allocator)
+		testing.expect(t, os.set_env(HOME, root) == nil)
+		defer os.set_env(HOME, home)
 
-	r: Rig
-	rig_open(&r, root)
-	defer rig_close(&r)
-	testing.expect(t, settle(&r, "Done"))
-	testing.expect(t, settle(&r, "arc web"))
-	testing.expect(t, ui.probe_click(&r.p, "Reclaim"))
-	press_and_hand_on(&r)
-	testing.expect(t, settle(&r, "Empty Trash"), "the Trash is offered")
-	// Always in view: above the list, never at its end to be scrolled to.
-	button, first :=
-		ui.probe_bounds(&r.p, "Empty Trash"), ui.probe_bounds(&r.p, "All Installed dependencies")
-	testing.expectf(
-		t,
-		first.h > 0 && button.y + button.h <= first.y,
-		"the button is at %v, the list at %v",
-		button,
-		first,
-	)
-	testing.expect(t, !ui.probe_tagged(&r.p, "All Trash"), "as a button, not a row")
+		r: Rig
+		rig_open(&r, root)
+		defer rig_close(&r)
+		testing.expect(t, settle(&r, "Done"))
+		testing.expect(t, settle(&r, "arc web"))
+		testing.expect(t, ui.probe_click(&r.p, "Reclaim"))
+		press_and_hand_on(&r)
+		testing.expect(t, settle(&r, "Empty Trash"), "the Trash is offered")
+		// Always in view: above the list, never at its end to be scrolled to.
+		button, first :=
+			ui.probe_bounds(&r.p, "Empty Trash"),
+			ui.probe_bounds(&r.p, "All Installed dependencies")
+		testing.expectf(
+			t,
+			first.h > 0 && button.y + button.h <= first.y,
+			"the button is at %v, the list at %v",
+			button,
+			first,
+		)
+		testing.expect(t, !ui.probe_tagged(&r.p, "All Trash"), "as a button, not a row")
 
-	confirm(t, &r, "Empty Trash", "Empty")
-	testing.expect(t, settle(&r, "Emptied the Trash and freed 20.5 kB"), "the notice says so")
-	testing.expect(t, !os.exists(fmt.tprintf("%s/%s", root, FILE)))
-	testing.expect(t, !os.exists(fmt.tprintf("%s/%s", root, RECORD)))
-	testing.expect(t, os.exists(fmt.tprintf("%s/%s", root, TRASH)), "the Trash stays")
-	testing.expect(t, os.exists(fmt.tprintf("%s/web/node_modules", root)), "cleaning is separate")
+		confirm(t, &r, "Empty Trash", "Empty")
+		testing.expect(t, settle(&r, "Emptied the Trash and freed 20.5 kB"), "the notice says so")
+		testing.expect(t, !os.exists(fmt.tprintf("%s/%s", root, FILE)))
+		testing.expect(t, !os.exists(fmt.tprintf("%s/%s", root, RECORD)))
+		testing.expect(t, os.exists(fmt.tprintf("%s/%s", root, TRASH)), "the Trash stays")
+		testing.expect(
+			t,
+			os.exists(fmt.tprintf("%s/web/node_modules", root)),
+			"cleaning is separate",
+		)
 	}
 }
 
@@ -2045,10 +2060,7 @@ each_chart_is_a_tree_a_screen_reader_walks :: proc(t: ^testing.T) {
 	testing.expect(t, ui.probe_click(&r.p, "Type"))
 	press_and_hand_on(&r)
 	ui.probe_advance(&r.p, 3, 1.0 / 60)
-	kind := fmt.tprintf(
-		`  tree item "notes.txt, 4.1 kB, 1.5%% of %s, Text" level 1 at`,
-		top,
-	)
+	kind := fmt.tprintf(`  tree item "notes.txt, 4.1 kB, 1.5%% of %s, Text" level 1 at`, top)
 	said := ui.probe_semantics(&r.p, context.temp_allocator)
 	testing.expectf(t, said_after(said, kind), "notes.txt says its kind:\n%s", said)
 
@@ -2313,10 +2325,14 @@ the_export_dialog_saves_a_report_where_chosen_and_offers_locate :: proc(t: ^test
 	testing.expect(t, choose(&r, "Export"), "the menu offers Export")
 	ui.probe_advance(&r.p, 20, 1.0 / 60)
 	testing.expect(t, ui.probe_tagged(&r.p, "Export report"), "the dialog opened")
-	testing.expect(t, ui.probe_tagged(&r.p, "Pages to print or attach to a ticket"), "PDF first")
+	testing.expect(
+		t,
+		ui.probe_tagged(&r.p, "A Pro report: pages to print or attach to a ticket"),
+		"PDF first",
+	)
 	testing.expect(t, ui.probe_click(&r.p, "HTML"))
 	ui.probe_frame(&r.p)
-	testing.expect(t, ui.probe_tagged(&r.p, "One page that opens in any browser"))
+	testing.expect(t, ui.probe_tagged(&r.p, "A Pro report: one page that opens in any browser"))
 	testing.expect(t, ui.probe_click_top(&r.p, "Export"), "the dialog's Export")
 	q, asked := ui.probe_picking(&r.p)
 	testing.expect(t, asked, "the save dialog opened")
@@ -2627,10 +2643,10 @@ offer :: proc(t: ^testing.T, r: ^Rig, text: string) {
 	hand_on(r)
 }
 
-// The key opens the licence dialog: free for personal use, with Buy. What is
-// neither a key nor a licence is refused and says why; a licence opened from a
-// file signed with the key leita checks against is taken, kept beside the
-// history store, and read back when leita next starts.
+// The key opens the licence dialog, with Buy. What is neither a key nor a
+// licence is refused and says why; a licence opened from a file signed with
+// the key leita checks against is taken, kept beside the history store, and
+// read back when leita next starts.
 @(test)
 a_licence_is_checked_kept_and_read_back :: proc(t: ^testing.T) {
 	root := fixture(t, "licence")
@@ -2679,7 +2695,11 @@ a_licence_is_checked_kept_and_read_back :: proc(t: ^testing.T) {
 		testing.expect(t, ui.probe_pick(&r.p, file))
 		ui.probe_frame(&r.p)
 		hand_on(&r)
-		testing.expect(t, settle(&r, "Licensed to ada@example.com"), "the licence from the file is taken")
+		testing.expect(
+			t,
+			settle(&r, "Licensed to ada@example.com"),
+			"the licence from the file is taken",
+		)
 		testing.expect(t, settle(&r, "Professional · order ord_7 · issued 2026-10-11T00:00:00Z"))
 		testing.expect(t, os.exists(fmt.tprintf("%s/licence", data)), "and kept")
 	}
@@ -2821,10 +2841,11 @@ leita_activate_url_replaces_the_default :: proc(t: ^testing.T) {
 	testing.expect_value(t, activate_endpoint(explicit), explicit)
 }
 
-// For thirty days from when leita first ran here, reports and change tracking
-// work without a licence. After that an unlicensed copy says the trial is over;
-// Export and colouring by change open the licence dialog saying why, and the
-// host writes no report; under a licence both work again.
+// For thirty days from when leita first ran here, Pro works without a licence.
+// After that the banner says the evaluation is over. Export still opens, on a
+// free CSV or JSON of this scan; a PDF is refused and says why. Colouring by
+// change opens the licence dialog. A line kept here is in use, and on a build
+// with no release stamp it does not turn Pro back on.
 @(test)
 reports_and_change_tracking_need_a_licence_after_the_trial :: proc(t: ^testing.T) {
 	root := fixture(t, "trial")
@@ -2836,7 +2857,8 @@ reports_and_change_tracking_need_a_licence_after_the_trial :: proc(t: ^testing.T
 	kept := fmt.tprintf("%s/history.db", data)
 	s := signer_make(t)
 	defer delete(s.line, runtime.heap_allocator())
-	ENDED :: "Your 30-day trial of reports and change tracking has ended"
+	ENDED      :: "Your 30-day Pro evaluation has ended"
+	PDF_LOCKED :: "PDF and HTML reports need a licence now the 30-day Pro evaluation has ended. A CSV or JSON of this scan is still free."
 
 	{
 		// The first run starts the trial: both work, and nothing is said.
@@ -2853,6 +2875,27 @@ reports_and_change_tracking_need_a_licence_after_the_trial :: proc(t: ^testing.T
 		testing.expect(t, choose(&r, "Export"))
 		ui.probe_advance(&r.p, 20, 1.0 / 60)
 		testing.expect(t, ui.probe_tagged(&r.p, "Export report"), "the export dialog opens")
+		r.m.export_open = false
+		ui.probe_advance(&r.p, 10, 1.0 / 60)
+		pdf_during := fmt.tprintf("%s-during.pdf", root)
+		defer os.remove(pdf_during)
+		stream.port_send(
+			r.h.cmd_port,
+			command.Command(
+				command.Export {
+					generation = r.m.generation,
+					format = .Pdf,
+					path = command.text_make(pdf_during),
+				},
+			),
+		)
+		testing.expect_value(t, saved_as(&r, ".pdf"), pdf_during)
+		during, during_err := os.read_entire_file(pdf_during, context.temp_allocator)
+		testing.expect(
+			t,
+			during_err == nil && strings.has_prefix(string(during), "%PDF-"),
+			"during the evaluation a PDF is written",
+		)
 	}
 
 	month := time.to_unix_seconds(time.now()) - 31 * 24 * 60 * 60
@@ -2872,17 +2915,10 @@ reports_and_change_tracking_need_a_licence_after_the_trial :: proc(t: ^testing.T
 
 		testing.expect(t, choose(&r, "Export"))
 		ui.probe_advance(&r.p, 20, 1.0 / 60)
-		testing.expect(
-			t,
-			ui.probe_tagged(
-				&r.p,
-				"Exporting reports needs a licence now the 30-day trial has ended.",
-			),
-			"Export says why",
-		)
-		testing.expect(t, !ui.probe_tagged(&r.p, "Export report"))
-		r.m.licence_open = false
-		ui.probe_advance(&r.p, 20, 1.0 / 60)
+		testing.expect(t, ui.probe_tagged(&r.p, "Export report"), "a free export still opens")
+		testing.expect(t, !ui.probe_tagged(&r.p, PDF_LOCKED))
+		r.m.export_open = false
+		ui.probe_advance(&r.p, 10, 1.0 / 60)
 
 		testing.expect(t, ui.probe_click(&r.p, "Change"))
 		ui.probe_advance(&r.p, 20, 1.0 / 60)
@@ -2890,30 +2926,52 @@ reports_and_change_tracking_need_a_licence_after_the_trial :: proc(t: ^testing.T
 			t,
 			ui.probe_tagged(
 				&r.p,
-				"Seeing what changed since the last scan needs a licence now the 30-day trial has ended. Leita still keeps every scan, so it is all there once you add one.",
+				"Seeing what changed since the last scan needs a licence now the 30-day Pro evaluation has ended. Leita still keeps every scan, so it is all there once you add one.",
 			),
 			"colouring by change says why",
 		)
 		testing.expect_value(t, r.m.colour, view.Colouring.Folder)
 
-		// Whatever the window sends, the host writes no report.
+		// The host writes a CSV or JSON of this scan, and refuses a PDF.
 		reports := fmt.tprintf("%s-reports", root)
 		defer os.remove_all(reports)
+		json_path := fmt.tprintf("%s.json", reports)
+		pdf_path := fmt.tprintf("%s.pdf", reports)
+		defer os.remove(json_path)
+		defer os.remove(pdf_path)
 		stream.port_send(
 			r.h.cmd_port,
 			command.Command(
 				command.Export {
 					generation = r.m.generation,
 					format = .Json,
-					path = command.text_make(fmt.tprintf("%s.json", reports)),
+					path = command.text_make(json_path),
 				},
 			),
 		)
+		got := saved_as(&r, ".json")
+		testing.expect_value(t, got, json_path)
+		written, read_err := os.read_entire_file(json_path, context.temp_allocator)
+		testing.expect(t, read_err == nil && os.exists(json_path), "the JSON is on disk")
 		testing.expect(
 			t,
-			settle(&r, "Exporting reports needs a licence now the 30-day trial has ended."),
+			strings.contains(string(written), "Free export of the current scan."),
+			string(written),
 		)
-		testing.expect(t, !os.exists(fmt.tprintf("%s.json", reports)))
+		testing.expect(t, strings.contains(string(written), "\"compared\": null"), string(written))
+
+		stream.port_send(
+			r.h.cmd_port,
+			command.Command(
+				command.Export {
+					generation = r.m.generation,
+					format = .Pdf,
+					path = command.text_make(pdf_path),
+				},
+			),
+		)
+		testing.expect(t, settle(&r, PDF_LOCKED), "a PDF is refused and says why")
+		testing.expect(t, !os.exists(pdf_path), "and nothing is written")
 	}
 
 	testing.expect(t, licence.save(fmt.tprintf("%s/licence", data), s.line) == .None)
@@ -2921,14 +2979,30 @@ reports_and_change_tracking_need_a_licence_after_the_trial :: proc(t: ^testing.T
 	rig_open(&r, root, kept = kept, licence_key = s.pub[:])
 	defer rig_close(&r)
 	testing.expect(t, settle(&r, "Done"))
-	ui.probe_advance(&r.p, 10, 1.0 / 60)
-	testing.expect(t, !ui.probe_tagged(&r.p, ENDED), "a licensed copy says nothing")
+	testing.expect(t, r.h.desk.licensed, "the line is in use")
+	testing.expect(
+		t,
+		!licence.pro_for_this_build(r.h.desk.licence),
+		"this build has no release stamp",
+	)
+	testing.expect(t, settle(&r, ENDED), "so the evaluation stays over")
 	testing.expect(t, ui.probe_click(&r.p, "Change"))
-	ui.probe_advance(&r.p, 10, 1.0 / 60)
-	testing.expect_value(t, r.m.colour, view.Colouring.Change)
-	testing.expect(t, choose(&r, "Export"))
 	ui.probe_advance(&r.p, 20, 1.0 / 60)
-	testing.expect(t, ui.probe_tagged(&r.p, "Export report"), "under a licence, Export works")
+	testing.expect_value(t, r.m.colour, view.Colouring.Folder)
+	pdf_licensed := fmt.tprintf("%s-licensed.pdf", root)
+	defer os.remove(pdf_licensed)
+	stream.port_send(
+		r.h.cmd_port,
+		command.Command(
+			command.Export {
+				generation = r.m.generation,
+				format = .Pdf,
+				path = command.text_make(pdf_licensed),
+			},
+		),
+	)
+	testing.expect(t, settle(&r, PDF_LOCKED), "and a PDF is still refused")
+	testing.expect(t, !os.exists(pdf_licensed), "and nothing is written")
 }
 
 // The settings menu's Language lists the languages by their own names; choosing one switches
@@ -3425,17 +3499,33 @@ about_checks_the_release_on_request_only :: proc(t: ^testing.T) {
 		ui.probe_advance(&r.p, 5, 1.0 / 60)
 		time.sleep(5 * time.Millisecond)
 	}
-	testing.expect(t, !ui.probe_tagged(&r.p, "Version v9.9.9 of Leita is available."), "nothing checked on its own")
+	testing.expect(
+		t,
+		!ui.probe_tagged(&r.p, "Version v9.9.9 of Leita is available."),
+		"nothing checked on its own",
+	)
 	testing.expect(t, !ui.probe_tagged(&r.p, "Checking for updates…"))
 
 	testing.expect(t, ui.probe_click_top(&r.p, "Check for updates"))
 	hand_on(&r)
-	testing.expect(t, settle(&r, "Version v9.9.9 of Leita is available."), "the newer release is named")
+	testing.expect(
+		t,
+		settle(&r, "Version v9.9.9 of Leita is available."),
+		"the newer release is named",
+	)
 	if update.why_not(update.default_config(.Window, version.VERSION)) == .None {
-		testing.expect(t, settle(&r, "Update"), "a replaceable build is offered an update in place")
+		testing.expect(
+			t,
+			settle(&r, "Update"),
+			"a replaceable build is offered an update in place",
+		)
 		testing.expect(t, !ui.probe_tagged(&r.p, "Download the update"))
 	} else {
-		testing.expect(t, settle(&r, "Download the update"), "a build that cannot be replaced is sent to the release page")
+		testing.expect(
+			t,
+			settle(&r, "Download the update"),
+			"a build that cannot be replaced is sent to the release page",
+		)
 		testing.expect(t, !ui.probe_tagged(&r.p, "Update"))
 	}
 
@@ -3448,7 +3538,11 @@ about_checks_the_release_on_request_only :: proc(t: ^testing.T) {
 	publish_release(t, release, string(body), "v1.0.0\n")
 	testing.expect(t, ui.probe_click_top(&r.p, "Check for updates"))
 	hand_on(&r)
-	testing.expect(t, settle(&r, "This is the latest version of Leita."), "this build is the release's")
+	testing.expect(
+		t,
+		settle(&r, "This is the latest version of Leita."),
+		"this build is the release's",
+	)
 
 	// No release at that base: the failure is said, not a crash or a hang.
 	os.remove_all(release)
@@ -3486,7 +3580,9 @@ closing_during_an_update_waits_without_racing_the_desk :: proc(t: ^testing.T) {
 	root := fixture(t, "update_close")
 	defer os.remove_all(root)
 	r: Rig
-	f := Update_Close_Fixture{host = &r.h}
+	f := Update_Close_Fixture {
+		host = &r.h,
+	}
 	srv, up := loopback.start(answer_update_on_close, &f, runtime.heap_allocator())
 	if !testing.expect(t, up, "the update server started") {
 		return
@@ -3500,8 +3596,16 @@ closing_during_an_update_waits_without_racing_the_desk :: proc(t: ^testing.T) {
 	}
 	testing.expect(t, sync.atomic_load(&f.started), "the check began before closing")
 	rig_close(&r)
-	testing.expect(t, sync.atomic_load(&f.desk_was_stopping), "the desk stopped accepting answers before the closing thread waited for the request")
-	testing.expect(t, r.h.desk.update_thread == nil, "the outstanding update was joined and destroyed")
+	testing.expect(
+		t,
+		sync.atomic_load(&f.desk_was_stopping),
+		"the desk stopped accepting answers before the closing thread waited for the request",
+	)
+	testing.expect(
+		t,
+		r.h.desk.update_thread == nil,
+		"the outstanding update was joined and destroyed",
+	)
 }
 
 // A folder the walk could not open holds nothing to draw, so the folders above

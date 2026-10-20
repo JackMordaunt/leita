@@ -36,7 +36,14 @@ export :: proc(d: ^Desk, c: command.Export) {
 		tell(d, true, .Export_Unfinished)
 		return
 	}
-	if !licence.unlocked(d.licensed, d.first_use, time.now()) {
+	// CSV and JSON of this scan are free. PDF and HTML are Pro, and so is
+	// attaching an earlier scan: a free export leaves that off.
+	grant := licence.Licence{}
+	if d.licensed {
+		grant = d.licence
+	}
+	pro := licence.entitled_to_pro(grant, d.first_use, time.now())
+	if !pro && !report.basic_export(FORMATS[c.format]) {
 		tell(d, true, .Reports_Locked)
 		return
 	}
@@ -63,11 +70,18 @@ export :: proc(d: ^Desk, c: command.Export) {
 	if d.licensed {
 		opt.licensee = d.licence.licensee
 	}
-	if d.compared.id != 0 && d.history != nil {
+	if pro && d.compared.id != 0 && d.history != nil {
 		if then, err := history.load(d.history, d.compared.id, context.temp_allocator);
 		   err == nil {
 			opt.previous = report.Snapshot{time.unix(d.compared.taken, 0), then}
 		}
+	} else if !pro && d.compared.id != 0 {
+		// The scan is kept either way. The file must not say there was none.
+		opt.earlier_kept = true
+	}
+	if _, comparing := opt.previous.?;
+	   opt.licensee == "" && report.basic_export(FORMATS[c.format]) && !comparing {
+		opt.free_export = true
 	}
 	r := report.build(&s.tree, &s.roll, facts, opt)
 	defer report.destroy(&r)

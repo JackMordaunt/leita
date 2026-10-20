@@ -11,9 +11,9 @@ a bare key the other form. {0} to {9} are arguments, {{ a literal brace. A
 message whose argument 0 is a count is plural, and picks its form by it.
 
 To add a message, add its member here and its line to locales/en.txt; msg_test
-fails until every other locale translates it. Licence_Terms and
-Trial_Ended_Body are one sentence, the free boundary LICENSE.md states, and a
-locale keeps that English sentence until it has its own.
+fails until every other locale translates it. Licence_Terms, Trial_Ended_Body,
+Free_Personal, Free_Personal_Trial and Reports_Locked state the free boundary
+LICENSE.md states, and a locale keeps that English until it has its own.
 
 Both halves of the window read it: the view for what it draws, and the host for
 the notices and problems it words.

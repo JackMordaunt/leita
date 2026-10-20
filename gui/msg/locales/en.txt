@@ -24,8 +24,8 @@ licence = Licence
 version = Version {0}
 tagline = Instant disk search, with reports.
 explainer = See what fills any drive as it scans, track what changed since the last scan, free space safely, and hand on reports.
-free_personal = Free for personal use.
-free_personal_trial = Free for personal use. {0}
+free_personal = Free to scan, chart, search, clean up and export this scan.
+free_personal_trial = Free to scan, chart, search, clean up and export this scan. {0}
 notices = Open-source licences
 notices_intro = {0} is built on these components, each under its own licence.
 close = Close
@@ -260,10 +260,10 @@ format_pdf = PDF document
 format_html = Web page
 format_csv = CSV spreadsheet
 format_json = JSON data
-caption_pdf = Pages to print or attach to a ticket
-caption_html = One page that opens in any browser
-caption_csv = A row per entry, for a spreadsheet
-caption_json = Every figure, for another program
+caption_pdf = A Pro report: pages to print or attach to a ticket
+caption_html = A Pro report: one page that opens in any browser
+caption_csv = A row per entry, for a spreadsheet. Free, of this scan.
+caption_json = Every figure, for another program. Free, of this scan.
 
 # The licence
 adding = Adding…
@@ -271,9 +271,9 @@ add_licence = Add licence
 licensed_to = Licensed to {0}
 # {0} the tier, {1} the order, {2} the date issued
 licence_details = {0} · order {1} · issued {2}
-licence_terms = Scanning, the charts and Reclaim are free for personal use. Reports, change tracking and monitoring need a licence, after a 30-day trial. An organisation may evaluate leita for 30 days, then needs a licence for any use.
-trial_left.one = You can try reports and change tracking for {0} more day.
-trial_left = You can try reports and change tracking for {0} more days.
+licence_terms = Scanning, charts, search, safe cleanup, its log, and a CSV or JSON of the current scan are free for everyone, including an organisation. Pro, which compares scans and growth, runs scheduled scans and writes PDF or HTML reports, works for 30 days without a licence, then needs one. A paid year covers updates released in that year; Pro stays in those versions after renewal is cancelled.
+trial_left.one = You can try Pro for {0} more day.
+trial_left = You can try Pro for {0} more days.
 buy_licence = Buy a licence
 replace_licence = Replace the licence
 add_a_licence = Add a licence
@@ -283,11 +283,11 @@ licence_to_add = Licence to add
 # {0} the product's name
 licence_privacy = {0} sends the key once, to mordaunt.dev, to fetch your licence. It sends nothing else, then or later.
 open_licence_file = Open licence file…
-trial_ended_title = Your 30-day trial of reports and change tracking has ended
-trial_ended_body = Scanning, the charts and Reclaim stay free for personal use. A licence brings back reports, change tracking and monitoring. An organisation needs one for any use after its 30-day evaluation.
-reports_locked = Exporting reports needs a licence now the 30-day trial has ended.
+trial_ended_title = Your 30-day Pro evaluation has ended
+trial_ended_body = Scanning, charts, search, safe cleanup, its log, and a CSV or JSON of the current scan stay free for everyone. A licence brings back comparing scans, scheduled scans and PDF or HTML reports. Cancelling a paid year later keeps Pro in the versions it covered.
+reports_locked = PDF and HTML reports need a licence now the 30-day Pro evaluation has ended. A CSV or JSON of this scan is still free.
 # {0} the product's name
-change_locked = Seeing what changed since the last scan needs a licence now the 30-day trial has ended. {0} still keeps every scan, so it is all there once you add one.
+change_locked = Seeing what changed since the last scan needs a licence now the 30-day Pro evaluation has ended. {0} still keeps every scan, so it is all there once you add one.
 tier_personal = Personal
 tier_professional = Professional
 tier_organisation = Organisation
@@ -379,7 +379,7 @@ reader_failed = could not start the reader
 
 # Monitoring: scheduled scans of the places watched. {0} of monitoring_explain is the product's name; of monitoring_through, where the system keeps the schedule (a name such as systemd user timer leita-monitor.timer, not translated); of last_scanned, when, then {1} a size and {2} seconds.
 monitoring = Monitoring
-monitoring_locked = Monitoring needs a licence now the 30-day trial has ended. It can still be turned off, and places removed.
+monitoring_locked = Scheduled scans need a licence now the 30-day Pro evaluation has ended. It can still be turned off, and places removed.
 scheduled_scans = Scheduled scans
 monitoring_explain = {0} scans each place below on its schedule while it is closed, gently, and keeps every scan so you can see what changed. Nothing runs while this is off.
 monitoring_through = Run every hour by the {0}.

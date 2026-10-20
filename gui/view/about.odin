@@ -219,8 +219,8 @@ about_mark :: proc(gtx: ^ui.Ctx, loc := #caller_location) {
 }
 
 // licence_line is the licence leita runs under, in a line, as the licence
-// dialog says it: whose, or free for personal use and how long the trial has
-// left; "" until the host says.
+// dialog says it: whose, or that scanning and cleanup are free and how long
+// the Pro evaluation has left; "" until the host says.
 @(private)
 licence_line :: proc(gtx: ^ui.Ctx) -> string {
 	r, _ := ui.need(gtx, query.Licence{}, query.Licence_Result)

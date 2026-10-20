@@ -278,11 +278,15 @@ take_activation :: proc(d: ^Desk, a: ^Activated) {
 
 licence_answer :: proc(d: ^Desk) -> query.Licence_Result {
 	now := time.now()
+	grant := licence.Licence{}
+	if d.licensed {
+		grant = d.licence
+	}
 	r := query.Licence_Result {
 		licensed   = d.licensed,
 		activating = d.activating,
 		offered    = d.licence_offered,
-		unlocked   = licence.unlocked(d.licensed, d.first_use, now),
+		unlocked   = licence.entitled_to_pro(grant, d.first_use, now),
 		trial_left = licence.days_left(d.first_use, now),
 		problem    = d.licence_problem,
 	}

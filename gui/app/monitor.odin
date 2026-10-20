@@ -188,10 +188,15 @@ monitor_settle :: proc(d: ^Desk, problem: string) {
 	mo.changed += 1
 }
 
-// unlocked is whether the paid features work: under a licence, or in the trial.
+// unlocked is whether Pro runs: the paid-through grant for this build, or the
+// 30-day evaluation. The zero licence is no grant.
 @(private = "file")
 unlocked :: proc(d: ^Desk) -> bool {
-	return licence.unlocked(d.licensed, d.first_use, time.now())
+	grant := licence.Licence{}
+	if d.licensed {
+		grant = d.licence
+	}
+	return licence.entitled_to_pro(grant, d.first_use, time.now())
 }
 
 // set_monitoring turns monitoring on or off as c asks.
