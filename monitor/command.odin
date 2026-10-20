@@ -69,8 +69,9 @@ Context :: struct {
 	desktop:  alert.System,
 }
 
-// LOCKED says why a paid command was refused.
-LOCKED :: "monitoring needs a licence now the 30-day trial has ended; add one with leita licence add, or in Leita, the window, under Licence in its settings"
+// LOCKED says why a Pro command was refused. Listing, turning monitoring off
+// and removing a place are not refused: the record stays reachable.
+LOCKED :: "scheduled scans need a licence now the 30-day Pro evaluation has ended; monitoring can still be turned off, and places removed. add one with leita licence add, or in Leita, the window, under Licence in its settings"
 
 // dispatch carries out the monitor command args names, saying how it went on w,
 // and returns the exit code.
@@ -198,7 +199,12 @@ print_usage :: proc(c: Context, w: io.Writer) {
 // errorf says what went wrong on w, the prefix in bold for a person.
 @(private)
 errorf :: proc(c: Context, w: io.Writer, format: string, args: ..any) {
-	fmt.wprintfln(w, "%s %s", term.painted(c.style, {.Bold}, "error:"), fmt.tprintf(format, ..args))
+	fmt.wprintfln(
+		w,
+		"%s %s",
+		term.painted(c.style, {.Bold}, "error:"),
+		fmt.tprintf(format, ..args),
+	)
 }
 
 // notef says what a person should know on w, the prefix in bold for them.
@@ -331,7 +337,15 @@ heal :: proc(c: Context, w: io.Writer) {
 	aside := c.aside if c.aside.procedure != nil else w
 	entry := schedule.describe(c.host)
 	if problem, _ := schedule.install(c.host, c.argv); problem != "" {
-		errorf(c, aside, "the %s ran %s and cannot be moved to %s: %s", entry, was, c.argv[0], problem)
+		errorf(
+			c,
+			aside,
+			"the %s ran %s and cannot be moved to %s: %s",
+			entry,
+			was,
+			c.argv[0],
+			problem,
+		)
 		return
 	}
 	notef(c, aside, "the %s ran %s; it now runs %s", entry, was, c.argv[0])
@@ -533,7 +547,11 @@ run_command_line :: proc(args: []string) -> int {
 	host := schedule.host_default(context.temp_allocator)
 	paths := paths_beside(kept, context.temp_allocator)
 	now := time.now()
-	_, unlocked, problem := licence_beside(kept, os.get_env(licence.ENV, context.temp_allocator), now)
+	_, unlocked, problem := licence_beside(
+		kept,
+		os.get_env(licence.ENV, context.temp_allocator),
+		now,
+	)
 	if problem != "" {
 		notef({style = style}, os.to_writer(os.stderr), "%s", problem)
 	}
@@ -553,12 +571,13 @@ run_command_line :: proc(args: []string) -> int {
 
 /*
 licence_beside is whose licence leita runs under at now for the stores beside
-the history store at kept, "" for none, and whether the paid features work:
-under given, the licence LEITA_LICENCE holds for this run, or the one kept
-there, or in the trial (settings.trial_began). key is what a licence is checked
-against, nil for the key leita was built with. problem says why given was not
-taken, "" when it was or there is none; the run goes on without it. The command
-line's report and the monitor both ask here. In the temp allocator.
+the history store at kept, "" for none, and whether Pro works. Pro is
+licence.entitled_to_pro: the paid-through grant for this build, or the 30-day
+evaluation (settings.trial_began). given is the licence LEITA_LICENCE holds for
+this run, in place of the one kept. key is what a licence is checked against,
+nil for the key leita was built with. problem says why given was not taken, ""
+when it was or there is none; the run goes on without it. The command line's
+report and the monitor both ask here. In the temp allocator.
 */
 licence_beside :: proc(
 	kept, given: string,
@@ -571,12 +590,20 @@ licence_beside :: proc(
 ) {
 	l, from, err := licence.in_use(licence.path_beside(kept, context.temp_allocator), given, key)
 	if from == .Env && err != .None {
-		problem = fmt.tprintf("%s holds no licence this leita takes: %s", licence.ENV, licence.describe(err))
+		problem = fmt.tprintf(
+			"%s holds no licence this leita takes: %s",
+			licence.ENV,
+			licence.describe(err),
+		)
 	}
+	checked: licence.Licence
 	if err == .None {
 		licensee = l.licensee
+		checked = l
 	}
-	return licensee, licence.unlocked(licensee != "", settings.trial_began(kept, now), now), problem
+	return licensee,
+		licence.entitled_to_pro(checked, settings.trial_began(kept, now), now),
+		problem
 }
 
 // show runs a notification's command for real, and says whether it ran.

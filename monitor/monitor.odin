@@ -1,5 +1,5 @@
 /*
-Package monitor is leita's monitoring, a paid feature: scans of the places the
+Package monitor is leita's monitoring, a Pro feature: scans of the places the
 person watches, run while the window is closed, each kept in history so change
 tracking has a steady record. There is no process of its own: the system's
 scheduler runs `leita monitor run` every hour (package schedule), and each run

@@ -359,7 +359,7 @@ monitoring_is_refused_once_the_trial_is_over_but_can_still_be_turned_off :: proc
 	for args in ([][]string{{"run"}, {"add", b.place}, {"on"}}) {
 		code, out := run_monitor(&b, ..args)
 		testing.expect_value(t, code, EXIT_FAILED)
-		testing.expect(t, strings.contains(out, "needs a licence"), out)
+		testing.expect(t, strings.contains(out, "30-day Pro evaluation"), out)
 	}
 	code, _ := run_monitor(&b, "off")
 	testing.expect_value(t, code, 0)
