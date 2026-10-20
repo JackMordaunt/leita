@@ -73,14 +73,27 @@ keep_scan :: proc(
 /*
 say_kept says what history did: on the terminal, unless quiet, the change since
 the last scan kept of the same place, or that this was the first; and on standard
-error, why history was unavailable, if it was.
+error, why history was unavailable, if it was. compare is whether Pro runs.
+When it does not, an earlier scan is not described: the scan is still kept,
+and a note says so.
 */
-say_kept :: proc(k: Kept, now: u64, quiet: bool) {
+say_kept :: proc(k: Kept, now: u64, quiet: bool, compare: bool) {
 	if k.problem != "" {
 		say_note("history unavailable, so this scan is not kept: %s", k.problem)
 	}
 	prev, compared := k.previous.?
-	if quiet || k.place == "" || (!compared && k.problem != "") {
+	if k.place == "" || (!compared && k.problem != "") {
+		return
+	}
+	if compared && !compare {
+		if k.problem == "" {
+			say_note(
+				"comparing with earlier scans needs a licence now the 30-day Pro evaluation has ended; this scan is still kept",
+			)
+		}
+		return
+	}
+	if quiet {
 		return
 	}
 	fmt.println()

@@ -92,8 +92,8 @@ write_csv :: proc(sb: ^strings.Builder, r: ^Report) {
 			}
 		}
 	}
-	if r.compared == nil {
-		csv_note(sb, "No earlier scan to compare with.")
+	if note := comparison_note(r); note != "" {
+		csv_note(sb, note)
 	}
 	csv_note(sb, generated_by(r))
 }

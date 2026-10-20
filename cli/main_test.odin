@@ -7,6 +7,7 @@ import "core:os"
 import "core:path/filepath"
 import "core:reflect"
 import "core:strings"
+import "core:sync"
 import "core:testing"
 import "core:thread"
 import "core:time"
@@ -283,23 +284,6 @@ exit_code_reads_a_verdict_back :: proc(t: ^testing.T) {
 	testing.expect_value(t, exit_code(.Ok), EXIT_OK)
 	testing.expect_value(t, exit_code(.Warn), EXIT_WARN)
 	testing.expect_value(t, exit_code(.Fail), EXIT_FAIL)
-}
-
-// Once the trial is over without a licence, a report is refused before anything
-// is read; the scan alone is still free.
-@(test)
-a_report_after_the_trial_needs_a_licence :: proc(t: ^testing.T) {
-	// A real directory, so only the lock can stop the report.
-	tmp, _ := os.temp_directory(context.temp_allocator)
-	root := fmt.tprintf("%s/leita_locked_cli_%d", tmp, os.get_pid())
-	os.remove_all(root)
-	testing.expect(t, os.make_directory(root) == nil)
-	defer os.remove_all(root)
-	out := fmt.tprintf("%s.json", root)
-	os.remove(out)
-	defer os.remove(out)
-	testing.expect_value(t, scan_and_say({target = root, report = out}, locked = true), 1)
-	testing.expect(t, !os.exists(out), "nothing is written")
 }
 
 // A directory under the temp folder for one test, empty, and its history store
@@ -656,6 +640,8 @@ the_summary_shows_a_hostile_name_without_its_controls :: proc(t: ^testing.T) {
 // heap, for the caller to delete.
 @(private)
 capture_stdout :: proc(t: ^testing.T, opt: Options) -> (out: string, code: int) {
+	sync.mutex_lock(&stdio_mu)
+	defer sync.mutex_unlock(&stdio_mu)
 	dir, _ := os.temp_directory(context.temp_allocator)
 	path := fmt.tprintf("%s/leita_hostile_stdout_%d", dir, os.get_pid())
 	defer os.remove(path)

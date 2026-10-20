@@ -57,7 +57,9 @@ Scan
                             last read
 Report
   --report FILE             write the scan up as FILE, .csv, .json, .html or .pdf;
-                            - writes it to standard output instead of the summary
+                            - writes it to standard output instead of the summary.
+                            a csv or json of this scan is free; html and pdf need
+                            a licence after the 30-day Pro evaluation
   --format FORMAT           the report's format, csv, json, html or pdf, whatever its
                             file is called
   --paper a4|letter         the paper a PDF report is laid out on; the locale's unless set
@@ -87,7 +89,7 @@ Also
 
 Exit codes: 0 no limit crossed; 1 a bad flag, or a target that could not be scanned;
 2 a --warn-used limit crossed; 3 a --fail-used or --min-free limit crossed.
-Each scan is kept beside the window's, so the next says what changed.
+Each scan is kept beside the window's. With Pro, the next says what changed.
 `
 
 // PROGRAM is the command's name in its messages: the product's.
@@ -266,7 +268,9 @@ scan_and_say scans what opt names and says what it found: a summary on the
 terminal, a report as well or instead when one is asked for. kept is the history
 store the scan is compared with and kept in, "" for none; --no-history makes it
 none whatever it is. licensee is whose licence leita runs under, "" for none,
-and locked says the trial is over without one, so no report is written.
+and locked says Pro is off, so a PDF or HTML report is refused and an earlier
+scan is not compared. A CSV or JSON of this scan is still written, and the scan
+is still kept.
 */
 scan_and_say :: proc(opt: Options, kept := "", licensee := "", locked := false) -> int {
 	// Checked before anything is read, so a mistake costs nothing.
@@ -275,9 +279,9 @@ scan_and_say :: proc(opt: Options, kept := "", licensee := "", locked := false) 
 		say_error("%s", format_err)
 		return 1
 	}
-	if opt.report != "" && locked {
+	if opt.report != "" && locked && !report.basic_export(format) {
 		say_error(
-			"reports need a licence now the 30-day trial has ended; add one with leita licence add, or in Leita, the window, under Licence in its settings",
+			"a pdf or html report needs a licence now the 30-day Pro evaluation has ended; a csv or json of this scan is still free. add one with leita licence add, or in Leita, the window, under Licence in its settings",
 		)
 		return 1
 	}
@@ -439,7 +443,7 @@ scan_and_say :: proc(opt: Options, kept := "", licensee := "", locked := false) 
 		disk = {sp.total, sp.free}
 	}
 	k := keep_scan(kept, &t, &roll, engine.engine, disk)
-	say_kept(k, survey.total(&roll, t.root) if t.root < roll.seen else 0, quiet)
+	say_kept(k, survey.total(&roll, t.root) if t.root < roll.seen else 0, quiet, !locked)
 
 	thresholds_set := opt.warn_used > 0 || opt.fail_used > 0 || min_free > 0
 	th, _, known := report.threshold_of(
@@ -468,6 +472,13 @@ scan_and_say :: proc(opt: Options, kept := "", licensee := "", locked := false) 
 		duration = elapsed,
 		space    = space,
 	}
+	previous: Maybe(report.Snapshot)
+	_, has_earlier := k.previous.?
+	if !locked {
+		previous = k.previous
+	}
+	basic := report.basic_export(format)
+	_, comparing := previous.?
 	r := report.build(
 		&t,
 		&roll,
@@ -475,8 +486,10 @@ scan_and_say :: proc(opt: Options, kept := "", licensee := "", locked := false) 
 		{
 			top = opt.top,
 			reclaim = opt.reclaim,
-			previous = k.previous,
+			previous = previous,
 			licensee = licensee,
+			free_export = licensee == "" && basic && !comparing,
+			earlier_kept = locked && has_earlier,
 			warn_used = opt.warn_used,
 			fail_used = opt.fail_used,
 			min_free = min_free,

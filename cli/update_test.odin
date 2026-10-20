@@ -57,9 +57,10 @@ update_says :: proc(cfg: update.Config, args: ..string) -> (int, string) {
 	return code, strings.to_string(b)
 }
 
-@(private = "file")
-read_file :: proc(p: string) -> string {
-	data, _ := os.read_entire_file(p, context.temp_allocator)
+@(private)
+read_file :: proc(t: ^testing.T, path: string) -> string {
+	data, err := os.read_entire_file(path, context.temp_allocator)
+	testing.expect(t, err == nil, path)
 	return string(data)
 }
 
@@ -85,7 +86,7 @@ update_check_is_two_when_newer :: proc(t: ^testing.T) {
 	for want in ([]string{"current    v1.0.0", "latest     v1.1.0", "leita update installs it"}) {
 		testing.expectf(t, strings.contains(said, want), "%q is not in %q", want, said)
 	}
-	testing.expect_value(t, read_file(r.exe), "old build")
+	testing.expect_value(t, read_file(t, r.exe), "old build")
 }
 
 // --check exits 1 when the release cannot be read, saying nothing on standard output.
@@ -111,8 +112,8 @@ update_installs_the_newer_build :: proc(t: ^testing.T) {
 	for want in ([]string{"updated", "from v1.0.0 to v1.1.0, by the full build", "replaced", ".old", "run leita again"}) {
 		testing.expectf(t, strings.contains(said, want), "%q is not in %q", want, said)
 	}
-	testing.expect_value(t, read_file(r.exe), "new build")
-	testing.expect_value(t, read_file(fmt.tprintf("%s.old", r.exe)), "old build")
+	testing.expect_value(t, read_file(t, r.exe), "new build")
+	testing.expect_value(t, read_file(t, fmt.tprintf("%s.old", r.exe)), "old build")
 
 	code, said = update_says(cfg_of(r))
 	testing.expect_value(t, code, EXIT_OK)
@@ -128,7 +129,7 @@ update_refuses_a_hash_mismatch :: proc(t: ^testing.T) {
 	code, said := update_says(cfg_of(r))
 	testing.expect_value(t, code, EXIT_ERROR)
 	testing.expect_value(t, said, "")
-	testing.expect_value(t, read_file(r.exe), "old build")
+	testing.expect_value(t, read_file(t, r.exe), "old build")
 	testing.expect(t, !os.exists(fmt.tprintf("%s.new", r.exe)), "no half-installed file")
 }
 
@@ -143,7 +144,7 @@ update_never_replaces_a_development_build :: proc(t: ^testing.T) {
 	testing.expect_value(t, code, EXIT_NEWER)
 	code, _ = update_says(cfg)
 	testing.expect_value(t, code, EXIT_ERROR)
-	testing.expect_value(t, read_file(r.exe), "old build")
+	testing.expect_value(t, read_file(t, r.exe), "old build")
 }
 
 // Anything but --check or nothing is a bad flag, and -h says what update does.
@@ -159,6 +160,6 @@ update_takes_check_or_nothing :: proc(t: ^testing.T) {
 	code, said = update_says(cfg_of(r), "-h")
 	testing.expect_value(t, code, EXIT_OK)
 	testing.expect_value(t, said, UPDATE_USAGE)
-	testing.expect_value(t, read_file(r.exe), "old build")
+	testing.expect_value(t, read_file(t, r.exe), "old build")
 	testing.expect(t, is_subcommand([]string{"update"}), "update is a subcommand, so Leita runs it as leita does")
 }

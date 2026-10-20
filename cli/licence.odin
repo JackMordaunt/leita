@@ -26,8 +26,8 @@ window alone: leita licence sends nothing anywhere.
 
 LICENCE_USAGE :: `leita licence — the licence leita runs under.
 
-  leita licence             whose licence leita runs under, and its tier; without one,
-                            how long the trial has left
+  leita licence             whose licence leita runs under, its tier and paid-through
+                            date; without one, how long the Pro evaluation has left
   leita licence add LICENCE check a licence and keep it beside leita's data, where
                             the window finds it too: the line beginning leita., or
                             the file from your receipt that holds it
@@ -35,9 +35,10 @@ LICENCE_USAGE :: `leita licence — the licence leita runs under.
   LEITA_LICENCE=LICENCE     run under LICENCE, the line, for one run in place of the
                             one kept: for a server or a container that keeps nothing
 
-Reports, change tracking and scheduled scans need a licence once the 30-day trial
-has ended; scanning never does. A line keeps Pro for a release made at or before
-the paid-through date it carries, and a later release runs Free.
+Pro — comparing scans, scheduled scans, and PDF or HTML reports — needs a licence
+once the 30-day evaluation has ended. Scanning, cleanup and a CSV or JSON of the
+current scan never do. A line keeps Pro for a release made at or before the
+paid-through date it carries, and a later release runs Free.
 `
 
 // TIER_TITLES are the tiers as the command line names them, as the window does.
@@ -90,7 +91,10 @@ licence_dispatch :: proc(c: Licence_Context, args: []string, w: io.Writer) -> in
 	case verb == "remove" && len(args) == 1:
 		return remove_licence(c, w)
 	}
-	say_error("leita licence takes add LICENCE, remove, or nothing, not %q", strings.join(args, " ", context.temp_allocator))
+	say_error(
+		"leita licence takes add LICENCE, remove, or nothing, not %q",
+		strings.join(args, " ", context.temp_allocator),
+	)
 	fmt.eprintln("leita licence -h lists what it takes")
 	return EXIT_ERROR
 }
@@ -99,7 +103,11 @@ licence_dispatch :: proc(c: Licence_Context, args: []string, w: io.Writer) -> in
 // left without one. A licence there that does not check is an error.
 @(private = "file")
 show_licence :: proc(c: Licence_Context, w: io.Writer) -> int {
-	l, from, err := licence.in_use(licence.path_beside(c.kept, context.temp_allocator), c.given, c.key)
+	l, from, err := licence.in_use(
+		licence.path_beside(c.kept, context.temp_allocator),
+		c.given,
+		c.key,
+	)
 	if err == .None && from != .None {
 		label_to(w, "licensed", "to %s", l.licensee)
 		label_to(w, "tier", "%s", TIER_TITLES[l.tier])
@@ -121,7 +129,11 @@ show_licence :: proc(c: Licence_Context, w: io.Writer) -> int {
 	}
 	if err != .None {
 		if from == .Env {
-			say_error("%s holds no licence this leita takes: %s", licence.ENV, licence.describe(err))
+			say_error(
+				"%s holds no licence this leita takes: %s",
+				licence.ENV,
+				licence.describe(err),
+			)
 		} else {
 			say_error("the licence kept here does not hold: %s", licence.describe(err))
 		}
@@ -130,14 +142,14 @@ show_licence :: proc(c: Licence_Context, w: io.Writer) -> int {
 	if left > 0 {
 		fmt.wprintfln(
 			w,
-			"no licence; the trial of reports, change tracking and scheduled scans has %d %s left",
+			"no licence; the Pro evaluation has %d %s left",
 			left,
 			"day" if left == 1 else "days",
 		)
 	} else {
 		fmt.wprintln(
 			w,
-			"no licence, and the 30-day trial of reports, change tracking and scheduled scans has ended; leita licence add LICENCE adds one",
+			"no licence, and the 30-day Pro evaluation has ended; scanning, cleanup and a CSV or JSON of this scan stay free. leita licence add LICENCE adds one",
 		)
 	}
 	return EXIT_ERROR if err != .None else EXIT_OK

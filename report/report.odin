@@ -40,6 +40,13 @@ Report :: struct {
 	// format says so where it says what built it, as it says a name: a CSV cell
 	// of it is neutralised like a path's.
 	licensee:            string,
+	// A CSV or JSON of the current scan, written with no licence and no earlier
+	// scan attached. The note says it is free. A Pro report with no licence,
+	// during the evaluation, leaves this false and names the evaluation.
+	free_export:         bool,
+	// An earlier scan of this place was kept and not attached. The note says
+	// so, rather than that there was no earlier scan.
+	earlier_kept:        bool,
 	target:              string, // the path scanned, its top; the display formats picture its controls
 	volume:              string, // the device behind it, "" when unknown
 	filesystem:          scan.Filesystem,
@@ -52,7 +59,7 @@ Report :: struct {
 	unread:              u64, // directories the scan could not open, so left out
 	space:               Maybe(Space),
 	// The earlier scan the largest entries are compared with: absent when there
-	// is none, or the caller had none to give.
+	// is none, or when one was kept and not attached (earlier_kept).
 	compared:            Maybe(Baseline),
 	largest_directories: []Entry, // largest first
 	largest_files:       []Entry, // largest first
@@ -131,14 +138,16 @@ path under the top, names joined by "/", "" for the top, as the window keeps
 them (history).
 */
 Options :: struct {
-	top:       int,
-	reclaim:   bool,
-	user:      home.User,
-	previous:  Maybe(Snapshot),
-	licensee:  string, // whose licence leita runs under, "" for none
-	warn_used: int, // --warn-used, percent used; 0 for no check
-	fail_used: int, // --fail-used, percent used; 0 for no check
-	min_free:  u64, // --min-free, bytes; 0 for no check
+	top:         int,
+	reclaim:     bool,
+	user:        home.User,
+	previous:    Maybe(Snapshot),
+	licensee:     string, // whose licence leita runs under, "" for none
+	free_export:  bool, // current-scan CSV or JSON with no licence and no earlier scan
+	earlier_kept: bool, // an earlier scan was kept and is not in previous
+	warn_used:    int, // --warn-used, percent used; 0 for no check
+	fail_used:    int, // --fail-used, percent used; 0 for no check
+	min_free:     u64, // --min-free, bytes; 0 for no check
 }
 
 // Snapshot is an earlier scan as history keeps it: when it was taken, and what
@@ -181,6 +190,8 @@ build :: proc(
 	r.generated = time.now()
 	r.version = strings.clone(version.VERSION, allocator)
 	r.licensee = strings.clone(opt.licensee, allocator)
+	r.free_export = opt.free_export
+	r.earlier_kept = opt.earlier_kept
 	r.volume = strings.clone(facts.target.volume, allocator)
 	r.filesystem = facts.target.fs
 	r.engine = facts.engine

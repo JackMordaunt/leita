@@ -90,7 +90,10 @@ a_licence_is_added_shown_and_removed :: proc(t: ^testing.T) {
 	testing.expect_value(t, code, EXIT_OK)
 	testing.expect(
 		t,
-		strings.contains(said, "licensed to ada@example.com, Professional; paid through 2027-10-19T00:00:00Z"),
+		strings.contains(
+			said,
+			"licensed to ada@example.com, Professional; paid through 2027-10-19T00:00:00Z",
+		),
 		said,
 	)
 	testing.expect(t, os.exists(kept_at), "it is kept beside the history store")
@@ -106,7 +109,7 @@ a_licence_is_added_shown_and_removed :: proc(t: ^testing.T) {
 	testing.expect(t, !os.exists(kept_at), "it is forgotten")
 	code, said = licence_says(c)
 	testing.expect_value(t, code, EXIT_OK)
-	testing.expect(t, strings.contains(said, "no licence; the trial"), said)
+	testing.expect(t, strings.contains(said, "no licence; the Pro evaluation"), said)
 	code, said = licence_says(c, "remove")
 	testing.expect_value(t, code, EXIT_OK)
 	testing.expect(t, strings.contains(said, "no licence is kept here"), said)
@@ -164,9 +167,11 @@ leita_licence_holds_a_licence_for_one_run :: proc(t: ^testing.T) {
 	testing.expect(t, !unlocked, "a month on, it is over")
 
 	licensee, unlocked, problem = monitor.licence_beside(kept, line, month, s.pub[:])
-	testing.expect(t, unlocked, "LEITA_LICENCE unlocks this run")
 	testing.expect_value(t, licensee, "ada@example.com")
 	testing.expect_value(t, problem, "")
+	// This build has no release stamp, so the line does not grant Pro once the
+	// evaluation is over. The paid-through cutoff is what the gate asks.
+	testing.expect(t, !unlocked, "an unstamped build stays Free after the evaluation")
 	beside := fmt.tprintf("%s/data/licence", dir)
 	testing.expect_value(t, licence.path_beside(kept, context.temp_allocator), beside)
 	testing.expect(t, !os.exists(beside), "and keeps nothing")

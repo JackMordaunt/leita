@@ -73,6 +73,12 @@ FORMAT_NAMES := [Format]string {
 	.Pdf  = "pdf",
 }
 
+// basic_export is a CSV or JSON of the current scan, which is free for
+// everyone. PDF and HTML are Pro reports.
+basic_export :: proc(format: Format) -> bool {
+	return format == .Csv || format == .Json
+}
+
 /*
 export writes r to w as format, a PDF on paper. It is the one call every export
 goes through, the command line's and the window's, so whatever decides who may
@@ -172,18 +178,47 @@ generated_by :: proc(r: ^Report) -> string {
 }
 
 // licensed_by says whose licence the leita that built r runs under, as a
-// sentence: a report handed on says whether it came from a licensed copy.
+// sentence: a report handed on says whether it came from a licensed copy, a
+// free export of the current scan, or a Pro report made during the evaluation.
 @(private)
 licensed_by :: proc(r: ^Report) -> string {
-	if r.licensee == "" {
-		return UNLICENSED
+	if r.licensee != "" {
+		return strings.concatenate(
+			{"Licensed to ", readable(r.licensee), "."},
+			context.temp_allocator,
+		)
 	}
-	return strings.concatenate({"Licensed to ", readable(r.licensee), "."}, context.temp_allocator)
+	if r.free_export {
+		return FREE_EXPORT
+	}
+	return UNLICENSED
 }
 
-// UNLICENSED is what a report built without a licence says of it. The trial is
-// named, so a reader does not take it for a copy anyone may use at work.
-UNLICENSED :: "Unlicensed copy made during the 30-day trial."
+// FREE_EXPORT is what a CSV or JSON of the current scan says of itself when no
+// licence is in use and no earlier scan is attached. It is free for everyone,
+// so it does not say it was made during the evaluation.
+FREE_EXPORT :: "Free export of the current scan."
+
+// UNLICENSED is what a Pro report built without a licence says of it. The
+// evaluation is named, so a reader does not take a PDF or HTML for a copy
+// anyone may hand on as licensed.
+UNLICENSED :: "Unlicensed copy made during the 30-day Pro evaluation."
+
+// NONE_EARLIER is the note when this report compares with nothing because
+// there is no earlier scan of the place.
+NONE_EARLIER :: "No earlier scan to compare with."
+
+// EARLIER_KEPT is the note when an earlier scan was kept and this report does
+// not compare with it. It must not say there was no earlier scan.
+EARLIER_KEPT :: "An earlier scan is kept, and not compared."
+
+// comparison_note is that note, or "" when this report does compare.
+comparison_note :: proc(r: ^Report) -> string {
+	if r.compared != nil {
+		return ""
+	}
+	return EARLIER_KEPT if r.earlier_kept else NONE_EARLIER
+}
 
 // readable is s as the display formats show it, a name made safe to print:
 // see human.shown. Exported for the history record the CLI prints.

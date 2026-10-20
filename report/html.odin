@@ -64,8 +64,10 @@ write_html :: proc(sb: ^strings.Builder, r: ^Report) {
 		)
 	}
 	strings.write_string(sb, "</dl>\n")
-	if r.compared == nil {
-		strings.write_string(sb, "<p class=\"note\">No earlier scan to compare with.</p>\n")
+	if note := comparison_note(r); note != "" {
+		strings.write_string(sb, "<p class=\"note\">")
+		strings.write_string(sb, note)
+		strings.write_string(sb, "</p>\n")
 	}
 	strings.write_string(sb, "</section>\n")
 
