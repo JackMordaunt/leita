@@ -5,7 +5,7 @@ import "core:time"
 import "../licence"
 
 /*
-TRIAL is when the trial of the paid features began, in unix seconds. It is
+TRIAL is when the 30-day Pro evaluation began, in unix seconds. It is
 kept here as well as in the first-use file beside this store
 (licence.first_use), so that deleting either does not start the trial again.
 */
