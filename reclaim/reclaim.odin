@@ -7,9 +7,11 @@ A directory is a candidate when a rule names it and, for every name that could
 also be someone's work (target, build, .venv), when the directory holding it also
 holds the file that shows which tool made it: node_modules beside package.json.
 Where a project could keep a folder of that name of its own, the directory must
-also hold the file the tool writes into it: a Cargo target its CACHEDIR.TAG, a
-CMake build its CMakeCache.txt, a virtual environment its pyvenv.cfg. Names
-nothing else uses (__pycache__) need no proof. Bare build, dist and out are never
+also hold the file the rule names: a Cargo target its CACHEDIR.TAG, a CMake
+build its CMakeCache.txt, a virtual environment its pyvenv.cfg. A rule that
+finds its marker but not that file has ruled the directory out, and a looser
+rule for the same name does not put it back. A name with no marker and no file
+inside, such as __pycache__, needs no proof. Bare build, dist and out are never
 candidates.
 
 Under the user's home, the caches of tools known to make them again, a few package
@@ -414,12 +416,29 @@ find :: proc(
 	return f.found[:]
 }
 
+// Confinement is where host_confine says the path leads, and whether that is known.
+// A missing tail is kept on the last directory that resolved. A symlink loop, a
+// realpath failure other than a missing component, or a path the buffer cannot
+// hold is not known.
+@(private)
+Confinement :: struct {
+	path:  string,
+	known: bool,
+}
+
 /*
 root_may_delete is whether Reclaim, acting as user id euid, may delete the
 directory at path, whose owner is owner, for user. As root it may delete anything
 the system holds, another user's work among it (sudo leita on /home would offer
 and delete /home/bob/proj/node_modules), so it keeps to what user could delete
-themself: a directory under their home that is theirs. Any other user id is left
+themself: a directory under their home that is theirs. On this machine the
+original path is resolved before ".." is collapsed. A symlink is followed, and
+a ".." after one is the parent of where it led, which the symlink test records.
+A missing tail stays on the last directory that resolved, so a path that is not
+on disk is still judged and a ".." in the text cannot cancel that symlink. When
+realpath fails for any reason other than a missing component, this refuses. A
+path of another platform is judged on its text alone, as is Windows, where the
+window does not ask this (gui/app/act.odin). Any other user id is left
 to the system's permission checks; a capability short of root is not looked for.
 */
 root_may_delete :: proc(
@@ -436,7 +455,23 @@ root_may_delete :: proc(
 	if !ok || uid != u64(owner) {
 		return false
 	}
-	rel, inside := within(path, strings.trim_right(user.dir, separators(platform)), platform)
+	home_dir := lexical_clean(
+		strings.trim_right(user.dir, separators(platform)),
+		platform,
+		context.temp_allocator,
+	)
+	// A made-up path of another platform is not on this machine to resolve.
+	if platform != HOST {
+		cleaned := lexical_clean(path, platform, context.temp_allocator)
+		rel, inside := within(cleaned, home_dir, platform)
+		return inside && rel != ""
+	}
+	judged := host_confine(path)
+	base := host_confine(home_dir)
+	if !judged.known || !base.known {
+		return false
+	}
+	rel, inside := within(judged.path, base.path, platform)
 	return inside && rel != ""
 }
 
@@ -514,9 +549,17 @@ match :: proc(
 }
 
 // rule_for is the category of directory dir, called name, in a directory holding
-// siblings, if a rule makes it a candidate there.
+// siblings, if a rule makes it a candidate there. A rule whose marker is present
+// and whose inside file is missing has claimed the name: a looser rule for that
+// name, one that asks for no file inside, does not override it. Cargo's target
+// without CACHEDIR.TAG stays out even beside a pom.xml, and a CMake build without
+// CMakeCache.txt stays out even beside a Gradle file. The looser rule still
+// applies when no stricter rule's marker is there.
 @(private)
 rule_for :: proc(f: ^Finder, name: string, dir: u32, siblings: []u32) -> (Category, bool) {
+	loose: Category
+	loose_ok := false
+	strict_failed := false
 	for rule in RULES {
 		if rule.name != name {
 			continue
@@ -528,12 +571,19 @@ rule_for :: proc(f: ^Finder, name: string, dir: u32, siblings: []u32) -> (Catego
 			clear(&f.held)
 			f.src.children(f.src.data, dir, &f.held)
 			if !holds_file(f, f.held[:], rule.inside) {
+				strict_failed = true
 				continue
 			}
+			return rule.category, true
 		}
-		return rule.category, true
+		if !loose_ok {
+			loose, loose_ok = rule.category, true
+		}
 	}
-	return {}, false
+	if strict_failed {
+		return {}, false
+	}
+	return loose, loose_ok
 }
 
 // holds_file is whether one of nodes is a file called one of names.
@@ -863,6 +913,68 @@ separator :: proc(platform: Platform) -> byte {
 @(private)
 separators :: proc(platform: Platform) -> string {
 	return `\/` if platform == .Windows else "/"
+}
+
+// lexical_clean is path with "." and ".." collapsed and repeated separators
+// folded to the platform's, in allocator. ".." above the root is dropped. It
+// does not follow a symlink: that is host_confine, and only for a path that is
+// on this machine.
+@(private)
+lexical_clean :: proc(
+	path: string,
+	platform: Platform,
+	allocator := context.temp_allocator,
+) -> string {
+	if path == "" {
+		return path
+	}
+	seps := separators(platform)
+	parts := make([dynamic]string, allocator)
+	start := 0
+	absolute := false
+	prefix := ""
+	if platform == .Windows && len(path) >= 2 && path[1] == ':' {
+		prefix = path[:2]
+		start = 2
+		if len(path) == 2 || strings.index_byte(seps, path[2]) >= 0 {
+			absolute = true
+		}
+	} else if strings.index_byte(seps, path[0]) >= 0 {
+		absolute = true
+	}
+	i := start
+	for i <= len(path) {
+		if i < len(path) && strings.index_byte(seps, path[i]) < 0 {
+			i += 1
+			continue
+		}
+		elem := path[start:i]
+		start = i + 1
+		i += 1
+		switch elem {
+		case "", ".":
+		case "..":
+			if len(parts) > 0 {
+				pop(&parts)
+			}
+		case:
+			append(&parts, elem)
+		}
+	}
+	b := strings.builder_make(allocator)
+	if prefix != "" {
+		strings.write_string(&b, prefix)
+	}
+	if absolute {
+		strings.write_byte(&b, separator(platform))
+	}
+	for elem, n in parts {
+		if n > 0 {
+			strings.write_byte(&b, separator(platform))
+		}
+		strings.write_string(&b, elem)
+	}
+	return strings.to_string(b)
 }
 
 // within is path relative to dir, if path is dir or lies under it on platform.
