@@ -29,48 +29,55 @@ SETTABLE_ATTRIBUTES :: win.DWORD(
 // SetFileInformationByHandle. Copy the attributes and the DACL with the
 // sizes those calls expect. Owner is left: copying it often needs a privilege
 // this process does not have. A failure aborts before the replace.
-preserve_permissions :: proc(exe, fresh: string, allocator := context.temp_allocator) -> bool {
+// note names the API and GetLastError, captured before any formatting.
+preserve_permissions :: proc(exe, fresh: string, allocator := context.temp_allocator) -> (ok: bool, note: string) {
 	wide_exe := win.utf8_to_wstring(exe, allocator)
 	wide_fresh := win.utf8_to_wstring(fresh, allocator)
 	if wide_exe == nil || wide_fresh == nil {
-		return false
+		return false, "utf8_to_wstring failed"
 	}
 	attr := win.GetFileAttributesW(wide_exe)
 	if attr == win.INVALID_FILE_ATTRIBUTES {
-		return false
+		err := win.GetLastError()
+		return false, fmt.tprintf("GetFileAttributesW error %d", err)
 	}
 	attr = attr & SETTABLE_ATTRIBUTES
 	if attr == 0 {
 		attr = win.FILE_ATTRIBUTE_NORMAL
 	}
-	if !win.SetFileAttributesW(wide_fresh, attr) {
-		return false
+	set_attr := win.SetFileAttributesW(wide_fresh, attr)
+	if !set_attr {
+		err := win.GetLastError()
+		return false, fmt.tprintf("SetFileAttributesW error %d", err)
 	}
 	needed: win.DWORD
 	sized := win.GetFileSecurityW(wide_exe, DACL_SECURITY_INFORMATION, nil, 0, &needed)
-	if needed == 0 || needed > 1_048_576 {
-		return false
-	}
-	if !sized && win.GetLastError() != win.ERROR_INSUFFICIENT_BUFFER {
-		return false
+	err := win.GetLastError()
+	if needed == 0 || needed > 1_048_576 || (!sized && err != win.ERROR_INSUFFICIENT_BUFFER) {
+		return false, fmt.tprintf("GetFileSecurityW error %d needed %d", err, needed)
 	}
 	buf := make([]byte, needed, allocator)
-	if !win.GetFileSecurityW(
+	read := win.GetFileSecurityW(
 		wide_exe,
 		DACL_SECURITY_INFORMATION,
 		win.PSECURITY_DESCRIPTOR(raw_data(buf)),
 		needed,
 		&needed,
-	) {
-		return false
-	}
-	return bool(
-		SetFileSecurityW(
-			wide_fresh,
-			DACL_SECURITY_INFORMATION,
-			win.PSECURITY_DESCRIPTOR(raw_data(buf)),
-		),
 	)
+	if !read {
+		err = win.GetLastError()
+		return false, fmt.tprintf("GetFileSecurityW error %d needed %d", err, needed)
+	}
+	wrote := SetFileSecurityW(
+		wide_fresh,
+		DACL_SECURITY_INFORMATION,
+		win.PSECURITY_DESCRIPTOR(raw_data(buf)),
+	)
+	if !wrote {
+		err = win.GetLastError()
+		return false, fmt.tprintf("SetFileSecurityW error %d", err)
+	}
+	return true, ""
 }
 
 @(private)

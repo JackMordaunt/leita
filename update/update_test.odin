@@ -885,7 +885,9 @@ a_link_to_a_protected_path_is_refused_before_anything_is_written :: proc(t: ^tes
 	ta := context.temp_allocator
 	link := path.join(f.root, "link-protected", allocator = ta)
 	package_target := "/usr/bin/leita-update-test-not-a-real-file"
-	testing.expect_value(t, os.symlink(package_target, link), nil)
+	if !link_to(t, package_target, link) {
+		return
+	}
 	cfg := config(&f)
 	cfg.base = path.join(f.root, "nowhere", allocator = ta)
 	cfg.exe = link
@@ -901,14 +903,18 @@ a_link_to_a_protected_path_is_refused_before_anything_is_written :: proc(t: ^tes
 
 	installer := `C:\Program Files\Leita\leita-update-test-not-a-real-file.exe`
 	link_i := path.join(f.root, "link-installer", allocator = ta)
-	testing.expect_value(t, os.symlink(installer, link_i), nil)
+	if !link_to(t, installer, link_i) {
+		return
+	}
 	cfg.exe = link_i
 	r = apply(cfg)
 	testing.expect_value(t, r.outcome, Outcome.Refused)
 	testing.expect_value(t, r.reason, Reason.Installer)
 
 	link_j := path.join(f.root, "link-journal", allocator = ta)
-	testing.expect_value(t, os.symlink(JOURNAL_COPY, link_j), nil)
+	if !link_to(t, JOURNAL_COPY, link_j) {
+		return
+	}
 	before, had := "", false
 	if exists(JOURNAL_COPY) {
 		before = read(JOURNAL_COPY)
@@ -931,8 +937,9 @@ a_link_to_a_protected_path_is_refused_before_anything_is_written :: proc(t: ^tes
 
 	a := path.join(f.root, "loop-a", allocator = ta)
 	b := path.join(f.root, "loop-b", allocator = ta)
-	testing.expect_value(t, os.symlink(b, a), nil)
-	testing.expect_value(t, os.symlink(a, b), nil)
+	if !link_to(t, b, a) || !link_to(t, a, b) {
+		return
+	}
 	cfg.exe = a
 	r = apply(cfg)
 	testing.expect_value(t, r.outcome, Outcome.Refused)
