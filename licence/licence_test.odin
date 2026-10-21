@@ -251,6 +251,76 @@ a_key_set_is_comma_separated_hex :: proc(t: ^testing.T) {
 	}
 }
 
+// A replacement that cannot be staged leaves the previous line and receipt
+// byte for byte. Once the blockage is gone, the new line replaces the old
+// one, keeps its mode, and does not leave the staging file behind.
+@(test)
+a_failed_replacement_keeps_the_line_and_the_receipt :: proc(t: ^testing.T) {
+	s := signer()
+	dir, derr := os.make_directory_temp("", "leita-licence-replace-*", context.temp_allocator)
+	testing.expect(t, derr == nil)
+	defer os.remove_all(dir)
+	path, _ := filepath.join({dir, "licence"}, context.temp_allocator)
+	text := mint(&s, TERMS)
+	testing.expect_value(t, save(path, text), Error.None)
+	before, berr := os.read_entire_file(path, context.temp_allocator)
+	testing.expect(t, berr == nil)
+	testing.expect_value(t, save_receipt(path, "LEITA-SOLD"), Error.None)
+	receipt := receipt_path(path, context.temp_allocator)
+	receipt_before, rerr := os.read_entire_file(receipt, context.temp_allocator)
+	testing.expect(t, rerr == nil)
+
+	// A directory where the staging file would be: the write cannot start.
+	line_block := fmt.tprintf("%s.new", path)
+	receipt_block := fmt.tprintf("%s.new", receipt)
+	testing.expect(t, os.make_directory(line_block) == nil)
+	testing.expect_value(t, save(path, mint(&s, other_terms(t))), Error.Unwritable)
+	after, aerr := os.read_entire_file(path, context.temp_allocator)
+	testing.expect(t, aerr == nil)
+	testing.expect_value(t, string(after), string(before))
+	testing.expect(t, os.is_dir(line_block), "the failed save does not remove the blockage")
+
+	testing.expect(t, os.make_directory(receipt_block) == nil)
+	testing.expect_value(t, save_receipt(path, "LEITA-OTHER"), Error.Unwritable)
+	receipt_after, raerr := os.read_entire_file(receipt, context.temp_allocator)
+	testing.expect(t, raerr == nil)
+	testing.expect_value(t, string(receipt_after), string(receipt_before))
+	still, _ := os.read_entire_file(path, context.temp_allocator)
+	testing.expect_value(t, string(still), string(before))
+
+	testing.expect(t, os.remove_all(line_block) == nil)
+	mode := os.Permissions{.Read_User, .Write_User}
+	testing.expect(t, os.chmod(path, mode) == nil)
+	next := mint(&s, other_terms(t))
+	testing.expect_value(t, save(path, next), Error.None)
+	got, gerr := os.read_entire_file(path, context.temp_allocator)
+	testing.expect(t, gerr == nil)
+	testing.expect_value(t, strings.trim_space(string(got)), next)
+	testing.expect(t, !os.exists(line_block), "a published replacement leaves no staging file")
+	when ODIN_OS != .Windows {
+		info, serr := os.stat(path, context.temp_allocator)
+		testing.expect(t, serr == nil)
+		if serr == nil {
+			defer os.file_info_delete(info, context.temp_allocator)
+			testing.expect(t, info.mode == mode, "the replacement keeps the line's mode")
+		}
+	}
+
+	testing.expect(t, os.remove_all(receipt_block) == nil)
+	testing.expect_value(t, save_receipt(path, "LEITA-OTHER"), Error.None)
+	key, ok := read_receipt(path)
+	testing.expect(t, ok && key == "LEITA-OTHER")
+	testing.expect(t, !os.exists(receipt_block))
+}
+
+// other_terms is TERMS with another order id, so a second save is a different line.
+@(private)
+other_terms :: proc(t: ^testing.T) -> string {
+	next, _ := strings.replace_all(TERMS, `"id":"ord_1"`, `"id":"ord_2"`, context.temp_allocator)
+	testing.expect(t, next != TERMS)
+	return next
+}
+
 // The receipt key is kept beside the line and takes the line's permissions.
 // Forgetting the line removes it. A line installed with keep was not fetched,
 // so a receipt left beside an older line goes too.
@@ -312,21 +382,17 @@ Memo :: struct {
 }
 
 memo_ledger :: proc(m: ^Memo) -> Ledger {
-	return {
-		user = m,
-		get = proc(user: rawptr) -> (string, bool) {
+	return {user = m, get = proc(user: rawptr) -> (string, bool) {
 			m := (^Memo)(user)
 			return m.text, m.found
-		},
-		set = proc(user: rawptr, text: string) -> bool {
+		}, set = proc(user: rawptr, text: string) -> bool {
 			m := (^Memo)(user)
 			if m.readonly {
 				return false
 			}
 			m.text, m.found = strings.clone(text, context.temp_allocator), true
 			return true
-		},
-	}
+		}}
 }
 
 // trial_dir is a folder for one test's first-use file, and the file's path.
@@ -403,13 +469,22 @@ a_garbled_stamp_ends_the_trial :: proc(t: ^testing.T) {
 	testing.expect(t, !unlocked(false, first_use(path, memo_ledger(&memo), now), now))
 	testing.expect(t, !memo.found, "nothing is written over it")
 
-	memo = {text = "x", found = true}
+	memo = {
+		text  = "x",
+		found = true,
+	}
 	testing.expect_value(t, first_use("", memo_ledger(&memo), now), TRIAL_OVER)
 
-	memo = {text = "1799000000", found = true}
+	memo = {
+		text  = "1799000000",
+		found = true,
+	}
 	testing.expect_value(t, unix(first_use(path, memo_ledger(&memo), now)), 1_799_000_000)
 	data, _ := os.read_entire_file(path, context.temp_allocator)
 	testing.expect_value(t, strings.trim_space(string(data)), "1799000000")
+	// The mended stamp is inside the 30-day trial, so Pro is open. A stub that
+	// always returns false fails here, beside the garbled stamp that locks it.
+	testing.expect(t, unlocked(false, time.unix(1_799_000_000, 0), now))
 
 	// A folder where the file should be: there, but not readable as one.
 	testing.expect(t, os.remove(path) == nil)
@@ -498,7 +573,10 @@ the_licence_in_use_is_the_one_given_or_else_the_one_kept :: proc(t: ^testing.T) 
 	testing.expect_value(t, from, Source.Kept)
 	testing.expect_value(t, l.licensee, "ada@example.com")
 
-	given := mint(&s, `{"v":1,"id":"ord_2","email":"ops@example.com","scope":"organisation","features":"pro","paidThrough":"2028-01-01T00:00:00Z","issued":"2026-10-19T12:00:00Z"}`)
+	given := mint(
+		&s,
+		`{"v":1,"id":"ord_2","email":"ops@example.com","scope":"organisation","features":"pro","paidThrough":"2028-01-01T00:00:00Z","issued":"2026-10-19T12:00:00Z"}`,
+	)
 	l, from, err = in_use(path, given, s.pub[:])
 	testing.expect_value(t, from, Source.Env)
 	testing.expect_value(t, l.licensee, "ops@example.com")
@@ -506,14 +584,11 @@ the_licence_in_use_is_the_one_given_or_else_the_one_kept :: proc(t: ^testing.T) 
 	testing.expect_value(t, from, Source.Env)
 	testing.expect_value(t, err, Error.Malformed)
 
-	built, parsed := parse_key_set(KEY)
-	defer if parsed {
-		delete(built)
-	}
-	if !parsed {
-		_, _, err = in_use(path, "", nil)
-		testing.expect_value(t, err, Error.No_Key)
-	}
+	// A key of the wrong size is not a key, on a build that has one and one that
+	// does not. nil would mean the keys this binary was built with.
+	short := [3]byte{1, 2, 3}
+	_, _, err = in_use(path, "", short[:])
+	testing.expect_value(t, err, Error.No_Key)
 
 	was, ferr := forget(path)
 	testing.expect(t, was && ferr == .None)
