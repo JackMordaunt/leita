@@ -3,6 +3,7 @@ package leita_files
 
 import "base:runtime"
 
+import "core:c"
 import "core:fmt"
 import "core:os"
 import "core:path/filepath"
@@ -19,17 +20,57 @@ SEPARATORS :: "/"
 @(private = "file")
 RENAME_NOREPLACE :: 1
 
-// rename_noreplace renames from to to, failing with Exists rather than replacing
-// whatever is at to: renameat2's RENAME_NOREPLACE makes the check and the rename one
-// step, so nothing can slip in between.
+/*
+rename_noreplace renames from to to, failing with Exists rather than replacing
+whatever is at to. Each folder is opened without following a link (open_directory),
+and renameat2's RENAME_NOREPLACE does the check and the rename as one step inside
+those descriptors. A symbolic link in either path is Not_Directory.
+*/
 rename_noreplace :: proc(from, to: string) -> Error {
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	from_name := filepath.base(from)
+	to_name := filepath.base(to)
+	if from_name == "" ||
+	   from_name == "." ||
+	   from_name == ".." ||
+	   to_name == "" ||
+	   to_name == "." ||
+	   to_name == ".." {
+		return .Bad_Name
+	}
+	from_dir := filepath.dir(from)
+	to_dir := filepath.dir(to)
+	if from_dir == to_dir {
+		fd, err := open_directory(from_dir)
+		if err != .None {
+			return err
+		}
+		defer posix.close(fd)
+		return rename_at(fd, from_name, fd, to_name)
+	}
+	from_fd, ferr := open_directory(from_dir)
+	if ferr != .None {
+		return ferr
+	}
+	defer posix.close(from_fd)
+	to_fd, terr := open_directory(to_dir)
+	if terr != .None {
+		return terr
+	}
+	defer posix.close(to_fd)
+	return rename_at(from_fd, from_name, to_fd, to_name)
+}
+
+// rename_at is renameat2 of from in from_dir to to in to_dir, refusing to replace.
+@(private)
+rename_at :: proc(from_dir: posix.FD, from: string, to_dir: posix.FD, to: string) -> Error {
 	f := strings.clone_to_cstring(from, context.temp_allocator)
 	t := strings.clone_to_cstring(to, context.temp_allocator)
 	ret := linux.syscall(
 		linux.SYS_renameat2,
-		linux.AT_FDCWD,
+		uintptr(from_dir),
 		rawptr(f),
-		linux.AT_FDCWD,
+		uintptr(to_dir),
 		rawptr(t),
 		uintptr(RENAME_NOREPLACE),
 	)
@@ -40,30 +81,74 @@ rename_noreplace :: proc(from, to: string) -> Error {
 }
 
 /*
+fchmod_nofollow changes the mode of name in dir on Linux, via fchmodat2 with
+AT_SYMLINK_NOFOLLOW. If that call fails, the caller leaves the directory unopened.
+There is no fallback that follows a link.
+*/
+@(private)
+fchmod_nofollow :: proc(dir: posix.FD, name: cstring, mode: posix.mode_t) -> bool {
+	flags := linux.FD_Flags{.SYMLINK_NOFOLLOW}
+	ret := linux.syscall(
+		linux.SYS_fchmodat2,
+		uintptr(dir),
+		rawptr(name),
+		uintptr(transmute(u32)mode),
+		uintptr(transmute(i32)flags),
+	)
+	return ret == 0
+}
+
+/*
 trash moves path to the home Trash of the freedesktop.org Trash specification: the
 entry under files/, and a .trashinfo under info/ saying where it came from, so the
 desktop's Trash can put it back. The info file is made first and exclusively, so two
 trashes never take one name. An entry on another filesystem than the home Trash is
 refused with Cross_Device: the specification's per-volume Trash folders are not
 supported, and copying a tree across to the home one is not a move.
+
+On Linux, the source's folder and the Trash's files and info directories are opened
+without following a link (open_directory, make_directory). A symbolic link in the
+source path, or standing in for files or info, is Not_Directory.
 */
 trash :: proc(path: string) -> Error {
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	base := filepath.base(path)
+	if base == "" || base == "." || base == ".." || strings.contains_rune(base, '/') {
+		return .Not_Directory
+	}
+	src, err := open_directory(filepath.dir(path))
+	if err != .None {
+		return err
+	}
+	defer posix.close(src)
+
 	root := trash_root()
 	files_dir, _ := filepath.join({root, "files"}, context.temp_allocator)
 	info_dir, _ := filepath.join({root, "info"}, context.temp_allocator)
-	_ = os.make_directory_all(files_dir)
-	_ = os.make_directory_all(info_dir)
-	base := filepath.base(path)
+	files, ferr := make_directory(files_dir)
+	if ferr != .None {
+		return ferr
+	}
+	defer posix.close(files)
+	info, ierr := make_directory(info_dir)
+	if ierr != .None {
+		return ierr
+	}
+	defer posix.close(info)
+
 	for n := 1; n < 10_000; n += 1 {
 		runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
 		name := base if n == 1 else fmt.tprintf("%s.%d", base, n)
-		info_path, _ := filepath.join(
-			{info_dir, strings.concatenate({name, ".trashinfo"}, context.temp_allocator)},
-			context.temp_allocator,
+		info_name := strings.concatenate({name, ".trashinfo"}, context.temp_allocator)
+		cname := strings.clone_to_cstring(info_name, context.temp_allocator)
+		ifd := posix.openat(
+			info,
+			cname,
+			{.WRONLY, .CREAT, .EXCL, .NOFOLLOW, .CLOEXEC},
+			{.IRUSR, .IWUSR},
 		)
-		f, ferr := os.open(info_path, {.Write, .Create, .Excl})
-		if ferr != nil {
-			if os.exists(info_path) {
+		if ifd == -1 {
+			if posix.errno() == .EEXIST {
 				continue
 			}
 			return .Denied
@@ -81,20 +166,80 @@ trash :: proc(path: string) -> Error {
 			mi,
 			s,
 		)
-		_, werr := os.write(f, transmute([]u8)body)
-		os.close(f)
-		err := Error.Other
-		if werr == nil {
-			target, _ := filepath.join({files_dir, name}, context.temp_allocator)
-			err = rename_noreplace(path, target)
-			if err == .None {
-				return .None
-			}
+		wrote := write_all(ifd, transmute([]byte)body)
+		posix.close(ifd)
+		if !wrote {
+			_ = posix.unlinkat(info, cname, {})
+			return .Other
 		}
-		_ = os.remove(info_path)
-		return err
+		moved := rename_at(src, base, files, name)
+		if moved == .None {
+			return .None
+		}
+		_ = posix.unlinkat(info, cname, {})
+		if moved == .Exists {
+			continue
+		}
+		return moved
 	}
 	return .Exists
+}
+
+/*
+make_directory opens path as a directory on Linux, creating any missing component
+as mode 0700. A symbolic link is Not_Directory and is not created through: mkdirat
+is only on a descriptor opened without following a link.
+*/
+@(private)
+make_directory :: proc(path: string) -> (fd: posix.FD, err: Error) {
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	if fd, err = open_directory(path); err != .Missing {
+		return fd, err
+	}
+	parent := filepath.dir(path)
+	name := filepath.base(path)
+	if name == "" || name == "." || name == ".." || strings.contains_rune(name, '/') {
+		return -1, .Not_Directory
+	}
+	pfd: posix.FD
+	switch {
+	case parent == "" || parent == ".":
+		pfd, err = open_directory(".")
+	case parent == path:
+		return -1, .Not_Directory
+	case:
+		pfd, err = make_directory(parent)
+	}
+	if err != .None {
+		return -1, err
+	}
+	defer posix.close(pfd)
+	cname := strings.clone_to_cstring(name, context.temp_allocator)
+	if posix.mkdirat(pfd, cname, posix.S_IRWXU) != .OK && posix.errno() != .EEXIST {
+		return -1, errno_error(i32(posix.errno()))
+	}
+	fd = posix.openat(pfd, cname, {.DIRECTORY, .NOFOLLOW, .CLOEXEC})
+	if fd == -1 {
+		if posix.errno() == .ELOOP || posix.errno() == .ENOTDIR {
+			return -1, .Not_Directory
+		}
+		return -1, errno_error(i32(posix.errno()))
+	}
+	return fd, .None
+}
+
+// write_all writes the whole of body to fd, or false if a write fails.
+@(private)
+write_all :: proc(fd: posix.FD, body: []byte) -> bool {
+	rest := body
+	for len(rest) > 0 {
+		n := posix.write(fd, raw_data(rest), c.size_t(len(rest)))
+		if n <= 0 {
+			return false
+		}
+		rest = rest[int(n):]
+	}
+	return true
 }
 
 // reveal asks the file manager over D-Bus to show path selected, and opens its
