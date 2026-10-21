@@ -4,6 +4,19 @@ package update
 import "core:strings"
 import win "core:sys/windows"
 
+// reparse_point reports a symlink or other reparse point.
+reparse_point :: proc(path: string, allocator := context.temp_allocator) -> bool {
+	wide := win.utf8_to_wstring(path, allocator)
+	if wide == nil {
+		return false
+	}
+	attr := win.GetFileAttributesW(wide)
+	if attr == win.INVALID_FILE_ATTRIBUTES {
+		return false
+	}
+	return attr & win.FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
 // canonical_existing is the path Windows names after following links. The
 // open does not pass FILE_FLAG_OPEN_REPARSE_POINT, so a symlink is not
 // returned as its own name. \\?\ and \\?\UNC\ are stripped: classification
