@@ -47,6 +47,8 @@ def main():
     system = system_name()
     directory = Path(os.environ.get("LIFECYCLE_DIR", ROOT / "build" / "lifecycle"))
     directory.mkdir(parents=True, exist_ok=True)
+    # Keep just's default -sanitize:address. Windows cleanup must not call
+    # os.remove_all; that path is SHFileOperationW and ASan aborts in it.
     proc = subprocess.run(["just", "schedule-evidence"], cwd=ROOT)
     status = "pass" if proc.returncode == 0 else "fail"
     detail = "" if status == "pass" else f"just schedule-evidence exited {proc.returncode}"

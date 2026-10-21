@@ -183,6 +183,48 @@ set_schedule_latest :: proc(d: ^Desk, version: string) {
 	d.update_result.latest_len = copy(d.update_result.latest_buf[:], version)
 }
 
+// os.remove_all on Windows is SHFileOperationW (core/os/path_windows.odin).
+// AddressSanitizer aborts there: HeapSize sees a pointer the shell owns
+// (windows-lifecycle-eighth.log, this test's defer). The directory holds
+// only settings.db, opened with WAL. schedule_close runs first, so the
+// connection is already shut. Remove the database and any wal or shm, then
+// the directory itself.
+@(private)
+remove_schedule_dir :: proc(t: ^testing.T, dir: string) {
+	if dir == "" {
+		return
+	}
+	remove_one :: proc(path: string) -> os.Error {
+		if !os.exists(path) {
+			return nil
+		}
+		return os.remove(path)
+	}
+	db := fmt.tprintf("%s/%s", dir, settings.FILE)
+	testing.expect(t, remove_one(db) == nil, "settings.db is removed")
+	testing.expect(t, remove_one(fmt.tprintf("%s-wal", db)) == nil, "settings.db-wal is removed")
+	testing.expect(t, remove_one(fmt.tprintf("%s-shm", db)) == nil, "settings.db-shm is removed")
+	testing.expect(t, os.remove(dir) == nil, "the schedule directory is removed")
+	testing.expect(t, !os.exists(dir), "the schedule directory is gone")
+}
+
+@(test)
+schedule_fixture_removal_deletes_the_database_and_the_directory :: proc(t: ^testing.T) {
+	dir, derr := os.make_directory_temp("", "leita-schedule-rm-*", context.temp_allocator)
+	testing.expect(t, derr == nil, "a temp directory")
+	db := fmt.tprintf("%s/%s", dir, settings.FILE)
+	wal := fmt.tprintf("%s-wal", db)
+	shm := fmt.tprintf("%s-shm", db)
+	testing.expect(t, os.write_entire_file(db, "x") == nil)
+	testing.expect(t, os.write_entire_file(wal, "w") == nil)
+	testing.expect(t, os.write_entire_file(shm, "s") == nil)
+	remove_schedule_dir(t, dir)
+	testing.expect(t, !os.exists(db), "settings.db is gone")
+	testing.expect(t, !os.exists(wal), "settings.db-wal is gone")
+	testing.expect(t, !os.exists(shm), "settings.db-shm is gone")
+	testing.expect(t, !os.exists(dir), "the schedule directory is gone")
+}
+
 // Opted-in checks are one at startup and one a day, through the desk's tick.
 // Off stays off. A second window does not repeat the check. A wall-clock
 // jump is one check. Nothing in this test installs or asks the network.
@@ -190,7 +232,7 @@ set_schedule_latest :: proc(d: ^Desk, version: string) {
 automatic_checks_once_at_startup_and_once_a_day :: proc(t: ^testing.T) {
 	dir, derr := os.make_directory_temp("", "leita-schedule-*", context.temp_allocator)
 	testing.expect(t, derr == nil, "a temp directory")
-	defer os.remove_all(dir)
+	defer remove_schedule_dir(t, dir)
 	path := fmt.tprintf("%s/%s", dir, settings.FILE)
 
 	T :: i64(1_700_000_000)
@@ -326,7 +368,7 @@ set_query_only :: proc(t: ^testing.T, d: ^Desk, on: bool) {
 a_failed_update_choice_checks_nothing_until_it_is_saved :: proc(t: ^testing.T) {
 	dir, derr := os.make_directory_temp("", "leita-schedule-ro-*", context.temp_allocator)
 	testing.expect(t, derr == nil, "a temp directory")
-	defer os.remove_all(dir)
+	defer remove_schedule_dir(t, dir)
 	path := fmt.tprintf("%s/%s", dir, settings.FILE)
 
 	T :: i64(1_700_000_000)

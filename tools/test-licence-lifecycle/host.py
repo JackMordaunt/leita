@@ -125,7 +125,9 @@ def run_capture(binary, target, data, theme, steps, env, timeout):
 
 
 # Parent directory names skipped when picking a Windows bash.
-BASH_SKIP_DIRS = {"system32", "sysnative", "windowsapps"}
+# System32 and Sysnative bash.exe, and the WindowsApps alias, start WSL.
+# C:\Program Files\WSL\bash.exe is that same launcher.
+BASH_SKIP_DIRS = {"system32", "sysnative", "windowsapps", "wsl"}
 
 
 def define_flag(name, value):
@@ -147,16 +149,35 @@ def prefer_bash(candidates):
     return ""
 
 
+def path_entries(env):
+    """PATH directories. A plain dict may spell the key Path; Windows does."""
+    raw = ""
+    for key, value in env.items():
+        if key.lower() == "path" and value:
+            raw = value
+            break
+    return [part for part in raw.split(os.pathsep) if part]
+
+
+def first_bash(candidates, exists):
+    """The first acceptable bash that exists() reports as a file. "" when none."""
+    for raw in candidates:
+        chosen = prefer_bash([raw])
+        if chosen and exists(chosen):
+            return chosen
+    return ""
+
+
 def windows_bash():
-    found = prefer_bash(
-        str(Path(directory) / "bash.exe")
-        for directory in os.environ.get("PATH", "").split(os.pathsep)
-        if directory
-    )
+    # The Visual Studio developer prompt puts its own bin first. Naming
+    # bash.exe there without checking the file made CreateProcess raise
+    # WinError 2 before the capture build started.
+    candidates = [str(Path(directory) / "bash.exe") for directory in path_entries(os.environ)]
+    found = first_bash(candidates, os.path.isfile)
     if not found:
         raise RuntimeError(
             "Git bash is required to build the capture host on Windows. "
-            "System32\\bash.exe is the WSL launcher and is not used."
+            "System32\\bash.exe and WSL\\bash.exe are launchers and are not used."
         )
     return found
 
