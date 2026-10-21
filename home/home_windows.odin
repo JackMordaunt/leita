@@ -1,6 +1,8 @@
 #+build windows
 package home
 
+import "core:log"
+import "core:mem"
 import "core:os"
 import win32 "core:sys/windows"
 
@@ -27,8 +29,20 @@ sid :: proc(allocator := context.allocator) -> string {
 	if needed == 0 {
 		return ""
 	}
-	buf := make([]byte, needed, context.temp_allocator)
+	// TOKEN_USER starts with a pointer. make([]byte) asks for alignment 1, and
+	// this arena only pads to the alignment it was asked for, so a USERPROFILE
+	// already stored here can leave the buffer off a pointer.
+	buf, aerr := mem.alloc_bytes(
+		int(needed),
+		align_of(win32.TOKEN_USER),
+		context.temp_allocator,
+	)
+	if aerr != .None || len(buf) < int(needed) {
+		return ""
+	}
 	if !win32.GetTokenInformation(token, .TokenUser, raw_data(buf), needed, &needed) {
+		code := win32.GetLastError()
+		log.warnf("GetTokenInformation(TokenUser) error %d", code)
 		return ""
 	}
 	who := (^win32.TOKEN_USER)(raw_data(buf))

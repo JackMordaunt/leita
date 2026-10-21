@@ -240,6 +240,32 @@ settle :: proc(r: ^Rig, name: string, present := true) -> bool {
 	return false
 }
 
+// settle_either is settle for the first tagged name. One deadline, so a miss
+// costs the same wait as settle.
+@(private = "file")
+settle_either :: proc(r: ^Rig, names: []string) -> string {
+	deadline := time.tick_now()._nsec + i64(30 * time.Second)
+	for time.tick_now()._nsec < deadline {
+		for name in names {
+			if ui.probe_tagged(&r.p, name) {
+				return name
+			}
+		}
+		if ui.inbox_pending(&r.h.inbox) {
+			ui.inbox_drain(&r.h.inbox, &r.p.layout)
+			ui.probe_frame(&r.p)
+			hand_on(r)
+			for name in names {
+				if ui.probe_tagged(&r.p, name) {
+					return name
+				}
+			}
+		}
+		time.sleep(time.Millisecond)
+	}
+	return ""
+}
+
 // await_rescan drains the host's answers, as settle does, until the window holds
 // a scan newer than first, and says whether it did in settle's time: what a test
 // reads of the desk's scan after that is the new scan's, not one half begun.
@@ -1449,9 +1475,24 @@ every_window_size_lays_out_without_a_clash :: proc(t: ^testing.T) {
 		for width := f32(640); width <= 1600; width += 160 {
 			r.p.size = {width, height}
 			ui.probe_advance(&r.p, 30, 1.0 / 60)
-			testing.expect(t, settle(&r, "Nothing here is safe to reclaim."))
+			// An empty project shows the sentence. A nonempty system bin shows
+			// Empty Trash instead. They are not on screen together.
+			body := settle_either(
+				&r,
+				[]string{"Nothing here is safe to reclaim.", "Empty Trash"},
+			)
+			testing.expectf(
+				t,
+				body != "",
+				"Reclaim at %vx%v shows neither the empty sentence nor Empty Trash",
+				width,
+				height,
+			)
+			if body == "" {
+				continue
+			}
 			grip := ui.probe_bounds(&r.p, "Resize panels")
-			for name in ([]string{"Reclaim", "Nothing here is safe to reclaim."}) {
+			for name in ([]string{"Reclaim", body}) {
 				b := ui.probe_bounds(&r.p, name)
 				testing.expectf(
 					t,
@@ -1770,12 +1811,7 @@ reclaim_offers_the_recycle_bin :: proc(t: ^testing.T) {
 			defer if other_file != "" {
 				os.remove(other_file)
 			}
-			testing.expectf(
-				t,
-				false,
-				"old.bin is not in this account's Recycle Bin; another folder held %s",
-				other_file if other_file != "" else "nothing",
-			)
+			recycle_miss(t, other_file)
 			return
 		}
 

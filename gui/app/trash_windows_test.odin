@@ -6,6 +6,7 @@ import "core:fmt"
 import "core:os"
 import "core:path/filepath"
 import "core:strings"
+import "core:testing"
 import "core:unicode/utf16"
 
 import "../../home"
@@ -74,6 +75,21 @@ recycled_elsewhere :: proc(dir, name: string) -> (record, file: string) {
 		}
 	}
 	return "", ""
+}
+
+// recycle_miss fails the test and names this process's SID. An empty SID is an
+// API failure; a SID here is the account whose folder was searched.
+@(private)
+recycle_miss :: proc(t: ^testing.T, other_file: string) {
+	who := home.user(context.temp_allocator)
+	defer home.user_destroy(&who, context.temp_allocator)
+	testing.expectf(
+		t,
+		false,
+		"old.bin is not in this account's Recycle Bin (sid %q); another folder held %s",
+		who.uid,
+		other_file if other_file != "" else "nothing",
+	)
 }
 
 /*
