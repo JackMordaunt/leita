@@ -419,12 +419,22 @@ a_copy_leita_cannot_replace_is_refused_with_where_to_download :: proc(t: ^testin
 		cfg := config(&f)
 		cfg.exe = link
 		r := apply(cfg)
-		testing.expect_value(t, r.outcome, Outcome.Refused)
-		testing.expect_value(t, r.reason, Reason.Link)
-		testing.expect(t, strings.contains(message(&r), RELEASE_PAGE), "it says where to download")
-		testing.expect_value(t, read(target), "old build")
+		testing.expect_value(t, r.outcome, Outcome.Applied)
+		testing.expect_value(t, read(target), "new build")
+		testing.expect_value(t, read(link), "new build")
+		info, serr := os.lstat(link, context.temp_allocator)
+		testing.expect_value(t, serr, nil)
+		testing.expect_value(t, info.type, os.File_Type.Symlink)
+		os.file_info_delete(info, context.temp_allocator)
 	}
-	r: Result
+	cfg := config(&f)
+	cfg.base = path.join(f.root, "nowhere", allocator = context.temp_allocator)
+	cfg.exe = "/usr/bin/leita-update-test-not-a-real-file"
+	r := apply(cfg)
+	testing.expect_value(t, r.outcome, Outcome.Refused)
+	testing.expect_value(t, r.reason, Reason.Package)
+	testing.expect(t, strings.contains(message(&r), RELEASE_PAGE), message(&r))
+	r = {}
 	finish(&r, .Refused, .Bundle, "%s", refusal_text(.Bundle, "v1.1.0"))
 	testing.expect(t, strings.contains(message(&r), "Leita.app"), "the bundle is named")
 	testing.expect(t, strings.contains(message(&r), "v1.1.0"), "the version is named")
@@ -834,6 +844,128 @@ an_unreachable_host_fails_with_a_reason :: proc(t: ^testing.T) {
 		"unreachable, or no libcurl to try",
 	)
 	testing.expect_value(t, read(f.exe), "old build")
+}
+
+@(test)
+a_second_update_does_not_pass_a_held_lock :: proc(t: ^testing.T) {
+	f := fixture(t, "old build", "new build", "v1.1.0")
+	defer os.remove_all(f.root)
+	held, how := lock_install(f.exe)
+	testing.expect_value(t, how, Lock_Result.Taken)
+	defer unlock_install(&held)
+	marker := strings.concatenate({f.exe, ".new"}, context.temp_allocator)
+	testing.expect_value(t, path.write(marker, "keep"), nil)
+	r := apply(config(&f))
+	testing.expect_value(t, r.outcome, Outcome.Failed)
+	testing.expect_value(t, r.reason, Reason.Cannot_Replace)
+	testing.expect(t, strings.contains(message(&r), "another update"), message(&r))
+	testing.expect_value(t, read(f.exe), "old build")
+	testing.expect_value(t, read(marker), "keep")
+}
+
+@(test)
+the_lock_file_stays_after_a_successful_update :: proc(t: ^testing.T) {
+	f := fixture(t, "old build", "new build", "v1.1.0")
+	defer os.remove_all(f.root)
+	r := apply(config(&f))
+	testing.expect_value(t, r.outcome, Outcome.Applied)
+	lock_path := strings.concatenate({f.exe, LOCK_SUFFIX}, context.temp_allocator)
+	part := strings.concatenate({f.exe, PART_SUFFIX}, context.temp_allocator)
+	testing.expect(t, exists(lock_path), "the lock file stays")
+	testing.expect(t, !exists(part), "the backup part does not stay")
+	testing.expect_value(t, read(strings.concatenate({f.exe, ".old"}, context.temp_allocator)), "old build")
+	testing.expect_value(t, apply(config(&f, "v1.1.0")).outcome, Outcome.Current)
+	testing.expect(t, exists(lock_path), "a second update does not unlink the lock")
+}
+
+@(test)
+a_link_to_a_protected_path_is_refused_before_anything_is_written :: proc(t: ^testing.T) {
+	f := fixture(t, "old build", "new build", "v1.1.0")
+	defer os.remove_all(f.root)
+	ta := context.temp_allocator
+	link := path.join(f.root, "link-protected", allocator = ta)
+	package_target := "/usr/bin/leita-update-test-not-a-real-file"
+	testing.expect_value(t, os.symlink(package_target, link), nil)
+	cfg := config(&f)
+	cfg.base = path.join(f.root, "nowhere", allocator = ta)
+	cfg.exe = link
+	r := apply(cfg)
+	testing.expect_value(t, r.outcome, Outcome.Refused)
+	testing.expect_value(t, r.reason, Reason.Package)
+	testing.expect(t, !exists(package_target), "the package path was not created")
+	testing.expect(
+		t,
+		!exists(strings.concatenate({package_target, LOCK_SUFFIX}, ta)),
+		"no lock beside a refused path",
+	)
+
+	installer := `C:\Program Files\Leita\leita-update-test-not-a-real-file.exe`
+	link_i := path.join(f.root, "link-installer", allocator = ta)
+	testing.expect_value(t, os.symlink(installer, link_i), nil)
+	cfg.exe = link_i
+	r = apply(cfg)
+	testing.expect_value(t, r.outcome, Outcome.Refused)
+	testing.expect_value(t, r.reason, Reason.Installer)
+
+	link_j := path.join(f.root, "link-journal", allocator = ta)
+	testing.expect_value(t, os.symlink(JOURNAL_COPY, link_j), nil)
+	before, had := "", false
+	if exists(JOURNAL_COPY) {
+		before = read(JOURNAL_COPY)
+		had = true
+	}
+	cfg.exe = link_j
+	r = apply(cfg)
+	testing.expect_value(t, r.outcome, Outcome.Refused)
+	testing.expect_value(t, r.reason, Reason.Journal)
+	if had {
+		testing.expect_value(t, read(JOURNAL_COPY), before)
+	}
+
+	when ODIN_OS != .Windows {
+		// The cleaned form of a /usr path is refused even when the file is absent.
+		cfg.exe = "/tmp/../usr/bin/leita-update-test-not-a-real-file"
+		r = apply(cfg)
+		testing.expect_value(t, r.reason, Reason.Package)
+	}
+
+	a := path.join(f.root, "loop-a", allocator = ta)
+	b := path.join(f.root, "loop-b", allocator = ta)
+	testing.expect_value(t, os.symlink(b, a), nil)
+	testing.expect_value(t, os.symlink(a, b), nil)
+	cfg.exe = a
+	r = apply(cfg)
+	testing.expect_value(t, r.outcome, Outcome.Refused)
+	testing.expect_value(t, r.reason, Reason.Link)
+	testing.expect(t, !exists(strings.concatenate({a, ".new"}, ta)), "a loop writes no scratch")
+}
+
+@(test)
+a_failed_replace_leaves_the_executable :: proc(t: ^testing.T) {
+	f := fixture(t, "old build", "new build", "v1.1.0")
+	defer os.remove_all(f.root)
+	missing := strings.concatenate({f.exe, ".missing-new"}, context.temp_allocator)
+	ok, unsupported, _ := replace_atomically(missing, f.exe)
+	testing.expect(t, !ok && !unsupported, "a missing new file is a replace failure")
+	testing.expect_value(t, read(f.exe), "old build")
+}
+
+@(test)
+the_installed_file_keeps_the_mode_it_had :: proc(t: ^testing.T) {
+	when ODIN_OS == .Windows {
+		return
+	} else {
+		f := fixture(t, "old build", "new build", "v1.1.0")
+		defer os.remove_all(f.root)
+		mode := os.Permissions{.Read_User, .Write_User, .Execute_User, .Read_Group, .Execute_Group}
+		testing.expect_value(t, os.change_mode(f.exe, mode), nil)
+		r := apply(config(&f))
+		testing.expect_value(t, r.outcome, Outcome.Applied)
+		info, err := os.stat(f.exe, context.temp_allocator)
+		testing.expect_value(t, err, nil)
+		testing.expect_value(t, info.mode & os.Permissions_All, mode)
+		os.file_info_delete(info, context.temp_allocator)
+	}
 }
 
 // noise fills n bytes from seed, so the payload is not a repeated run.

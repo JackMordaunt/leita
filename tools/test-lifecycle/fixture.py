@@ -258,23 +258,28 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         self.server.seen.append({"path": name, "user_agent": self.headers.get("User-Agent", "")})
         path = Path(self.server.directory) / name
         if name in self.server.stall:
-            if not path.is_file():
-                self.send_error(404)
+            release = getattr(self.server, "release", None)
+            if release is None:
+                if not path.is_file():
+                    self.send_error(404)
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "application/octet-stream")
+                self.send_header("Content-Length", "100000000")
+                self.end_headers()
+                try:
+                    self.wfile.write(path.read_bytes()[:64])
+                    self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError):
+                    return
+                # The client is killed by the harness. A short wait is enough
+                # for it to observe an unfinished body if it is not killed.
+                import time
+                time.sleep(self.server.stall_seconds)
                 return
-            self.send_response(200)
-            self.send_header("Content-Type", "application/octet-stream")
-            self.send_header("Content-Length", "100000000")
-            self.end_headers()
-            try:
-                self.wfile.write(path.read_bytes()[:64])
-                self.wfile.flush()
-            except (BrokenPipeError, ConnectionResetError):
+            if not release.wait(self.server.stall_seconds):
+                self.send_error(503)
                 return
-            # The client is killed by the harness. A short wait is enough
-            # for it to observe an unfinished body if it is not killed.
-            import time
-            time.sleep(self.server.stall_seconds)
-            return
         if not path.is_file():
             self.send_error(404)
             return
@@ -294,10 +299,11 @@ class ReleaseServer:
 
     Use as a context manager. url has no trailing slash. requests lists
     each GET as {path, user_agent}. stall is a set of file names whose body
-    is never finished.
+    is never finished, unless release is set: then the handler waits on that
+    event and, if it is set in time, sends the real body.
     """
 
-    def __init__(self, directory, stall=(), stall_seconds=30):
+    def __init__(self, directory, stall=(), stall_seconds=30, release=None):
         self.directory = str(directory)
         self.stall = set(stall)
         self.stall_seconds = stall_seconds
@@ -306,6 +312,7 @@ class ReleaseServer:
         self._httpd.seen = []
         self._httpd.stall = self.stall
         self._httpd.stall_seconds = stall_seconds
+        self._httpd.release = release
         self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
 
     @property

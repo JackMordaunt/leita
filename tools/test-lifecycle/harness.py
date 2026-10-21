@@ -928,6 +928,8 @@ def update_cases(results, old, new, dev, seed, asset, test_line, update_key):
     guard(results, "update_bundle_refused", bundle)
     guard(results, "update_installer_path_refused", installer_path)
     guard(results, "update_symlink_loose_follows_real", symlink_loose)
+    import transaction
+    transaction.cases(results, old, new_bytes, seed, asset)
 
 
 def namespace_env(env):

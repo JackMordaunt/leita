@@ -15,8 +15,8 @@ LINUX = ("linux",)
 # blocked, fail, and a missing id stop the lifecycle job and publishing.
 # activation_http and receipt_recovery are written by tools/test-licence-lifecycle.
 # automatic_startup_check and automatic_daily_check are written by the scheduler harness.
-# A symlink launch is not a required refusal. The case is
-# update_symlink_loose_follows_real.
+# A symlink to a loose file is followed (update_symlink_loose_follows_real).
+# A symlink to Program Files is refused (update_symlink_protected_refused).
 REQUIRED = {
     "licence_persisted": ALL,
     "licence_offline": ALL,
@@ -50,6 +50,11 @@ REQUIRED = {
     "update_package_refused": LINUX,
     "update_journal_path_not_replaced": LINUX,
     "update_symlink_loose_follows_real": ALL,
+    "update_peer_blocked": ALL,
+    "update_lock_released_on_exit": ALL,
+    "update_commit_killed_keeps_old": ALL,
+    "update_commit_completes": ALL,
+    "update_symlink_protected_refused": ALL,
     "linux_journal_alive_across_update": LINUX,
     "linux_journal_stop": LINUX,
     "linux_journal_restart": LINUX,
