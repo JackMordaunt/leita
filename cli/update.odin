@@ -46,9 +46,10 @@ after the licence's paid-through date. A copy installed by a package manager,
 Scoop, an AppImage, the Windows installer or inside Leita.app is not replaced,
 and nor is the Linux recorder's own binary: it says where to download the new
 one. On Linux the check needs libcurl, which a stock desktop may lack. On
-Windows the old program stays beside the new one, as leita.exe.old, until the
-next update removes it. An interrupted update puts the previous program back
-the next time this is run.
+Windows the old program stays beside the new one, as leita.exe.old. An
+interrupted update puts the previous program back the next time this is run
+when the program itself is missing. A second update does not wait if one is
+already replacing the program.
 
 Exit codes: 0 up to date, or updated; 1 an error, or a copy that is not replaced;
 2 with --check, a newer release exists.

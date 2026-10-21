@@ -140,6 +140,14 @@ class JudgeTest(unittest.TestCase):
 
     def test_symlink_case_is_required_on_every_os(self):
         self.assertEqual(gate.REQUIRED["update_symlink_loose_follows_real"], gate.ALL)
+        for case_id in (
+            "update_peer_blocked",
+            "update_lock_released_on_exit",
+            "update_commit_killed_keeps_old",
+            "update_commit_completes",
+            "update_symlink_protected_refused",
+        ):
+            self.assertEqual(gate.REQUIRED[case_id], gate.ALL)
 
 
 class MergeTest(unittest.TestCase):

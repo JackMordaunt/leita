@@ -36,17 +36,21 @@ the Pro copy where it is. A copy that is not Pro may still install a signed
 release. The check reports that a release exists either way; only apply
 refuses.
 
-The executable is replaced the way selfupdate does: the running file is renamed
-to <exe>.old and the new one moved in (selfupdate.swap, whose comment holds why:
-a running executable can be renamed on every platform but overwritten not on
-Windows), so there the old file stays beside the new until the next update
-removes it. If an update was interrupted after that first rename, the next
-apply puts <exe>.old back before it downloads anything, and it deletes a
-leftover <exe>.new rather than trusting it. A directory that will not take a
-file beside the executable is left untouched. Only a copy leita can replace
-is replaced: a development build, a link, a package's file, Scoop's copy, the
-Linux recorder's own binary, an AppImage, an installer's Program Files copy,
-and anything inside Leita.app are refused, with the page to download from.
+The executable is replaced only while this process holds a lock the operating
+system drops when the process ends, so a second update does not share the
+scratch names and does not wait. The previous bytes are kept as <exe>.old
+first. The new file is then renamed over the one that is running: on Unix
+that rename replaces it in one step, and on Windows the rename uses POSIX
+semantics, so the launch path is never removed first. If the program is
+missing and <exe>.old remains, the next apply puts that copy back before it
+downloads anything, and it deletes a leftover <exe>.new rather than trusting
+it. A directory that will not take a file beside the executable is left
+untouched. Only a copy leita can replace is replaced: a development build, a
+package's file, Scoop's copy, the Linux recorder's own binary, an AppImage,
+an installer's Program Files copy, and anything inside Leita.app are refused,
+with the page to download from. A symbolic link is followed to the file it
+names, and that file is what is classified and replaced; a loop, or a link
+that does not name a file, is refused.
 The recorder is not stopped or restarted from here: its process keeps the
 inode it opened, and `leita journal on` is what copies a new binary into
 place. A signed bundle's signature covers every file in its Contents
@@ -56,7 +60,9 @@ replaced together, by the dmg.
 
 Why not selfupdate.run: run fetches with jm:http's own User-Agent and
 re-executes the new binary. This package uses selfupdate's pieces, the
-hashes, the decoder and the swap, and fetches itself. It does not relaunch.
+hashes and the decoder, and fetches itself. It does not relaunch, and it
+does not call selfupdate.swap: that removes the launch path before the new
+file takes its place.
 */
 package update
 
@@ -375,7 +381,7 @@ apply :: proc(cfg: Config, allocator := context.temp_allocator) -> (r: Result) {
 		}
 		exe = p
 	}
-	if len(exe) + 8 >= selfupdate.PATH_CAP {
+	if len(exe) + len(LOCK_SUFFIX) >= selfupdate.PATH_CAP {
 		return finish(
 			&r,
 			.Failed,
@@ -384,27 +390,74 @@ apply :: proc(cfg: Config, allocator := context.temp_allocator) -> (r: Result) {
 			selfupdate.PATH_CAP,
 		)
 	}
-	// Class and the interrupted-install repair happen before any download, so
-	// a package or a recorder binary is not fetched and a half-written .new
-	// is not what gets installed.
-	if why := install_reason(exe); why != .None {
+	// The real file is named before any lock or scratch write, so a package
+	// path, including one reached by a link, is refused with nothing created.
+	real, why, located := resolve_exe(exe)
+	if !located {
+		if why == .Link {
+			return finish(&r, .Refused, why, "%s", refusal_text(why, ""))
+		}
+		return finish(
+			&r,
+			.Failed,
+			.Cannot_Replace,
+			"could not resolve %s, so it was not replaced",
+			exe,
+		)
+	}
+	if len(real) + len(LOCK_SUFFIX) >= selfupdate.PATH_CAP {
+		return finish(
+			&r,
+			.Failed,
+			.Cannot_Replace,
+			"executable path longer than %d bytes",
+			selfupdate.PATH_CAP,
+		)
+	}
+	if selfupdate.is_link(real) {
+		return finish(&r, .Refused, .Link, "%s", refusal_text(.Link, ""))
+	}
+	if why = install_reason(real); why != .None {
 		return finish(&r, .Refused, why, "%s", refusal_text(why, ""))
 	}
-	if !restore_target(exe, &r) {
+	// Held before scratch is removed, and until this procedure returns. The
+	// system drops it if the process is killed.
+	held, how := lock_install(real)
+	defer unlock_install(&held)
+	switch how {
+	case .Held:
+		return finish(
+			&r,
+			.Failed,
+			.Cannot_Replace,
+			"another update is already replacing %s",
+			real,
+		)
+	case .Failed:
+		return finish(
+			&r,
+			.Failed,
+			.Cannot_Replace,
+			"could not lock %s, so it was not replaced",
+			real,
+		)
+	case .Taken:
+	}
+	if !restore_target(real, &r) {
 		return r
 	}
-	if !can_write_beside(exe) {
+	if !can_write_beside(real) {
 		return finish(
 			&r,
 			.Failed,
 			.Cannot_Replace,
 			"cannot write beside %s, so it was not replaced",
-			exe,
+			real,
 		)
 	}
 
 	cfg := cfg
-	cfg.exe = exe
+	cfg.exe = real
 	rel, ok := inspect(cfg, &r)
 	if !ok || r.outcome != .Available {
 		return r
@@ -414,19 +467,55 @@ apply :: proc(cfg: Config, allocator := context.temp_allocator) -> (r: Result) {
 		return refuse_ineligible(&r, hold)
 	}
 
-	old_buf, fresh_buf: [selfupdate.PATH_CAP]byte
-	old := fmt.bprintf(old_buf[:], "%s.old", rel.exe)
+	fresh_buf: [selfupdate.PATH_CAP]byte
 	fresh := fmt.bprintf(fresh_buf[:], "%s.new", rel.exe)
-	// swap clears the copy an earlier update left, which on Windows the run
-	// that replaced it may still have held open.
 	route := obtain(cfg, rel, fresh)
 	if !route.ok {
 		return finish(&r, .Failed, route.reason, "cannot download %s: %s", cfg.asset, route.note)
 	}
-	sr: selfupdate.Result
-	if !selfupdate.swap(rel.exe, old, fresh, &sr) {
+	status, note := commit_verified(rel.exe, fresh)
+	switch status {
+	case .Ok:
+	case .Backup:
 		os.remove(fresh)
-		return finish(&r, .Failed, .Cannot_Replace, "%s", selfupdate.message(&sr))
+		return finish(
+			&r,
+			.Failed,
+			.Cannot_Replace,
+			"could not keep a copy of %s, so it was not replaced",
+			rel.exe,
+		)
+	case .Permission:
+		os.remove(fresh)
+		return finish(
+			&r,
+			.Failed,
+			.Cannot_Replace,
+			"could not keep the permissions of %s, so it was not replaced",
+			rel.exe,
+		)
+	case .Hold:
+		os.remove(fresh)
+		return finish(
+			&r,
+			.Failed,
+			.Cannot_Replace,
+			"could not hold the update before installing %s, so it was not replaced",
+			rel.exe,
+		)
+	case .Unsupported:
+		os.remove(fresh)
+		return finish(&r, .Failed, .Cannot_Replace, "%s", note)
+	case .Replace:
+		os.remove(fresh)
+		return finish(
+			&r,
+			.Failed,
+			.Cannot_Replace,
+			"could not install %s: %s. It was not replaced",
+			rel.exe,
+			note,
+		)
 	}
 	r.via = route.via
 	return finish(&r, .Applied, .None, "updated via %s", selfupdate.VIA_NAMES[route.via])
@@ -448,16 +537,21 @@ why_not :: proc(cfg: Config) -> Reason {
 		}
 		exe = p
 	}
-	return install_reason(exe)
-}
-
-// install_reason is why the executable at exe is not to be replaced, .None
-// when it is.
-install_reason :: proc(exe: string) -> Reason {
-	if selfupdate.is_link(exe) {
+	real, why, located := resolve_exe(exe)
+	if !located {
+		return why
+	}
+	if selfupdate.is_link(real) {
 		return .Link
 	}
-	switch install_of(exe, os.get_env("APPIMAGE", context.temp_allocator) != "") {
+	return install_reason(real)
+}
+
+// install_reason is why the resolved file at exe is not to be replaced, .None
+// when it is. Callers resolve links first; a path that is still a link is
+// their concern.
+install_reason :: proc(exe: string, allocator := context.temp_allocator) -> Reason {
+	switch install_of(exe, os.get_env("APPIMAGE", allocator) != "", allocator) {
 	case .Loose:
 		return .None
 	case .Bundle:
@@ -510,11 +604,12 @@ refusal_text :: proc(why: Reason, version: string) -> string {
 // against the release this run authenticated.
 @(private)
 restore_target :: proc(exe: string, r: ^Result) -> bool {
-	old_buf, fresh_buf, dl_buf, try_buf: [selfupdate.PATH_CAP]byte
+	old_buf, fresh_buf, dl_buf, try_buf, part_buf: [selfupdate.PATH_CAP]byte
 	old := fmt.bprintf(old_buf[:], "%s.old", exe)
 	fresh := fmt.bprintf(fresh_buf[:], "%s.new", exe)
 	dl := fmt.bprintf(dl_buf[:], "%s.dl", exe)
 	probe := fmt.bprintf(try_buf[:], "%s.try", exe)
+	part := fmt.bprintf(part_buf[:], "%s%s", exe, PART_SUFFIX)
 	if !os.exists(exe) && os.exists(old) {
 		if err := os.rename(old, exe); err != nil {
 			finish(
@@ -532,6 +627,8 @@ restore_target :: proc(exe: string, r: ^Result) -> bool {
 	os.remove(fresh)
 	os.remove(dl)
 	os.remove(probe)
+	os.remove(part)
+	// The lock file is not removed. The operating system holds it.
 	if !os.exists(exe) {
 		finish(r, .Failed, .Cannot_Replace, "cannot find %s to replace", exe)
 		return false
