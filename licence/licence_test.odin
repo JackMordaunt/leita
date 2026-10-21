@@ -156,20 +156,146 @@ a_saved_licence_reads_back :: proc(t: ^testing.T) {
 // signed, as just check-licence gives it: -define:LEITA_LICENCE_SAMPLE=<licence>.
 SAMPLE :: #config(LEITA_LICENCE_SAMPLE, "")
 
-// A build with a key takes the licences its private half signed, as a release
+// A build with a key set takes the licences any key in it signed, as a release
 // must; a build without one, as just test makes, has no key to check them with.
+// A malformed set is refused whole, the same as none.
 @(test)
 the_key_built_in_checks_what_it_signed :: proc(t: ^testing.T) {
-	key, ok := public_key()
-	if KEY == "" {
-		testing.expect(t, !ok, "a build without a key has none")
+	keys, ok := parse_key_set(KEY)
+	defer if ok {
+		delete(keys)
+	}
+	if !ok {
+		_, lone := public_key()
+		testing.expect(t, !lone, "a build without a well-formed set has no single key")
 		return
 	}
-	testing.expect(t, ok, "the key is 32 bytes in hex")
-	testing.expect(t, SAMPLE != "", "a build with a key is given a licence it signed")
-	l, err := check(SAMPLE, key[:], context.temp_allocator)
+	testing.expect(t, SAMPLE != "", "a build with a key is given a licence one of them signed")
+	l, err := check_keys(SAMPLE, keys[:], context.temp_allocator)
 	testing.expect_value(t, err, Error.None)
 	testing.expect(t, l.licensee != "", "it names whose it is")
+	if len(keys) == 1 {
+		one, single := public_key()
+		testing.expect(t, single)
+		testing.expect(t, one == keys[0])
+	}
+}
+
+// Either key in a set verifies the line it signed. A third key's line does
+// not, and a signature that holds with bad terms is not offered to the other key.
+@(test)
+either_key_of_a_set_verifies_its_line :: proc(t: ^testing.T) {
+	a, b, c := signer(), signer(), signer()
+	keys := [][ed25519.PUBLIC_KEY_SIZE]byte{a.pub, b.pub}
+	l, err := check_keys(mint(&a, TERMS), keys)
+	defer destroy(&l)
+	testing.expect_value(t, err, Error.None)
+	testing.expect_value(t, l.licensee, "ada@example.com")
+	l2, err2 := check_keys(mint(&b, TERMS), keys)
+	defer destroy(&l2)
+	testing.expect_value(t, err2, Error.None)
+	_, err3 := check_keys(mint(&c, TERMS), keys)
+	testing.expect_value(t, err3, Error.Signature)
+	// The other order still accepts both.
+	flipped := [][ed25519.PUBLIC_KEY_SIZE]byte{b.pub, a.pub}
+	again, err4 := check_keys(mint(&a, TERMS), flipped)
+	defer destroy(&again)
+	testing.expect_value(t, err4, Error.None)
+
+	bad := `{"v":1,"id":"ord_1","email":"not-an-email","scope":"professional","features":"pro","paidThrough":"2027-10-19T00:00:00Z","issued":"2026-10-19T12:00:00Z"}`
+	_, err5 := check_keys(mint(&a, bad), keys)
+	testing.expect_value(t, err5, Error.Terms)
+	_, none := check_keys(mint(&a, TERMS), nil)
+	testing.expect_value(t, none, Error.No_Key)
+}
+
+// A comma-separated list is the set. A blank, a short token, or a character
+// that is not hex refuses the whole list.
+@(test)
+a_key_set_is_comma_separated_hex :: proc(t: ^testing.T) {
+	a, b := signer(), signer()
+	ha := string(hex.encode(a.pub[:], context.temp_allocator))
+	hb := string(hex.encode(b.pub[:], context.temp_allocator))
+	upper := strings.to_upper(ha, context.temp_allocator)
+	keys, ok := parse_key_set(fmt.tprintf("%s, %s", ha, hb))
+	defer if ok {
+		delete(keys)
+	}
+	testing.expect(t, ok && len(keys) == 2)
+	testing.expect(t, keys[0] == a.pub && keys[1] == b.pub)
+	held, err := check_keys(mint(&b, TERMS), keys[:])
+	defer destroy(&held)
+	testing.expect_value(t, err, Error.None)
+
+	one, ook := parse_key_set(upper)
+	defer if ook {
+		delete(one)
+	}
+	testing.expect(t, ook && len(one) == 1 && one[0] == a.pub)
+
+	bad := []string {
+		"",
+		"   ",
+		",",
+		fmt.tprintf("%s,", ha),
+		fmt.tprintf(",%s", ha),
+		fmt.tprintf("%s,,%s", ha, hb),
+		ha[:len(ha) - 1],
+		fmt.tprintf("%saa", ha),
+		fmt.tprintf("%s,zzzz", ha),
+		fmt.tprintf("%s %s", ha, hb),
+	}
+	for text in bad {
+		_, parsed := parse_key_set(text)
+		testing.expectf(t, !parsed, "%q parsed", text)
+	}
+}
+
+// The receipt key is kept beside the line and takes the line's permissions.
+// Forgetting the line removes it. A line installed with keep was not fetched,
+// so a receipt left beside an older line goes too.
+@(test)
+the_receipt_key_keeps_the_lines_permissions :: proc(t: ^testing.T) {
+	s := signer()
+	dir, derr := os.make_directory_temp("", "leita-licence-*", context.temp_allocator)
+	testing.expect(t, derr == nil)
+	defer os.remove_all(dir)
+	kept, _ := filepath.join({dir, "data", "history.db"}, context.temp_allocator)
+	path := path_beside(kept, context.temp_allocator)
+	text := mint(&s, TERMS)
+	testing.expect_value(t, save(path, text), Error.None)
+	mode := os.Permissions{.Read_User, .Write_User}
+	testing.expect(t, os.chmod(path, mode) == nil)
+	testing.expect_value(t, save_receipt(path, "LEITA-SOLD"), Error.None)
+	got, ok := read_receipt(path)
+	testing.expect(t, ok)
+	testing.expect_value(t, got, "LEITA-SOLD")
+	line, lerr := os.stat(path, context.temp_allocator)
+	testing.expect(t, lerr == nil)
+	defer os.file_info_delete(line, context.temp_allocator)
+	receipt, rerr := os.stat(receipt_path(path, context.temp_allocator), context.temp_allocator)
+	testing.expect(t, rerr == nil)
+	defer os.file_info_delete(receipt, context.temp_allocator)
+	testing.expect(t, line.mode == mode)
+	testing.expect(t, receipt.mode == line.mode)
+
+	elsewhere, _ := filepath.join({dir, "elsewhere.db"}, context.temp_allocator)
+	_, missing := read_receipt(elsewhere)
+	testing.expect(t, !missing, "another folder has no receipt")
+	testing.expect_value(t, save_receipt(path, "not a key"), Error.Unwritable)
+	testing.expect_value(t, save_receipt(path, ""), Error.Unwritable)
+
+	_, kerr := keep(path, text, s.pub[:], context.temp_allocator)
+	testing.expect_value(t, kerr, Error.None)
+	_, still := read_receipt(path)
+	testing.expect(t, !still, "keep drops a receipt the line was not fetched with")
+
+	testing.expect_value(t, save_receipt(path, "LEITA-SOLD"), Error.None)
+	was, ferr := forget(path)
+	testing.expect(t, was && ferr == .None)
+	testing.expect(t, !os.exists(path))
+	_, gone := read_receipt(path)
+	testing.expect(t, !gone)
 }
 
 // Memo is a ledger kept in memory, standing in for settings.db.
@@ -374,7 +500,11 @@ the_licence_in_use_is_the_one_given_or_else_the_one_kept :: proc(t: ^testing.T) 
 	testing.expect_value(t, from, Source.Env)
 	testing.expect_value(t, err, Error.Malformed)
 
-	if KEY == "" {
+	built, parsed := parse_key_set(KEY)
+	defer if parsed {
+		delete(built)
+	}
+	if !parsed {
 		_, _, err = in_use(path, "", nil)
 		testing.expect_value(t, err, Error.No_Key)
 	}

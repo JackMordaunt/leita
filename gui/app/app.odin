@@ -171,14 +171,21 @@ Desk :: struct {
 	// A report is being written, for Progress to say so while the desk is busy.
 	exporting:        bool,
 	// The licence in use (licence.odin), where it is kept, the key it is checked
-	// against, and how the last one the window offered went.
+	// against, and how the last one the window offered went. renew_key is a
+	// receipt key to exchange once the answer port exists. receipt_pending is
+	// the key of the exchange under way. refreshing is that automatic exchange,
+	// as against one the window asked for. licence_renewal is why it failed.
 	licence:          licence.Licence,
 	licensed:         bool,
 	licence_path:     string,
-	licence_key:      []byte, // into licence_built, or the caller's
-	licence_built:    [32]byte,
+	licence_key:      []byte, // the caller's, or nil for the keys built in
 	licence_offered:  u32,
-	licence_problem:  string, // Exchanging a key for its licence: the client, started on the first key,
+	licence_problem:  string,
+	licence_renewal:  string,
+	renew_key:        string,
+	receipt_pending:  string,
+	refreshing:       bool,
+	// Exchanging a key for its licence: the client, started on the first key,
 	// where it sends to, the port its answer comes back through, and whether one
 	// is under way.
 	client:           ^http.Client,
@@ -240,7 +247,7 @@ wake is called, from the desk thread, whenever an answer has been put in the inb
 a frame loop runs a frame on it. kept is the history store's path, "" for none;
 reports the folder reports are exported to, "" for the user's Documents. The
 licence is kept beside the history store and checked against licence_key, nil
-for the key leita was built with. A licence key is exchanged for its licence at
+for the keys leita was built with. A licence key is exchanged for its licence at
 activate_url, "" for LEITA_ACTIVATE_URL or else ACTIVATE_URL. Monitoring is
 handed to scheduler running monitor_argv, nil for the system's scheduler running
 this binary (monitor.odin).
@@ -302,6 +309,7 @@ init :: proc(
 	activations: stream.Stream(Activated)
 	activations, h.act_port = stream.port(p, Activated, name = "activations")
 	h.desk.activations = &h.act_port
+	licence_refresh_pending(&h.desk)
 	updates: stream.Stream(Updated)
 	updates, h.update_port = stream.port(p, Updated, name = "updates")
 	h.desk.updates = &h.update_port

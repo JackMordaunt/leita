@@ -297,6 +297,9 @@ Licence_Result :: struct {
 	// and problem says why it was not taken, "" when it was.
 	offered:    u32,
 	problem:    string,
+	// renewal is why an automatic refresh of a stored line failed. "" when none
+	// was tried or the new line verified. A failed refresh leaves this copy free.
+	renewal:    string,
 }
 
 // Update is where a check for a newer Leita stands, which About shows. Nothing

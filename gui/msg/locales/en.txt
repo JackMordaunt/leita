@@ -281,7 +281,7 @@ licence_caption = The licence key from your receipt, or a licence beginning leit
 licence_key = Licence key
 licence_to_add = Licence to add
 # {0} the product's name
-licence_privacy = {0} sends the key once, to mordaunt.dev, to fetch your licence. It sends nothing else, then or later.
+licence_privacy = {0} sends the key to mordaunt.dev to fetch your licence, and nothing else. It sends that key again only when a stored licence no longer verifies.
 open_licence_file = Open licence file…
 trial_ended_title = Your 30-day Pro evaluation has ended
 trial_ended_body = Scanning, charts, search, safe cleanup, its log, and a CSV or JSON of the current scan stay free for everyone. A licence brings back comparing scans, scheduled scans and PDF or HTML reports. Cancelling a paid year later keeps Pro in the versions it covered.

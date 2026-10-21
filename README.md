@@ -153,14 +153,17 @@ writes it for a program.
 
 ## Private by design
 
-- **No telemetry.** leita sends nothing about you or your disks, and checks
-  for nothing on its own. It reaches the network in two cases, each started
-  by you. Adding a licence key in the window sends one POST to
+- **No telemetry.** leita sends nothing about you or your disks. It reaches
+  the network in three cases. Adding a licence key in the window sends one POST to
   `https://mordaunt.dev/leita/activate`; the body holds the key and nothing
-  else. `leita update`, and Check for updates in About, download files from
-  the latest release on GitHub, `releases/latest/download`: a GET for
+  else. When a licence kept on this machine no longer verifies, and the key
+  from the receipt was kept beside it, leita sends that key once more, to the
+  same address. If that request cannot reach the server, or the server has no
+  line, this copy stays free and says so, and the licence already kept stays.
+  `leita update`, and Check for updates in About, download files from the
+  latest release on GitHub, `releases/latest/download`: a GET for
   `sha256sums.txt`, `version.txt` and, if you ask for the update, the new
-  program. Both requests carry the User-Agent `leita/<version>` and nothing
+  program. These requests carry the User-Agent `leita/<version>` and nothing
   from your machine. `leita licence add` keeps a licence you already have and
   sends nothing. The source is published, so you can check.
 - **No account.** On Linux the release needs glibc 2.39 or newer and

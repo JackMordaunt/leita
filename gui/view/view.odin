@@ -584,6 +584,7 @@ status :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result) {
 				primer.text(gtx, tr(.Status_Empty), color = primer.color(.Fg_Color_Muted))
 			}
 		}
+		renewal_banner(gtx)
 		return
 	}
 	if primer.slot(gtx, lines = 2) {
@@ -594,6 +595,7 @@ status :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result) {
 	}
 	notice(gtx, m, prog.notice)
 	trial_banner(gtx, m)
+	renewal_banner(gtx)
 }
 
 // state_line is the status' first line: the scan's state, its counters, and
