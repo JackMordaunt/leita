@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Capture current Leita views and a verified, disposable growth scenario."""
+"""Capture current Leita views and a verified, disposable growth scenario.
+
+Licence and update flows are tools/capture/lifecycle.py. This script does not
+activate a licence or talk to a release server.
+"""
 import argparse
 import hashlib
 import json

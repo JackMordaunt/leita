@@ -45,11 +45,34 @@ fail :: proc(message: string) {
 	os.exit(1)
 }
 
+// dump_tags prints every tag in the current frame, so a missed -await can be
+// compared with the text the host actually drew.
+dump_tags :: proc(h: ^render.Headless) {
+	fmt.eprintln("tags:")
+	for name in ui.probe_names(&h.p) {
+		fmt.eprintln(name)
+	}
+}
+
+// write_tags writes those tags, one per line.
+write_tags :: proc(
+	h: ^render.Headless,
+	path: string,
+	allocator := context.temp_allocator,
+) -> bool {
+	b := strings.builder_make(allocator)
+	for name in ui.probe_names(&h.p) {
+		strings.write_string(&b, name)
+		strings.write_byte(&b, '\n')
+	}
+	return os.write_entire_file(path, strings.to_string(b)) == nil
+}
+
 main :: proc() {
 	args := os.args
 	if len(args) < 4 {
 		fail(
-			"usage: capture TARGET ISOLATED_DATA_DIR light|dark [jm headless steps] [-await TAG] [-rescan] [-pick PATH] [-signal PATH] [-await-file PATH] [-frames PREFIX COUNT]",
+			"usage: capture TARGET ISOLATED_DATA_DIR light|dark [jm headless steps] [-await TAG] [-absent TAG] [-tags PATH] [-rescan] [-pick PATH] [-signal PATH] [-await-file PATH] [-frames PREFIX COUNT]",
 		)
 	}
 	if args[3] != "light" && args[3] != "dark" {fail("theme must be light or dark")}
@@ -97,7 +120,7 @@ main :: proc() {
 		if movie_step(&movie, &h, args, &i) {continue}
 		flag := args[i]
 		switch flag {
-		case "-png", "-await", "-pick", "-signal", "-await-file":
+		case "-png", "-await", "-absent", "-tags", "-pick", "-signal", "-await-file":
 			if i + 1 >= len(args) {fail("step needs an argument")}
 			i += 1
 			value := args[i]
@@ -108,12 +131,23 @@ main :: proc() {
 				if !ui.probe_pick(&h.p, value) {fail("no save dialog is open")}
 			case "-signal":
 				if os.write_entire_file(value, "ready\n") != nil {fail("signal write failed")}
-			case "-await", "-await-file":
+			case "-await", "-await-file", "-absent", "-tags":
 				if movie.active && flag == "-await" {
 					if !ui.probe_tagged(
 						&h.p,
 						value,
 					) {fail(fmt.tprintf("movie did not reach %s", value))}
+					continue
+				}
+				if flag == "-tags" {
+					if !write_tags(&h, value) {fail("could not write tags")}
+					continue
+				}
+				if flag == "-absent" {
+					if ui.probe_tagged(&h.p, value) {
+						dump_tags(&h)
+						fail(fmt.tprintf("unexpected tag %s", value))
+					}
 					continue
 				}
 				deadline := time.tick_now()._nsec + i64(120 * time.Second)
@@ -122,8 +156,10 @@ main :: proc() {
 					if !movie.active {ui.probe_frame(&h.p)}
 					ready := ui.probe_tagged(&h.p, value) if flag == "-await" else os.exists(value)
 					if ready {break}
-					if time.tick_now()._nsec >=
-					   deadline {fail(fmt.tprintf("timeout: %s %s", flag, value))}
+					if time.tick_now()._nsec >= deadline {
+						if flag == "-await" {dump_tags(&h)}
+						fail(fmt.tprintf("timeout: %s %s", flag, value))
+					}
 					time.sleep(10 * time.Millisecond)
 				}
 			}
