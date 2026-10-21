@@ -3,7 +3,7 @@
 # PNGs and MP4s are written to the directory given on the command line, never
 # into the repository. Keys are throwaway and minted in process. The fixture
 # sleeps on a release GET so "Checking for updates…" is visible; that is not a
-# scheduler clock. There is no automatic-update preference in this build.
+# scheduler clock. Automatic checks stay off until the About checkbox is turned on.
 
 import argparse
 import html
@@ -25,8 +25,8 @@ from suite import ROOT
 DISCLOSURES = [
     "Throwaway Ed25519 keys were minted in this process. production_signature is false. No request was sent to mordaunt.dev or GitHub.",
     "The trial-over state is a real first-use file stamped 40 days before the run, beside the isolated history file. It is not an injected query answer.",
-    "Checking for updates is delayed by the local release fixture sleeping on each GET. No scheduler clock was simulated. This build has no automatic-update preference; the idle About panel is the explicit-only state, and there is no on-switch to show.",
-    "The licence dialog shows the licensee, tier, order and issued instant. It does not show paidThrough. A later ineligible build keeps the line and locks PDF export. An eligible build refuses a newer release in the update result.",
+    "Checking for updates is delayed by the local release fixture sleeping on each GET when a still needs the checking line. No scheduler clock was simulated. Automatic checks are offered and stay off until the checkbox is turned on. Opting in runs one signed local HTTP check. Nothing is installed, and the download link is not opened.",
+    "The licence dialog names paidThrough and whether this installed build is inside it. A later ineligible build keeps the line and locks PDF export. About names both the paid-through date and a candidate released after it, offers Download, and does not fetch the asset.",
     "The activation timeout still is the client's real 30 second limit. The fixture accepts the request and does not answer.",
     "Update apply replaces a throwaway copy of the capture binary with fixture bytes and does not relaunch it. Videos use libx264, CRF 18, yuv420p, faststart, preset fast, 30 fps.",
 ]
@@ -176,17 +176,53 @@ def movie_ineligible(bins, theme, dest):
         with fixture.ReleaseServer(directory) as server:
             steps = [
                 "-await", "Done",
-                "-click", "Settings",
-                "-click", "About Leita",
-                "-await", host.UPDATE_PRIVACY,
-                "-click", "Check for updates",
-                "-await", scenarios.AVAILABLE_LATE,
                 "-movie", "{prefix}",
-                "-cue", "This release is after Pro",
-                "-tap", "Update",
-                "-hold", "30",
-                "-await", scenarios.INELIGIBLE_MESSAGE,
-                "-hold", "15",
+                "-cue", "About",
+                "-tap", "Settings",
+                "-tap", "About Leita",
+                "-hold", "12",
+                "-cue", "Check",
+                "-tap", "Check for updates",
+                "-hold", "60",
+                "-await", scenarios.LATER_CANDIDATE,
+                "-cue", "Download is offered. The file stays.",
+                "-hold", "24",
+                "-end-movie",
+            ]
+            return movie(
+                bins, theme, dest, steps, None, server.url, line=bins.line, copy=True,
+                extra={"LEITA_LICENCE": bins.line},
+            )
+    finally:
+        scenarios.finish(work_release)
+
+
+def movie_opt_in(bins, theme, dest):
+    work_release = host.make_work("leita-movie-opt-")
+    try:
+        directory = work_release / "release"
+        scenarios.write_signed_release(
+            directory, scenarios.VERSION_OK, scenarios.RELEASED_OK, scenarios.ASSET_OK, bins.update.seed,
+        )
+        with fixture.ReleaseServer(directory) as server:
+            steps = [
+                "-await", "Done",
+                "-movie", "{prefix}",
+                "-cue", "About",
+                "-tap", "Settings",
+                "-tap", "About Leita",
+                "-hold", "16",
+                "-cue", "Checks stay off",
+                "-hold", "16",
+                "-cue", "Opt in",
+                "-tap", scenarios.AUTOMATIC,
+                "-hold", "75",
+                "-await", scenarios.AVAILABLE,
+                "-cue", "Dismiss this version",
+                "-tap", "Close",
+                "-hold", "12",
+                "-tap", scenarios.DISMISS,
+                "-hold", "24",
                 "-end-movie",
             ]
             return movie(
@@ -250,7 +286,8 @@ def write_index(out, results, captions):
         for name, caption in (
             ("activate.mp4", "Free, then a licence key is exchanged, then this copy is licensed to ada@example.com."),
             ("update.mp4", "About, check, and install a signed eligible release. The fixture delays each GET."),
-            ("ineligible.mp4", "A retained Pro copy refuses a release dated after paidThrough."),
+            ("ineligible.mp4", "A retained Pro copy explains a release after paidThrough and offers Download. The asset is not fetched."),
+            ("opt-in.mp4", "Automatic checks start off. Opting in runs one signed check, then this version's notice is dismissed. Nothing is installed."),
         ):
             path = out / theme / name
             if path.exists():
@@ -323,14 +360,18 @@ CAPTIONS = [
     ("invalid-key.png", "The shop answered 404 for an unknown key. Nothing was stored."),
     ("network.png", "The activation port refused the connection."),
     ("tampered.png", "The signed reply was altered. The host rejected it and stored nothing."),
-    ("persisted-pro.png", "A stored eligible line still verifies. The shop would 404 and received no request."),
+    ("persisted-pro.png", "A stored eligible line still verifies. The dialog names paidThrough and that this build is covered. The shop received no request."),
     ("ineligible-build.png", "The same line is kept, and PDF export is locked because this build is one second after paidThrough."),
-    ("updates-idle.png", "About, before any check. There is no automatic-update switch in this build."),
+    ("updates-idle.png", "About, before any check. Automatic checks are offered and left off."),
+    ("updates-opt-in.png", "The checkbox is on. One signed local check found v0.2.0 inside the paid-through date."),
+    ("updates-notice.png", "The quiet notice names v0.2.0. It was not installed."),
+    ("updates-dismissed.png", "That notice was dismissed. The release was not installed."),
+    ("updates-kept.png", "About still names v0.2.0 after the notice was dismissed."),
     ("updates-checking.png", "A check is in flight. The fixture is delaying the release GETs."),
     ("updates-available.png", "Version v0.2.0 is available. The asset was not downloaded yet."),
     ("updates-applied.png", "The throwaway copy was replaced. The dialog says to restart."),
     ("updates-offline.png", "The release port refused the connection."),
-    ("updates-ineligible.png", "Retained Pro refused v0.9.0 because that release is after paidThrough."),
+    ("updates-ineligible.png", "About names the paid-through date and v0.9.0's later release date, and offers Download. The asset was not fetched."),
     ("activation-timeout.png", "The shop accepted the key and never answered. The client stopped at its real 30 second limit."),
 ]
 
@@ -351,6 +392,16 @@ def render(out, bins):
         attempt(results, f"{theme}/later", lambda theme=theme, dest=dest: scenarios.pro_later_ineligible(bins, theme, dest / "ineligible-build.png"))
         attempt(results, f"{theme}/idle", lambda theme=theme, dest=dest: scenarios.update_explicit_only(bins, theme, dest / "updates-idle.png"))
         attempt(
+            results, f"{theme}/opt-in",
+            lambda theme=theme, dest=dest: scenarios.update_opt_in(
+                bins, theme,
+                opt_in_png=dest / "updates-opt-in.png",
+                notice_png=dest / "updates-notice.png",
+                dismissed_png=dest / "updates-dismissed.png",
+                kept_png=dest / "updates-kept.png",
+            ),
+        )
+        attempt(
             results, f"{theme}/check",
             lambda theme=theme, dest=dest: scenarios.update_check_available(
                 bins, theme, checking_png=dest / "updates-checking.png", available_png=dest / "updates-available.png",
@@ -362,6 +413,7 @@ def render(out, bins):
         attempt(results, f"{theme}/movie-activate", lambda theme=theme, dest=dest: movie_activation(bins, theme, dest / "activate.mp4"))
         attempt(results, f"{theme}/movie-update", lambda theme=theme, dest=dest: movie_update(bins, theme, dest / "update.mp4"))
         attempt(results, f"{theme}/movie-ineligible", lambda theme=theme, dest=dest: movie_ineligible(bins, theme, dest / "ineligible.mp4"))
+        attempt(results, f"{theme}/movie-opt-in", lambda theme=theme, dest=dest: movie_opt_in(bins, theme, dest / "opt-in.mp4"))
         attempt(results, f"{theme}/timeout", lambda theme=theme, dest=dest: scenarios.activation_timeout(bins, theme, dest / "activation-timeout.png"))
     pngs = sorted(path for path in out.glob("*/*.png"))
     sheet = contact_sheet(out, pngs)

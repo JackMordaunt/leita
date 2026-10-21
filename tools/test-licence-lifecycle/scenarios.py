@@ -29,11 +29,16 @@ ASSET_LATE = b"leita fixture window v0.9.0\n"
 AVAILABLE = f"Version {VERSION_OK} of Leita is available."
 AVAILABLE_LATE = f"Version {VERSION_LATE} of Leita is available."
 APPLIED = "Updated. Restart Leita to use the new version."
-INELIGIBLE_MESSAGE = (
-    "The update failed: this copy is still Pro through "
-    f"{host.PAID_THROUGH}; {VERSION_LATE} was released {RELEASED_LATE}, "
-    "which is after that, so it was not installed"
+AUTOMATIC = "Check for updates automatically"
+DOWNLOAD = "Download the update"
+UPDATE_BUTTON = "Update"
+DISMISS = "Dismiss banner"
+LATER_CANDIDATE = (
+    f"Leita stays Pro through {host.PAID_THROUGH}. "
+    f"Version {VERSION_LATE} was released {RELEASED_LATE}, "
+    "which is after that, so it was not installed."
 )
+COVERED_CANDIDATE = f"This release is within the paid-through date {host.PAID_THROUGH}."
 FIELD = "Licence to add"
 ADD = "Add licence"
 
@@ -70,11 +75,23 @@ def add_key(key, result_tag):
 
 
 def show_licence():
-    return ["-await", "Done", "-click", "Settings", "-click", "Licence", "-await", host.LICENSED]
+    return [
+        "-await", "Done",
+        "-click", "Settings",
+        "-click", "Licence",
+        "-await", host.LICENSED,
+        "-await", host.COVERED_BUILD,
+    ]
 
 
 def open_about():
-    return ["-await", "Done", "-click", "Settings", "-click", "About Leita", "-await", host.UPDATE_PRIVACY]
+    return [
+        "-await", "Done",
+        "-click", "Settings",
+        "-click", "About Leita",
+        "-await", host.UPDATE_PRIVACY,
+        "-await", AUTOMATIC,
+    ]
 
 
 def host_asset():
@@ -338,16 +355,24 @@ def pro_later_ineligible(bins, theme="light", png=None):
 
 def update_explicit_only(bins, theme="light", png=None):
     work = host.make_work("leita-idle-")
-    steps = open_about() + ["-absent", host.CHECKING, "-advance", "20", "-absent", host.CHECKING]
+    steps = open_about() + [
+        "-absent", host.CHECKING,
+        "-advance", "20",
+        "-absent", host.CHECKING,
+        "-absent", AVAILABLE,
+    ]
     if png:
         steps += ["-png", str(png)]
     try:
         directory = work / "release"
         write_signed_release(directory, VERSION_OK, RELEASED_OK, ASSET_OK, bins.update.seed)
         with fixture.ReleaseServer(directory) as server:
-            host.run_host(bins.capture_eligible, work, steps, DEAD_ACTIVATE, server.url, theme=theme)
-            ok = server.requests == []
-            return ok, f"release_gets={len(server.requests)} no_preference_switch"
+            _proc, data, _exe = host.run_host(
+                bins.capture_eligible, work, steps, DEAD_ACTIVATE, server.url, theme=theme,
+            )
+            chosen = host.setting_value(data, "updates")
+            ok = server.requests == [] and chosen != "on"
+            return ok, f"release_gets={len(server.requests)} automatic={chosen!r}"
     finally:
         finish(work)
 
@@ -377,11 +402,13 @@ def update_check_available(bins, theme="light", idle_png=None, checking_png=None
 
 
 def update_apply(bins, theme="light", png=None):
+    """About stays open. Update on the banner is under it, so click the top one."""
     work = host.make_work("leita-apply-")
     steps = open_about() + [
         "-click", "Check for updates",
         "-await", AVAILABLE,
-        "-click", "Update",
+        "-absent", DOWNLOAD,
+        "-click-top", UPDATE_BUTTON,
         "-await", APPLIED,
     ]
     if png:
@@ -392,7 +419,7 @@ def update_apply(bins, theme="light", png=None):
         with fixture.ReleaseServer(directory) as server:
             _proc, _data, exe = host.run_host(
                 bins.capture_eligible, work, steps, DEAD_ACTIVATE, server.url,
-                theme=theme, timeout=90, copy=True, extra={"LEITA_LICENCE": bins.line}, line=bins.line,
+                theme=theme, timeout=150, copy=True, extra={"LEITA_LICENCE": bins.line}, line=bins.line,
             )
             paths = [item["path"] for item in server.requests]
             got = exe.read_bytes()
@@ -415,12 +442,15 @@ def update_offline(bins, theme="light", png=None):
 
 
 def update_ineligible(bins, theme="light", png=None):
+    """About explains a later release and offers Download. The asset is not fetched."""
     work = host.make_work("leita-inelig-")
     steps = open_about() + [
         "-click", "Check for updates",
         "-await", AVAILABLE_LATE,
-        "-click", "Update",
-        "-await", INELIGIBLE_MESSAGE,
+        "-await", LATER_CANDIDATE,
+        "-await", DOWNLOAD,
+        "-absent", UPDATE_BUTTON,
+        "-await", host.LICENSED,
     ]
     if png:
         steps += ["-png", str(png)]
@@ -428,13 +458,99 @@ def update_ineligible(bins, theme="light", png=None):
         directory = work / "release"
         write_signed_release(directory, VERSION_LATE, RELEASED_LATE, ASSET_LATE, bins.update.seed)
         with fixture.ReleaseServer(directory) as server:
-            _proc, _data, exe = host.run_host(
+            _proc, data, exe = host.run_host(
                 bins.capture_eligible, work, steps, DEAD_ACTIVATE, server.url,
                 theme=theme, timeout=90, copy=True, extra={"LEITA_LICENCE": bins.line}, line=bins.line,
             )
             paths = [item["path"] for item in server.requests]
-            ok = exe.read_bytes() != ASSET_LATE and host_asset() not in paths
-            return ok, f"binary_kept={exe.read_bytes() != ASSET_LATE} asset_absent={host_asset() not in paths}"
+            kept = exe.read_bytes() == bins.capture_eligible.read_bytes()
+            line = host.stored_text(licence_file(data))
+            ok = kept and host_asset() not in paths and "sha256sums.txt" in paths and line == bins.line
+            return ok, (
+                f"binary_kept={kept} asset_absent={host_asset() not in paths} "
+                f"line_kept={line == bins.line} gets={paths}"
+            )
+    finally:
+        finish(work)
+
+
+def _release_ok(server):
+    paths = [item["path"] for item in server.requests]
+    agents = {item["user_agent"] for item in server.requests}
+    allowed = {"sha256sums.txt", "sha256sums.txt.sig", "released.txt", "version.txt"}
+    ok = (
+        host_asset() not in paths
+        and paths.count("sha256sums.txt") == 1
+        and set(paths) <= allowed
+        and paths
+        and agents == {USER_AGENT}
+    )
+    return ok, paths, agents
+
+
+def update_opt_in(bins, theme="light", opt_in_png=None, notice_png=None, dismissed_png=None, kept_png=None):
+    """Checks stay off, one opted-in signed check runs, and dismissing hides that version."""
+    work = host.make_work("leita-opt-")
+    steps = open_about() + [
+        "-advance", "20",
+        "-absent", host.CHECKING,
+        "-absent", AVAILABLE,
+        "-click", AUTOMATIC,
+        "-await", AVAILABLE,
+        "-await", COVERED_CANDIDATE,
+    ]
+    if opt_in_png:
+        steps += ["-png", str(opt_in_png)]
+    steps += [
+        "-click", "Close",
+        "-await", AVAILABLE,
+        "-absent", DOWNLOAD,
+    ]
+    if notice_png:
+        steps += ["-png", str(notice_png)]
+    steps += [
+        "-click", DISMISS,
+        "-absent", AVAILABLE,
+        "-advance", "15",
+        "-absent", AVAILABLE,
+    ]
+    if dismissed_png:
+        steps += ["-png", str(dismissed_png)]
+    steps += [
+        "-click", "Settings",
+        "-click", "About Leita",
+        "-await", AVAILABLE,
+        "-await", COVERED_CANDIDATE,
+        "-await", AUTOMATIC,
+    ]
+    if kept_png:
+        steps += ["-png", str(kept_png)]
+    try:
+        directory = work / "release"
+        write_signed_release(directory, VERSION_OK, RELEASED_OK, ASSET_OK, bins.update.seed)
+        with fixture.ReleaseServer(directory) as server:
+            _proc, data, exe = host.run_host(
+                bins.capture_eligible, work, steps, DEAD_ACTIVATE, server.url,
+                theme=theme, timeout=90, copy=True, extra={"LEITA_LICENCE": bins.line}, line=bins.line,
+            )
+            fetched, paths, agents = _release_ok(server)
+            kept = exe.read_bytes() == bins.capture_eligible.read_bytes()
+            line = host.stored_text(licence_file(data))
+            updates = host.setting_value(data, "updates")
+            dismissed = host.setting_value(data, "update_dismissed")
+            checked = host.setting_value(data, "update_checked")
+            ok = (
+                fetched
+                and kept
+                and line == bins.line
+                and updates == "on"
+                and dismissed == VERSION_OK
+                and checked not in (None, "")
+            )
+            return ok, (
+                f"binary_kept={kept} line_kept={line == bins.line} automatic={updates!r} "
+                f"dismissed={dismissed!r} checked={checked!r} agents={sorted(agents)} gets={paths}"
+            )
     finally:
         finish(work)
 
