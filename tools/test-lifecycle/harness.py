@@ -175,7 +175,10 @@ def child_env(work, extra=None):
         env.update(extra)
     env.pop("LEITA_UPDATE_SEED", None)
     env.pop("LEITA_LICENCE_KEY", None)
-    return env, data / "leita"
+    folder = data / "leita"
+    if system_name() == "darwin":
+        folder = home / "Library" / "Application Support" / "leita"
+    return env, folder
 
 
 def invoke(binary, args, env, timeout=90):
