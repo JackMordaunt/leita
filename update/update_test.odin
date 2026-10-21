@@ -15,6 +15,8 @@ import "jm:path"
 import "jm:selfupdate"
 import "jm:zstd"
 
+import "../history/place"
+import "../journal"
 import "../licence"
 
 // The tests run the package under the runner's tracking allocator on purpose:
@@ -52,8 +54,13 @@ fixture :: proc(t: ^testing.T, running, published, version: string) -> (f: Fixtu
 publish :: proc(t: ^testing.T, f: ^Fixture, body, version: string) {
 	ta := context.temp_allocator
 	testing.expect_value(t, path.write(path.join(f.release, ASSET, allocator = ta), body), nil)
-	testing.expect_value(t, path.write(path.join(f.release, "version.txt", allocator = ta), strings.concatenate({version, "\n"}, ta)), nil)
-	write_sums(t, f, {{ASSET, sha256(body)}})
+	ver := strings.concatenate({version, "\n"}, ta)
+	testing.expect_value(
+		t,
+		path.write(path.join(f.release, selfupdate.VERSION_FILE, allocator = ta), ver),
+		nil,
+	)
+	write_sums(t, f, {{ASSET, sha256(body)}, {selfupdate.VERSION_FILE, sha256(ver)}})
 }
 
 Sum :: struct {
@@ -70,18 +77,40 @@ write_sums :: proc(t: ^testing.T, f: ^Fixture, lines: []Sum) {
 		strings.write_byte(&b, '\n')
 	}
 	text := strings.to_string(b)
-	testing.expect_value(t, path.write(path.join(f.release, "sha256sums.txt", allocator = ta), text), nil)
+	testing.expect_value(
+		t,
+		path.write(path.join(f.release, "sha256sums.txt", allocator = ta), text),
+		nil,
+	)
 	sig: [ed25519.SIGNATURE_SIZE]byte
 	ed25519.sign(&f.priv, transmute([]byte)text, sig[:])
-	testing.expect_value(t, path.write(path.join(f.release, "sha256sums.txt.sig", allocator = ta), string(sig[:])), nil)
+	testing.expect_value(
+		t,
+		path.write(path.join(f.release, "sha256sums.txt.sig", allocator = ta), string(sig[:])),
+		nil,
+	)
 }
 
 sha256 :: proc(body: string) -> string {
-	return string(hex.encode(hash.hash_string(.SHA256, body, context.temp_allocator), context.temp_allocator))
+	return string(
+		hex.encode(
+			hash.hash_string(.SHA256, body, context.temp_allocator),
+			context.temp_allocator,
+		),
+	)
 }
 
-config :: proc(f: Fixture, version := "v1.0.0") -> Config {
-	return Config{base = f.release, version = version, asset = ASSET, exe = f.exe, user_agent = "leita/" + "test"}
+// config trusts the fixture's key and does not read the machine's licence.
+config :: proc(f: ^Fixture, version := "v1.0.0") -> Config {
+	return Config {
+		base = f.release,
+		version = version,
+		asset = ASSET,
+		exe = f.exe,
+		user_agent = "leita/" + "test",
+		public_key = f.key[:],
+		hold_known = true,
+	}
 }
 
 read :: proc(p: string) -> string {
@@ -97,10 +126,10 @@ exists :: proc(p: string) -> bool {
 the_same_build_is_current :: proc(t: ^testing.T) {
 	f := fixture(t, "same build", "same build", "v1.0.0")
 	defer os.remove_all(f.root)
-	r := check(config(f))
+	r := check(config(&f))
 	testing.expect_value(t, r.outcome, Outcome.Current)
 	testing.expect_value(t, latest(&r), "v1.0.0")
-	r = apply(config(f))
+	r = apply(config(&f))
 	testing.expect_value(t, r.outcome, Outcome.Current)
 	testing.expect_value(t, read(f.exe), "same build")
 }
@@ -109,9 +138,9 @@ the_same_build_is_current :: proc(t: ^testing.T) {
 the_release_naming_this_version_is_current_whatever_the_bytes :: proc(t: ^testing.T) {
 	f := fixture(t, "built here", "built by ci", "v1.0.0")
 	defer os.remove_all(f.root)
-	r := check(config(f))
+	r := check(config(&f))
 	testing.expect_value(t, r.outcome, Outcome.Current)
-	r = apply(config(f))
+	r = apply(config(&f))
 	testing.expect_value(t, r.outcome, Outcome.Current)
 	testing.expect_value(t, read(f.exe), "built here")
 }
@@ -120,20 +149,24 @@ the_release_naming_this_version_is_current_whatever_the_bytes :: proc(t: ^testin
 a_newer_release_is_available_and_check_changes_nothing :: proc(t: ^testing.T) {
 	f := fixture(t, "old build", "new build", "v1.1.0")
 	defer os.remove_all(f.root)
-	r := check(config(f))
+	r := check(config(&f))
 	testing.expect_value(t, r.outcome, Outcome.Available)
 	testing.expect_value(t, latest(&r), "v1.1.0")
 	testing.expect_value(t, message(&r), "v1.1.0 is available")
 	testing.expect_value(t, read(f.exe), "old build")
-	testing.expect(t, !exists(strings.concatenate({f.exe, ".new"}, context.temp_allocator)), "no temp file")
+	testing.expect(
+		t,
+		!exists(strings.concatenate({f.exe, ".new"}, context.temp_allocator)),
+		"no temp file",
+	)
 }
 
 @(test)
 a_development_build_checks_but_never_applies :: proc(t: ^testing.T) {
 	f := fixture(t, "old build", "new build", "v1.1.0")
 	defer os.remove_all(f.root)
-	testing.expect_value(t, check(config(f, "dev")).outcome, Outcome.Available)
-	r := apply(config(f, "dev"))
+	testing.expect_value(t, check(config(&f, "dev")).outcome, Outcome.Available)
+	r := apply(config(&f, "dev"))
 	testing.expect_value(t, r.outcome, Outcome.Refused)
 	testing.expect_value(t, r.reason, Reason.Dev_Build)
 	testing.expect_value(t, read(f.exe), "old build")
@@ -144,17 +177,21 @@ apply_replaces_the_executable_and_keeps_the_old_one :: proc(t: ^testing.T) {
 	f := fixture(t, "old build", "new build", "v1.1.0")
 	defer os.remove_all(f.root)
 	old := strings.concatenate({f.exe, ".old"}, context.temp_allocator)
-	r := apply(config(f))
+	r := apply(config(&f))
 	testing.expect_value(t, r.outcome, Outcome.Applied)
 	testing.expect_value(t, r.via, selfupdate.Via.Full)
 	testing.expect_value(t, message(&r), "updated via full download")
 	testing.expect_value(t, read(f.exe), "new build")
 	testing.expect_value(t, read(old), "old build")
-	testing.expect(t, !exists(strings.concatenate({f.exe, ".new"}, context.temp_allocator)), "no temp file")
+	testing.expect(
+		t,
+		!exists(strings.concatenate({f.exe, ".new"}, context.temp_allocator)),
+		"no temp file",
+	)
 
 	// The next update finds itself current, and clears the old copy once it
 	// has one to replace.
-	testing.expect_value(t, apply(config(f)).outcome, Outcome.Current)
+	testing.expect_value(t, apply(config(&f)).outcome, Outcome.Current)
 }
 
 @(test)
@@ -163,12 +200,20 @@ a_download_that_does_not_match_its_hash_is_not_installed :: proc(t: ^testing.T) 
 	defer os.remove_all(f.root)
 	// The sums promise bytes the asset does not hold: a corrupted or swapped file.
 	write_sums(t, &f, {{ASSET, sha256("what the sums promise")}})
-	r := apply(config(f))
+	r := apply(config(&f))
 	testing.expect_value(t, r.outcome, Outcome.Failed)
 	testing.expect_value(t, r.reason, Reason.Bad_Download)
 	testing.expect_value(t, read(f.exe), "old build")
-	testing.expect(t, !exists(strings.concatenate({f.exe, ".new"}, context.temp_allocator)), "no temp file")
-	testing.expect(t, !exists(strings.concatenate({f.exe, ".dl"}, context.temp_allocator)), "no download left")
+	testing.expect(
+		t,
+		!exists(strings.concatenate({f.exe, ".new"}, context.temp_allocator)),
+		"no temp file",
+	)
+	testing.expect(
+		t,
+		!exists(strings.concatenate({f.exe, ".dl"}, context.temp_allocator)),
+		"no download left",
+	)
 }
 
 @(test)
@@ -176,10 +221,16 @@ an_asset_the_release_lacks_fails :: proc(t: ^testing.T) {
 	f := fixture(t, "old build", "new build", "v1.1.0")
 	defer os.remove_all(f.root)
 	write_sums(t, &f, {{"leita-other", sha256("x")}})
-	r := check(config(f))
+	r := check(config(&f))
 	testing.expect_value(t, r.outcome, Outcome.Failed)
 	testing.expect_value(t, r.reason, Reason.Not_Published)
-	r = check(Config{base = path.join(f.root, "nowhere", allocator = context.temp_allocator), asset = ASSET, exe = f.exe})
+	r = check(
+		Config {
+			base = path.join(f.root, "nowhere", allocator = context.temp_allocator),
+			asset = ASSET,
+			exe = f.exe,
+		},
+	)
 	testing.expect_value(t, r.outcome, Outcome.Failed)
 	testing.expect_value(t, r.reason, Reason.Not_Published)
 }
@@ -197,7 +248,7 @@ the_smaller_routes_are_taken_when_the_sums_list_them :: proc(t: ^testing.T) {
 	zst := strings.concatenate({ASSET, ".zst"}, ta)
 	testing.expect_value(t, path.write(path.join(f.release, zst, allocator = ta), compressed), nil)
 	write_sums(t, &f, {{ASSET, sha256(newer)}, {zst, sha256(compressed)}})
-	r := apply(config(f))
+	r := apply(config(&f))
 	testing.expect_value(t, r.outcome, Outcome.Applied)
 	testing.expect_value(t, r.via, selfupdate.Via.Compressed)
 	testing.expect(t, read(f.exe) == newer, "the compressed asset installs the new build")
@@ -208,7 +259,7 @@ the_smaller_routes_are_taken_when_the_sums_list_them :: proc(t: ^testing.T) {
 	name := strings.concatenate({ASSET, ".", sha256(older), ".patch"}, ta)
 	testing.expect_value(t, path.write(path.join(f.release, name, allocator = ta), patch), nil)
 	write_sums(t, &f, {{ASSET, sha256(newer)}, {zst, sha256(compressed)}, {name, sha256(patch)}})
-	r = apply(config(f))
+	r = apply(config(&f))
 	testing.expect_value(t, r.outcome, Outcome.Applied)
 	testing.expect_value(t, r.via, selfupdate.Via.Patch)
 	testing.expect(t, read(f.exe) == newer, "the patch installs the new build")
@@ -216,7 +267,7 @@ the_smaller_routes_are_taken_when_the_sums_list_them :: proc(t: ^testing.T) {
 	// A patch that does not match its published hash falls through to the next route.
 	testing.expect_value(t, path.write(f.exe, older), nil)
 	testing.expect_value(t, path.write(path.join(f.release, name, allocator = ta), "garbage"), nil)
-	r = apply(config(f))
+	r = apply(config(&f))
 	testing.expect_value(t, r.outcome, Outcome.Applied)
 	testing.expect_value(t, r.via, selfupdate.Via.Compressed)
 }
@@ -225,7 +276,7 @@ the_smaller_routes_are_taken_when_the_sums_list_them :: proc(t: ^testing.T) {
 a_signed_release_must_verify_when_a_key_is_set :: proc(t: ^testing.T) {
 	f := fixture(t, "old build", "new build", "v1.1.0")
 	defer os.remove_all(f.root)
-	cfg := config(f)
+	cfg := config(&f)
 	cfg.public_key = f.key[:]
 	r := check(cfg)
 	testing.expect_value(t, r.outcome, Outcome.Available)
@@ -234,7 +285,14 @@ a_signed_release_must_verify_when_a_key_is_set :: proc(t: ^testing.T) {
 
 	// The sums changed after they were signed.
 	ta := context.temp_allocator
-	testing.expect_value(t, path.write(path.join(f.release, "sha256sums.txt", allocator = ta), strings.concatenate({sha256("evil"), "  ", ASSET, "\n"}, ta)), nil)
+	testing.expect_value(
+		t,
+		path.write(
+			path.join(f.release, "sha256sums.txt", allocator = ta),
+			strings.concatenate({sha256("evil"), "  ", ASSET, "\n"}, ta),
+		),
+		nil,
+	)
 	r = apply(cfg)
 	testing.expect_value(t, r.outcome, Outcome.Failed)
 	testing.expect_value(t, r.reason, Reason.Bad_Signature)
@@ -243,10 +301,18 @@ a_signed_release_must_verify_when_a_key_is_set :: proc(t: ^testing.T) {
 	// No signature at all fails too, rather than falling back to the hashes.
 	os.remove(path.join(f.release, "sha256sums.txt.sig", allocator = ta))
 	testing.expect_value(t, check(cfg).outcome, Outcome.Failed)
-	// With no key configured, the hashes alone decide.
-	write_sums(t, &f, {{ASSET, sha256("new build")}})
-	os.remove(path.join(f.release, "sha256sums.txt.sig", allocator = ta))
-	testing.expect_value(t, check(config(f)).outcome, Outcome.Available)
+	testing.expect_value(t, check(cfg).reason, Reason.Bad_Signature)
+
+	// A build with no key does not accept the hashes on their own.
+	bare := config(&f)
+	bare.public_key = nil
+	testing.expect_value(t, check(bare).outcome, Outcome.Failed)
+	testing.expect_value(t, check(bare).reason, Reason.Bad_Signature)
+	testing.expect_value(t, read(f.exe), "old build")
+
+	short := config(&f)
+	short.public_key = f.key[:1]
+	testing.expect_value(t, check(short).reason, Reason.Bad_Signature)
 }
 
 // A signed released.txt is the instant licence.pro_entitled compares with
@@ -258,10 +324,14 @@ a_signed_release_stamp_is_the_paid_through_cutoff :: proc(t: ^testing.T) {
 	stamp := "2026-10-19T12:00:00Z"
 	ta := context.temp_allocator
 	released_body := strings.concatenate({stamp, "\n"}, ta)
-	testing.expect_value(t, path.write(path.join(f.release, RELEASED_FILE, allocator = ta), released_body), nil)
+	testing.expect_value(
+		t,
+		path.write(path.join(f.release, RELEASED_FILE, allocator = ta), released_body),
+		nil,
+	)
 	write_sums(t, &f, {{ASSET, sha256("new build")}, {RELEASED_FILE, sha256(released_body)}})
 
-	cfg := config(f)
+	cfg := config(&f)
 	cfg.public_key = f.key[:]
 	r := check(cfg)
 	testing.expect_value(t, r.outcome, Outcome.Available)
@@ -278,42 +348,75 @@ a_signed_release_stamp_is_the_paid_through_cutoff :: proc(t: ^testing.T) {
 
 	// The file changed after the sums were signed. The asset is still good.
 	later := "2026-10-19T12:00:01Z\n"
-	testing.expect_value(t, path.write(path.join(f.release, RELEASED_FILE, allocator = ta), later), nil)
+	testing.expect_value(
+		t,
+		path.write(path.join(f.release, RELEASED_FILE, allocator = ta), later),
+		nil,
+	)
 	r = check(cfg)
 	testing.expect_value(t, r.outcome, Outcome.Available)
 	_, ok = released(&r)
 	testing.expect(t, !ok, "a stamp that no longer matches its signed hash is not authenticated")
 
-	// Restored, and still listed, but the sums were not signed for this check.
-	testing.expect_value(t, path.write(path.join(f.release, RELEASED_FILE, allocator = ta), released_body), nil)
-	r = check(config(f))
-	testing.expect_value(t, r.outcome, Outcome.Available)
+	// Restored, and still listed, but this check has no key, so it fails closed
+	// rather than treating the stamp as unauthenticated and continuing.
+	testing.expect_value(
+		t,
+		path.write(path.join(f.release, RELEASED_FILE, allocator = ta), released_body),
+		nil,
+	)
+	bare := config(&f)
+	bare.public_key = nil
+	r = check(bare)
+	testing.expect_value(t, r.outcome, Outcome.Failed)
+	testing.expect_value(t, r.reason, Reason.Bad_Signature)
 	_, ok = released(&r)
 	testing.expect(t, !ok, "an unsigned manifest does not authenticate the stamp")
+	testing.expect_value(t, read(f.exe), "old build")
 }
 
 @(test)
 a_copy_leita_cannot_replace_is_refused_with_where_to_download :: proc(t: ^testing.T) {
 	testing.expect_value(t, install_of("/home/a/bin/leita"), Install.Loose)
 	testing.expect_value(t, install_of("/usr/local/bin/leita"), Install.Loose)
-	testing.expect_value(t, install_of("/Users/a/Applications/Leita.app/Contents/Helpers/leita"), Install.Bundle)
-	testing.expect_value(t, install_of("/Applications/Leita.app/Contents/MacOS/Leita"), Install.Bundle)
+	testing.expect_value(t, install_of(JOURNAL_COPY), Install.Journal)
+	testing.expect_value(t, JOURNAL_COPY, journal.BINARY_PATH)
+	testing.expect_value(
+		t,
+		install_of(`C:\Users\a\scoop\apps\leita\current\leita.exe`),
+		Install.Scoop,
+	)
+	testing.expect_value(
+		t,
+		install_of("/Users/a/Applications/Leita.app/Contents/Helpers/leita"),
+		Install.Bundle,
+	)
+	testing.expect_value(
+		t,
+		install_of("/Applications/Leita.app/Contents/MacOS/Leita"),
+		Install.Bundle,
+	)
 	testing.expect_value(t, install_of("/usr/bin/leita"), Install.Package)
 	testing.expect_value(t, install_of("/usr/libexec/leita/leita"), Install.Package)
 	testing.expect_value(t, install_of("/opt/homebrew/Cellar/leita/1/bin/leita"), Install.Package)
 	testing.expect_value(t, install_of("/tmp/.mount_LeitaXYZ/usr/bin/Leita"), Install.App_Image)
-	testing.expect_value(t, install_of("/home/a/Leita.AppImage", app_image = true), Install.App_Image)
+	testing.expect_value(
+		t,
+		install_of("/home/a/Leita.AppImage", app_image = true),
+		Install.App_Image,
+	)
 	testing.expect_value(t, install_of("C:\\Program Files\\Leita\\leita.exe"), Install.Installer)
 	testing.expect_value(t, install_of("C:\\Users\\a\\bin\\leita.exe"), Install.Loose)
 
 	f := fixture(t, "old build", "new build", "v1.1.0")
 	defer os.remove_all(f.root)
-	// A link, as a checkout installs it.
+	// A link, as a checkout installs it. A platform that refuses the symlink
+	// (Windows without the privilege) is not this case.
 	target := path.join(f.root, "target", allocator = context.temp_allocator)
 	testing.expect_value(t, path.write(target, "old build"), nil)
 	link := path.join(f.root, "link", allocator = context.temp_allocator)
 	if os.symlink(target, link) == nil {
-		cfg := config(f)
+		cfg := config(&f)
 		cfg.exe = link
 		r := apply(cfg)
 		testing.expect_value(t, r.outcome, Outcome.Refused)
@@ -325,7 +428,318 @@ a_copy_leita_cannot_replace_is_refused_with_where_to_download :: proc(t: ^testin
 	finish(&r, .Refused, .Bundle, "%s", refusal_text(.Bundle, "v1.1.0"))
 	testing.expect(t, strings.contains(message(&r), "Leita.app"), "the bundle is named")
 	testing.expect(t, strings.contains(message(&r), "v1.1.0"), "the version is named")
-	testing.expect(t, not_replaceable(.Bundle) && !not_replaceable(.Unreachable))
+	testing.expect(
+		t,
+		not_replaceable(.Bundle) && not_replaceable(.Journal) && not_replaceable(.Scoop),
+	)
+	testing.expect(t, !not_replaceable(.Unreachable) && !not_replaceable(.Ineligible))
+}
+
+// A package, Scoop or the recorder is refused before the release is fetched,
+// so a missing base is still a refusal and not a network failure.
+@(test)
+a_copy_that_is_not_ours_is_refused_before_the_release_is_fetched :: proc(t: ^testing.T) {
+	f := fixture(t, "old build", "new build", "v1.1.0")
+	defer os.remove_all(f.root)
+	expect_unfetched(t, &f, "/usr/bin/leita-update-test-not-a-real-file", .Package)
+	expect_unfetched(t, &f, JOURNAL_COPY, .Journal)
+	expect_unfetched(
+		t,
+		&f,
+		`C:\Users\leita-update-test\scoop\apps\leita\current\leita.exe`,
+		.Scoop,
+	)
+	testing.expect_value(t, read(f.exe), "old build")
+}
+
+@(private)
+expect_unfetched :: proc(t: ^testing.T, f: ^Fixture, exe: string, reason: Reason) {
+	cfg := config(f)
+	cfg.base = path.join(f.root, "nowhere", allocator = context.temp_allocator)
+	cfg.exe = exe
+	before, before_ok := "", false
+	if os.exists(exe) {
+		before, before_ok = read(exe), true
+	}
+	r := apply(cfg)
+	testing.expect_value(t, r.outcome, Outcome.Refused)
+	testing.expect_value(t, r.reason, reason)
+	testing.expect(t, strings.contains(message(&r), RELEASE_PAGE), message(&r))
+	testing.expect(t, !exists(strings.concatenate({exe, ".new"}, context.temp_allocator)), exe)
+	if before_ok {
+		testing.expect_value(t, read(exe), before)
+	}
+}
+
+@(test)
+an_unauthenticated_version_does_not_mark_this_build_current :: proc(t: ^testing.T) {
+	f := fixture(t, "built here", "built by ci", "v1.0.0")
+	defer os.remove_all(f.root)
+	// The asset hash differs. version.txt still says v1.0.0, but it is not
+	// in the signed sums, so it must not suppress the update.
+	write_sums(t, &f, {{ASSET, sha256("built by ci")}})
+	r := check(config(&f))
+	testing.expect_value(t, r.outcome, Outcome.Available)
+	testing.expect_value(t, latest(&r), "")
+}
+
+@(test)
+retained_pro_refuses_a_later_or_unstamped_release :: proc(t: ^testing.T) {
+	f := fixture(t, "old build", "new build", "v1.1.0")
+	defer os.remove_all(f.root)
+	ta := context.temp_allocator
+	through := "2026-10-19T12:00:00Z"
+	later := "2026-10-19T12:00:01Z"
+	body := strings.concatenate({later, "\n"}, ta)
+	testing.expect_value(
+		t,
+		path.write(path.join(f.release, RELEASED_FILE, allocator = ta), body),
+		nil,
+	)
+	ver := "v1.1.0\n"
+	write_sums(
+		t,
+		&f,
+		{
+			{ASSET, sha256("new build")},
+			{selfupdate.VERSION_FILE, sha256(ver)},
+			{RELEASED_FILE, sha256(body)},
+		},
+	)
+
+	cfg := config(&f)
+	cfg.hold = {
+		retained     = true,
+		paid_through = through,
+	}
+	r := check(cfg)
+	testing.expect_value(t, r.outcome, Outcome.Available)
+	at, ok := released(&r)
+	testing.expect(t, ok && at == later, "the check still reports the authenticated instant")
+
+	r = apply(cfg)
+	testing.expect_value(t, r.outcome, Outcome.Refused)
+	testing.expect_value(t, r.reason, Reason.Ineligible)
+	testing.expect(t, strings.contains(message(&r), through), message(&r))
+	testing.expect_value(t, read(f.exe), "old build")
+	testing.expect(
+		t,
+		!exists(strings.concatenate({f.exe, ".new"}, ta)),
+		"the asset was not downloaded into place",
+	)
+
+	// The same line accepts the instant it is paid through, including equal.
+	equal := strings.concatenate({through, "\n"}, ta)
+	testing.expect_value(
+		t,
+		path.write(path.join(f.release, RELEASED_FILE, allocator = ta), equal),
+		nil,
+	)
+	write_sums(
+		t,
+		&f,
+		{
+			{ASSET, sha256("new build")},
+			{selfupdate.VERSION_FILE, sha256(ver)},
+			{RELEASED_FILE, sha256(equal)},
+		},
+	)
+	r = apply(cfg)
+	testing.expect_value(t, r.outcome, Outcome.Applied)
+	testing.expect_value(t, read(f.exe), "new build")
+
+	// A copy that is not retained Pro installs with no stamp at all.
+	testing.expect_value(t, path.write(f.exe, "old build"), nil)
+	os.remove(path.join(f.release, RELEASED_FILE, allocator = ta))
+	write_sums(t, &f, {{ASSET, sha256("new build")}, {selfupdate.VERSION_FILE, sha256(ver)}})
+	free := config(&f)
+	r = apply(free)
+	testing.expect_value(t, r.outcome, Outcome.Applied)
+	_, ok = released(&r)
+	testing.expect(t, !ok, "a free install does not invent an instant")
+	testing.expect_value(t, read(f.exe), "new build")
+}
+
+@(test)
+retained_pro_refuses_a_stamp_that_no_longer_matches :: proc(t: ^testing.T) {
+	f := fixture(t, "old build", "new build", "v1.1.0")
+	defer os.remove_all(f.root)
+	ta := context.temp_allocator
+	body := "2026-01-01T00:00:00Z\n"
+	ver := "v1.1.0\n"
+	testing.expect_value(
+		t,
+		path.write(path.join(f.release, RELEASED_FILE, allocator = ta), body),
+		nil,
+	)
+	write_sums(
+		t,
+		&f,
+		{
+			{ASSET, sha256("new build")},
+			{selfupdate.VERSION_FILE, sha256(ver)},
+			{RELEASED_FILE, sha256(body)},
+		},
+	)
+	testing.expect_value(
+		t,
+		path.write(path.join(f.release, RELEASED_FILE, allocator = ta), "2026-01-01T00:00:01Z\n"),
+		nil,
+	)
+	cfg := config(&f)
+	cfg.hold = {
+		retained     = true,
+		paid_through = "2026-06-01T00:00:00Z",
+	}
+	r := apply(cfg)
+	testing.expect_value(t, r.outcome, Outcome.Refused)
+	testing.expect_value(t, r.reason, Reason.Ineligible)
+	testing.expect_value(t, read(f.exe), "old build")
+}
+
+@(test)
+a_licence_that_does_not_verify_is_not_retained_pro :: proc(t: ^testing.T) {
+	f := fixture(t, "old build", "new build", "v1.1.0")
+	defer os.remove_all(f.root)
+	data := path.join(f.root, "data", allocator = context.temp_allocator)
+	testing.expect_value(t, path.mkdirs(data), nil)
+	was_data, had_data := os.lookup_env("XDG_DATA_HOME", context.temp_allocator)
+	was_lic, had_lic := os.lookup_env(licence.ENV, context.temp_allocator)
+	testing.expect(t, os.set_env("XDG_DATA_HOME", data) == nil)
+	testing.expect(t, os.set_env(licence.ENV, "not a licence") == nil)
+	defer {
+		if had_data {
+			os.set_env("XDG_DATA_HOME", was_data)
+		} else {
+			os.unset_env("XDG_DATA_HOME")
+		}
+		if had_lic {
+			os.set_env(licence.ENV, was_lic)
+		} else {
+			os.unset_env(licence.ENV)
+		}
+	}
+	cfg := config(&f)
+	cfg.hold_known = false
+	r := apply(cfg)
+	testing.expect_value(t, r.outcome, Outcome.Applied)
+	testing.expect_value(t, read(f.exe), "new build")
+	kept := place.default_path(context.temp_allocator)
+	when ODIN_OS == .Linux {
+		testing.expect(t, strings.has_suffix(kept, "/leita/history.db"), kept)
+	} else {
+		if len(kept) > 0 {
+			testing.expect(t, strings.contains(kept, "leita"), kept)
+		}
+	}
+}
+
+@(test)
+an_interrupted_update_restores_the_previous_executable :: proc(t: ^testing.T) {
+	f := fixture(t, "old build", "new build", "v1.1.0")
+	defer os.remove_all(f.root)
+	ta := context.temp_allocator
+	old := strings.concatenate({f.exe, ".old"}, ta)
+	fresh := strings.concatenate({f.exe, ".new"}, ta)
+	testing.expect_value(t, os.remove(f.exe), nil)
+	testing.expect_value(t, path.write(old, "old build"), nil)
+	testing.expect_value(t, path.write(fresh, "GARBAGE"), nil)
+	r := apply(config(&f))
+	testing.expect_value(t, r.outcome, Outcome.Applied)
+	testing.expect_value(t, read(f.exe), "new build")
+	testing.expect_value(t, read(old), "old build")
+	testing.expect(t, !exists(fresh), "the unchecked .new was not kept")
+
+	// Restored, and already the release: nothing is downloaded over it.
+	testing.expect_value(t, os.remove(f.exe), nil)
+	testing.expect_value(t, path.write(old, "new build"), nil)
+	testing.expect_value(t, path.write(fresh, "GARBAGE"), nil)
+	same := config(&f)
+	same.version = "v1.1.0"
+	r = apply(same)
+	testing.expect_value(t, r.outcome, Outcome.Current)
+	testing.expect_value(t, read(f.exe), "new build")
+	testing.expect(t, !exists(fresh), "a leftover .new is removed")
+	testing.expect(t, !exists(old), "the restored file is the executable again")
+}
+
+@(test)
+a_failed_swap_puts_the_old_executable_back :: proc(t: ^testing.T) {
+	f := fixture(t, "old build", "new build", "v1.1.0")
+	defer os.remove_all(f.root)
+	fresh := strings.concatenate({f.exe, ".new"}, context.temp_allocator)
+	old := strings.concatenate({f.exe, ".old"}, context.temp_allocator)
+	sr: selfupdate.Result
+	testing.expect(t, !selfupdate.swap(f.exe, old, fresh, &sr), "there is no .new to move in")
+	testing.expect_value(t, read(f.exe), "old build")
+	testing.expect(t, !exists(old), "the first rename was reversed")
+}
+
+@(test)
+a_directory_that_cannot_be_written_is_left_untouched :: proc(t: ^testing.T) {
+	when ODIN_OS == .Windows {
+		// The Windows mode bit does not stop the owner creating a file beside
+		// the executable. The probe is the same; this platform has no
+		// deny-write fixture here.
+		return
+	} else {
+		if os.get_uid() == 0 {
+			// Root ignores the directory mode, so the probe would succeed.
+			return
+		}
+	}
+	f := fixture(t, "old build", "new build", "v1.1.0")
+	defer os.remove_all(f.root)
+	dir := path.join(f.root, "bin", allocator = context.temp_allocator)
+	mode := os.Permissions {
+		.Read_User,
+		.Write_User,
+		.Execute_User,
+		.Read_Group,
+		.Execute_Group,
+		.Read_Other,
+		.Execute_Other,
+	}
+	testing.expect_value(
+		t,
+		os.change_mode(
+			dir,
+			{.Read_User, .Execute_User, .Read_Group, .Execute_Group, .Read_Other, .Execute_Other},
+		),
+		nil,
+	)
+	defer os.change_mode(dir, mode)
+	r := apply(config(&f))
+	testing.expect_value(t, r.outcome, Outcome.Failed)
+	testing.expect_value(t, r.reason, Reason.Cannot_Replace)
+	testing.expect_value(t, read(f.exe), "old build")
+	testing.expect(
+		t,
+		!exists(strings.concatenate({f.exe, ".new"}, context.temp_allocator)),
+		"nothing was downloaded",
+	)
+}
+
+// The bytes that land on disk are executed, and the files beside the
+// executable are not part of the swap.
+@(test)
+the_installed_executable_runs_and_user_data_stays :: proc(t: ^testing.T) {
+	old_body := "#!/bin/sh\necho OLD-LEITA\n"
+	new_body := "#!/bin/sh\necho NEW-LEITA\n"
+	f := fixture(t, old_body, new_body, "v1.1.0")
+	defer os.remove_all(f.root)
+	ta := context.temp_allocator
+	data := path.join(f.root, "data", allocator = ta)
+	testing.expect_value(t, path.mkdirs(data), nil)
+	history := path.join(data, "history.db", allocator = ta)
+	kept := path.join(data, "licence", allocator = ta)
+	testing.expect_value(t, path.write(history, "KEEP-HISTORY"), nil)
+	testing.expect_value(t, path.write(kept, "KEEP-LICENCE"), nil)
+	r := apply(config(&f))
+	testing.expect_value(t, r.outcome, Outcome.Applied)
+	testing.expect_value(t, read(f.exe), new_body)
+	testing.expect_value(t, read(history), "KEEP-HISTORY")
+	testing.expect_value(t, read(kept), "KEEP-LICENCE")
 }
 
 // Served over HTTP, each request carries User-Agent leita/<version> and
@@ -350,26 +764,31 @@ requests_name_leita_and_the_version_only :: proc(t: ^testing.T) {
 		}
 		delete(seen.heads)
 	}
-	srv, ok := loopback.start(
-		proc(conn: ^loopback.Conn, req: loopback.Request) {
+	srv, ok := loopback.start(proc(conn: ^loopback.Conn, req: loopback.Request) {
 			s := (^Seen)(conn.server.user)
 			sync.mutex_guard(&s.mutex)
 			append(&s.heads, strings.clone(req.head))
-			body, err := os.read_entire_file(path.join(s.dir, req.path[1:], allocator = context.temp_allocator), context.temp_allocator)
+			body, err := os.read_entire_file(
+				path.join(s.dir, req.path[1:], allocator = context.temp_allocator),
+				context.temp_allocator,
+			)
 			if err != nil {
 				loopback.send(conn, "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n")
 				return
 			}
-			loopback.send(conn, strings.concatenate({"HTTP/1.1 200 OK\r\nContent-Length: ", itoa(len(body)), "\r\n\r\n"}, context.temp_allocator))
+			loopback.send(
+				conn,
+				strings.concatenate(
+					{"HTTP/1.1 200 OK\r\nContent-Length: ", itoa(len(body)), "\r\n\r\n"},
+					context.temp_allocator,
+				),
+			)
 			loopback.send(conn, string(body))
-		},
-		&seen,
-		context.allocator,
-	)
+		}, &seen, context.allocator)
 	testing.expect(t, ok, "the server starts")
 	defer loopback.stop(srv)
 
-	cfg := config(f)
+	cfg := config(&f)
 	cfg.base = strings.trim_suffix(loopback.url(srv, "/"), "/")
 	cfg.user_agent = "leita/v1.0.0"
 	r := check(cfg)
@@ -382,9 +801,22 @@ requests_name_leita_and_the_version_only :: proc(t: ^testing.T) {
 	testing.expect(t, len(seen.heads) >= 3, "sums, version and the asset were asked for")
 	for h in seen.heads {
 		testing.expect(t, strings.has_prefix(h, "GET /"), "only GET")
-		testing.expectf(t, strings.contains(h, "User-Agent: leita/v1.0.0\r\n"), "the user agent names leita and its version: %q", h)
-		testing.expect(t, !strings.contains(strings.to_lower(h, context.temp_allocator), "cookie"), "no cookie")
-		testing.expect(t, !strings.contains(strings.to_lower(h, context.temp_allocator), "authorization"), "no credentials")
+		testing.expectf(
+			t,
+			strings.contains(h, "User-Agent: leita/v1.0.0\r\n"),
+			"the user agent names leita and its version: %q",
+			h,
+		)
+		testing.expect(
+			t,
+			!strings.contains(strings.to_lower(h, context.temp_allocator), "cookie"),
+			"no cookie",
+		)
+		testing.expect(
+			t,
+			!strings.contains(strings.to_lower(h, context.temp_allocator), "authorization"),
+			"no credentials",
+		)
 	}
 }
 
@@ -392,11 +824,15 @@ requests_name_leita_and_the_version_only :: proc(t: ^testing.T) {
 an_unreachable_host_fails_with_a_reason :: proc(t: ^testing.T) {
 	f := fixture(t, "old build", "new build", "v1.1.0")
 	defer os.remove_all(f.root)
-	cfg := config(f)
+	cfg := config(&f)
 	cfg.base = "http://127.0.0.1:1"
 	r := check(cfg)
 	testing.expect_value(t, r.outcome, Outcome.Failed)
-	testing.expect(t, r.reason == .Unreachable || r.reason == .No_Library, "unreachable, or no libcurl to try")
+	testing.expect(
+		t,
+		r.reason == .Unreachable || r.reason == .No_Library,
+		"unreachable, or no libcurl to try",
+	)
 	testing.expect_value(t, read(f.exe), "old build")
 }
 
@@ -417,7 +853,16 @@ compress :: proc(t: ^testing.T, body, prefix: string) -> string {
 	bytes.buffer_init_allocator(&buf, 0, 0, context.temp_allocator)
 	w := bytes.buffer_to_stream(&buf)
 	if prefix != "" {
-		testing.expect_value(t, zstd.diff(w, transmute([]byte)prefix, transmute([]byte)body, allocator = context.temp_allocator), nil)
+		testing.expect_value(
+			t,
+			zstd.diff(
+				w,
+				transmute([]byte)prefix,
+				transmute([]byte)body,
+				allocator = context.temp_allocator,
+			),
+			nil,
+		)
 	} else {
 		out := make([]byte, zstd.compress_bound(len(body)), context.temp_allocator)
 		packed, err := zstd.compress(out, transmute([]byte)body)

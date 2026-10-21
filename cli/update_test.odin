@@ -1,5 +1,6 @@
 package leita_cli
 
+import "core:crypto/ed25519"
 import "core:crypto/hash"
 import "core:encoding/hex"
 import "core:fmt"
@@ -11,16 +12,23 @@ import "../update"
 
 UPDATE_ASSET :: "leita-test-asset"
 
-// A release on disk and an executable, as the update package's tests make
-// them, without a signature: the hashes decide.
+// A release on disk and an executable. The sums are signed by key; the CLI
+// passes that public half through, the way a build passes LEITA_UPDATE_KEY.
 @(private = "file")
 Release :: struct {
 	root, dir, exe: string,
+	priv:           ed25519.Private_Key,
+	key:            [ed25519.PUBLIC_KEY_SIZE]byte,
 }
 
 @(private = "file")
 sha256 :: proc(body: string) -> string {
-	return string(hex.encode(hash.hash_string(.SHA256, body, context.temp_allocator), context.temp_allocator))
+	return string(
+		hex.encode(
+			hash.hash_string(.SHA256, body, context.temp_allocator),
+			context.temp_allocator,
+		),
+	)
 }
 
 @(private = "file")
@@ -32,22 +40,62 @@ release_of :: proc(t: ^testing.T, running, published, version: string) -> (r: Re
 	r.exe = fmt.tprintf("%s/bin/leita", root)
 	testing.expect(t, os.make_directory_all(r.dir) == nil)
 	testing.expect(t, os.make_directory_all(fmt.tprintf("%s/bin", root)) == nil)
-	testing.expect(t, os.write_entire_file(r.exe, running) == nil)
-	testing.expect(t, os.write_entire_file(fmt.tprintf("%s/%s", r.dir, UPDATE_ASSET), published) == nil)
-	testing.expect(t, os.write_entire_file(fmt.tprintf("%s/version.txt", r.dir), fmt.tprintf("%s\n", version)) == nil)
-	write_sums(t, r, sha256(published))
+	testing.expect(t, os.write_entire_file(r.exe, transmute([]byte)running) == nil)
+	testing.expect(
+		t,
+		os.write_entire_file(
+			fmt.tprintf("%s/%s", r.dir, UPDATE_ASSET),
+			transmute([]byte)published,
+		) ==
+		nil,
+	)
+	testing.expect(t, ed25519.private_key_generate(&r.priv), "key generation")
+	ed25519.private_key_public_bytes(&r.priv, r.key[:])
+	ver := fmt.tprintf("%s\n", version)
+	testing.expect(
+		t,
+		os.write_entire_file(fmt.tprintf("%s/version.txt", r.dir), transmute([]byte)ver) == nil,
+	)
+	write_sums(t, &r, {{UPDATE_ASSET, sha256(published)}, {"version.txt", sha256(ver)}})
 	return
 }
 
 @(private = "file")
-write_sums :: proc(t: ^testing.T, r: Release, hash: string) {
-	line := fmt.tprintf("%s  %s\n", hash, UPDATE_ASSET)
-	testing.expect(t, os.write_entire_file(fmt.tprintf("%s/sha256sums.txt", r.dir), line) == nil)
+Sum :: struct {
+	name, hash: string,
 }
 
 @(private = "file")
-cfg_of :: proc(r: Release) -> update.Config {
-	return update.Config{base = r.dir, version = "v1.0.0", asset = UPDATE_ASSET, exe = r.exe, user_agent = "leita/v1.0.0"}
+write_sums :: proc(t: ^testing.T, r: ^Release, lines: []Sum) {
+	b := strings.builder_make(context.temp_allocator)
+	for line in lines {
+		fmt.sbprintf(&b, "%s  %s\n", line.hash, line.name)
+	}
+	text := strings.to_string(b)
+	testing.expect(
+		t,
+		os.write_entire_file(fmt.tprintf("%s/sha256sums.txt", r.dir), transmute([]byte)text) ==
+		nil,
+	)
+	sig: [ed25519.SIGNATURE_SIZE]byte
+	ed25519.sign(&r.priv, transmute([]byte)text, sig[:])
+	testing.expect(
+		t,
+		os.write_entire_file(fmt.tprintf("%s/sha256sums.txt.sig", r.dir), sig[:]) == nil,
+	)
+}
+
+@(private = "file")
+cfg_of :: proc(r: ^Release) -> update.Config {
+	return update.Config {
+		base = r.dir,
+		version = "v1.0.0",
+		asset = UPDATE_ASSET,
+		exe = r.exe,
+		user_agent = "leita/v1.0.0",
+		public_key = r.key[:],
+		hold_known = true,
+	}
 }
 
 @(private = "file")
@@ -69,7 +117,7 @@ read_file :: proc(t: ^testing.T, path: string) -> string {
 update_check_is_zero_when_current :: proc(t: ^testing.T) {
 	r := release_of(t, "same build", "same build", "v1.0.0")
 	defer os.remove_all(r.root)
-	code, said := update_says(cfg_of(r), "--check")
+	code, said := update_says(cfg_of(&r), "--check")
 	testing.expect_value(t, code, EXIT_OK)
 	for want in ([]string{"current    v1.0.0", "latest     v1.0.0", "this is the latest leita"}) {
 		testing.expectf(t, strings.contains(said, want), "%q is not in %q", want, said)
@@ -81,7 +129,7 @@ update_check_is_zero_when_current :: proc(t: ^testing.T) {
 update_check_is_two_when_newer :: proc(t: ^testing.T) {
 	r := release_of(t, "old build", "new build", "v1.1.0")
 	defer os.remove_all(r.root)
-	code, said := update_says(cfg_of(r), "--check")
+	code, said := update_says(cfg_of(&r), "--check")
 	testing.expect_value(t, code, EXIT_NEWER)
 	for want in ([]string{"current    v1.0.0", "latest     v1.1.0", "leita update installs it"}) {
 		testing.expectf(t, strings.contains(said, want), "%q is not in %q", want, said)
@@ -94,7 +142,7 @@ update_check_is_two_when_newer :: proc(t: ^testing.T) {
 update_check_is_one_on_an_error :: proc(t: ^testing.T) {
 	r := release_of(t, "old build", "new build", "v1.1.0")
 	defer os.remove_all(r.root)
-	cfg := cfg_of(r)
+	cfg := cfg_of(&r)
 	cfg.base = fmt.tprintf("%s/nowhere", r.root)
 	code, said := update_says(cfg, "--check")
 	testing.expect_value(t, code, EXIT_ERROR)
@@ -107,7 +155,7 @@ update_check_is_one_on_an_error :: proc(t: ^testing.T) {
 update_installs_the_newer_build :: proc(t: ^testing.T) {
 	r := release_of(t, "old build", "new build", "v1.1.0")
 	defer os.remove_all(r.root)
-	code, said := update_says(cfg_of(r))
+	code, said := update_says(cfg_of(&r))
 	testing.expect_value(t, code, EXIT_OK)
 	for want in ([]string{"updated", "from v1.0.0 to v1.1.0, by the full build", "replaced", ".old", "run leita again"}) {
 		testing.expectf(t, strings.contains(said, want), "%q is not in %q", want, said)
@@ -115,7 +163,7 @@ update_installs_the_newer_build :: proc(t: ^testing.T) {
 	testing.expect_value(t, read_file(t, r.exe), "new build")
 	testing.expect_value(t, read_file(t, fmt.tprintf("%s.old", r.exe)), "old build")
 
-	code, said = update_says(cfg_of(r))
+	code, said = update_says(cfg_of(&r))
 	testing.expect_value(t, code, EXIT_OK)
 	testing.expect(t, strings.contains(said, "is the latest release; nothing to do"), said)
 }
@@ -125,8 +173,12 @@ update_installs_the_newer_build :: proc(t: ^testing.T) {
 update_refuses_a_hash_mismatch :: proc(t: ^testing.T) {
 	r := release_of(t, "old build", "new build", "v1.1.0")
 	defer os.remove_all(r.root)
-	write_sums(t, r, sha256("not the file"))
-	code, said := update_says(cfg_of(r))
+	write_sums(
+		t,
+		&r,
+		{{UPDATE_ASSET, sha256("not the file")}, {"version.txt", sha256("v1.1.0\n")}},
+	)
+	code, said := update_says(cfg_of(&r))
 	testing.expect_value(t, code, EXIT_ERROR)
 	testing.expect_value(t, said, "")
 	testing.expect_value(t, read_file(t, r.exe), "old build")
@@ -138,7 +190,7 @@ update_refuses_a_hash_mismatch :: proc(t: ^testing.T) {
 update_never_replaces_a_development_build :: proc(t: ^testing.T) {
 	r := release_of(t, "old build", "new build", "v1.1.0")
 	defer os.remove_all(r.root)
-	cfg := cfg_of(r)
+	cfg := cfg_of(&r)
 	cfg.version = "dev"
 	code, _ := update_says(cfg, "--check")
 	testing.expect_value(t, code, EXIT_NEWER)
@@ -152,14 +204,69 @@ update_never_replaces_a_development_build :: proc(t: ^testing.T) {
 update_takes_check_or_nothing :: proc(t: ^testing.T) {
 	r := release_of(t, "old build", "new build", "v1.1.0")
 	defer os.remove_all(r.root)
-	code, _ := update_says(cfg_of(r), "--now")
+	code, _ := update_says(cfg_of(&r), "--now")
 	testing.expect_value(t, code, EXIT_ERROR)
-	code, _ = update_says(cfg_of(r), "--check", "extra")
+	code, _ = update_says(cfg_of(&r), "--check", "extra")
 	testing.expect_value(t, code, EXIT_ERROR)
 	said: string
-	code, said = update_says(cfg_of(r), "-h")
+	code, said = update_says(cfg_of(&r), "-h")
 	testing.expect_value(t, code, EXIT_OK)
 	testing.expect_value(t, said, UPDATE_USAGE)
 	testing.expect_value(t, read_file(t, r.exe), "old build")
-	testing.expect(t, is_subcommand([]string{"update"}), "update is a subcommand, so Leita runs it as leita does")
+	testing.expect(
+		t,
+		is_subcommand([]string{"update"}),
+		"update is a subcommand, so Leita runs it as leita does",
+	)
+}
+
+// An unsigned manifest is an error, and the executable stays as it was.
+@(test)
+update_refuses_an_unsigned_manifest :: proc(t: ^testing.T) {
+	r := release_of(t, "old build", "new build", "v1.1.0")
+	defer os.remove_all(r.root)
+	testing.expect(t, os.remove(fmt.tprintf("%s/sha256sums.txt.sig", r.dir)) == nil)
+	code, said := update_says(cfg_of(&r))
+	testing.expect_value(t, code, EXIT_ERROR)
+	testing.expect_value(t, said, "")
+	testing.expect_value(t, read_file(t, r.exe), "old build")
+
+	bare := cfg_of(&r)
+	bare.public_key = nil
+	code, said = update_says(bare, "--check")
+	testing.expect_value(t, code, EXIT_ERROR)
+	testing.expect_value(t, said, "")
+}
+
+// A retained Pro installation is not replaced by a release after its paid-through date.
+@(test)
+update_refuses_a_release_after_paid_through :: proc(t: ^testing.T) {
+	r := release_of(t, "old build", "new build", "v1.1.0")
+	defer os.remove_all(r.root)
+	stamp := "2026-10-19T12:00:01Z\n"
+	testing.expect(
+		t,
+		os.write_entire_file(fmt.tprintf("%s/released.txt", r.dir), transmute([]byte)stamp) == nil,
+	)
+	write_sums(
+		t,
+		&r,
+		{
+			{UPDATE_ASSET, sha256("new build")},
+			{"version.txt", sha256("v1.1.0\n")},
+			{"released.txt", sha256(stamp)},
+		},
+	)
+	cfg := cfg_of(&r)
+	cfg.hold = {
+		retained     = true,
+		paid_through = "2026-10-19T12:00:00Z",
+	}
+	code, said := update_says(cfg, "--check")
+	testing.expect_value(t, code, EXIT_NEWER)
+	testing.expect(t, strings.contains(said, "v1.1.0"), said)
+	code, said = update_says(cfg)
+	testing.expect_value(t, code, EXIT_ERROR)
+	testing.expect_value(t, said, "")
+	testing.expect_value(t, read_file(t, r.exe), "old build")
 }

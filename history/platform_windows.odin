@@ -1,17 +1,11 @@
 #+build windows
 package leita_history
 
-import "core:os"
-import "core:path/filepath"
+import "place"
 
 // default_path is where the store lives: leita's folder under the local
 // application data folder, which stays on this machine rather than roaming. ""
 // when Windows does not say where that is.
 default_path :: proc(allocator := context.allocator) -> string {
-	data := os.get_env("LOCALAPPDATA", context.temp_allocator)
-	if data == "" {
-		return ""
-	}
-	path, _ := filepath.join({data, "leita", "history.db"}, allocator)
-	return path
+	return place.default_path(allocator)
 }
