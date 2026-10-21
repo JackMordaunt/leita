@@ -22,16 +22,20 @@ import "../scan"
 import "jm:flow"
 
 Config :: struct {
-	workers: int, // 0 lets `width` choose
+	workers:         int, // 0 lets `width` choose
 	// Descend through symlinks and junctions. On Linux a link to a directory above
 	// it is not followed (follow_link); elsewhere such a loop is not detected.
-	follow:  bool,
-	media:   scan.Media, // what holds the tree, which `width` fits the choice to
-	pace:    Pace,
+	follow:          bool,
+	media:           scan.Media, // what holds the tree, which `width` fits the choice to
+	pace:            Pace,
 	// Add each directory's total as it finishes, so a rollup afterwards copies
 	// directories instead of charging every node. Off when a watcher is already
 	// folding the same tree on its own thread.
-	fold:    bool,
+	fold:            bool,
+	// Called after a directory's children are queued. Nil unless the caller sets
+	// it. `after_list_data` is passed back as given.
+	after_list:      proc(path: string, data: rawptr),
+	after_list_data: rawptr,
 }
 
 /*
@@ -179,18 +183,20 @@ run :: proc(seed: Dir, t: ^scan.Tree, cfg: Config, u: ^Update) -> Error {
 	defer delete(states, allocator)
 	for i in 0 ..< workers {
 		states[i] = Worker {
-			writer    = scan.writer(t, i),
-			found     = make([dynamic]Dir, allocator),
-			follow    = cfg.follow,
-			linked    = &linked,
-			btrfs     = &search,
-			scratch   = scratch_make(allocator),
-			update    = u,
-			siblings  = make(map[string]u32, allocator),
-			fold      = fold,
-			dirs      = make([dynamic]u32, allocator),
-			paid      = make([dynamic]scan.Link, allocator),
-			allocator = allocator,
+			writer          = scan.writer(t, i),
+			found           = make([dynamic]Dir, allocator),
+			follow          = cfg.follow,
+			linked          = &linked,
+			btrfs           = &search,
+			scratch         = scratch_make(allocator),
+			update          = u,
+			siblings        = make(map[string]u32, allocator),
+			fold            = fold,
+			after_list      = cfg.after_list,
+			after_list_data = cfg.after_list_data,
+			dirs            = make([dynamic]u32, allocator),
+			paid            = make([dynamic]scan.Link, allocator),
+			allocator       = allocator,
 		}
 	}
 	defer for &s in states {
@@ -203,6 +209,19 @@ run :: proc(seed: Dir, t: ^scan.Tree, cfg: Config, u: ^Update) -> Error {
 
 	first := seed
 	first.path = strings.clone(seed.path, allocator)
+	// Off the follow path, a Linux walk opens every later directory from this
+	// descriptor (read_linux.odin). Preparing it fails only when out of memory.
+	// A root that cannot be anchored is refused by the read, which does not open
+	// that path.
+	held, held_err := anchor_prepare(first.path, cfg.follow, allocator)
+	if held_err != nil {
+		delete(first.path, allocator)
+		return .Out_Of_Memory
+	}
+	defer anchor_release(&held)
+	for &s in states {
+		s.held = held
+	}
 	flow.manage([]Dir{first}, states, walk_dir, hand_over, drop)
 	paid, gathered := gather_paid(states, allocator)
 	if !gathered {
@@ -310,32 +329,38 @@ Job :: enum u8 {
 
 @(private)
 Worker :: struct {
-	writer:    scan.Writer,
-	found:     [dynamic]Dir,
-	follow:    bool,
-	linked:    ^Linked_Files, // shared by every worker
-	btrfs:     ^Btrfs_Search, // shared by every worker
-	err:       Error, // why this worker gave up, which only the manager acts on
-	scratch:   Scratch, // reused by the platform's reader between directories
+	writer:          scan.Writer,
+	found:           [dynamic]Dir,
+	follow:          bool,
+	// Linux, and only when follow is off: the root directory, opened once, that
+	// every directory below is opened from. Empty elsewhere. Not owned; `run`
+	// releases the one it made.
+	held:            Anchor,
+	after_list:      proc(path: string, data: rawptr),
+	after_list_data: rawptr,
+	linked:          ^Linked_Files, // shared by every worker
+	btrfs:           ^Btrfs_Search, // shared by every worker
+	err:             Error, // why this worker gave up, which only the manager acts on
+	scratch:         Scratch, // reused by the platform's reader between directories
 	// An update's, shared by every worker and read only. nil for a walk.
-	update:    ^Update,
+	update:          ^Update,
 	// Shared by every worker when the walk is folding totals. Nil otherwise.
-	fold:      ^Fold,
+	fold:            ^Fold,
 	// Containers this worker recorded: child directories as it linked them, and
 	// a root or a followed link when it finished the directory.
-	dirs:      [dynamic]u32,
+	dirs:            [dynamic]u32,
 	// While a List job reads its directory: the entries the tree updated had in it,
 	// by name, so a name it still has keeps the decision made about it there.
-	siblings:  map[string]u32,
-	listing:   bool,
+	siblings:        map[string]u32,
+	listing:         bool,
 	// Names this worker charged for a file with more than one (counts), the tree's
 	// once the walk is done (scan.Tree.linked).
-	paid:      [dynamic]scan.Link,
+	paid:            [dynamic]scan.Link,
 	// Directories this worker could not read whole, and whether any of them
 	// refused for want of permission. Summed into the tree once the walk is done.
-	unread:    u64,
-	denied:    bool,
-	allocator: mem.Allocator,
+	unread:          u64,
+	denied:          bool,
+	allocator:       mem.Allocator,
 }
 
 /*
