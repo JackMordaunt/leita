@@ -6,9 +6,11 @@ nothing about the buyer or the machine leaves it.
 
 A line is leita., the payload in standard base64, and the Ed25519 signature
 of everything before the second dot, as licence/FORMAT.md in this directory
-specifies. This package only checks lines. A line grants Pro on a release
-whose authenticated instant is at or before paidThrough, and a later release
-runs Free. A draft prefix, leita1. or leita2., is not a line this build reads.
+specifies. This package only checks lines. A build trusts one public key or
+several, and a line holds when any of them verifies it. A line grants Pro on
+a release whose authenticated instant is at or before paidThrough, and a
+later release runs Free. A draft prefix, leita1. or leita2., is not a line
+this build reads.
 
 The one in use is kept as a file of its own in leita's data folder, beside
 the history store.
@@ -34,10 +36,20 @@ PREFIX :: "leita."
 // FEATURES_PRO is the only feature set a line may name. Scope does not change it.
 FEATURES_PRO :: "pro"
 
-// KEY is the public key licences are checked against, in hex, set with
-// -define:LEITA_LICENCE_KEY=<hex>. A build without one takes no licence, so the
-// justfile's release recipes refuse to build without it.
+// KEY is the public keys licences are checked against, in hex, set with
+// -define:LEITA_LICENCE_KEY=<hex>[,<hex>...]. Each key is 64 hex characters.
+// Commas separate a set, and spaces around a comma are ignored. A build
+// without a well-formed set takes no licence, so the justfile's release
+// recipes refuse to build without one.
 KEY :: #config(LEITA_LICENCE_KEY, "")
+
+// RECEIPT is the file beside the licence line that holds the licence key from
+// the receipt, so a line that no longer verifies can be exchanged once.
+RECEIPT :: "licence-key"
+
+// RECEIPT_MAX is the longest licence key the receipt file may hold. It is the
+// same bound the activation request uses.
+RECEIPT_MAX :: 128
 
 // Tier is the permitted use a licence was bought for. All three grant the same
 // Pro feature set.
@@ -77,14 +89,84 @@ Error :: enum u8 {
 	Unwritable, // the file could not be written
 }
 
-// public_key is KEY, decoded; false when the build has none or it is not a key.
-public_key :: proc() -> (key: [ed25519.PUBLIC_KEY_SIZE]byte, ok: bool) {
-	b := hex.decode(transmute([]byte)string(KEY), context.temp_allocator) or_return
-	if len(b) != len(key) {
+// parse_key_set reads text as comma-separated Ed25519 public keys, 64 hex
+// characters each, either case. Spaces around a comma are ignored. Empty
+// text, a blank entry, or a token that is not one key refuses the whole set,
+// so a typo cannot drop a key and keep the rest. The result is in allocator.
+@(private)
+parse_key_set :: proc(
+	text: string,
+	allocator := context.temp_allocator,
+) -> (
+	keys: [dynamic][ed25519.PUBLIC_KEY_SIZE]byte,
+	ok: bool,
+) {
+	trimmed := strings.trim_space(text)
+	if trimmed == "" {
 		return
 	}
-	copy(key[:], b)
-	return key, true
+	keys = make([dynamic][ed25519.PUBLIC_KEY_SIZE]byte, allocator)
+	rest := trimmed
+	for {
+		head, match, tail := strings.partition(rest, ",")
+		token := strings.trim_space(head)
+		if len(token) != ed25519.PUBLIC_KEY_SIZE * 2 || !hex_ok(token) {
+			delete(keys)
+			return {}, false
+		}
+		raw, decoded := hex.decode(transmute([]byte)token, allocator)
+		if !decoded || len(raw) != ed25519.PUBLIC_KEY_SIZE {
+			delete(keys)
+			return {}, false
+		}
+		item: [ed25519.PUBLIC_KEY_SIZE]byte
+		copy(item[:], raw)
+		append(&keys, item)
+		if match == "" {
+			break
+		}
+		rest = tail
+	}
+	if len(keys) == 0 {
+		delete(keys)
+		return {}, false
+	}
+	return keys, true
+}
+
+// hex_ok reports whether s is only hex digits.
+@(private)
+hex_ok :: proc(s: string) -> bool {
+	for c in s {
+		switch c {
+		case '0' ..= '9', 'a' ..= 'f', 'A' ..= 'F':
+		case:
+			return false
+		}
+	}
+	return true
+}
+
+// public_key is the one public key KEY names, when the build trusts exactly
+// one. Several keys, or a missing or malformed set, is not one key.
+public_key :: proc() -> (key: [ed25519.PUBLIC_KEY_SIZE]byte, ok: bool) {
+	keys, parsed := parse_key_set(KEY)
+	defer delete(keys)
+	if !parsed || len(keys) != 1 {
+		return
+	}
+	return keys[0], true
+}
+
+// check_built checks pasted against every public key the build trusts. An
+// empty or malformed set is .No_Key, and the line is not read.
+check_built :: proc(pasted: string, allocator := context.allocator) -> (Licence, Error) {
+	keys, ok := parse_key_set(KEY)
+	if !ok {
+		return {}, .No_Key
+	}
+	defer delete(keys)
+	return check_keys(pasted, keys[:], allocator)
 }
 
 /*
@@ -100,13 +182,34 @@ check :: proc(
 	l: Licence,
 	err: Error,
 ) {
-	pub: ed25519.Public_Key
-	if !ed25519.public_key_set_bytes(&pub, key) {
+	if len(key) != ed25519.PUBLIC_KEY_SIZE {
+		return {}, .No_Key
+	}
+	one: [1][ed25519.PUBLIC_KEY_SIZE]byte
+	copy(one[0][:], key)
+	return check_keys(pasted, one[:], allocator)
+}
+
+/*
+check_keys reads pasted as a licence and checks it against keys, in order.
+The first signature that holds decides the terms; a later key is not tried
+after that. No usable key is .No_Key. A signature none of them verifies is
+.Signature, and the payload is not read.
+*/
+check_keys :: proc(
+	pasted: string,
+	keys: [][ed25519.PUBLIC_KEY_SIZE]byte,
+	allocator := context.allocator,
+) -> (
+	l: Licence,
+	err: Error,
+) {
+	if len(keys) == 0 {
 		return {}, .No_Key
 	}
 	text := strings.trim_space(pasted)
 	if strings.has_prefix(text, PREFIX) {
-		return check_annual(text, &pub, allocator)
+		return check_annual(text, keys, allocator)
 	}
 	// leita1., leita2., and a later leitaN. are formats this build does not read.
 	if strings.has_prefix(text, "leita") && strings.index_byte(text, '.') > 0 {
@@ -122,7 +225,7 @@ check :: proc(
 @(private)
 check_annual :: proc(
 	text: string,
-	pub: ^ed25519.Public_Key,
+	keys: [][ed25519.PUBLIC_KEY_SIZE]byte,
 	allocator := context.allocator,
 ) -> (
 	l: Licence,
@@ -139,7 +242,22 @@ check_annual :: proc(
 	if serr != nil || len(sig) != ed25519.SIGNATURE_SIZE {
 		return {}, .Malformed
 	}
-	if !ed25519.verify(pub, transmute([]byte)signed, sig) {
+	usable, held := false, false
+	for &key in keys {
+		pub: ed25519.Public_Key
+		if !ed25519.public_key_set_bytes(&pub, key[:]) {
+			continue
+		}
+		usable = true
+		if ed25519.verify(&pub, transmute([]byte)signed, sig) {
+			held = true
+			break
+		}
+	}
+	if !usable {
+		return {}, .No_Key
+	}
+	if !held {
 		return {}, .Signature
 	}
 	raw, terr := base64.decode(payload_b64, allocator = context.temp_allocator)
@@ -657,9 +775,10 @@ save :: proc(path, text: string) -> Error {
 	return .None
 }
 
-// keep checks text against key, nil for the key leita was built with, and, if it
+// keep checks text against key, nil for the keys leita was built with, and, if it
 // holds, keeps it at path as the licence in use, as the window does, returning
-// its terms in allocator.
+// its terms in allocator. The receipt key is removed: this line was not fetched
+// by exchanging one.
 keep :: proc(
 	path, text: string,
 	key: []byte = nil,
@@ -668,14 +787,20 @@ keep :: proc(
 	Licence,
 	Error,
 ) {
-	built: [ed25519.PUBLIC_KEY_SIZE]byte
-	against, ok := key_or_built(key, &built)
-	if !ok {
-		return {}, .No_Key
+	l: Licence
+	err: Error
+	if key != nil {
+		l, err = check(text, key, allocator)
+	} else {
+		l, err = check_built(text, allocator)
 	}
-	l, err := check(text, against, allocator)
 	if err == .None {
 		err = save(path, text)
+	}
+	// A line installed here was not fetched with a receipt key. A key left
+	// beside an older line would exchange itself later and replace this one.
+	if err == .None {
+		err = forget_receipt(path)
 	}
 	if err != .None {
 		destroy(&l, allocator)
@@ -686,13 +811,17 @@ keep :: proc(
 
 // forget removes the licence kept at path, saying whether there was one.
 forget :: proc(path: string) -> (was: bool, err: Error) {
-	if path == "" || !os.exists(path) {
+	if path == "" {
 		return false, .None
 	}
-	if os.remove(path) != nil {
+	was = os.exists(path)
+	if was && os.remove(path) != nil {
 		return true, .Unwritable
 	}
-	return true, .None
+	if forget_receipt(path) != .None {
+		return was, .Unwritable
+	}
+	return was, .None
 }
 
 // ENV holds a licence for one run, in place of the one kept: for a server, a
@@ -708,7 +837,7 @@ Source :: enum u8 {
 
 /*
 in_use is the licence leita runs under: given, what ENV holds, for this run, or
-else the one kept at path, checked against key, nil for the key leita was built
+else the one kept at path, checked against key, nil for the keys leita was built
 with. err says why the one from names did not check; .None when it did, or when
 there is none. In the temp allocator.
 */
@@ -722,25 +851,94 @@ in_use :: proc(path, given: string, key: []byte = nil) -> (l: Licence, from: Sou
 	} else {
 		return
 	}
-	built: [ed25519.PUBLIC_KEY_SIZE]byte
-	against, ok := key_or_built(key, &built)
-	if !ok {
-		return {}, from, .No_Key
+	if key != nil {
+		l, err = check(text, key, context.temp_allocator)
+	} else {
+		l, err = check_built(text, context.temp_allocator)
 	}
-	l, err = check(text, against, context.temp_allocator)
 	return
 }
 
-// key_or_built is key, or when it is nil the key leita was built with, decoded
-// into built; false when there is neither.
-@(private)
-key_or_built :: proc(key: []byte, built: ^[ed25519.PUBLIC_KEY_SIZE]byte) -> ([]byte, bool) {
-	if key != nil {
-		return key, true
+// receipt_path is the licence key kept beside the line at licence_path.
+receipt_path :: proc(licence_path: string, allocator := context.allocator) -> string {
+	if licence_path == "" {
+		return ""
 	}
-	ok: bool
-	built^, ok = public_key()
-	return built[:], ok
+	path, _ := filepath.join({filepath.dir(licence_path), RECEIPT}, allocator)
+	return path
+}
+
+// receipt_ok reports whether key can be sent as a licence key: 1 to
+// RECEIPT_MAX bytes and no ASCII whitespace.
+@(private)
+receipt_ok :: proc(key: string) -> bool {
+	if key == "" || len(key) > RECEIPT_MAX {
+		return false
+	}
+	return strings.index_any(key, " \t\r\n") < 0
+}
+
+// read_receipt is the licence key kept beside the line at licence_path, in
+// the temp allocator. ok is false when there is none or it is not a key.
+read_receipt :: proc(licence_path: string) -> (key: string, ok: bool) {
+	path := receipt_path(licence_path, context.temp_allocator)
+	if path == "" || !os.exists(path) {
+		return "", false
+	}
+	text, err := read(path)
+	if err != .None {
+		return "", false
+	}
+	key = strings.trim_space(text)
+	if !receipt_ok(key) {
+		return "", false
+	}
+	return key, true
+}
+
+// save_receipt keeps key beside the line at licence_path, with that line's
+// file permissions. The line must already be there, so its mode is known.
+save_receipt :: proc(licence_path, key: string) -> Error {
+	text := strings.trim_space(key)
+	if licence_path == "" || !receipt_ok(text) || !os.exists(licence_path) {
+		return .Unwritable
+	}
+	path := receipt_path(licence_path, context.temp_allocator)
+	if path == "" {
+		return .Unwritable
+	}
+	if dir := filepath.dir(path); !os.exists(dir) {
+		if os.make_directory_all(dir) != nil {
+			return .Unwritable
+		}
+	}
+	line := strings.concatenate({text, "\n"}, context.temp_allocator)
+	if os.write_entire_file(path, transmute([]byte)line) != nil {
+		return .Unwritable
+	}
+	info, serr := os.stat(licence_path, context.temp_allocator)
+	if serr != nil {
+		os.remove(path)
+		return .Unwritable
+	}
+	defer os.file_info_delete(info, context.temp_allocator)
+	if os.chmod(path, info.mode) != nil {
+		os.remove(path)
+		return .Unwritable
+	}
+	return .None
+}
+
+// forget_receipt removes the licence key kept beside the line at licence_path.
+forget_receipt :: proc(licence_path: string) -> Error {
+	path := receipt_path(licence_path, context.temp_allocator)
+	if path == "" || !os.exists(path) {
+		return .None
+	}
+	if os.remove(path) != nil {
+		return .Unwritable
+	}
+	return .None
 }
 
 // describe says why a licence was not taken, as the command line says it.

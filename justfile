@@ -31,10 +31,11 @@
 # the jm submodule (https://mordaunt.dev/code/jm); JM=<path> builds against another
 # checkout instead.
 #
-# A release checks licences against the public key in LEITA_LICENCE_KEY, 64 hex
-# characters, which only the release build is given: just cli release and just
-# gui release refuse to build without it, since a release without a key takes no
-# licence. Debug and test builds take none.
+# A release checks licences against the public keys in LEITA_LICENCE_KEY, one
+# or more comma-separated 64-hex keys, which only the release build is given:
+# just cli release and just gui release refuse an empty or malformed set, since
+# a release without one takes no licence. A line holds when any key in the set
+# verifies it. Debug and test builds take none.
 #
 # Debug and test builds carry -sanitize:address. The debug allocator poisons its
 # guard bytes and freed blocks, so instrumented reads past the end or after free
@@ -221,15 +222,19 @@ bundle window="" cli="":
     rm -rf build/release/{{gui}}.iconset
     echo "bundle: $app, version $number"
 
-# The licence public key a release is built with, from LEITA_LICENCE_KEY: it
-# fails, saying why, when the key is unset or not 64 hex characters.
+# The licence public keys a release is built with, from LEITA_LICENCE_KEY:
+# one or more 64-hex keys, commas between them. Spaces around a comma are
+# removed. It fails, saying why, when the set is empty or any entry is not
+# one key, and prints the set with no spaces so the compiler flag stays one
+# argument.
 [private]
 release-key:
     #!/usr/bin/env bash
     set -euo pipefail
     key="${LEITA_LICENCE_KEY:-}"
-    if ! [[ $key =~ ^[0-9a-fA-F]{64}$ ]]; then
-        echo "release: LEITA_LICENCE_KEY must be the licence public key, 64 hex characters; a release without it takes no licence" >&2
+    key="${key//[[:space:]]/}"
+    if ! [[ $key =~ ^[0-9a-fA-F]{64}(,[0-9a-fA-F]{64})*$ ]]; then
+        echo "release: LEITA_LICENCE_KEY must be one or more licence public keys, 64 hex characters each, separated by commas; a release without a valid set takes no licence" >&2
         exit 1
     fi
     printf '%s' "$key"

@@ -106,17 +106,20 @@ Ed25519ph and not Ed25519ctx.
 
 - Private key: the 32-byte seed. Go `ed25519.NewKeyFromSeed`. Not the
   64-byte expanded key, and not PKCS8 or PEM.
-- Public key: 32 raw bytes. The release build takes it as 64 hex characters
-  (`LEITA_LICENCE_KEY`), either case, compiled in. The vectors below use
-  lowercase hex. There is no environment variable that replaces it at run
-  time.
+- Public key: 32 raw bytes. A build trusts one or more, compiled in as
+  `LEITA_LICENCE_KEY`: 64 hex characters, either case, or several of those
+  separated by commas. Spaces around a comma are ignored. An empty set, a
+  blank entry, or a token that is not 64 hex characters is malformed, and a
+  release build refuses it. There is no environment variable that replaces
+  the set at run time. A line is valid when any trusted key verifies it.
+  The vectors below use one lowercase key.
 - Signature: 64 raw bytes, then standard base64. Not ASN.1.
 
 The signed message is the exact ASCII bytes of `leita.` concatenated with
 the payload's base64 text. Verify those bytes. Do not verify the decoded
 JSON, and do not verify a buffer that still has the signature suffix.
 
-A release build embeds the production public key only. Sandbox lines are
+A release build embeds the production public key set only. Sandbox lines are
 signed with a different key, so they fail in a release build. A development
 build compiled with the sandbox public key accepts them.
 `LEITA_ACTIVATE_URL` for that build is
@@ -131,8 +134,9 @@ build compiled with the sandbox public key accepts them.
 3. Split on the only remaining dot. Reject any other count.
 4. Base64-decode the payload and the signature as above. The signature must
    be 64 bytes.
-5. Verify Ed25519 over `leita.<payload-b64>` with the build's public key.
-   A bad signature stops here. The payload is not interpreted.
+5. Verify Ed25519 over `leita.<payload-b64>` with each public key the build
+   trusts, until one holds. A bad signature on every key stops here. The
+   payload is not interpreted.
 6. Require the decoded payload to be the canonical encoding, and each field
    to match the table. Failure here is a terms failure: signed, but not a
    grant this format accepts.
@@ -173,8 +177,9 @@ The release instant is the 20-byte profile, once, for that release:
 ## Activation
 
 The app exchanges a licence key for a line. It sends nothing else about the
-person or the machine, and it does not ask again once the line verifies and
-is stored.
+person or the machine. It does not ask again while the stored line verifies.
+When the stored line does not verify and the receipt key was kept beside it,
+it exchanges that key once.
 
 ```
 POST /leita/activate
@@ -217,7 +222,7 @@ Success, HTTP 200:
 
 `<line>` is a licence line, JSON-string-escaped per RFC 8259. This format's
 alphabet needs no escapes. The app verifies the line offline against the
-public key it was built with. A 200 whose body is not this object, or whose
+public keys it was built with. A 200 whose body is not this object, or whose
 line does not verify, grants nothing.
 
 The same key returns the same stored line. A line already issued is still
@@ -244,6 +249,28 @@ at 200 bytes.
 
 Any other status, or a body that is not JSON, grants nothing. The app does
 not mint a line itself.
+
+## Key rotation
+
+The server signs with one current seed. A build trusts a set, so a line an
+older key in that set signed still verifies. Planned rotation:
+
+1. Mint the next seed and leave the current one signing.
+2. Ship a build whose `LEITA_LICENCE_KEY` is the current public key and the
+   next one, comma-separated. Release that build before the server changes.
+3. Switch the server to the next seed. It re-signs stored lines. Keep the
+   old public key in later builds, so a line already on a machine keeps
+   verifying. After the switch, activation returns a line the new key signed.
+
+The app stores the licence key from the receipt beside the line, with the
+line's file permissions. When a stored line fails verification and that key
+is present, the app exchanges it once. A line that verifies replaces the
+stored line. No network, or HTTP 404, leaves the copy Free and says so. The
+previous line stays on disk.
+
+To drop a compromised key, ship a build that omits it. In that build, old
+lines fail verification and the app re-activates once, as above. A build
+that still contains the key keeps trusting it. That limit is accepted.
 
 ## Test vectors
 
