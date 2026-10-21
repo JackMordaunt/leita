@@ -28,6 +28,11 @@ the_recycle_bin_is_sized_per_volume_and_empty_refuses_a_non_bin :: proc(t: ^test
 	defer home.user_destroy(&u)
 	testing.expect(t, strings.has_prefix(u.uid, "S-1-"), "the account SID")
 	bins := recycle_bins(u.uid, context.temp_allocator)
+	// Subsequent caller allocations must not overwrite the returned list.
+	churn := make([]byte, 64 * 1024, context.temp_allocator)
+	for &b in churn {
+		b = 0xa5
+	}
 	testing.expect(t, len(bins) >= 1, "this machine has a volume the shell will query")
 	found := false
 	for b in bins {

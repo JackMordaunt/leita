@@ -1,9 +1,9 @@
 #+build windows
 package leita_files
 
-import "base:runtime"
 import "core:encoding/endian"
 import "core:log"
+import "core:mem"
 import "core:os"
 import "core:strings"
 import win32 "core:sys/windows"
@@ -58,10 +58,16 @@ recycle_bins :: proc(sid: string, allocator := context.allocator) -> []Recycle_B
 	if sid == "" {
 		return nil
 	}
+	// Output can use the caller's temp allocator. Reset only our separate
+	// scratch arena; resetting the caller's arena would invalidate out.
+	scratch: mem.Dynamic_Arena
+	mem.dynamic_arena_init(&scratch, block_allocator = allocator, array_allocator = allocator)
+	defer mem.dynamic_arena_destroy(&scratch)
+	work := mem.dynamic_arena_allocator(&scratch)
 	mask := GetLogicalDrives()
 	out := make([dynamic]Recycle_Bin, allocator)
 	for i in 0 ..< 26 {
-		runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+		mem.dynamic_arena_free_all(&scratch)
 		if mask & (1 << u32(i)) == 0 {
 			continue
 		}
@@ -76,7 +82,7 @@ recycle_bins :: proc(sid: string, allocator := context.allocator) -> []Recycle_B
 		}
 		vol := strings.clone(string([]u8{u8(letter), ':', '\\'}), allocator)
 		path := strings.concatenate({vol, reclaim.RECYCLE_DIR, `\`, sid}, allocator)
-		bytes, items, ok := query_recycle_bin(cstring16(&root[0]), path, context.temp_allocator)
+		bytes, items, ok := query_recycle_bin(cstring16(&root[0]), path, work)
 		if !ok {
 			delete(path, allocator)
 			delete(vol, allocator)
