@@ -120,12 +120,10 @@ initialized the thread.
 
 A positive shell size is kept. A size of zero is not, even when the shell
 still names items: overlay skips a bin of zero bytes, so this user's folder
-is measured. The size is the one stored in the $I record, which is what the
-shell itself sums, or the $R file's size when the record says 0. Another
-account's folder is not read. An administrator can list it, and emptying
-still removes only this account's bin. A folder both call empty stays at the
-shell's zero, and a volume the shell will not query whose folder is empty or
-unreadable stays out.
+is measured. The size comes from the $I record, or from the $R file when
+the record says 0. Only the current token SID folder is read. A folder both
+call empty stays at the shell's zero, and a volume the shell will not query
+whose folder is empty or unreadable stays out.
 */
 @(private)
 query_recycle_bin :: proc(
