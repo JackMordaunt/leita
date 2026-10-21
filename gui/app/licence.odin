@@ -393,6 +393,14 @@ licence_answer :: proc(d: ^Desk) -> query.Licence_Result {
 		r.tier = say(d, TIER_TITLES[d.licence.tier])
 		r.order = d.licence.order
 		r.issued = d.licence.issued
+		// The paid-through date names which releases this line covers. It
+		// is not an expiry of the installed build, and a failed renewal is
+		// a different sentence (renewal).
+		r.paid_through = d.licence.paid_through
+		if at, ok := licence.this_release(); ok {
+			r.release_at = at
+			r.build_covered = licence.pro_for_this_build(d.licence)
+		}
 	}
 	return r
 }

@@ -33,7 +33,8 @@ A need is answered the moment it appears, from whatever the scan holds then, and
 stays live until the frame stops asking. Each tick of the clock charges what the
 reader has settled since the last and answers every live need again, so a
 directory's listing fills in and reorders as the scan reaches into it. Once a scan
-is over the clock still ticks, but nothing moves, so nothing is sent.
+is over the clock still ticks. An opted-in release check is the one other thing
+a tick may start, and it never installs.
 */
 package leita_app
 
@@ -141,89 +142,104 @@ Scan :: struct {
 // Desk is the stage pinned to the desk thread: the current scan and every live
 // need, so each tick can answer them all again.
 Desk :: struct {
-	inbox:            ^ui.Inbox,
-	wake:             proc(),
-	generation:       u32,
-	scan:             ^Scan,
-	live:             map[ui.Need_Key]Query,
-	notice:           query.Notice, // its text owned
-	words:            ^msg.Strings, // what the host says, in the window's language (words.odin)
+	inbox:               ^ui.Inbox,
+	wake:                proc(),
+	generation:          u32,
+	scan:                ^Scan,
+	live:                map[ui.Need_Key]Query,
+	notice:              query.Notice, // its text owned
+	words:               ^msg.Strings, // what the host says, in the window's language (words.odin)
 	// What Reclaim last offered, by node: Clean deletes only these.
-	reclaimable:      map[u32]reclaim.Category,
+	reclaimable:         map[u32]reclaim.Category,
 	// Recycle Bin paths Reclaim last offered, by node: Empty Trash asks the
 	// shell, never delete_tree. A node not in the scan tree is recycle_bin_node.
-	recycle_paths:    map[u32]string,
+	recycle_paths:       map[u32]string,
 	// The scans kept (history.odin), nil when none are, and the path of the store
 	// opened, whose folder holds each place's baseline; the snapshot this scan was
 	// kept as, the one it is compared with, and what each node held in that.
-	history:          ^history.Store,
-	history_path:     string,
-	snapshot:         i64,
-	compared:         query.Snapshot,
-	was:              map[u32]u64,
+	history:             ^history.Store,
+	history_path:        string,
+	snapshot:            i64,
+	compared:            query.Snapshot,
+	was:                 map[u32]u64,
 	// What the person chose, kept between runs (settings.odin); nil when not.
-	settings:         ^settings.Store,
+	settings:            ^settings.Store,
 	// Where reports are exported to when the window names no file, and where
 	// its save dialog opens: files.reports_folder unless init was given one, ""
 	// for neither; and each one saved, by the notice that said so (export.odin).
-	reports:          string,
-	saved:            map[u32]string,
+	reports:             string,
+	saved:               map[u32]string,
 	// A report is being written, for Progress to say so while the desk is busy.
-	exporting:        bool,
+	exporting:           bool,
 	// The licence in use (licence.odin), where it is kept, the key it is checked
 	// against, and how the last one the window offered went. renew_key is a
 	// receipt key to exchange once the answer port exists. receipt_pending is
 	// the key of the exchange under way. refreshing is that automatic exchange,
 	// as against one the window asked for. licence_renewal is why it failed.
-	licence:          licence.Licence,
-	licensed:         bool,
-	licence_path:     string,
-	licence_key:      []byte, // the caller's, or nil for the keys built in
-	licence_offered:  u32,
-	licence_problem:  string,
-	licence_renewal:  string,
-	renew_key:        string,
-	receipt_pending:  string,
-	refreshing:       bool,
+	licence:             licence.Licence,
+	licensed:            bool,
+	licence_path:        string,
+	licence_key:         []byte, // the caller's, or nil for the keys built in
+	licence_offered:     u32,
+	licence_problem:     string,
+	licence_renewal:     string,
+	renew_key:           string,
+	receipt_pending:     string,
+	refreshing:          bool,
 	// Exchanging a key for its licence: the client, started on the first key,
 	// where it sends to, the port its answer comes back through, and whether one
 	// is under way.
-	client:           ^http.Client,
-	activate_url:     string,
-	activations:      ^stream.Port(Activated),
-	activating:       bool,
+	client:              ^http.Client,
+	activate_url:        string,
+	activations:         ^stream.Port(Activated),
+	activating:          bool,
 	// Updates (update.odin): the release to ask, "" for update's own; the
 	// last check or update, and what it found; the thread one is on, and the
 	// port it answers through.
-	update_base:      string,
-	update_state:     query.Update_State,
-	update_result:    update.Result,
-	update_can_apply: bool,
-	update_thread:    ^thread.Thread,
-	updates:          ^stream.Port(Updated),
+	update_base:         string,
+	update_state:        query.Update_State,
+	update_result:       update.Result,
+	update_can_apply:    bool,
+	update_thread:       ^thread.Thread,
+	updates:             ^stream.Port(Updated),
 	// update_key is the throwaway Ed25519 public key a test signs its fixture
 	// with. Empty means the key compiled into the build, which a debug build
 	// does not have.
-	update_key:       [32]byte,
-	update_key_set:   bool,
+	update_key:          [32]byte,
+	update_key_set:      bool,
 	// update_exe is the executable a test asks the check to classify. "" is
 	// this process.
-	update_exe:       string,
+	update_exe:          string,
+	// The opted-in schedule (update_schedule.odin). update_time is a test
+	// clock, nil for the real one. update_checked is the shared Unix seconds
+	// of the last automatic check. update_dismissed is the version whose
+	// notice was closed, owned. The counts are how many automatic and manual
+	// checks this window started.
+	update_time:         ^Update_Time,
+	update_opened_set:   bool,
+	update_opened_mono:  i64,
+	update_startup_done: bool,
+	update_checked:      i64,
+	update_has_mono:     bool,
+	update_last_mono:    i64,
+	update_dismissed:    string,
+	update_auto_count:   int,
+	update_manual_count: int,
 	// When leita first ran here, the start of the evaluation (licence.first_use).
-	first_use:        time.Time,
+	first_use:           time.Time,
 	// Searching (search.odin): each live Search need's finding, each pass out
 	// on the workers by the finding it is for (nil once halted), the workers,
 	// the port passes come back through, and what describing a hit works in.
-	findings:         map[ui.Need_Key]^Finding,
-	passes:           map[^search.Pass]^Finding,
-	workers:          ^stream.Workers,
-	searched:         ^stream.Port(Finished_Pass),
-	open_failures:    ^stream.Port(Open_Failure), // act.odin's open_entry
-	opening:          ^sync.Wait_Group, // the entries open_entry is opening
-	recordings:       ^stream.Port(Recorder_Change), // recorder_linux.odin's set_recording
-	recording:        ^sync.Wait_Group, // the change it is running, if any
-	scratch:          ^search.Scratch,
-	monitoring:       Monitoring, // monitor.odin
+	findings:            map[ui.Need_Key]^Finding,
+	passes:              map[^search.Pass]^Finding,
+	workers:             ^stream.Workers,
+	searched:            ^stream.Port(Finished_Pass),
+	open_failures:       ^stream.Port(Open_Failure), // act.odin's open_entry
+	opening:             ^sync.Wait_Group, // the entries open_entry is opening
+	recordings:          ^stream.Port(Recorder_Change), // recorder_linux.odin's set_recording
+	recording:           ^sync.Wait_Group, // the change it is running, if any
+	scratch:             ^search.Scratch,
+	monitoring:          Monitoring, // monitor.odin
 }
 
 Host :: struct {
@@ -612,13 +628,21 @@ desk_step :: proc(d: ^Desk, v: Desk_In) {
 			set_recording(d, c)
 			answer_all(d)
 		case command.Check_Update:
-			update_begin(d, false)
+			// A person asked. It does not record the automatic check, and it
+			// does not install.
+			sync.atomic_add(&d.update_manual_count, 1)
+			if d.updates != nil {
+				update_begin(d, false)
+			}
 			answer_all(d)
 		case command.Apply_Update:
-			// Only what a check found, and what can be replaced in place.
-			if d.update_state == .Available && d.update_can_apply {
-				update_begin(d, true)
-			}
+			update_apply(d)
+			answer_all(d)
+		case command.Automatic_Checks:
+			remember_updates(d, c.on)
+			answer_all(d)
+		case command.Dismiss_Update:
+			remember_dismiss(d, command.text_of(&c.version))
 			answer_all(d)
 		case command.Locate,
 		     command.Open,
@@ -655,7 +679,13 @@ desk_step :: proc(d: ^Desk, v: Desk_In) {
 		finish_recording(d, &e)
 		answer_all(d)
 	case Tick:
-		if advance(d) {
+		// A check is due or not on its own. The scan moving is a separate
+		// reason to answer, and neither waits on the other.
+		changed := advance(d)
+		if update_consider(d) {
+			changed = true
+		}
+		if changed {
 			answer_all(d)
 		}
 		find_tick(d)
