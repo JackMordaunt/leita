@@ -121,6 +121,7 @@ All input dispatch and host responses are real. Theme selection is the only
 view-state override. The caller owns the step list and must use generated
 fixtures: ordinary app actions can write or delete files when explicitly clicked.
 
+`-await-absent TAG` waits for a tag to disappear after an asynchronous host command.
 `-absent TAG` fails when that exact tag is on the current frame. `-tags PATH`
 writes every current tag, one per line. An `-await` that times out prints the
 same list to standard error.

@@ -510,7 +510,7 @@ def update_opt_in(bins, theme="light", opt_in_png=None, notice_png=None, dismiss
         steps += ["-png", str(notice_png)]
     steps += [
         "-click", DISMISS,
-        "-absent", AVAILABLE,
+        "-await-absent", AVAILABLE,
         "-advance", "15",
         "-absent", AVAILABLE,
     ]

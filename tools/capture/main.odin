@@ -1,3 +1,4 @@
+//review:ignore history-coupled-file the new await-absent operation is used by licence lifecycle scenarios; the separate screenshot suite needs no change
 // Capture the real application host and view without a desktop or personal state.
 package main
 
@@ -72,7 +73,7 @@ main :: proc() {
 	args := os.args
 	if len(args) < 4 {
 		fail(
-			"usage: capture TARGET ISOLATED_DATA_DIR light|dark [jm headless steps] [-await TAG] [-absent TAG] [-click-top TAG] [-tags PATH] [-rescan] [-pick PATH] [-signal PATH] [-await-file PATH] [-frames PREFIX COUNT]",
+			"usage: capture TARGET ISOLATED_DATA_DIR light|dark [jm headless steps] [-await TAG] [-await-absent TAG] [-absent TAG] [-click-top TAG] [-tags PATH] [-rescan] [-pick PATH] [-signal PATH] [-await-file PATH] [-frames PREFIX COUNT]",
 		)
 	}
 	if args[3] != "light" && args[3] != "dark" {fail("theme must be light or dark")}
@@ -120,7 +121,7 @@ main :: proc() {
 		if movie_step(&movie, &h, args, &i) {continue}
 		flag := args[i]
 		switch flag {
-		case "-png", "-await", "-absent", "-tags", "-pick", "-signal", "-await-file":
+		case "-png", "-await", "-await-absent", "-absent", "-tags", "-pick", "-signal", "-await-file":
 			if i + 1 >= len(args) {fail("step needs an argument")}
 			i += 1
 			value := args[i]
@@ -131,7 +132,7 @@ main :: proc() {
 				if !ui.probe_pick(&h.p, value) {fail("no save dialog is open")}
 			case "-signal":
 				if os.write_entire_file(value, "ready\n") != nil {fail("signal write failed")}
-			case "-await", "-await-file", "-absent", "-tags":
+			case "-await", "-await-absent", "-await-file", "-absent", "-tags":
 				if movie.active && flag == "-await" {
 					if !ui.probe_tagged(&h.p, value) {
 						dump_tags(&h)
@@ -154,10 +155,15 @@ main :: proc() {
 				for {
 					model.dark = args[3] == "dark"
 					if !movie.active {ui.probe_frame(&h.p)}
-					ready := ui.probe_tagged(&h.p, value) if flag == "-await" else os.exists(value)
+					ready := false
+					switch flag {
+					case "-await": ready = ui.probe_tagged(&h.p, value)
+					case "-await-absent": ready = !ui.probe_tagged(&h.p, value)
+					case "-await-file": ready = os.exists(value)
+					}
 					if ready {break}
 					if time.tick_now()._nsec >= deadline {
-						if flag == "-await" {dump_tags(&h)}
+						if flag != "-await-file" {dump_tags(&h)}
 						fail(fmt.tprintf("timeout: %s %s", flag, value))
 					}
 					time.sleep(10 * time.Millisecond)
