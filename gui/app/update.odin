@@ -19,8 +19,8 @@ A check or an update waits on the network and the disk, so it runs on a thread
 of its own, one at a time, and comes back through a port as Updated, as a
 licence key's exchange does. The thread calls package update, as `Leita update`
 does, so what the window does is what the command line does: the same release
-files, the same sha256 checks, the User-Agent leita/<version> and no other
-request. An update replaces this window's own file (the release's
+files, the same signature and sha256 checks, the User-Agent leita/<version>
+and no other request. An update replaces this window's own file (the release's
 leita-window-<os>-<arch>), only when update.why_not says it can be replaced in
 place; otherwise the window sends the person to the release page.
 
@@ -67,7 +67,11 @@ update_begin :: proc(d: ^Desk, apply: bool) {
 		port  = d.updates,
 	}
 	d.update_state = .Applying if apply else .Checking
-	d.update_thread = thread.create_and_start_with_poly_data(job, update_main, init_context = context)
+	d.update_thread = thread.create_and_start_with_poly_data(
+		job,
+		update_main,
+		init_context = context,
+	)
 }
 
 @(private = "file")
@@ -150,7 +154,20 @@ update_answer :: proc(d: ^Desk) -> query.Update_Result {
 		r.problem = .Unreachable
 	case .Not_Published:
 		r.problem = .Not_Published
-	case .None, .Dev_Build, .Link, .Bundle, .Package, .App_Image, .Installer, .Unsupported, .Bad_Signature, .Bad_Download, .Cannot_Replace:
+	case .None,
+	     .Dev_Build,
+	     .Link,
+	     .Bundle,
+	     .Package,
+	     .App_Image,
+	     .Installer,
+	     .Unsupported,
+	     .Bad_Signature,
+	     .Bad_Download,
+	     .Cannot_Replace,
+	     .Ineligible,
+	     .Journal,
+	     .Scoop:
 		r.problem = .Other
 		r.detail = update.message(&d.update_result)
 	}

@@ -17,8 +17,9 @@ on a timer or in the background, and has no setting that does.
 Its one request is the download: GET for a file under update.RELEASE_BASE (the
 latest GitHub release), with the User-Agent leita/<version>. It sends no key,
 path, name or count. LEITA_RELEASE_BASE names another base, or a directory.
-A release is trusted by the sha256 it publishes (update.SIGNING_KEY is the
-hook for its signature, once the release is signed).
+A release counts only when sha256sums.txt.sig verifies under the public key
+compiled into this build. A copy that is still Pro is replaced only when the
+release's authenticated instant is within that licence.
 
 The window and the command line share the package update; which release file
 is fetched follows the program running: Leita, the window, takes `Leita update`
@@ -31,18 +32,23 @@ UPDATE_USAGE :: `leita update — look for a newer leita, and install it when as
                             release; exit 0 when this is the latest, 2 when a
                             newer one is out, 1 when the release could not be asked
   leita update              download the latest release's build of this program,
-                            check its sha256 against the release's sha256sums.txt,
-                            and replace this program with it; run leita again to
-                            use it
+                            require a signature of sha256sums.txt and a matching
+                            sha256, and replace this program with it; run leita
+                            again to use it
 
 Nothing checks on its own: leita asks the release page only when you run this. The
 only request is the download, a GET for a file of the latest GitHub release, with the
 User-Agent leita/<version>. LEITA_RELEASE_BASE=URL-OR-DIRECTORY asks elsewhere.
 
-A copy installed by a package manager, an AppImage, the Windows installer or inside
-Leita.app is not replaced: it says where to download the new one. On Linux the check
-needs libcurl, which a stock desktop may lack. On Windows the old program stays beside
-the new one, as leita.exe.old, until the next update removes it.
+The signature has to verify, or nothing is installed. A copy that is still Pro is
+not replaced when the release has no authenticated instant, or that instant is
+after the licence's paid-through date. A copy installed by a package manager,
+Scoop, an AppImage, the Windows installer or inside Leita.app is not replaced,
+and nor is the Linux recorder's own binary: it says where to download the new
+one. On Linux the check needs libcurl, which a stock desktop may lack. On
+Windows the old program stays beside the new one, as leita.exe.old, until the
+next update removes it. An interrupted update puts the previous program back
+the next time this is run.
 
 Exit codes: 0 up to date, or updated; 1 an error, or a copy that is not replaced;
 2 with --check, a newer release exists.
@@ -60,15 +66,24 @@ running_as := update.Binary.Command_Line
 update_command_line :: proc(args: []string) -> int {
 	mode, _ := term.parse_mode(os.get_env("LEITA_COLOR", context.temp_allocator))
 	set_style(mode)
-	return update_dispatch(update.default_config(running_as, version.VERSION), args, os.to_writer(os.stdout))
+	return update_dispatch(
+		update.default_config(running_as, version.VERSION),
+		args,
+		os.to_writer(os.stdout),
+	)
 }
 
 // update_dispatch carries out the leita update command args names against cfg's
 // release, saying how it went on w and what went wrong on standard error.
-update_dispatch :: proc(cfg: update.Config, args: []string, w: io.Writer) -> int {
+update_dispatch :: proc(
+	cfg: update.Config,
+	args: []string,
+	w: io.Writer,
+	allocator := context.temp_allocator,
+) -> int {
 	switch {
 	case len(args) == 1 && (args[0] == "-h" || args[0] == "--help"):
-		b := strings.builder_make(context.temp_allocator)
+		b := strings.builder_make(allocator)
 		term.write_usage(&b, style, "leita update", UPDATE_USAGE)
 		fmt.wprint(w, strings.to_string(b))
 		return EXIT_OK
@@ -77,7 +92,7 @@ update_dispatch :: proc(cfg: update.Config, args: []string, w: io.Writer) -> int
 	case len(args) == 1 && args[0] == "--check":
 		return check_update(cfg, w)
 	}
-	say_error("leita update takes --check or nothing, not %q", strings.join(args, " ", context.temp_allocator))
+	say_error("leita update takes --check or nothing, not %q", strings.join(args, " ", allocator))
 	fmt.eprintln("leita update -h says what it does")
 	return EXIT_ERROR
 }
@@ -122,6 +137,16 @@ apply_update :: proc(cfg: update.Config, w: io.Writer) -> int {
 			label_to(w, "kept", "%s.old, the program it replaced", cfg.exe)
 		}
 		fmt.wprintln(w, "run leita again to use the new one")
+		when ODIN_OS == .Linux {
+			// The recorder is a different file. Leave it running; journal on
+			// is what copies this binary and restarts the service.
+			if os.exists(update.JOURNAL_COPY) {
+				fmt.wprintln(
+					w,
+					"the recorder keeps its own copy; sudo leita journal on installs this one and restarts it",
+				)
+			}
+		}
 		return EXIT_OK
 	case .Available, .Refused, .Failed:
 		// apply never stops at Available: it installs or says why not.

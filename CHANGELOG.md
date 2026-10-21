@@ -27,6 +27,7 @@ Each release is one section.
 
 **Changed**
 
+- `leita update` installs a release only when the signature of `sha256sums.txt` verifies. It does not replace a copy that is still Pro with a release whose authenticated instant is missing or after the paid-through date, and it does not replace a package, Scoop, the Windows installer, an AppImage, Leita.app, or the Linux recorder's binary. An interrupted update puts the previous program back.
 - Sizes are the space taken on disk, printed in decimal units, and an amount you type may be decimal or binary.
 - A Linux scan stays on the filesystem it started on, walks other btrfs subvolumes of the same pool, skips read-only snapshots, and counts each btrfs extent once.
 - A scan reads one directory per processor core.
