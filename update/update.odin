@@ -698,7 +698,7 @@ refuse_ineligible :: proc(r: ^Result, hold: Hold) -> Result {
 			r,
 			.Refused,
 			.Ineligible,
-			"this copy is still Pro through %s; the release has no authenticated release instant, so it was not installed",
+			"your licence covers releases through %s; the release has no authenticated release instant, so it was not installed",
 			hold.paid_through,
 		)
 	}
@@ -710,7 +710,7 @@ refuse_ineligible :: proc(r: ^Result, hold: Hold) -> Result {
 		r,
 		.Refused,
 		.Ineligible,
-		"this copy is still Pro through %s; %s was released %s, which is after that, so it was not installed",
+		"your licence covers releases through %s; %s was released %s, which is after that, so it was not installed",
 		hold.paid_through,
 		name,
 		at,

@@ -844,9 +844,8 @@ def update_cases(results, old, new, dev, seed, asset, test_line, update_key):
             if binary.read_bytes() != before or code == 0 or saw_asset:
                 return False, "retained Pro installed, or downloaded, a release with no authenticated instant: " + tail(err)
             lowered = err.lower()
-            # The updater says "still Pro through" and either names the missing
-            # instant or the later authenticated instant. It does not say "paid".
-            names_hold = "still pro through" in lowered
+            # Require the release-coverage cutoff and the refused release instant.
+            names_hold = "licence covers releases through" in lowered
             names_instant = "no authenticated release instant" in lowered or "was released" in lowered
             if not names_hold or not names_instant:
                 return False, "the executable stayed, but the refusal is not the retained-Pro rule: " + tail(err)
