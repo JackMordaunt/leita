@@ -709,6 +709,90 @@ root_deletes_only_the_invokers_own_under_their_home :: proc(t: ^testing.T) {
 
 	// Not root: the system's permissions decide, whoever owns it.
 	testing.expect(t, root_may_delete(bobs, 1001, ann, 1000, .Unix))
+
+	// ".." is the parent, so the text of the path is not where it lies. Root must
+	// not follow it out of the home. The Windows rules treat either slash as a
+	// separator.
+	testing.expect(
+		t,
+		!root_may_delete("/home/ann/../bob/node_modules", 1000, ann, 0, .Unix),
+		"a .. component leaves the home",
+	)
+	testing.expect(
+		t,
+		!root_may_delete("/home/ann/../../etc/node_modules", 1000, ann, 0, .Unix),
+		"a .. component reaches a system directory",
+	)
+	testing.expect(
+		t,
+		root_may_delete("/home/ann/./src/../src/web/node_modules", 1000, ann, 0, .Unix),
+		"dots that stay inside the home",
+	)
+	win := home.User{`C:\Users\ann`, "1000"}
+	testing.expect(
+		t,
+		!root_may_delete(`C:\Users\ann\..\bob\node_modules`, 1000, win, 0, .Windows),
+		"a .. component leaves the home on Windows",
+	)
+	testing.expect(
+		t,
+		!root_may_delete(`C:/Users/ann/../../Windows/Temp/node_modules`, 1000, win, 0, .Windows),
+		"either slash, out to a system directory",
+	)
+	testing.expect(
+		t,
+		root_may_delete(`C:/Users/ann/./src/node_modules`, 1000, win, 0, .Windows),
+		"dots that stay inside the home on Windows",
+	)
+}
+
+// Cargo's target and CMake's build are candidates only with the file the tool
+// writes inside them. A second manifest for a looser rule of the same name, a
+// pom.xml or a Gradle file, does not put back a directory that proof was missing
+// from. The looser rule still applies when it is the only one whose marker is there.
+@(test)
+a_stricter_rule_is_not_overruled_by_a_looser_one :: proc(t: ^testing.T) {
+	tree: Fake
+	defer fake_destroy(&tree)
+	root := fake_add(&tree, 0, "/", true)
+	src := fake_path(&tree, root, "home/ann/src")
+
+	both := project(&tree, src, "both", "Cargo.toml")
+	fake_add(&tree, both, "pom.xml", false, 1)
+	fake_path(&tree, both, "target/debug")
+
+	proved := project(&tree, src, "proved", "Cargo.toml")
+	fake_add(&tree, proved, "pom.xml", false, 1)
+	fake_add(&tree, fake_path(&tree, proved, "target"), "CACHEDIR.TAG", false, 1)
+
+	maven := project(&tree, src, "maven", "pom.xml")
+	fake_path(&tree, maven, "target")
+
+	cmake := project(&tree, src, "cmake-gradle", "CMakeLists.txt")
+	fake_add(&tree, cmake, "build.gradle", false, 1)
+	fake_path(&tree, cmake, "build/docs")
+
+	gradle := project(&tree, src, "gradle", "build.gradle")
+	fake_path(&tree, gradle, "build")
+
+	ready := project(&tree, src, "ready", "CMakeLists.txt")
+	fake_add(&tree, ready, "settings.gradle", false, 1)
+	fake_add(&tree, fake_path(&tree, ready, "build"), "CMakeCache.txt", false, 1)
+
+	meson := project(&tree, src, "meson-gradle", "meson.build")
+	fake_add(&tree, meson, "build.gradle", false, 1)
+	fake_path(&tree, meson, "build")
+
+	found := find(fake_source(&tree), root, "/", ANN, platform = .Unix)
+	defer candidates_destroy(found)
+	want := []string {
+		"/home/ann/src/gradle/build",
+		"/home/ann/src/maven/target",
+		"/home/ann/src/proved/target",
+		"/home/ann/src/ready/build",
+	}
+	got := found_paths(found)
+	testing.expectf(t, slice.equal(got, want), "found\n%v\nwant\n%v", got, want)
 }
 
 // macOS keeps each user's temporary directory under /private/var/folders, which a

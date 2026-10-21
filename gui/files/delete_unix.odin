@@ -35,6 +35,58 @@ Bounds :: struct {
 	points: map[[2]u64]struct{},
 }
 
+/*
+open_directory opens path as a directory, one component at a time, without following
+a symbolic link. ".." is refused. The caller closes the descriptor. A link, or
+anything that is not a directory, is Not_Directory.
+*/
+@(private)
+open_directory :: proc(path: string) -> (fd: posix.FD, err: Error) {
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	start := "/" if strings.has_prefix(path, "/") else "."
+	fd = posix.open(
+		strings.clone_to_cstring(start, context.temp_allocator),
+		{.DIRECTORY, .CLOEXEC},
+	)
+	if fd == -1 {
+		return -1, .Missing
+	}
+	rest := path
+	if strings.has_prefix(rest, "/") {
+		rest = rest[1:]
+	}
+	for part in strings.split_iterator(&rest, "/") {
+		if part == "" || part == "." {
+			continue
+		}
+		if part == ".." {
+			posix.close(fd)
+			return -1, .Not_Directory
+		}
+		next := posix.openat(
+			fd,
+			strings.clone_to_cstring(part, context.temp_allocator),
+			{.DIRECTORY, .NOFOLLOW, .CLOEXEC},
+		)
+		if next == -1 {
+			e := posix.errno()
+			posix.close(fd)
+			#partial switch e {
+			case .ELOOP, .ENOTDIR:
+				return -1, .Not_Directory
+			case .ENOENT:
+				return -1, .Missing
+			case .EACCES, .EPERM:
+				return -1, .Denied
+			}
+			return -1, .Other
+		}
+		posix.close(fd)
+		fd = next
+	}
+	return fd, .None
+}
+
 // is_link is whether path is a symbolic link, as lstat says.
 @(private)
 is_link :: proc(path: string) -> bool {
@@ -64,6 +116,10 @@ The tree must lie on the same mount as the folder holding it, or it is refused w
 Mount_Point: a disk mounted at node_modules is another volume's. Inside, an entry on
 another device or mount, or one the mount table names as a mount point (a bind of
 the same filesystem keeps the device), is counted as left and not entered.
+
+The folder holding the tree is opened one component at a time and a symbolic link
+is refused (open_directory). A directory swapped for a link before the delete runs
+cannot redirect it onto the link's target.
 */
 @(private)
 remove_tree :: proc(path: string) -> (failed: int, freed: u64, err: Error) {
@@ -74,13 +130,9 @@ remove_tree :: proc(path: string) -> (failed: int, freed: u64, err: Error) {
 		return 0, 0, .Not_Directory
 	}
 	cname := strings.clone_to_cstring(name, context.temp_allocator)
-	holder := filepath.dir(path)
-	parent := posix.open(
-		strings.clone_to_cstring(holder, context.temp_allocator),
-		{.DIRECTORY, .CLOEXEC},
-	)
-	if parent == -1 {
-		return 0, 0, .Missing
+	parent, oerr := open_directory(filepath.dir(path))
+	if oerr != .None {
+		return 0, 0, oerr
 	}
 	defer posix.close(parent)
 	around, around_err := look_self(parent)
@@ -138,10 +190,13 @@ remove_dir :: proc(
 	changed := false
 	fd := posix.openat(parent, name, {.DIRECTORY, .NOFOLLOW, .CLOEXEC})
 	if fd == -1 && posix.errno() == .EACCES && at.mode & OWNER != OWNER {
-		// Its owner cannot list it. fchmodat follows a link, but one put here
-		// since the look is still never entered: the open refuses to follow it.
-		changed = posix.fchmodat(parent, name, at.mode + OWNER, {}) == .OK
-		fd = posix.openat(parent, name, {.DIRECTORY, .NOFOLLOW, .CLOEXEC})
+		// Its owner cannot list it. chmod by name follows a link, so a directory
+		// swapped for a symlink since the look would change the link's target.
+		// fchmod_nofollow refuses a link instead of following it.
+		changed = fchmod_nofollow(parent, name, at.mode + OWNER)
+		if changed {
+			fd = posix.openat(parent, name, {.DIRECTORY, .NOFOLLOW, .CLOEXEC})
+		}
 	}
 	if fd == -1 {
 		return 1, 0

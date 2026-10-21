@@ -3,10 +3,12 @@ package walk
 
 import "core:fmt"
 import "core:log"
+import "core:mem"
 import "core:os"
 import "core:strings"
 import "core:sys/linux"
 import "core:testing"
+import "core:thread"
 
 import "../scan"
 
@@ -426,11 +428,7 @@ test_entries_that_cannot_be_asked_about_are_not_empty :: proc(t: ^testing.T) {
 	_, inner := node_named(&tree, "inner")
 	testing.expect(t, !inner, "a directory statx could not describe was recorded")
 	link, linked := node_named(&tree, "link")
-	testing.expect(
-		t,
-		linked && .Reparse in scan.node_flags(link),
-		"the link beside them was lost",
-	)
+	testing.expect(t, linked && .Reparse in scan.node_flags(link), "the link beside them was lost")
 	a, sized := node_named(&tree, "a.txt")
 	testing.expect(t, sized && a.disk > 0, "a sibling of the listing directory lost its size")
 	testing.expectf(
@@ -463,6 +461,9 @@ test_an_entry_statx_could_not_answer_is_unknown :: proc(t: ^testing.T) {
 	testing.expect_value(t, kind_of(.UNKNOWN, .NONE, linux.S_IFLNK), Kind.Symlink)
 	testing.expect_value(t, kind_of(.UNKNOWN, .NONE, linux.S_IFREG), Kind.File)
 	testing.expect_value(t, kind_of(.DIR, .NONE, linux.S_IFDIR), Kind.Directory)
+	// A name getdents called a directory and statx calls a symlink was replaced
+	// between the two calls. It is a symlink, and must not be queued as a directory.
+	testing.expect_value(t, kind_of(.DIR, .NONE, linux.S_IFLNK), Kind.Symlink)
 	testing.expect_value(t, kind_of(.LNK, .NONE, {}), Kind.Symlink)
 	testing.expect_value(t, kind_of(.REG, .NONE, linux.S_IFREG), Kind.File)
 	testing.expect_value(t, kind_of(.FIFO, .NONE, {}), Kind.File)
@@ -512,10 +513,464 @@ test_an_interrupted_statx_is_asked_again :: proc(t: ^testing.T) {
 	testing.expect_value(t, st.blocks, 8)
 
 	asked = 0
+	testing.expect_value(t, stat_entry(always_interrupted, 0, "f", {}, {}, &st), linux.Errno.EINTR)
+	testing.expect_value(t, asked, STATX_TRIES)
+}
+
+// Where one walk replaces a listed directory: `at` is the directory path that
+// walk has just finished listing, `dir` is the directory renamed aside, and
+// `target` is what the symlink put in its place names.
+@(private = "file")
+Listed_Swap :: struct {
+	at:     string,
+	dir:    string,
+	target: string,
+	done:   bool,
+}
+
+@(private = "file")
+swap_listed_directory :: proc(path: string, data: rawptr) {
+	swap := cast(^Listed_Swap)data
+	if swap == nil || swap.done || path != swap.at {
+		return
+	}
+	swap.done = true
+	real := fmt.tprintf("%s.real", swap.dir)
+	if os.rename(swap.dir, real) != nil {
+		return
+	}
+	_ = os.symlink(swap.target, swap.dir)
+}
+
+// `base` holds `root` and `outside` beside it. The caller removes `base`.
+@(private = "file")
+swap_fixture :: proc(t: ^testing.T, name: string) -> (base, root, outside: string) {
+	dir, dir_err := os.temp_directory(context.temp_allocator)
+	testing.expect(t, dir_err == nil, "no temp directory")
+	base = fmt.tprintf("%s/leita_walk_replace_%s_%d", dir, name, os.get_pid())
+	os.remove_all(base)
+	root = fmt.tprintf("%s/root", base)
+	outside = fmt.tprintf("%s/outside", base)
+	testing.expect(t, os.make_directory_all(root) == nil, "could not make the root")
+	testing.expect(t, os.make_directory_all(outside) == nil, "could not make the outside")
+	return
+}
+
+// Walk `root` with `swap` aimed at one directory. `workers` is 1.
+@(private = "file")
+walk_swapped :: proc(t: ^testing.T, root: string, swap: ^Listed_Swap) -> scan.Tree {
+	tree: scan.Tree
+	testing.expect_value(t, scan.tree_init(&tree, 1), scan.Error.None)
 	testing.expect_value(
 		t,
-		stat_entry(always_interrupted, 0, "f", {}, {}, &st),
-		linux.Errno.EINTR,
+		read(
+			root,
+			&tree,
+			Config{workers = 1, after_list = swap_listed_directory, after_list_data = swap},
+		),
+		Error.None,
 	)
-	testing.expect_value(t, asked, STATX_TRIES)
+	open, counted := count_fds_under(root)
+	testing.expect(t, counted, "could not read /proc/self/fd")
+	testing.expect_value(t, open, 0)
+	return tree
+}
+
+// How many descriptors this process holds whose target is under `prefix`.
+@(private = "file")
+count_fds_under :: proc(prefix: string) -> (n: int, ok: bool) {
+	fd, errno := linux.open("/proc/self/fd", {.DIRECTORY, .CLOEXEC})
+	if errno != .NONE {
+		return 0, false
+	}
+	defer linux.close(fd)
+	buf: [8 * 1024]u8
+	for {
+		got, err := linux.getdents(fd, buf[:])
+		if err != .NONE {
+			return 0, false
+		}
+		if got == 0 {
+			break
+		}
+		offset := 0
+		for entry in linux.dirent_iterate_buf(buf[:got], &offset) {
+			name := linux.dirent_name(entry)
+			if name == "." || name == ".." {
+				continue
+			}
+			target, rd_err := os.read_link(
+				fmt.tprintf("/proc/self/fd/%s", name),
+				context.temp_allocator,
+			)
+			if rd_err == nil && strings.has_prefix(target, prefix) {
+				n += 1
+			}
+		}
+	}
+	return n, true
+}
+
+@(private = "file")
+is_symlink :: proc(path: string) -> bool {
+	buf: Path
+	cpath, ok := terminate(path, &buf)
+	if !ok {
+		return false
+	}
+	st: linux.Statx
+	if linux.statx(linux.AT_FDCWD, cpath, {.SYMLINK_NOFOLLOW}, {.TYPE}, &st) != .NONE {
+		return false
+	}
+	return linux.S_ISLNK(st.mode)
+}
+
+/*
+A directory listed as a directory and replaced with a symlink before it is
+opened must not be followed. The symlink names a directory outside the walk.
+*/
+@(test)
+test_replacing_a_directory_with_a_symlink_is_not_followed :: proc(t: ^testing.T) {
+	base, root, outside := swap_fixture(t, "final")
+	defer os.remove_all(base)
+
+	sub := fmt.tprintf("%s/sub", root)
+	testing.expect(t, os.make_directory(sub) == nil, "could not make sub")
+	testing.expect(
+		t,
+		os.write_entire_file(fmt.tprintf("%s/inside.txt", sub), []byte{'i'}) == nil,
+		"could not write inside",
+	)
+	testing.expect(
+		t,
+		os.write_entire_file(fmt.tprintf("%s/secret.txt", outside), []byte{'s'}) == nil,
+		"could not write secret",
+	)
+
+	swap := Listed_Swap {
+		at     = root,
+		dir    = sub,
+		target = outside,
+	}
+	tree := walk_swapped(t, root, &swap)
+	defer scan.tree_destroy(&tree)
+
+	testing.expect(t, swap.done, "the directory was not replaced")
+	testing.expect(t, is_symlink(sub), "sub is not a symlink after the walk")
+	_, secret := node_named(&tree, "secret.txt")
+	_, inside := node_named(&tree, "inside.txt")
+	testing.expect(t, !secret, "the symlink target was walked")
+	testing.expect(t, !inside, "the replaced directory was still walked")
+	got, found := node_named(&tree, "sub")
+	testing.expect(t, found, "sub was not recorded")
+	if found {
+		flags := scan.node_flags(got)
+		testing.expect(t, .Directory in flags, "sub is not a directory")
+		testing.expect(t, .Unread in flags, "sub was not left unread")
+	}
+}
+
+/*
+The component above the one being opened is replaced with a symlink. Refusing
+only the final component would still follow this one and read `outside`.
+*/
+@(test)
+test_replacing_an_intermediate_directory_is_not_followed :: proc(t: ^testing.T) {
+	base, root, outside := swap_fixture(t, "middle")
+	defer os.remove_all(base)
+
+	a := fmt.tprintf("%s/a", root)
+	b := fmt.tprintf("%s/b", a)
+	testing.expect(t, os.make_directory_all(b) == nil, "could not make a/b")
+	testing.expect(
+		t,
+		os.make_directory(fmt.tprintf("%s/b", outside)) == nil,
+		"could not make outside/b",
+	)
+	testing.expect(
+		t,
+		os.write_entire_file(fmt.tprintf("%s/inside.txt", b), []byte{'i'}) == nil,
+		"could not write inside",
+	)
+	testing.expect(
+		t,
+		os.write_entire_file(fmt.tprintf("%s/b/secret.txt", outside), []byte{'s'}) == nil,
+		"could not write secret",
+	)
+
+	swap := Listed_Swap {
+		at     = a,
+		dir    = a,
+		target = outside,
+	}
+	tree := walk_swapped(t, root, &swap)
+	defer scan.tree_destroy(&tree)
+
+	testing.expect(t, swap.done, "the directory was not replaced")
+	testing.expect(t, is_symlink(a), "a is not a symlink after the walk")
+	_, secret := node_named(&tree, "secret.txt")
+	_, inside := node_named(&tree, "inside.txt")
+	testing.expect(t, !secret, "the symlink target was walked")
+	testing.expect(t, !inside, "the directory below the symlink was walked")
+	got, found := node_named(&tree, "b")
+	testing.expect(t, found, "b was not recorded")
+	if found {
+		testing.expect(t, .Unread in scan.node_flags(got), "b was not left unread")
+	}
+}
+
+// A real directory opens. A symlink component does not, and neither does "..".
+@(test)
+test_a_component_walk_does_not_follow_a_symlink :: proc(t: ^testing.T) {
+	base, root, outside := swap_fixture(t, "components")
+	defer os.remove_all(base)
+	real := fmt.tprintf("%s/real", root)
+	testing.expect(
+		t,
+		os.make_directory_all(fmt.tprintf("%s/nest", real)) == nil,
+		"could not make real",
+	)
+	testing.expect(
+		t,
+		os.make_directory(fmt.tprintf("%s/nest", outside)) == nil,
+		"could not make outside",
+	)
+	link := fmt.tprintf("%s/link", root)
+	testing.expect(t, os.symlink(outside, link) == nil, "could not link outside")
+
+	dir, errno := linux.open(
+		strings.clone_to_cstring(root, context.temp_allocator),
+		{.DIRECTORY, .CLOEXEC},
+	)
+	testing.expect_value(t, errno, linux.Errno.NONE)
+	defer linux.close(dir)
+
+	got, got_err := open_nofollow(dir, "real/nest")
+	testing.expect_value(t, got_err, linux.Errno.NONE)
+	linux.close(got)
+
+	// The helper treats ENOTDIR and ELOOP as a refused open.
+	refused := proc(errno: linux.Errno) -> bool {
+		return errno == .ENOTDIR || errno == .ELOOP
+	}
+	_, link_err := open_nofollow(dir, "link")
+	testing.expectf(t, refused(link_err), "a symlink opened: %v", link_err)
+	_, mid_err := open_nofollow(dir, "link/nest")
+	testing.expectf(t, refused(mid_err), "a symlink in the middle opened: %v", mid_err)
+	_, dot_err := open_nofollow(dir, "..")
+	testing.expect_value(t, dot_err, linux.Errno.EXDEV)
+	_, nested_dot := open_nofollow(dir, "real/..")
+	testing.expect_value(t, nested_dot, linux.Errno.EXDEV)
+
+	beneath, beneath_err := open_beneath(
+		dir,
+		strings.clone_to_cstring("real/nest", context.temp_allocator),
+	)
+	testing.expect_value(t, beneath_err, linux.Errno.NONE)
+	linux.close(beneath)
+	_, beneath_link := open_beneath(
+		dir,
+		strings.clone_to_cstring("link/nest", context.temp_allocator),
+	)
+	testing.expect_value(t, beneath_link, linux.Errno.ELOOP)
+	_, beneath_dot := open_beneath(dir, strings.clone_to_cstring("..", context.temp_allocator))
+	testing.expect_value(t, beneath_dot, linux.Errno.EXDEV)
+}
+
+// The path the caller names may itself be a symlink. The walk reads that
+// directory.
+@(test)
+test_a_symlink_to_the_root_is_read :: proc(t: ^testing.T) {
+	base, root, _ := swap_fixture(t, "rootlink")
+	defer os.remove_all(base)
+	testing.expect(t, os.make_directory(fmt.tprintf("%s/sub", root)) == nil, "could not make sub")
+	testing.expect(
+		t,
+		os.write_entire_file(fmt.tprintf("%s/sub/f.txt", root), []byte{'f'}) == nil,
+		"could not write f.txt",
+	)
+	link := fmt.tprintf("%s/link", base)
+	testing.expect(t, os.symlink(root, link) == nil, "could not link the root")
+
+	tree: scan.Tree
+	testing.expect_value(t, scan.tree_init(&tree, 1), scan.Error.None)
+	defer scan.tree_destroy(&tree)
+	testing.expect_value(t, read(link, &tree, Config{workers = 1}), Error.None)
+	_, found := node_named(&tree, "f.txt")
+	testing.expect(t, found, "the directory named by the symlink root was not read")
+	open, counted := count_fds_under(base)
+	testing.expect(t, counted, "could not read /proc/self/fd")
+	testing.expect_value(t, open, 0)
+}
+
+@(test)
+test_rel_under_rejects_a_sibling_prefix :: proc(t: ^testing.T) {
+	_, sibling := rel_under("/tmp/a", "/tmp/ab")
+	testing.expect(t, !sibling, "a sibling prefix was accepted")
+	child_rel, child := rel_under("/tmp/a", "/tmp/a/b")
+	testing.expect(t, child && child_rel == "b", "a child was rejected")
+	same_rel, same := rel_under("/tmp/a", "/tmp/a")
+	testing.expect(t, same && same_rel == "", "the root was rejected")
+	_, slash := rel_under("/tmp/a", "/tmp/a/")
+	testing.expect(t, !slash, "a trailing slash was a child")
+	rooted_rel, rooted := rel_under("/tmp/a/", "/tmp/a/b")
+	testing.expect(t, rooted && rooted_rel == "b", "a slashed root rejected its child")
+	top_rel, top := rel_under("/", "/tmp/a")
+	testing.expect(t, top && top_rel == "tmp/a", "the filesystem root rejected a child")
+}
+
+@(test)
+test_anchor_prepare_closes_its_fd_when_allocation_fails :: proc(t: ^testing.T) {
+	base, root, _ := swap_fixture(t, "anchor-alloc")
+	defer os.remove_all(base)
+	before, before_ok := count_fds_under(root)
+	testing.expect(t, before_ok && before == 0, "the fixture was already open")
+
+	refuse :: proc(
+		data: rawptr,
+		mode: mem.Allocator_Mode,
+		size, alignment: int,
+		old_memory: rawptr,
+		old_size: int,
+		loc := #caller_location,
+	) -> (
+		[]byte,
+		mem.Allocator_Error,
+	) {
+		_ = data
+		_ = mode
+		_ = size
+		_ = alignment
+		_ = old_memory
+		_ = old_size
+		_ = loc
+		return nil, .Out_Of_Memory
+	}
+	held, err := anchor_prepare(root, false, mem.Allocator{procedure = refuse})
+	testing.expect(t, err != nil, "allocation was reported as success")
+	testing.expect(t, held.fd < 0, "the failed anchor kept a descriptor")
+	after, after_ok := count_fds_under(root)
+	testing.expect(t, after_ok && after == 0, "the descriptor was not closed")
+}
+
+@(test)
+test_a_walk_without_an_anchor_does_not_open_the_path :: proc(t: ^testing.T) {
+	base, root, _ := swap_fixture(t, "unanchored")
+	defer os.remove_all(base)
+	before, before_ok := count_fds_under(root)
+	testing.expect(t, before_ok && before == 0, "the fixture was already open")
+
+	w: Worker
+	w.follow = false
+	w.held.fd = -1
+	w.held.errno = .EACCES
+	buf: Path
+	fd, errno := open_listed(Dir{path = root}, &w, &buf)
+	testing.expect_value(t, errno, linux.Errno.EACCES)
+	testing.expect(t, int(i32(fd)) < 0 || errno != .NONE, "the path was opened")
+	after, after_ok := count_fds_under(root)
+	testing.expect(t, after_ok && after == 0, "a descriptor was left open")
+
+	w.follow = true
+	w.held.errno = .NONE
+	opened, open_err := open_listed(Dir{path = root}, &w, &buf)
+	testing.expect_value(t, open_err, linux.Errno.NONE)
+	linux.close(opened)
+}
+
+Swap_Task :: struct {
+	root:    string,
+	swap:    Listed_Swap,
+	err:     Error,
+	secret:  bool,
+	inside:  bool,
+	unread:  bool,
+	open:    int,
+	counted: bool,
+	is_link: bool,
+}
+
+run_swap_task :: proc(th: ^thread.Thread) {
+	task := cast(^Swap_Task)th.data
+	tree: scan.Tree
+	if scan.tree_init(&tree, 1) != .None {
+		task.err = .Out_Of_Memory
+		return
+	}
+	defer scan.tree_destroy(&tree)
+	task.err = read(
+		task.root,
+		&tree,
+		Config{workers = 1, after_list = swap_listed_directory, after_list_data = &task.swap},
+	)
+	_, task.secret = node_named(&tree, "secret.txt")
+	_, task.inside = node_named(&tree, "inside.txt")
+	if got, found := node_named(&tree, "sub"); found {
+		task.unread = .Unread in scan.node_flags(got)
+	}
+	task.open, task.counted = count_fds_under(task.root)
+	task.is_link = is_symlink(task.swap.dir)
+}
+
+@(test)
+test_replacement_state_stays_on_its_walk :: proc(t: ^testing.T) {
+	base_a, root_a, outside_a := swap_fixture(t, "cross-a")
+	defer os.remove_all(base_a)
+	base_b, root_b, outside_b := swap_fixture(t, "cross-b")
+	defer os.remove_all(base_b)
+	sub_a := fmt.tprintf("%s/sub", root_a)
+	sub_b := fmt.tprintf("%s/sub", root_b)
+	testing.expect(t, os.make_directory(sub_a) == nil, "could not make sub a")
+	testing.expect(t, os.make_directory(sub_b) == nil, "could not make sub b")
+	testing.expect(
+		t,
+		os.write_entire_file(fmt.tprintf("%s/inside.txt", sub_a), []byte{'a'}) == nil,
+		"could not write inside a",
+	)
+	testing.expect(
+		t,
+		os.write_entire_file(fmt.tprintf("%s/inside.txt", sub_b), []byte{'b'}) == nil,
+		"could not write inside b",
+	)
+	testing.expect(
+		t,
+		os.write_entire_file(fmt.tprintf("%s/secret.txt", outside_a), []byte{'a'}) == nil,
+		"could not write secret a",
+	)
+	testing.expect(
+		t,
+		os.write_entire_file(fmt.tprintf("%s/secret.txt", outside_b), []byte{'b'}) == nil,
+		"could not write secret b",
+	)
+
+	task_a := Swap_Task {
+		root = root_a,
+		swap = Listed_Swap{at = root_a, dir = sub_a, target = outside_a},
+	}
+	task_b := Swap_Task {
+		root = root_b,
+		swap = Listed_Swap{at = root_b, dir = sub_b, target = outside_b},
+	}
+	thread_a := thread.create(run_swap_task)
+	thread_b := thread.create(run_swap_task)
+	thread_a.data = &task_a
+	thread_b.data = &task_b
+	thread.start(thread_a)
+	thread.start(thread_b)
+	thread.join(thread_a)
+	thread.join(thread_b)
+	thread.destroy(thread_a)
+	thread.destroy(thread_b)
+
+	check_task :: proc(t: ^testing.T, task: Swap_Task, name: string) {
+		testing.expectf(t, task.err == .None, "%s walk failed: %v", name, task.err)
+		testing.expectf(t, task.swap.done, "%s was not replaced", name)
+		testing.expectf(t, task.is_link, "%s is not a symlink", name)
+		testing.expectf(t, !task.secret, "%s followed the symlink", name)
+		testing.expectf(t, !task.inside, "%s walked the replaced directory", name)
+		testing.expectf(t, task.unread, "%s left sub readable", name)
+		testing.expectf(t, task.counted && task.open == 0, "%s leaked a descriptor", name)
+	}
+	check_task(t, task_a, "a")
+	check_task(t, task_b, "b")
 }

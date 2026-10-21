@@ -12,6 +12,7 @@
 <p align="center">See what is filling any drive the moment you open it, then hand the answer on as a report.</p>
 
 <p align="center"><b>Free to scan and clean up, for everyone</b> · Pro for comparisons, schedules and client reports · source published · no telemetry · Linux, Windows and macOS</p>
+<p align="center"><a href="https://mordaunt.dev/leita/">Download Leita, a disk space analyzer for Linux, Windows and macOS</a> · <a href="https://mordaunt.dev/leita/buy/">Plans and pricing</a></p>
 
 <p align="center">
   <a href="branding/demo.mp4"><img src="branding/demo-poster.png" style="border-radius: 12px; box-shadow: 0 22px 70px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(0, 0, 0, 0.12);" alt="leita scanning a disk: the sunburst, treemap and icicle views fill in as the scan runs, in the light theme and then the dark" width="900"></a>

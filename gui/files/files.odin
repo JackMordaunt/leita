@@ -170,8 +170,9 @@ holds one, and how many bytes what it did delete gave back. Anything left is
 Partly: the tree is still there, and only freed is gone. It is for what Reclaim
 proved can be made again, and it is careful in the ways deletion has to be:
 
-  - path must be a directory itself, not a link to one: a link is refused, so
-    deleting never reaches through it to what it points at;
+  - path must be a directory itself, not a link to one. On Linux and Darwin an
+    ancestor that is a link is refused as well, and the delete does not walk
+    through it;
   - inside, a link is deleted as a link, never followed;
   - it never deletes through a mount: a tree that is itself mounted there is
     refused with Mount_Point, and another disk or a bind of somewhere else
@@ -200,18 +201,37 @@ delete_tree :: proc(path: string) -> (failed: int, freed: u64, err: Error) {
 }
 
 // rename gives the entry at path the new name in the same folder, refusing with
-// Exists rather than replacing whatever already has it.
+// Exists rather than replacing whatever already has it. On Linux the folder is
+// opened without following a link, and the rename stays inside that descriptor.
 rename :: proc(path, name: string, allocator := context.allocator) -> (to: string, err: Error) {
 	if name_fault(name) != .None {
 		return "", .Bad_Name
 	}
-	dir := path[:max(strings.last_index_any(path, SEPARATORS), 0)]
-	to = strings.concatenate({dir, SEPARATOR, name}, allocator)
-	if err = rename_noreplace(path, to); err != .None {
+	parent := filepath.dir(path)
+	base := filepath.base(path)
+	if base == "" || base == "." || base == ".." {
+		return "", .Bad_Name
+	}
+	to = child_path(parent, name, allocator)
+	err = rename_noreplace(path, to)
+	if err != .None {
 		delete(to, allocator)
 		return "", err
 	}
 	return to, .None
+}
+
+// child_path is name inside parent. An empty parent is the working directory, so
+// a relative path is not joined onto the root: path[:0] + "/" + name is "/name".
+@(private)
+child_path :: proc(parent, name: string, allocator := context.allocator) -> string {
+	switch {
+	case parent == "" || parent == ".":
+		return strings.clone(name, allocator)
+	case strings.has_suffix(parent, "/") || strings.has_suffix(parent, `\`):
+		return strings.concatenate({parent, name}, allocator)
+	}
+	return strings.concatenate({parent, SEPARATOR, name}, allocator)
 }
 
 // reports_folder is where the window saves what it exports: the user's

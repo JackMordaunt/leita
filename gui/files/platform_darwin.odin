@@ -27,6 +27,16 @@ File_Manager :: struct {
 	using _: NS.Object,
 }
 
+/*
+fchmod_nofollow changes the mode of name in dir without following a symbolic link.
+AT_SYMLINK_NOFOLLOW is that refusal. If the call fails, the caller leaves the
+directory unopened: there is no fallback that follows a link.
+*/
+@(private)
+fchmod_nofollow :: proc(dir: posix.FD, name: cstring, mode: posix.mode_t) -> bool {
+	return posix.fchmodat(dir, name, mode, {.SYMLINK_NOFOLLOW}) == .OK
+}
+
 // rename_noreplace renames from to to, failing with Exists rather than replacing
 // whatever is at to: renamex_np(2)'s RENAME_EXCL makes the check and the rename one
 // step, so nothing can slip in between.

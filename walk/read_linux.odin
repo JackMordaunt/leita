@@ -1,8 +1,10 @@
 #+build linux
 package walk
 
+import "base:intrinsics"
 import "core:mem"
 import "core:slice"
+import "core:strings"
 import "core:sys/linux"
 
 import "../btrfs"
@@ -28,15 +30,7 @@ a guessed block: a sparse or compressed file is charged what it occupies.
 @(private)
 read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 	path: Path
-	cpath, path_ok := terminate(d.path, &path)
-	if !path_ok {
-		mark_unread(w, d.index, false)
-		return 0, 0, false
-	}
-	// Not NOFOLLOW: the queue holds directories, and symlinks only when the caller
-	// asked for those to be followed, so refusing a link here would refuse exactly
-	// the ones it was told to walk. DIRECTORY still rejects a link onto a file.
-	fd, open_errno := linux.open(cpath, {.DIRECTORY, .CLOEXEC})
+	fd, open_errno := open_listed(d, w, &path)
 	if open_errno != .NONE {
 		mark_unread(w, d.index, denied_errno(open_errno))
 		return 0, 0, false
@@ -262,6 +256,10 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 	if short {
 		mark_unread(w, d.index, denied)
 	}
+	// After the children are queued and before any of them is opened.
+	if w.after_list != nil {
+		w.after_list(d.path, w.after_list_data)
+	}
 	return nodes, bytes, true
 }
 
@@ -297,6 +295,12 @@ kind_of :: proc(type: linux.Dirent_Type, errno: linux.Errno, mode: linux.Mode) -
 	}
 	#partial switch type {
 	case .DIR:
+		// getdents and statx can disagree when the name was replaced by a symlink
+		// between them. statx was asked not to follow, so a link mode is the
+		// link, and queuing the name as a directory would open it next.
+		if linux.S_ISLNK(mode) {
+			return .Symlink
+		}
 		return .Directory
 	case .LNK:
 		return .Symlink
@@ -594,4 +598,240 @@ scratch_destroy :: proc(s: ^Scratch) {
 	delete(s.listed)
 	free(s.args, s.allocator)
 	mem.dynamic_arena_destroy(&s.ancestry)
+}
+
+/*
+The root a walk that is not following links keeps open for the whole walk.
+
+`fd` is the directory opened from the path the caller named. `root` is that
+path, so a child's path can be turned back into a path relative to `fd`. The
+descriptor and the path are shared by every worker. Each worker's copy of
+`openat2` is its own: it starts set, and `open_child` clears it when that call
+returns ENOSYS.
+*/
+@(private)
+Anchor :: struct {
+	fd:        int, // -1 when the walk is not anchored
+	root:      string, // owned; empty when fd < 0
+	openat2:   bool,
+	errno:     linux.Errno, // why the root did not open; NONE when fd >= 0
+	allocator: mem.Allocator,
+}
+
+@(private)
+anchor_prepare :: proc(
+	path: string,
+	follow: bool,
+	allocator: mem.Allocator,
+) -> (
+	a: Anchor,
+	err: mem.Allocator_Error,
+) {
+	a.fd = -1
+	a.openat2 = true
+	a.allocator = allocator
+	if follow {
+		return a, nil
+	}
+	buf: Path
+	cpath, path_ok := terminate(path, &buf)
+	if !path_ok {
+		a.errno = .ENAMETOOLONG
+		return a, nil
+	}
+	// The caller's path is opened here. Children are opened from the descriptor.
+	fd, errno := linux.open(cpath, {.DIRECTORY, .CLOEXEC})
+	if errno != .NONE {
+		a.errno = errno
+		return a, nil
+	}
+	root, clone_err := strings.clone(path, allocator)
+	if clone_err != nil {
+		linux.close(fd)
+		a.fd = -1
+		return a, clone_err
+	}
+	a.fd = int(i32(fd))
+	a.root = root
+	return a, nil
+}
+
+@(private)
+anchor_release :: proc(a: ^Anchor) {
+	if a.fd >= 0 {
+		linux.close(linux.Fd(i32(a.fd)))
+		a.fd = -1
+	}
+	delete(a.root, a.allocator)
+	a.root = ""
+}
+
+// `path` relative to `root`, as `join` built it. Not ok unless `path` is `root`
+// or a slash separates `root` from the rest.
+@(private)
+rel_under :: proc(root, path: string) -> (rel: string, ok: bool) {
+	if path == root {
+		return "", true
+	}
+	base := root
+	if len(base) > 1 && base[len(base) - 1] == '/' {
+		base = base[:len(base) - 1]
+	}
+	if base == "/" {
+		if len(path) > 1 && path[0] == '/' {
+			return path[1:], true
+		}
+		return "", false
+	}
+	if len(path) <= len(base) || path[:len(base)] != base || path[len(base)] != '/' {
+		return "", false
+	}
+	rest := path[len(base) + 1:]
+	if rest == "" {
+		return "", false
+	}
+	return rest, true
+}
+
+// Packed for the openat2 syscall below: flags, mode, resolve. The size
+// argument is the size of this struct.
+@(private)
+Open_How :: struct {
+	flags:   u64,
+	mode:    u64,
+	resolve: u64,
+}
+#assert(size_of(Open_How) == 24)
+
+@(private)
+RESOLVE_NO_SYMLINKS :: u64(0x04)
+@(private)
+RESOLVE_BENEATH :: u64(0x08)
+
+// openat2 with RESOLVE_NO_SYMLINKS and RESOLVE_BENEATH.
+@(private)
+open_beneath :: proc(dir: linux.Fd, rel: cstring) -> (linux.Fd, linux.Errno) {
+	how := Open_How {
+		flags   = u64(transmute(u32)linux.Open_Flags{.DIRECTORY, .CLOEXEC}),
+		resolve = RESOLVE_NO_SYMLINKS | RESOLVE_BENEATH,
+	}
+	ret := int(
+		intrinsics.syscall(
+			linux.SYS_openat2,
+			uintptr(i32(dir)),
+			transmute(uintptr)rel,
+			uintptr(&how),
+			uintptr(size_of(Open_How)),
+		),
+	)
+	if ret < 0 {
+		return {}, linux.Errno(-ret)
+	}
+	return linux.Fd(i32(ret)), .NONE
+}
+
+// Open `rel` a component at a time with O_NOFOLLOW. A ".." component returns
+// EXDEV. `dir` itself is left open.
+@(private)
+open_nofollow :: proc(dir: linux.Fd, rel: string) -> (linux.Fd, linux.Errno) {
+	fd := dir
+	owned := false
+	i := 0
+	for i < len(rel) {
+		start := i
+		for i < len(rel) && rel[i] != '/' {
+			i += 1
+		}
+		if i > start {
+			comp := rel[start:i]
+			if comp == ".." {
+				if owned {
+					linux.close(fd)
+				}
+				return {}, .EXDEV
+			}
+			buf: [256]u8
+			if len(comp) >= len(buf) {
+				if owned {
+					linux.close(fd)
+				}
+				return {}, .ENAMETOOLONG
+			}
+			copy(buf[:], comp)
+			buf[len(comp)] = 0
+			next, errno := linux.openat(fd, cstring(&buf[0]), {.DIRECTORY, .NOFOLLOW, .CLOEXEC})
+			if owned {
+				linux.close(fd)
+			}
+			if errno != .NONE {
+				return {}, errno
+			}
+			fd = next
+			owned = true
+		}
+		if i < len(rel) && rel[i] == '/' {
+			i += 1
+		}
+	}
+	if !owned {
+		return {}, .ENOENT
+	}
+	return fd, .NONE
+}
+
+@(private)
+open_child :: proc(
+	a: ^Anchor,
+	dir: linux.Fd,
+	crel: cstring,
+	rel: string,
+) -> (
+	linux.Fd,
+	linux.Errno,
+) {
+	if a.openat2 {
+		fd, errno := open_beneath(dir, crel)
+		if errno != .ENOSYS {
+			return fd, errno
+		}
+		a.openat2 = false
+	}
+	return open_nofollow(dir, rel)
+}
+
+/*
+The directory `d` for listing.
+
+When the walk holds an anchor, the root is reopened with its own offset and
+every other directory is opened relative to that descriptor. When it does not,
+and the caller asked to follow links, the path is opened as given. When it
+does not and the caller did not, the open is refused.
+*/
+@(private)
+open_listed :: proc(d: Dir, w: ^Worker, buf: ^Path) -> (linux.Fd, linux.Errno) {
+	if w.held.fd >= 0 {
+		rel, rel_ok := rel_under(w.held.root, d.path)
+		if !rel_ok {
+			return {}, .ENOENT
+		}
+		if rel == "" {
+			return linux.openat(linux.Fd(i32(w.held.fd)), ".", {.DIRECTORY, .NOFOLLOW, .CLOEXEC})
+		}
+		crel, term_ok := terminate(rel, buf)
+		if !term_ok {
+			return {}, .ENAMETOOLONG
+		}
+		return open_child(&w.held, linux.Fd(i32(w.held.fd)), crel, rel)
+	}
+	if !w.follow {
+		if w.held.errno != .NONE {
+			return {}, w.held.errno
+		}
+		return {}, .ENOENT
+	}
+	cpath, path_ok := terminate(d.path, buf)
+	if !path_ok {
+		return {}, .ENAMETOOLONG
+	}
+	return linux.open(cpath, {.DIRECTORY, .CLOEXEC})
 }
