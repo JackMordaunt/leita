@@ -150,7 +150,7 @@ cli mode="debug": sqlite
     set -euo pipefail
     case "{{mode}}" in
     debug) opt="-debug {{san}}" ;;
-    release) opt="-o:speed -define:LEITA_LICENCE_KEY=$(just --justfile "{{justfile()}}" release-key) -define:LEITA_UPDATE_KEY=$(just --justfile "{{justfile()}}" update-key)" ;;
+    release) opt="-o:speed -define:LEITA_LICENCE_KEY='$(just --justfile "{{justfile()}}" release-key)' -define:LEITA_UPDATE_KEY='$(just --justfile "{{justfile()}}" update-key)'" ;;
     *) echo "cli: the mode is debug or release, not {{mode}}" >&2; exit 1 ;;
     esac
     mkdir -p build/{{mode}}
@@ -164,7 +164,7 @@ gui mode="debug": deps
     set -euo pipefail
     case "{{mode}}" in
     debug) opt="-debug {{san}}" ;;
-    release) opt="-o:speed -define:LEITA_LICENCE_KEY=$(just --justfile "{{justfile()}}" release-key) -define:LEITA_UPDATE_KEY=$(just --justfile "{{justfile()}}" update-key)" ;;
+    release) opt="-o:speed -define:LEITA_LICENCE_KEY='$(just --justfile "{{justfile()}}" release-key)' -define:LEITA_UPDATE_KEY='$(just --justfile "{{justfile()}}" update-key)'" ;;
     *) echo "gui: the mode is debug or release, not {{mode}}" >&2; exit 1 ;;
     esac
     # A release window on Windows is a GUI program, so starting it opens no
@@ -318,7 +318,7 @@ check-licence key=test_licence_key licence="": sqlite
         exit 1
     fi
     mkdir -p build/test
-    {{odin}} test licence -debug {{san}} {{flags}} '-define:LEITA_LICENCE_KEY={{key}}' "-define:LEITA_LICENCE_SAMPLE=$licence" -out:build/test/licence{{exe}}
+    {{odin}} test licence -debug {{san}} {{flags}} "-define:LEITA_LICENCE_KEY='{{key}}'" "-define:LEITA_LICENCE_SAMPLE=$licence" -out:build/test/licence{{exe}}
 
 # The tests that mount: a delete with a tmpfs and a bind inside the tree being
 # deleted, and walks over binds of a directory above them and beside them. Each
