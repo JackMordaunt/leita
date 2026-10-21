@@ -101,12 +101,19 @@ jobs:
           LEITA_LICENCE_KEY: ${{ secrets.LEITA_LICENCE_KEY }}
         run: |
           if [ "${{ runner.os }}" = Windows ]; then export SAN=; fi
-          if LEITA_LICENCE_KEY='' just cli release; then
+          if LEITA_LICENCE_KEY='' LEITA_UPDATE_KEY='' just cli release; then
             echo "release: built without a licence key" >&2
             exit 1
           fi
+          # The update key is required on its own. Fixture CI uses the public
+          # test key and never the production seed.
+          if LEITA_LICENCE_KEY="$(just --evaluate test_licence_key)" LEITA_UPDATE_KEY='' just cli release; then
+            echo "release: built without an update key" >&2
+            exit 1
+          fi
           LEITA_LICENCE_KEY="${LEITA_LICENCE_KEY:-$(just --evaluate test_licence_key)}"
-          export LEITA_LICENCE_KEY
+          LEITA_UPDATE_KEY="$(just --evaluate test_update_key)"
+          export LEITA_LICENCE_KEY LEITA_UPDATE_KEY
           just build release
           # Built with the test key, the release binary takes its licence.
           if [ "$LEITA_LICENCE_KEY" = "$(just --evaluate test_licence_key)" ]; then
