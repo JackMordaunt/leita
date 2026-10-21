@@ -69,18 +69,23 @@
 #                                        compiled into each binary as
 #                                        LEITA_RELEASED
 #   sha256sums.txt, version.txt          sha256sums.txt over all of the
-#                                        above, including released.txt.
-#                                        version.txt names the version and
-#                                        is not hashed. A signature will
-#                                        cover the sums.
+#                                        above, including released.txt and
+#                                        version.txt. The sums are signed
+#                                        only after those lines are in the
+#                                        file. sha256sums.txt.sig is the
+#                                        raw 64-byte signature and is not
+#                                        itself a line of the sums.
 #
 # A tag with a pre-release suffix (v1.0.0-rc1) is published as a draft
 # pre-release, for a person to look over and publish; any other tag is
 # published at once. The universal job signs and notarises Leita.app when
 # the MACOS_* secrets are set, and the Windows job signs leita.exe, Leita.exe
 # and the installer when the WINDOWS_SIGN_* secrets are (see "windows signing
-# plan" below). Other signing is left to the card that owns it:
-# sha256sums.txt.sig (jm:selfupdate, card 547).
+# plan" below). sha256sums.txt.sig is Ed25519 over the finished sums. The
+# public key is LEITA_UPDATE_KEY, compiled into both binaries. The seed is
+# LEITA_UPDATE_SEED. A real publish fails closed when either is missing,
+# malformed, or the seed's public half is not the compiled key. A dry run
+# generates a throwaway pair and must not ship.
 #
 # The Linux window carries SDL3 inside it and opens libcurl only to activate
 # a licence, so it needs nothing a stock desktop lacks but glibc and
@@ -126,11 +131,18 @@ jobs:
       prerelease: ${{ steps.plan.outputs.prerelease }}
       test_key: ${{ steps.plan.outputs.test_key }}
       released: ${{ steps.plan.outputs.released }}
+      update_key: ${{ steps.plan.outputs.update_key }}
+      # Throwaway only. A real publish leaves this empty and assemble reads
+      # the seed from the secret, so the production seed is never an output.
+      update_seed: ${{ steps.plan.outputs.update_seed }}
     steps:
-      # The justfile alone, for the test key a release must not carry.
+      # The justfile, for the test keys a release must not carry, and the
+      # fixture tool that derives a public key from a seed.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          sparse-checkout: justfile
+          sparse-checkout: |
+            justfile
+            tools/test-lifecycle/fixture.py
           sparse-checkout-cone-mode: false
           persist-credentials: false
       - id: plan
@@ -138,6 +150,8 @@ jobs:
           # Empty on a push, so a pushed tag is never a dry run.
           DISPATCH_DRY_RUN: ${{ inputs.dry_run }}
           LEITA_LICENCE_KEY: ${{ secrets.LEITA_LICENCE_KEY }}
+          LEITA_UPDATE_KEY: ${{ secrets.LEITA_UPDATE_KEY }}
+          LEITA_UPDATE_SEED: ${{ secrets.LEITA_UPDATE_SEED }}
         run: |
           set -euo pipefail
           dry_run=true
@@ -166,10 +180,16 @@ jobs:
           fi
           test_key=$(sed -n 's/^test_licence_key *:= *"\([0-9a-fA-F]*\)".*/\1/p' justfile)
           [ -n "$test_key" ] || { echo "::error::no test_licence_key in the justfile"; exit 1; }
+          test_update_key=$(sed -n 's/^test_update_key *:= *"\([0-9a-fA-F]*\)".*/\1/p' justfile)
+          [ -n "$test_update_key" ] || { echo "::error::no test_update_key in the justfile"; exit 1; }
           # A release built without the real key takes no licence, and one
           # built with the test key takes the licence anyone can read in the
           # justfile: neither may ship. A dry run without the secret builds
-          # with the test key, and says so, below.
+          # with the test key, and says so, below. The update key is the same
+          # shape: a real publish fails closed without LEITA_UPDATE_KEY and
+          # LEITA_UPDATE_SEED, and refuses either test constant. A dry run
+          # mints a throwaway pair here. That seed is not a production secret;
+          # the production seed is never written to an output.
           if [ "$dry_run" = false ]; then
             if ! [[ $LEITA_LICENCE_KEY =~ ^[0-9a-fA-F]{64}$ ]]; then
               echo "::error::the LEITA_LICENCE_KEY secret must hold the licence public key, 64 hex characters"
@@ -179,6 +199,30 @@ jobs:
               echo "::error::the LEITA_LICENCE_KEY secret holds the justfile's test key"
               exit 1
             fi
+            if ! [[ $LEITA_UPDATE_KEY =~ ^[0-9a-fA-F]{64}$ ]]; then
+              echo "::error::the LEITA_UPDATE_KEY secret must hold the update public key, 64 hex characters"
+              exit 1
+            fi
+            if ! [[ $LEITA_UPDATE_SEED =~ ^[0-9a-fA-F]{64}$ ]]; then
+              echo "::error::the LEITA_UPDATE_SEED secret must hold the update seed, 64 hex characters"
+              exit 1
+            fi
+            if [ "${LEITA_UPDATE_KEY,,}" = "${test_update_key,,}" ] || [ "${LEITA_UPDATE_KEY,,}" = "${test_key,,}" ]; then
+              echo "::error::the LEITA_UPDATE_KEY secret holds a test key"
+              exit 1
+            fi
+            derived=$(python3 tools/test-lifecycle/fixture.py public --seed-hex "$LEITA_UPDATE_SEED")
+            if [ "${derived,,}" != "${LEITA_UPDATE_KEY,,}" ]; then
+              echo "::error::LEITA_UPDATE_SEED does not match LEITA_UPDATE_KEY"
+              exit 1
+            fi
+            update_key=$LEITA_UPDATE_KEY
+            update_seed=
+          else
+            pair=$(python3 tools/test-lifecycle/fixture.py keygen)
+            update_key=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["public_hex"])' <<<"$pair")
+            update_seed=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["seed_hex"])' <<<"$pair")
+            echo "::warning::dry run update key is throwaway and must never ship"
           fi
           {
             echo "version=$version"
@@ -186,6 +230,8 @@ jobs:
             echo "prerelease=$prerelease"
             echo "test_key=$test_key"
             echo "released=$released"
+            echo "update_key=$update_key"
+            echo "update_seed=$update_seed"
           } >> "$GITHUB_OUTPUT"
           echo "version $version, dry run $dry_run, pre-release $prerelease, released $released"
 
@@ -251,21 +297,32 @@ jobs:
       - name: build
         env:
           LEITA_LICENCE_KEY: ${{ secrets.LEITA_LICENCE_KEY }}
+          LEITA_UPDATE_KEY: ${{ needs.plan.outputs.update_key }}
           DRY_RUN: ${{ needs.plan.outputs.dry_run }}
         run: |
           set -euo pipefail
           test_key=$(just --evaluate test_licence_key)
+          test_update=$(just --evaluate test_update_key)
           if [ -z "$LEITA_LICENCE_KEY" ]; then
             if [ "$DRY_RUN" != true ]; then echo "::error::no LEITA_LICENCE_KEY for a release"; exit 1; fi
             echo "::warning::LEITA_LICENCE_KEY is unset: this dry run carries the justfile's test key and must never ship"
             LEITA_LICENCE_KEY=$test_key
           fi
-          export LEITA_LICENCE_KEY
+          if ! [[ $LEITA_UPDATE_KEY =~ ^[0-9a-fA-F]{64}$ ]]; then
+            echo "::error::the plan job named no update key"
+            exit 1
+          fi
+          export LEITA_LICENCE_KEY LEITA_UPDATE_KEY
           just build release
           for bin in "build/release/leita$LEITA_EXE" "build/release/app/Leita$LEITA_EXE"; do
             grep -aqiF "$LEITA_LICENCE_KEY" "$bin" || { echo "::error::$bin does not carry the licence key"; exit 1; }
+            grep -aqiF "$LEITA_UPDATE_KEY" "$bin" || { echo "::error::$bin does not carry the update key"; exit 1; }
             if [ "$DRY_RUN" != true ] && grep -aqiF "$test_key" "$bin"; then
               echo "::error::$bin carries the test key"
+              exit 1
+            fi
+            if [ "$DRY_RUN" != true ] && grep -aqiF "$test_update" "$bin"; then
+              echo "::error::$bin carries the test update key"
               exit 1
             fi
           done
@@ -858,21 +915,48 @@ jobs:
           rm -rf "$stage"
       - name: sha256sums
         working-directory: assets
+        env:
+          DRY_RUN: ${{ needs.plan.outputs.dry_run }}
+          UPDATE_KEY: ${{ needs.plan.outputs.update_key }}
+          THROWAWAY_SEED: ${{ needs.plan.outputs.update_seed }}
+          LEITA_UPDATE_SEED: ${{ secrets.LEITA_UPDATE_SEED }}
         run: |
           set -euo pipefail
           # leita-* is the binaries, the archives, their compressed forms
           # and the SBOM. THIRD_PARTY.md is the loose copy beside the
           # single binaries; without it here the signature would not cover
           # that file.
-          # The instant the plan job compiled into the binaries. 20 bytes and
-          # one LF, and the sums cover it, so a signature covers it too.
+          # version.txt and released.txt are written first, then the sums,
+          # then the signature of those exact sum bytes. The signature is
+          # not a line of the sums.
+          printf '%s\n' "$VERSION" > version.txt
           printf '%s\n' "$RELEASED" > released.txt
           if [ "$(wc -c < released.txt)" -ne 21 ]; then
             echo "::error::released.txt is not the 20-byte instant and a newline"
             exit 1
           fi
-          sha256sum leita-* THIRD_PARTY.md released.txt > sha256sums.txt
-          echo "$VERSION" > version.txt
+          sha256sum leita-* THIRD_PARTY.md released.txt version.txt > sha256sums.txt
+          if [ "$DRY_RUN" = true ]; then
+            SEED=$THROWAWAY_SEED
+          else
+            SEED=$LEITA_UPDATE_SEED
+          fi
+          if ! [[ $SEED =~ ^[0-9a-fA-F]{64}$ ]]; then
+            echo "::error::no update seed to sign the sums"
+            exit 1
+          fi
+          derived=$(python3 "$GITHUB_WORKSPACE/tools/test-lifecycle/fixture.py" public --seed-hex "$SEED")
+          if [ "${derived,,}" != "${UPDATE_KEY,,}" ]; then
+            echo "::error::the update seed does not match the key compiled into the binaries"
+            exit 1
+          fi
+          python3 "$GITHUB_WORKSPACE/tools/test-lifecycle/fixture.py" sign --seed-hex "$SEED" --in sha256sums.txt --out sha256sums.txt.sig
+          [ "$(wc -c < sha256sums.txt.sig)" -eq 64 ] || { echo "::error::sha256sums.txt.sig is not 64 bytes"; exit 1; }
+          if grep -q 'sha256sums.txt.sig' sha256sums.txt; then
+            echo "::error::the signature is listed in the sums"
+            exit 1
+          fi
+          python3 "$GITHUB_WORKSPACE/tools/test-lifecycle/fixture.py" verify --public-hex "$UPDATE_KEY" --in sha256sums.txt --sig sha256sums.txt.sig
           cat sha256sums.txt
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -880,11 +964,63 @@ jobs:
           path: assets
           if-no-files-found: error
 
+  # Publishing waits for the native lifecycle run of this exact commit.
+  # A failed or missing run, or evidence that does not pass the gate, stops
+  # the release. Dry runs do not publish, so they do not wait.
+  lifecycle-gate:
+    needs: plan
+    if: needs.plan.outputs.dry_run == 'false'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          sparse-checkout: tools/test-lifecycle/gate.py
+          sparse-checkout-cone-mode: false
+      - name: wait for lifecycle evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh_failures=0
+          deadline=$((SECONDS + 2400))
+          id=
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            if ! gh run list --workflow lifecycle.yml --commit "$GITHUB_SHA" --limit 20 \
+              --json databaseId,headSha,status,conclusion,url > runs.json; then
+              gh_failures=$((gh_failures + 1))
+              if [ "$gh_failures" -ge 3 ]; then
+                echo "::error::gh run list failed three times"
+                exit 1
+              fi
+              sleep 20
+              continue
+            fi
+            gh_failures=0
+            line=$(python3 tools/test-lifecycle/gate.py select runs.json "$GITHUB_SHA")
+            echo "$line"
+            case "$line" in
+              ready\ *) id=${line#ready }; break ;;
+              failed\ *) echo "::error::lifecycle run failed: ${line#failed }"; exit 1 ;;
+              waiting) sleep 30 ;;
+              *) echo "::error::unexpected select output: $line"; exit 1 ;;
+            esac
+          done
+          [ -n "$id" ] || { echo "::error::no successful lifecycle run for $GITHUB_SHA"; exit 1; }
+          gh run download "$id" -D evidence
+          mapfile -t files < <(find evidence -name evidence.json -print)
+          [ "${#files[@]}" -ge 1 ] || { echo "::error::lifecycle artifacts have no evidence.json"; exit 1; }
+          python3 tools/test-lifecycle/gate.py judge --sha "$GITHUB_SHA" "${files[@]}"
+
   # The only job that writes: it creates the release from the assembled
   # artifact with the runner's own gh, no third-party uploader. It checks
   # the key once more itself, so no path to it skips that check.
   release:
-    needs: [plan, assemble]
+    needs: [plan, assemble, lifecycle-gate]
     if: needs.plan.outputs.dry_run == 'false'
     runs-on: ubuntu-24.04
     permissions:
@@ -892,22 +1028,60 @@ jobs:
     env:
       VERSION: ${{ needs.plan.outputs.version }}
     steps:
-      - name: licence key
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            justfile
+            tools/test-lifecycle/fixture.py
+          sparse-checkout-cone-mode: false
+      - name: release secrets
         env:
           LEITA_LICENCE_KEY: ${{ secrets.LEITA_LICENCE_KEY }}
+          LEITA_UPDATE_KEY: ${{ secrets.LEITA_UPDATE_KEY }}
+          LEITA_UPDATE_SEED: ${{ secrets.LEITA_UPDATE_SEED }}
           TEST_KEY: ${{ needs.plan.outputs.test_key }}
         run: |
           set -euo pipefail
           # An empty TEST_KEY would make the second test pass anything.
           [ -n "$TEST_KEY" ] || { echo "::error::the plan job named no test key"; exit 1; }
+          test_update=$(sed -n 's/^test_update_key *:= *"\([0-9a-fA-F]*\)".*/\1/p' justfile)
+          [ -n "$test_update" ] || { echo "::error::no test_update_key in the justfile"; exit 1; }
           if ! [[ $LEITA_LICENCE_KEY =~ ^[0-9a-fA-F]{64}$ ]] || [ "${LEITA_LICENCE_KEY,,}" = "${TEST_KEY,,}" ]; then
             echo "::error::the LEITA_LICENCE_KEY secret is unset, malformed or the test key; nothing is published"
+            exit 1
+          fi
+          if ! [[ $LEITA_UPDATE_KEY =~ ^[0-9a-fA-F]{64}$ ]] || [ "${LEITA_UPDATE_KEY,,}" = "${test_update,,}" ] || [ "${LEITA_UPDATE_KEY,,}" = "${TEST_KEY,,}" ]; then
+            echo "::error::the LEITA_UPDATE_KEY secret is unset, malformed or a test key; nothing is published"
+            exit 1
+          fi
+          if ! [[ $LEITA_UPDATE_SEED =~ ^[0-9a-fA-F]{64}$ ]]; then
+            echo "::error::the LEITA_UPDATE_SEED secret is unset or malformed; nothing is published"
+            exit 1
+          fi
+          derived=$(python3 tools/test-lifecycle/fixture.py public --seed-hex "$LEITA_UPDATE_SEED")
+          if [ "${derived,,}" != "${LEITA_UPDATE_KEY,,}" ]; then
+            echo "::error::LEITA_UPDATE_SEED does not match LEITA_UPDATE_KEY; nothing is published"
             exit 1
           fi
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: release-${{ needs.plan.outputs.version }}
           path: assets
+      - name: signature
+        env:
+          LEITA_UPDATE_KEY: ${{ secrets.LEITA_UPDATE_KEY }}
+        run: |
+          set -euo pipefail
+          [ -f assets/sha256sums.txt.sig ] || { echo "::error::the release has no sha256sums.txt.sig"; exit 1; }
+          [ "$(wc -c < assets/sha256sums.txt.sig)" -eq 64 ] || { echo "::error::sha256sums.txt.sig is not 64 bytes"; exit 1; }
+          grep -q 'version.txt' assets/sha256sums.txt || { echo "::error::version.txt is not in the sums"; exit 1; }
+          grep -q 'released.txt' assets/sha256sums.txt || { echo "::error::released.txt is not in the sums"; exit 1; }
+          if grep -q 'sha256sums.txt.sig' assets/sha256sums.txt; then
+            echo "::error::the signature is listed in the sums"
+            exit 1
+          fi
+          python3 tools/test-lifecycle/fixture.py verify --public-hex "$LEITA_UPDATE_KEY" --in assets/sha256sums.txt --sig assets/sha256sums.txt.sig
       - name: publish
         env:
           GH_TOKEN: ${{ github.token }}

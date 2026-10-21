@@ -26,6 +26,7 @@
 #   just gui-test             run the window's tests, the host's on a real directory
 #   just package              Linux: the release as an AppImage, a .deb and an .rpm
 #                             -> build/package/
+#   just lifecycle            native lifecycle evidence, then the release gate
 #
 # The debug allocator, flow, sqlite3, stream and ui come from the jm collection, pinned as
 # the jm submodule (https://mordaunt.dev/code/jm); JM=<path> builds against another
@@ -35,7 +36,10 @@
 # or more comma-separated 64-hex keys, which only the release build is given:
 # just cli release and just gui release refuse an empty or malformed set, since
 # a release without one takes no licence. A line holds when any key in the set
-# verifies it. Debug and test builds take none.
+# verifies it. Debug and test builds take none. The same builds take
+# LEITA_UPDATE_KEY, one 64-hex Ed25519 public key, and refuse a release
+# without it. The private half is LEITA_UPDATE_SEED, used only to sign a
+# release, never as a compile flag and never by the lifecycle fixture.
 #
 # Debug and test builds carry -sanitize:address. The debug allocator poisons its
 # guard bytes and freed blocks, so instrumented reads past the end or after free
@@ -126,6 +130,11 @@ sdl3_link := if os() == "linux" { "-extra-linker-flags:\"-L" + sdl3_dir + "\"" }
 test_licence_key := "88c75c5976728b7e57a6fe3a5a0bd898abfc79bfce9257ea9ce32c41d6acc20f"
 test_licence     := "leita.eyJ2IjoxLCJpZCI6InRlc3QiLCJlbWFpbCI6InRlc3RAbGVpdGEuZXhhbXBsZSIsInNjb3BlIjoicGVyc29uYWwiLCJmZWF0dXJlcyI6InBybyIsInBhaWRUaHJvdWdoIjoiOTk5OS0xMi0zMVQyMzo1OTo1OVoiLCJpc3N1ZWQiOiIyMDI2LTEwLTE3VDAwOjAwOjAwWiJ9.QdzfxSW5ivSRjgF7+MwQj1nE0EZjeeBX2Eb+Mo9UxT6UND4ZacO/rwNJQZ9eZugVq/Ycm+C7m84V8Uk/GjtZBg=="
 
+# Public half of a throwaway update key, for tests and for a release build
+# that is not published. No seed is stored. A publishing run refuses this
+# value. It is not a production signature and it is not the licence test key.
+test_update_key := "31bb08cd168ed6d55390ee4380eacb18f5d83961c54403a538649f7aedfd1ff8"
+
 # `just` alone lists the recipes.
 default:
     @just --list --unsorted
@@ -141,7 +150,7 @@ cli mode="debug": sqlite
     set -euo pipefail
     case "{{mode}}" in
     debug) opt="-debug {{san}}" ;;
-    release) opt="-o:speed -define:LEITA_LICENCE_KEY=$(just --justfile "{{justfile()}}" release-key)" ;;
+    release) opt="-o:speed -define:LEITA_LICENCE_KEY=$(just --justfile "{{justfile()}}" release-key) -define:LEITA_UPDATE_KEY=$(just --justfile "{{justfile()}}" update-key)" ;;
     *) echo "cli: the mode is debug or release, not {{mode}}" >&2; exit 1 ;;
     esac
     mkdir -p build/{{mode}}
@@ -155,7 +164,7 @@ gui mode="debug": deps
     set -euo pipefail
     case "{{mode}}" in
     debug) opt="-debug {{san}}" ;;
-    release) opt="-o:speed -define:LEITA_LICENCE_KEY=$(just --justfile "{{justfile()}}" release-key)" ;;
+    release) opt="-o:speed -define:LEITA_LICENCE_KEY=$(just --justfile "{{justfile()}}" release-key) -define:LEITA_UPDATE_KEY=$(just --justfile "{{justfile()}}" update-key)" ;;
     *) echo "gui: the mode is debug or release, not {{mode}}" >&2; exit 1 ;;
     esac
     # A release window on Windows is a GUI program, so starting it opens no
@@ -238,6 +247,34 @@ release-key:
         exit 1
     fi
     printf '%s' "$key"
+
+# The update public key a release is built with, from LEITA_UPDATE_KEY:
+# one 64-hex key, no commas. It fails when the value is empty or not one key.
+[private]
+update-key:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    key="${LEITA_UPDATE_KEY:-}"
+    key="${key//[[:space:]]/}"
+    if ! [[ $key =~ ^[0-9a-fA-F]{64}$ ]]; then
+        echo "release: LEITA_UPDATE_KEY must be one update public key, 64 hex characters; a release without one cannot check a signature" >&2
+        exit 1
+    fi
+    printf '%s' "$key"
+
+# The harness writes evidence-update.json. Sibling harnesses may already
+# have written evidence-*.json in the same directory. A missing required
+# case fails the gate.
+#
+# Native lifecycle evidence for this OS, then the release gate.
+lifecycle:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if command -v python3 >/dev/null 2>&1; then py=python3; else py=python; fi
+    dir="${LIFECYCLE_DIR:-build/lifecycle}"
+    "$py" tools/test-lifecycle/harness.py
+    sha=$(git rev-parse HEAD)
+    "$py" tools/test-lifecycle/gate.py local "$dir" "$sha"
 
 # A first argument of release builds and runs the release build.
 #
@@ -596,8 +633,8 @@ fsbench args="": (cli "release")
 # times (1 + tolerance). The tolerance is 30% because a GitHub runner varies
 # against the machine that wrote the medians. `--update` rewrites the median.
 #
-# A release build needs a licence key. The test key stands in when
-# LEITA_LICENCE_KEY is unset; the key does not change the walk.
+# A release build needs a licence key and an update key. The test keys stand
+# in when the variables are unset; neither key changes the walk.
 #
 # Check the walk: just fsbench-ci
 # Rewrite the baseline: just fsbench-ci --update
@@ -606,6 +643,9 @@ fsbench-ci *args:
     set -euo pipefail
     if [ -z "${LEITA_LICENCE_KEY:-}" ]; then
         export LEITA_LICENCE_KEY="$(just --justfile "{{justfile()}}" --evaluate test_licence_key)"
+    fi
+    if [ -z "${LEITA_UPDATE_KEY:-}" ]; then
+        export LEITA_UPDATE_KEY="$(just --justfile "{{justfile()}}" --evaluate test_update_key)"
     fi
     just --justfile "{{justfile()}}" cli release
     python3 tools/fsbench --ci {{args}}
