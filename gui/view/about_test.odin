@@ -408,7 +408,7 @@ a_release_after_paid_through_is_explained_and_not_installed :: proc(t: ^testing.
 		t,
 		ui.probe_tagged(
 			&h.p,
-			"Leita stays Pro through 2026-10-19T00:00:00Z. Version v9 was released 2026-10-19T00:00:01Z, which is after that, so it was not installed.",
+			"Your Leita licence covers releases through 2026-10-19T00:00:00Z. Version v9 was released 2026-10-19T00:00:01Z, which is after that, so it was not installed.",
 		),
 	)
 	testing.expect(t, !ui.probe_tagged(&h.p, "Update"), "the banner does not install it")

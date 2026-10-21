@@ -34,7 +34,7 @@ DOWNLOAD = "Download the update"
 UPDATE_BUTTON = "Update"
 DISMISS = "Dismiss banner"
 LATER_CANDIDATE = (
-    f"Leita stays Pro through {host.PAID_THROUGH}. "
+    f"Your Leita licence covers releases through {host.PAID_THROUGH}. "
     f"Version {VERSION_LATE} was released {RELEASED_LATE}, "
     "which is after that, so it was not installed."
 )
