@@ -432,14 +432,18 @@ directory at path, whose owner is owner, for user. As root it may delete anythin
 the system holds, another user's work among it (sudo leita on /home would offer
 and delete /home/bob/proj/node_modules), so it keeps to what user could delete
 themself: a directory under their home that is theirs. On this machine the
-original path is resolved before ".." is collapsed. A symlink is followed, and
-a ".." after one is the parent of where it led, which the symlink test records.
-A missing tail stays on the last directory that resolved, so a path that is not
-on disk is still judged and a ".." in the text cannot cancel that symlink. When
-realpath fails for any reason other than a missing component, this refuses. A
-path of another platform is judged on its text alone, as is Windows, where the
-window does not ask this (gui/app/act.odin). Any other user id is left
-to the system's permission checks; a capability short of root is not looked for.
+original path is resolved one component at a time, before ".." is collapsed. A
+symlink is followed, and a ".." after one is the parent of where it led, which
+the symlink test records. A ".." after a component that is not a directory is
+refused: the path never entered it, and one realpath of the whole text is not
+that proof, because it can name the parent of a file. A missing tail stays on
+the last directory that resolved, so a path that is not on disk is still judged
+and a ".." in the text
+cannot cancel that symlink. When realpath fails for any reason other than a
+missing component, this refuses. A path of another platform is judged on its
+text alone, as is Windows, where the window does not ask this
+(gui/app/act.odin). Any other user id is left to the system's permission
+checks; a capability short of root is not looked for.
 */
 root_may_delete :: proc(
 	path: string,

@@ -90,6 +90,8 @@ root_refuses_a_symlink_that_leaves_the_home :: proc(t: ^testing.T) {
 		!root_may_delete(looped, owner, who, 0, HOST),
 		"a symlink loop is not proof the directory stays inside",
 	)
+	// The text spells her own directory. The file is not a directory, so ".."
+	// does not enter it and must not count as her node_modules.
 	file := strings.concatenate({home_dir, "/file"}, context.temp_allocator)
 	testing.expect(t, os.write_entire_file(file, "x") == nil)
 	not_dir := strings.concatenate({file, "/../proj/node_modules"}, context.temp_allocator)
@@ -97,5 +99,13 @@ root_refuses_a_symlink_that_leaves_the_home :: proc(t: ^testing.T) {
 		t,
 		!root_may_delete(not_dir, owner, who, 0, HOST),
 		"a non-directory component does not cancel in the text",
+	)
+	// The same file, then enough ".." to spell the outside directory. Cancelling
+	// through the file would leave the home; stopping at the file must too.
+	leapt := strings.concatenate({file, "/../../outside/node_modules"}, context.temp_allocator)
+	testing.expect(
+		t,
+		!root_may_delete(leapt, owner, who, 0, HOST),
+		"a non-directory component does not let .. leave the home",
 	)
 }

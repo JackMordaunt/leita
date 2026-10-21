@@ -744,6 +744,14 @@ root_deletes_only_the_invokers_own_under_their_home :: proc(t: ^testing.T) {
 		root_may_delete(`C:/Users/ann/./src/node_modules`, 1000, win, 0, .Windows),
 		"dots that stay inside the home on Windows",
 	)
+	// Windows, and any path judged as another platform, collapses ".." in the
+	// text. A Unix host refuses this shape when the component is a real file
+	// (reclaim_root_unix_test.odin); this judge does not ask the filesystem.
+	testing.expect(
+		t,
+		root_may_delete(`C:\Users\ann\file\..\proj\node_modules`, 1000, win, 0, .Windows),
+		"Windows text cancels .. through a component name",
+	)
 }
 
 // Cargo's target and CMake's build are candidates only with the file the tool
