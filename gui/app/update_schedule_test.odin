@@ -183,12 +183,8 @@ set_schedule_latest :: proc(d: ^Desk, version: string) {
 	d.update_result.latest_len = copy(d.update_result.latest_buf[:], version)
 }
 
-// os.remove_all on Windows is SHFileOperationW (core/os/path_windows.odin).
-// AddressSanitizer aborts there: HeapSize sees a pointer the shell owns
-// (windows-lifecycle-eighth.log, this test's defer). The directory holds
-// only settings.db, opened with WAL. schedule_close runs first, so the
-// connection is already shut. Remove the database and any wal or shm, then
-// the directory itself.
+// Remove the fixture database and SQLite sidecars after schedule_close
+// closes its connections, without the shell-recursive directory deletion.
 @(private)
 remove_schedule_dir :: proc(t: ^testing.T, dir: string) {
 	if dir == "" {

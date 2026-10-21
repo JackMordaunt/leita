@@ -3162,7 +3162,7 @@ reports_and_change_tracking_need_a_licence_after_the_trial :: proc(t: ^testing.T
 		testing.expect(t, settle(&r, ENDED), "a month on, it says the trial is over")
 		testing.expect(t, ui.probe_click(&r.p, "Dismiss banner"))
 		ui.probe_advance(&r.p, 10, 1.0 / 60)
-		testing.expect(t, !ui.probe_tagged(&r.p, ENDED), "dismissed, it goes")
+		testing.expect(t, settle(&r, ENDED, present = false), "dismissed, it goes")
 
 		testing.expect(t, choose(&r, "Export"))
 		ui.probe_advance(&r.p, 20, 1.0 / 60)
