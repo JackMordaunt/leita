@@ -35,7 +35,25 @@ update_no_curl = {0} ha bisogno di libcurl per cercare aggiornamenti, ma questo 
 update_unreachable = {0} non riesce a raggiungere la pagina della release. Controlla la connessione.
 update_not_published = L’ultima release non contiene una build di {0} per questo sistema.
 update_failed = Aggiornamento non riuscito: {0}
-update_privacy = Solo quando fai clic, {0} chiede a GitHub qual è l’ultima release. Non viene inviato nulla su di te o sui tuoi dischi.
+update_privacy = I controlli restano disattivati finché non li attivi. Un controllo chiede a GitHub solo la release pubblica. Non viene inviato nulla su di te o sui tuoi dischi, e {0} non installa mai una release da solo.
+automatic_checks = Cerca aggiornamenti automaticamente
+automatic_checks_caption = Un controllo all’apertura di {0} e uno al giorno finché resta aperto. Il controllo chiede solo la release pubblica, e {0} non ne installa mai una.
+update_notes = Note di rilascio
+update_covered = Questa release rientra nella data di copertura {0}.
+update_later = {0} resta Pro fino al {1}. La versione {2} è uscita il {3}, dopo quella data, quindi non è stata installata.
+update_unstamped = {0} resta Pro fino al {1}. Questa release non ha una data di pubblicazione autenticata, quindi non è stata installata.
+update_package = Un gestore di pacchetti aggiorna questa copia. Non è stata sostituita.
+update_scoop = Scoop aggiorna questa copia. Non è stata sostituita.
+update_app_image = Questa copia è un AppImage. Scarica quella nuova. Non è stata sostituita.
+update_installer = Il programma di installazione aggiorna questa copia. Non è stata sostituita.
+update_bundle = Questa copia è dentro il bundle dell’app. Scarica la nuova app. Non è stata sostituita.
+update_journal = Questa è la registrazione. Aggiorna la copia che esegui, poi riattiva la registrazione. Non è stata sostituita.
+update_link = Questa copia è un collegamento. Installa la release da solo. Non è stata sostituita.
+update_dev = Questa è una build di sviluppo. Scarica una release per aggiornarla. Non è stata sostituita.
+licence_coverage = Pro copre le release fino al {0}.
+licence_build_covered = Questa build installata è coperta.
+licence_build_later = Questa build installata ({0}) è successiva a quella data. Pro resta sulle build che la data copre.
+licence_build_unstamped = Questa build non ha una data di release, quindi quella data non la copre.
 
 # How the scan is going
 status_empty = Indica una cartella per vedere cosa occupa il disco.

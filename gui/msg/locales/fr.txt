@@ -38,7 +38,25 @@ update_no_curl = {0} a besoin de libcurl pour rechercher des mises à jour, et c
 update_unreachable = {0} n’a pas pu joindre la page de la version. Vérifiez la connexion.
 update_not_published = La dernière version ne contient pas de build de {0} pour ce système.
 update_failed = La mise à jour a échoué : {0}
-update_privacy = Seulement quand vous cliquez, {0} demande à GitHub quelle est la dernière version. Rien sur vous ni sur vos disques n’est envoyé.
+update_privacy = Les vérifications restent désactivées tant que vous ne les activez pas. Une vérification ne demande à GitHub que la version publique. Rien sur vous ni sur vos disques n’est envoyé, et {0} n’installe jamais une version de lui-même.
+automatic_checks = Vérifier les mises à jour automatiquement
+automatic_checks_caption = Une vérification à l’ouverture de {0}, et une par jour tant qu’il reste ouvert. La vérification ne demande que la version publique, et {0} n’en installe jamais.
+update_notes = Notes de version
+update_covered = Cette version est couverte jusqu’au {0}.
+update_later = {0} reste Pro jusqu’au {1}. La version {2} est sortie le {3}, après cette date, elle n’a donc pas été installée.
+update_unstamped = {0} reste Pro jusqu’au {1}. Cette version n’a pas de date de publication authentifiée, elle n’a donc pas été installée.
+update_package = Un gestionnaire de paquets met à jour cette copie. Elle n’a pas été remplacée.
+update_scoop = Scoop met à jour cette copie. Elle n’a pas été remplacée.
+update_app_image = Cette copie est un AppImage. Téléchargez le nouveau. Elle n’a pas été remplacée.
+update_installer = Le programme d’installation met à jour cette copie. Elle n’a pas été remplacée.
+update_bundle = Cette copie est dans le paquet de l’application. Téléchargez la nouvelle application. Elle n’a pas été remplacée.
+update_journal = Voici l’enregistreur. Mettez à jour la copie que vous lancez, puis réactivez l’enregistrement. Elle n’a pas été remplacée.
+update_link = Cette copie est un lien. Installez la version vous-même. Elle n’a pas été remplacée.
+update_dev = Ceci est une version de développement. Téléchargez une version publiée pour la mettre à jour. Elle n’a pas été remplacée.
+licence_coverage = Pro couvre les versions jusqu’au {0}.
+licence_build_covered = Cette version installée est couverte.
+licence_build_later = Cette version installée ({0}) est postérieure à cette date. Pro reste sur les versions que la date couvre.
+licence_build_unstamped = Cette version n’a pas de date de publication, donc cette date ne la couvre pas.
 
 # How the scan is going
 status_empty = Indiquez un dossier pour voir ce qui occupe le disque.

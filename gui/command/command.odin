@@ -51,6 +51,8 @@ Command :: union {
 	Recording,
 	Check_Update,
 	Apply_Update,
+	Automatic_Checks,
+	Dismiss_Update,
 }
 
 // Scan reads what is at path, calling off any scan still running.
@@ -193,14 +195,29 @@ Unwatch :: struct {
 }
 
 // Check_Update asks the release page whether a newer Leita is out, and says what
-// it found in query.Update. It is sent only when a person asks, from About;
-// nothing in Leita checks on its own.
+// it found in query.Update. About sends it when a person asks. An opted-in
+// window also sends the same check at startup and once a day; that path is
+// the host's, and it never installs.
 Check_Update :: struct {}
 
 // Apply_Update downloads the release's build of this window and replaces the
-// running file with it, when a check found one and this copy can be replaced in
-// place (query.Update_Result.can_apply); the new one runs on the next start.
+// running file with it, when a check found one, this copy can be replaced in
+// place (query.Update_Result.can_apply), and the release is inside the
+// paid-through date when this copy is still Pro. The new one runs on the
+// next start. Nothing sends this unless a person asks.
 Apply_Update :: struct {}
+
+// Automatic_Checks turns the startup and daily release check on or off. Off
+// is the default. Turning it off stops later checks. It does not install.
+Automatic_Checks :: struct {
+	on: bool,
+}
+
+// Dismiss_Update hides the quiet notice for version until a different release
+// is published. About can still show that release.
+Dismiss_Update :: struct {
+	version: Text,
+}
 
 // Recording turns the recorder of changes on or off, on Linux: this binary's
 // `journal on` or `journal off`, under pkexec for the administrator's rights it
