@@ -118,3 +118,12 @@ extra scan time. `-png` always omits the pointer and cue, even inside a movie.
 All input dispatch and host responses are real. Theme selection is the only
 view-state override. The caller owns the step list and must use generated
 fixtures: ordinary app actions can write or delete files when explicitly clicked.
+
+`-absent TAG` fails when that exact tag is on the current frame. `-tags PATH`
+writes every current tag, one per line. An `-await` that times out prints the
+same list to standard error.
+
+`lifecycle.py` drives this host through a local activation server and signed
+release fixture (`tools/test-licence-lifecycle`). It writes light and dark PNGs,
+MP4s, a contact sheet and `index.html` into a directory outside the repository.
+The runs use throwaway keys. There is no automatic-update preference to turn on.

@@ -8,7 +8,24 @@ JM="$capture_jm" just sqlite
 (cd "$capture_jm"; ls ui/blend2d/lib/*blend2d* >/dev/null 2>&1 || just blend2d)
 (cd "$capture_jm"; ls ui/kb/lib/kb_text_shape.* >/dev/null 2>&1 || just kb)
 capture_version=${LEITA_VERSION:-"g$(git rev-parse --short HEAD)-capture"}
-mkdir -p build
+capture_out=${CAPTURE_OUT:-build/capture}
+capture_defines=()
+capture_os=()
+# Optional fixture defines. Empty values are omitted so an ordinary capture
+# stays a development build with no licence or update key.
+for capture_name in LEITA_LICENCE_KEY LEITA_UPDATE_KEY LEITA_RELEASED; do
+  capture_value=$(printenv "$capture_name" || true)
+  if [ -n "$capture_value" ]; then
+    # Unquoted. The harness supplies hex that contains a-f.
+    capture_defines+=("-define:${capture_name}=${capture_value}")
+  fi
+done
+case "$(uname -s)" in
+  Linux) capture_os+=(-define:JM_HTTP_DLOPEN=true) ;;
+  Darwin) capture_os+=(-minimum-os-version:11.0) ;;
+esac
+mkdir -p "$(dirname "$capture_out")"
 "${ODIN:-odin}" build tools/capture -o:minimal -vet -strict-style \
   "-collection:jm=$capture_jm" "-define:LEITA_VERSION=$capture_version" \
-  -define:JM_HTTP_DLOPEN=true -out:build/capture
+  ${capture_os+"${capture_os[@]}"} ${capture_defines+"${capture_defines[@]}"} \
+  -out:"$capture_out"
