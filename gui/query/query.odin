@@ -300,10 +300,19 @@ Licence_Result :: struct {
 	// renewal is why an automatic refresh of a stored line failed. "" when none
 	// was tried or the new line verified. A failed refresh leaves this copy free.
 	renewal:    string,
+	// paid_through is the canonical instant the paid year covers, "" when this
+	// is not an annual line. release_at is this build's compiled instant, ""
+	// when it has none. build_covered is whether that instant is within
+	// paid_through. A line that does not cover this build still stays the
+	// licence in use; Pro is not turned off by naming the date.
+	paid_through:  string,
+	release_at:    string,
+	build_covered: bool,
 }
 
-// Update is where a check for a newer Leita stands, which About shows. Nothing
-// asks on its own: it is Idle until a person sends command.Check_Update.
+// Update is where a check for a newer Leita stands, which About and the
+// release notice show. It stays Idle until a person asks, or until they have
+// opted in and the startup or daily check runs. A check does not install.
 Update :: struct {}
 
 Update_State :: enum u8 {
@@ -322,7 +331,32 @@ Update_Problem :: enum u8 {
 	No_Library, // libcurl is not on this system
 	Unreachable, // the release page could not be reached
 	Not_Published, // the release does not hold this window's build
+	// This copy is still Pro, and the release is outside the paid-through date.
+	Ineligible,
 	Other, // detail says
+}
+
+// Update_Coverage is whether the candidate is inside the paid-through date.
+// None is not a retained Pro installation, so the date does not refuse it.
+Update_Coverage :: enum u8 {
+	None,
+	Covered, // the candidate's instant is at or before paid_through
+	Later, // the candidate is after paid_through; it was not installed
+	Unstamped, // retained Pro, and the release has no authenticated instant
+}
+
+// Update_Guidance is why this copy is not replaced in place, for the notice
+// to say which installer owns it. None means the window may replace its own file.
+Update_Guidance :: enum u8 {
+	None,
+	Package,
+	Scoop,
+	App_Image,
+	Installer,
+	Bundle,
+	Journal,
+	Link,
+	Dev,
 }
 
 Update_Result :: struct {
@@ -335,6 +369,13 @@ Update_Result :: struct {
 	problem:   Update_Problem,
 	detail:    string, // English, from the update package, when problem is Other
 	page:      string, // where to download a release by hand
+	// notice is the quiet banner. A dismissed version leaves it false while
+	// About still shows the same release.
+	notice:       bool,
+	coverage:     Update_Coverage,
+	paid_through: string, // canonical instant, "" when coverage is None
+	released:     string, // the candidate's authenticated instant, "" when none
+	guidance:     Update_Guidance,
 }
 
 // Settings is what the person chose in an earlier run, for the window to open
@@ -351,6 +392,9 @@ Theme_Choice :: enum u8 {
 Settings_Result :: struct {
 	language: string, // a BCP 47 tag, as i18n.locale_tag gives it; "" when none was chosen
 	theme:    Theme_Choice,
+	// automatic_checks is the opted-in release check. False when the person
+	// has not chosen it, including a store from before the setting existed.
+	automatic_checks: bool,
 }
 
 /*

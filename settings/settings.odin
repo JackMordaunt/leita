@@ -27,6 +27,15 @@ BUSY_WAIT :: 2 * time.Second
 // The keys the window keeps.
 LANGUAGE :: "language" // a BCP 47 tag, as i18n.locale_tag gives it
 THEME    :: "theme" // "light" or "dark"
+// UPDATES is "on" when the person opted in to automatic release checks.
+// Absent is off, including a store written before the key existed, so an
+// upgrade does not start checking.
+UPDATES :: "updates"
+// UPDATE_DISMISSED is the release version whose notice was dismissed.
+UPDATE_DISMISSED :: "update_dismissed"
+// UPDATE_CHECKED is the Unix seconds of the last automatic check, shared by
+// every window so two of them do not both ask.
+UPDATE_CHECKED :: "update_checked"
 
 Store :: struct {
 	db: sqlite3.Db,
@@ -105,6 +114,63 @@ set :: proc(st: ^Store, key, value: string) -> sqlite3.Error {
 		key,
 		value,
 	)
+}
+
+/*
+replace_if writes value under key only when the stored value is still
+previous. Absent matches previous "". The write is one transaction, so two
+windows that both saw the same previous cannot both record a check: one
+commits, the other finds the value changed and leaves it.
+*/
+replace_if :: proc(st: ^Store, key, previous, value: string) -> (won: bool, err: sqlite3.Error) {
+	if err = sqlite3.exec(st.db, "BEGIN IMMEDIATE"); err != nil {
+		return false, err
+	}
+	current, read_err := setting_value(st, key)
+	if read_err != nil {
+		_ = sqlite3.exec(st.db, "ROLLBACK")
+		return false, read_err
+	}
+	if current != previous {
+		_ = sqlite3.exec(st.db, "ROLLBACK")
+		return false, nil
+	}
+	if err = set(st, key, value); err != nil {
+		_ = sqlite3.exec(st.db, "ROLLBACK")
+		return false, err
+	}
+	if err = sqlite3.exec(st.db, "COMMIT"); err != nil {
+		_ = sqlite3.exec(st.db, "ROLLBACK")
+		return false, err
+	}
+	return true, nil
+}
+
+// setting_value is the text under key, "" when the key is absent. The caller
+// compares it inside this transaction, so the default allocator is temporary.
+@(private)
+setting_value :: proc(
+	st: ^Store,
+	key: string,
+	allocator := context.temp_allocator,
+) -> (
+	value: string,
+	err: sqlite3.Error,
+) {
+	rows, qerr := sqlite3.query(
+		st.db,
+		"SELECT value FROM setting WHERE key = ?",
+		key,
+		allocator = context.temp_allocator,
+	)
+	if qerr != nil {
+		return "", qerr
+	}
+	defer sqlite3.finish(&rows)
+	if !sqlite3.next(&rows) {
+		return "", nil
+	}
+	return strings.clone(sqlite3.text(rows, 0), allocator), nil
 }
 
 // Column is a column added to a table after the table was first made, and the
