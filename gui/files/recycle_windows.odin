@@ -1,9 +1,14 @@
 #+build windows
 package leita_files
 
+import "base:runtime"
+import "core:encoding/endian"
+import "core:log"
+import "core:os"
 import "core:strings"
 import win32 "core:sys/windows"
 
+import "../../home"
 import "../../reclaim"
 
 foreign import kernel32 "system:Kernel32.lib"
@@ -19,11 +24,18 @@ SHERB_NOPROGRESSUI   :: 0x00000002
 SHERB_NOSOUND        :: 0x00000004
 
 // SHQUERYRBINFO is passed to SHQueryRecycleBinW after cbSize is assigned.
+// shellapi.h includes pshpack1.h only for 32-bit builds. On x64 the struct is
+// naturally aligned: 24 bytes, with the two counts at 8 and 16. A packed 20-byte
+// cbSize is ERROR_INVALID_PARAMETER, and that volume is then left out.
 SHQUERYRBINFO :: struct {
 	cbSize:      win32.DWORD,
 	i64Size:     i64,
 	i64NumItems: i64,
 }
+
+#assert(size_of(SHQUERYRBINFO) == 24)
+#assert(offset_of(SHQUERYRBINFO, i64Size) == 8)
+#assert(offset_of(SHQUERYRBINFO, i64NumItems) == 16)
 
 @(default_calling_convention = "system")
 foreign kernel32 {
@@ -38,9 +50,9 @@ foreign shell32 {
 }
 
 /*
-recycle_bins are the Recycle Bins the shell can see on this machine, one per
-volume that answers, with this user's folder as path. A volume the shell will
-not query is left out. Volume and path are in allocator.
+recycle_bins are the Recycle Bins on this machine, one per volume that answers,
+with this user's folder as path. A volume the shell will not query is left out
+unless that folder already holds recycled files. Volume and path are in allocator.
 */
 recycle_bins :: proc(sid: string, allocator := context.allocator) -> []Recycle_Bin {
 	if sid == "" {
@@ -49,6 +61,7 @@ recycle_bins :: proc(sid: string, allocator := context.allocator) -> []Recycle_B
 	mask := GetLogicalDrives()
 	out := make([dynamic]Recycle_Bin, allocator)
 	for i in 0 ..< 26 {
+		runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
 		if mask & (1 << u32(i)) == 0 {
 			continue
 		}
@@ -61,42 +74,166 @@ recycle_bins :: proc(sid: string, allocator := context.allocator) -> []Recycle_B
 		   kind != DRIVE_REMOTE {
 			continue
 		}
-		info := SHQUERYRBINFO {
-			cbSize = size_of(SHQUERYRBINFO),
-		}
-		if !win32.SUCCEEDED(SHQueryRecycleBinW(cstring16(&root[0]), &info)) {
+		vol := strings.clone(string([]u8{u8(letter), ':', '\\'}), allocator)
+		path := strings.concatenate({vol, reclaim.RECYCLE_DIR, `\`, sid}, allocator)
+		bytes, items, ok := query_recycle_bin(cstring16(&root[0]), path, context.temp_allocator)
+		if !ok {
+			delete(path, allocator)
+			delete(vol, allocator)
 			continue
 		}
-		vol := strings.clone(string([]u8{u8(letter), ':', '\\'}), allocator)
-		append(
-			&out,
-			Recycle_Bin {
-				volume = vol,
-				path = strings.concatenate({vol, reclaim.RECYCLE_DIR, `\`, sid}, allocator),
-				bytes = u64(max(info.i64Size, 0)),
-				items = u64(max(info.i64NumItems, 0)),
-			},
-		)
+		append(&out, Recycle_Bin{volume = vol, path = path, bytes = bytes, items = items})
 	}
 	return out[:]
 }
 
-// recycle_bin_info is what the Recycle Bin on root holds, as the shell reports
-// it. root must be a volume `C:\`; anything else returns not-ok and the shell
-// is not called.
-recycle_bin_info :: proc(root: string) -> (bytes, items: u64, ok: bool) {
+// recycle_bin_info is what the Recycle Bin on root holds. root must be a volume
+// `C:\` or that volume's Recycle Bin folder; anything else returns not-ok and
+// the shell is not called.
+recycle_bin_info :: proc(
+	root: string,
+	allocator := context.temp_allocator,
+) -> (
+	bytes, items: u64,
+	ok: bool,
+) {
 	letter, has := drive_letter(root)
 	if !has {
 		return 0, 0, false
 	}
 	wide := [4]u16{letter, ':', '\\', 0}
+	return query_recycle_bin(cstring16(&wide[0]), recycle_folder(root, allocator), allocator)
+}
+
+/*
+query_recycle_bin is what the shell reports for the volume at root, which is
+`C:\` and a NUL. Nothing else in this process initializes COM, and the shell's
+recycle-bin enumerator is a COM object, so CoInitializeEx asks for the apartment
+the shell expects. It is released only when this call was the one that
+initialized the thread.
+
+A successful answer that names files is kept. An answer of zero, or a failure,
+is not the last word while folder holds this user's $I records: overlay skips a
+bin of zero bytes, so a file that is already in the folder would not be offered.
+The size is the one stored in the $I record, which is what the shell itself
+sums, or the $R file's size when the record says 0. A folder both call empty
+stays at the shell's zero, and a volume the shell will not query whose folder
+is empty or unreadable stays out.
+*/
+@(private)
+query_recycle_bin :: proc(
+	root: cstring16,
+	folder: string,
+	allocator := context.temp_allocator,
+) -> (
+	bytes, items: u64,
+	ok: bool,
+) {
+	release := win32.CoInitializeEx() == win32.S_OK
+	defer if release {
+		win32.CoUninitialize()
+	}
 	info := SHQUERYRBINFO {
 		cbSize = size_of(SHQUERYRBINFO),
 	}
-	if !win32.SUCCEEDED(SHQueryRecycleBinW(cstring16(&wide[0]), &info)) {
+	hr := SHQueryRecycleBinW(root, &info)
+	ok = win32.SUCCEEDED(hr)
+	if ok {
+		bytes = u64(max(info.i64Size, 0))
+		items = u64(max(info.i64NumItems, 0))
+	}
+	if ok && (bytes > 0 || items > 0) {
+		return
+	}
+	disk_bytes, disk_items, disk_ok := recycle_folder_usage(folder, allocator)
+	if !disk_ok || (disk_bytes == 0 && disk_items == 0) {
+		return
+	}
+	log.warnf(
+		"Recycle Bin %s: shell returned %#x with %d bytes in %d items; the folder holds %d bytes in %d files",
+		folder,
+		u32(hr),
+		bytes,
+		items,
+		disk_bytes,
+		disk_items,
+	)
+	return disk_bytes, disk_items, true
+}
+
+// recycle_folder is root when root is already a user's Recycle Bin folder, and
+// otherwise that folder on root's volume for this process's account. "" when
+// root is not a volume. The result is in allocator.
+@(private)
+recycle_folder :: proc(root: string, allocator := context.allocator) -> string {
+	p := strings.trim_right(strings.trim_space(root), `\/`)
+	rest := ""
+	if len(p) >= 2 && p[1] == ':' {
+		rest = strings.trim_left(p[2:], `\/`)
+	}
+	if rest != "" && recycle_dir_at(rest) {
+		return strings.clone(p, allocator)
+	}
+	letter, has := drive_letter(root)
+	if !has {
+		return ""
+	}
+	who := home.user(allocator)
+	defer home.user_destroy(&who, allocator)
+	if who.uid == "" {
+		return ""
+	}
+	vol := string([]u8{u8(letter), ':', '\\'})
+	return strings.concatenate({vol, reclaim.RECYCLE_DIR, `\`, who.uid}, allocator)
+}
+
+/*
+recycle_folder_usage is the bytes and the count of recycled files in folder, one
+item per $I record. The record's size is the original file's, at byte 8, as
+Windows has written it since the $I format began. A record that says 0 takes the
+$R file's size beside it, so a file the record failed to measure is still
+counted. ok is false when folder cannot be listed.
+*/
+@(private)
+recycle_folder_usage :: proc(
+	folder: string,
+	allocator := context.temp_allocator,
+) -> (
+	bytes, items: u64,
+	ok: bool,
+) {
+	if folder == "" {
 		return 0, 0, false
 	}
-	return u64(max(info.i64Size, 0)), u64(max(info.i64NumItems, 0)), true
+	entries, err := os.read_all_directory_by_path(folder, allocator)
+	if err != nil {
+		return 0, 0, false
+	}
+	for e in entries {
+		if !strings.has_prefix(e.name, "$I") || len(e.name) < 2 {
+			continue
+		}
+		size, got := recorded_size(e.fullpath, allocator)
+		if !got || size == 0 {
+			sibling := strings.concatenate({folder, `\$R`, e.name[2:]}, allocator)
+			if info, serr := os.stat(sibling, allocator); serr == nil && info.size > 0 {
+				size = u64(info.size)
+			}
+		}
+		bytes += size
+		items += 1
+	}
+	return bytes, items, true
+}
+
+// recorded_size is the original file size a $I record stores at byte 8.
+@(private)
+recorded_size :: proc(path: string, allocator := context.temp_allocator) -> (size: u64, ok: bool) {
+	data, err := os.read_entire_file(path, allocator)
+	if err != nil || len(data) < 16 {
+		return 0, false
+	}
+	return endian.get_u64(data[8:16], .Little)
 }
 
 /*

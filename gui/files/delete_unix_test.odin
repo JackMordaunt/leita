@@ -23,7 +23,7 @@ a_partial_delete_says_so_and_counts_only_what_went :: proc(t: ^testing.T) {
 		log.warn("skipped: as root a read-only folder does not stop a delete")
 		return
 	}
-	base, _ := os.temp_directory(context.temp_allocator)
+	base := temp_root()
 	root := strings.concatenate(
 		{base, fmt.tprintf("/leita_files_partly_%d", os.get_pid())},
 		context.temp_allocator,
@@ -62,6 +62,23 @@ a_partial_delete_says_so_and_counts_only_what_went :: proc(t: ^testing.T) {
 	testing.expect(t, os.exists(at(root, "/kept")), "the other name is not touched")
 	info, _ := os.stat_do_not_follow_links(tree, context.temp_allocator)
 	testing.expect_value(t, info.mode & os.Permissions_All, read_only)
+}
+
+// The directory delete_tree is given must not itself be reached through a link.
+// macOS's temp directory is named under /var, and that component is one.
+@(test)
+the_temp_root_a_delete_uses_has_no_link_ancestor :: proc(t: ^testing.T) {
+	root := temp_root()
+	testing.expect(t, root != "", "a temp directory")
+	path := root
+	for len(path) > 1 {
+		testing.expect(t, !is_link(path), path)
+		i := strings.last_index(path, "/")
+		if i <= 0 {
+			break
+		}
+		path = path[:i]
+	}
 }
 
 // blocks is what the file at path takes on disk, as held_alone counts it.
