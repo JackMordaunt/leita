@@ -1,6 +1,7 @@
 package leita_app
 
 import "core:fmt"
+import "core:strings"
 
 import "jm:i18n"
 
@@ -30,6 +31,15 @@ settings_open :: proc(d: ^Desk, path: string) {
 		return
 	}
 	d.settings = st
+	update_restore(d)
+}
+
+// update_restore reads the shared check and the dismissed version. Absent
+// stays off: an older store has no updates key.
+update_restore :: proc(d: ^Desk, allocator := context.allocator) {
+	d.update_checked = update_checked_load(d)
+	delete(d.update_dismissed, allocator)
+	d.update_dismissed = update_dismissed_load(d, allocator)
 }
 
 settings_close :: proc(d: ^Desk) {
@@ -40,21 +50,24 @@ settings_close :: proc(d: ^Desk) {
 	}
 }
 
-settings_answer :: proc(d: ^Desk) -> query.Settings_Result {
+settings_answer :: proc(d: ^Desk, allocator := context.temp_allocator) -> query.Settings_Result {
 	r: query.Settings_Result
 	if d.settings == nil {
 		return r
 	}
-	if tag, ok := settings.get(d.settings, settings.LANGUAGE, context.temp_allocator); ok {
+	if tag, ok := settings.get(d.settings, settings.LANGUAGE, allocator); ok {
 		r.language = tag
 	}
-	if theme, ok := settings.get(d.settings, settings.THEME, context.temp_allocator); ok {
+	if theme, ok := settings.get(d.settings, settings.THEME, allocator); ok {
 		switch theme {
 		case "light":
 			r.theme = .Light
 		case "dark":
 			r.theme = .Dark
 		}
+	}
+	if value, found := settings.get(d.settings, settings.UPDATES, allocator); found {
+		r.automatic_checks = value == "on"
 	}
 	return r
 }
@@ -73,6 +86,25 @@ remember_theme :: proc(d: ^Desk, c: command.Theme) {
 		return
 	}
 	keep_setting(d, settings.THEME, "dark" if c.dark else "light")
+}
+
+// remember_updates keeps the opt-in. Off is written, so a later run stays
+// off; a store that never had the key stays off without this write.
+remember_updates :: proc(d: ^Desk, on: bool) {
+	if d.settings == nil {
+		return
+	}
+	keep_setting(d, settings.UPDATES, "on" if on else "off")
+}
+
+// remember_dismiss hides the notice for version until a different one is
+// published. About can still show it.
+remember_dismiss :: proc(d: ^Desk, version: string, allocator := context.allocator) {
+	if d.settings != nil {
+		keep_setting(d, settings.UPDATE_DISMISSED, version)
+	}
+	delete(d.update_dismissed, allocator)
+	d.update_dismissed = strings.clone(version, allocator)
 }
 
 @(private = "file")

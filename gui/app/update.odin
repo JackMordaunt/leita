@@ -11,9 +11,9 @@ import "../../version"
 import "../query"
 
 /*
-Updates, on the desk: About's Check for updates and the Update button beside it.
-Neither happens unless a person clicks it: the desk starts no check of its own,
-at start-up or later, and query.Update is Idle until one is asked for.
+Updates, on the desk: About's Check for updates, and the one startup check
+and one daily check when the person has opted in. Nothing installs unless
+they click Update, and an ineligible release is not that click.
 
 A check or an update waits on the network and the disk, so it runs on a thread
 of its own, one at a time, and comes back through a port as Updated, as a
@@ -55,6 +55,22 @@ Update_Job :: struct {
 // (update.RELEASE_BASE, or LEITA_RELEASE_BASE).
 update_open :: proc(d: ^Desk, base: string) {
 	d.update_base = strings.clone(base)
+}
+
+// update_apply installs only what a check found, what can be replaced in
+// place, and what this copy's paid-through date allows. Anything else is
+// left on the installed build.
+update_apply :: proc(d: ^Desk) {
+	if d.update_state != .Available || !d.update_can_apply {
+		return
+	}
+	if !coverage_allows(update_coverage(d)) {
+		return
+	}
+	if d.updates == nil {
+		return
+	}
+	update_begin(d, true)
 }
 
 // update_begin starts a check, or an update when apply is set, unless one is
@@ -145,15 +161,26 @@ update_stop :: proc(d: ^Desk) {
 	}
 }
 
-update_close :: proc(d: ^Desk) {
-	delete(d.update_base)
+update_close :: proc(d: ^Desk, allocator := context.allocator) {
+	delete(d.update_base, allocator)
+	delete(d.update_dismissed, allocator)
+	d.update_dismissed = ""
 }
 
 update_answer :: proc(d: ^Desk) -> query.Update_Result {
+	coverage := update_coverage(d)
+	at, stamped := update.released(&d.update_result)
 	r := query.Update_Result {
 		state     = d.update_state,
-		can_apply = d.update_can_apply,
+		can_apply = d.update_can_apply && coverage_allows(coverage),
 		page      = update.RELEASE_PAGE,
+		coverage  = coverage,
+	}
+	if coverage != .None {
+		r.paid_through = d.licence.paid_through
+	}
+	if stamped {
+		r.released = at
 	}
 	switch d.update_state {
 	case .Idle, .Checking, .Applying:
@@ -161,6 +188,10 @@ update_answer :: proc(d: ^Desk) -> query.Update_Result {
 	case .Current, .Available, .Applied, .Failed:
 	}
 	r.latest = update.latest(&d.update_result)
+	if d.update_state == .Available || d.update_result.reason == .Ineligible {
+		r.guidance = update_guidance(d)
+	}
+	r.notice = update_notice_due(d, r.latest, coverage)
 	if d.update_state != .Failed {
 		return r
 	}
@@ -171,6 +202,9 @@ update_answer :: proc(d: ^Desk) -> query.Update_Result {
 		r.problem = .Unreachable
 	case .Not_Published:
 		r.problem = .Not_Published
+	case .Ineligible:
+		r.problem = .Ineligible
+		r.detail = update.message(&d.update_result)
 	case .None,
 	     .Dev_Build,
 	     .Link,
@@ -182,11 +216,70 @@ update_answer :: proc(d: ^Desk) -> query.Update_Result {
 	     .Bad_Signature,
 	     .Bad_Download,
 	     .Cannot_Replace,
-	     .Ineligible,
 	     .Journal,
 	     .Scoop:
 		r.problem = .Other
 		r.detail = update.message(&d.update_result)
 	}
 	return r
+}
+
+// update_notice_due is the quiet banner: a release we can name, not the one
+// whose notice was dismissed. About still shows that release.
+@(private)
+update_notice_due :: proc(d: ^Desk, latest: string, coverage: query.Update_Coverage) -> bool {
+	if latest == "" || latest == d.update_dismissed {
+		return false
+	}
+	switch d.update_state {
+	case .Available:
+		return true
+	case .Failed:
+		return(
+			coverage == .Later ||
+			coverage == .Unstamped ||
+			d.update_result.reason == .Ineligible \
+		)
+	case .Idle, .Checking, .Current, .Applying, .Applied:
+		return false
+	}
+	return false
+}
+
+// update_guidance is why this copy is not replaced in place.
+@(private)
+update_guidance :: proc(d: ^Desk) -> query.Update_Guidance {
+	cfg := update.default_config(.Window, version.VERSION)
+	if d.update_exe != "" {
+		cfg.exe = d.update_exe
+	}
+	switch update.why_not(cfg) {
+	case .None,
+	     .Unsupported,
+	     .No_Library,
+	     .Unreachable,
+	     .Not_Published,
+	     .Bad_Signature,
+	     .Bad_Download,
+	     .Cannot_Replace,
+	     .Ineligible:
+		return .None
+	case .Dev_Build:
+		return .Dev
+	case .Link:
+		return .Link
+	case .Bundle:
+		return .Bundle
+	case .Package:
+		return .Package
+	case .App_Image:
+		return .App_Image
+	case .Installer:
+		return .Installer
+	case .Journal:
+		return .Journal
+	case .Scoop:
+		return .Scoop
+	}
+	return .None
 }
