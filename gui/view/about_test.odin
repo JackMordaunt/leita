@@ -1,6 +1,7 @@
 package leita_view
 
 import "core:fmt"
+import "core:strings"
 import "core:testing"
 
 import "jm:ui"
@@ -243,6 +244,72 @@ about_checks_for_updates_on_request_and_shows_the_result :: proc(t: ^testing.T) 
 		t,
 		ui.probe_tagged(&h.p, "The update failed: cannot move the file aside"),
 		"an error the window has no words for is said as it was",
+	)
+}
+
+@(private = "file")
+checks_box_line :: proc(p: ^ui.Probe) -> string {
+	said := ui.probe_semantics(p, context.temp_allocator)
+	mark := `checkbox "Check for updates automatically"`
+	at := strings.index(said, mark)
+	if at < 0 {
+		return ""
+	}
+	rest := said[at:]
+	if nl := strings.index(rest, "\n"); nl >= 0 {
+		return rest[:nl]
+	}
+	return rest
+}
+
+// The checkbox shows the click at once. A host answer that could not save
+// the choice clears that, leaves the box off, and says checks are off for
+// this session. It does not say the click was kept.
+@(test)
+a_failed_update_choice_clears_the_optimistic_checkbox :: proc(t: ^testing.T) {
+	m: Model
+	defer model_destroy(&m)
+	fonts := []ops.Font_Ref {
+		{0, ui.default_font(), 400},
+		{1, ui.default_font(), 500},
+		{2, ui.default_font(), 600},
+		{3, ui.default_font(), 400},
+	}
+	h: render.Headless
+	render.headless_init(&h, about_frame, &m, {900, 700}, fonts)
+	defer render.headless_destroy(&h)
+
+	warning := fmt.tprintf(
+		"Automatic checks are off for this session. The choice could not be saved. The saved choice applies the next time %s opens.",
+		version.PRODUCT,
+	)
+	testing.expect(t, choose(&h.p, &m, "About Leita"))
+	ui.probe_advance(&h.p, 10, 1.0 / 60)
+	testing.expect(t, !ui.probe_tagged(&h.p, warning), "a saved session shows no warning")
+	testing.expect(t, !strings.contains(checks_box_line(&h.p), " checked"), "the box starts off")
+
+	testing.expect(t, ui.probe_click_top(&h.p, "Check for updates automatically"))
+	if got, ok := sent(&h.p, command.Automatic_Checks).?;
+	   testing.expect(t, ok, "the click asks to opt in") {
+		testing.expect(t, got.on)
+	}
+	want, optimistic := m.checks_want.?
+	testing.expect(t, optimistic && want, "the box is optimistic on until the host answers")
+	testing.expect(t, strings.contains(checks_box_line(&h.p), " checked"), "the click shows on")
+
+	ui.probe_deliver(
+		&h.p,
+		query.Settings{},
+		query.Settings_Result{automatic_checks = false, automatic_checks_unsaved = true},
+	)
+	ui.probe_advance(&h.p, 2, 1.0 / 60)
+	_, still := m.checks_want.?
+	testing.expect(t, !still, "the failed answer drops the optimistic box")
+	testing.expect(t, !strings.contains(checks_box_line(&h.p), " checked"), "the box resolves off")
+	testing.expect(
+		t,
+		ui.probe_tagged(&h.p, warning),
+		"the warning says checks are off this session",
 	)
 }
 

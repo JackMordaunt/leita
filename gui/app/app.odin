@@ -225,6 +225,10 @@ Desk :: struct {
 	update_dismissed:    string,
 	update_auto_count:   int,
 	update_manual_count: int,
+	// update_save_failed is set when this session could not write the
+	// automatic-check choice. Checks stay off until the process ends. The
+	// stored choice is what the next launch reads.
+	update_save_failed:  bool,
 	// When leita first ran here, the start of the evaluation (licence.first_use).
 	first_use:           time.Time,
 	// Searching (search.odin): each live Search need's finding, each pass out

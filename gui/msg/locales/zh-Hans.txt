@@ -40,6 +40,7 @@ update_failed = 更新失败：{0}
 update_privacy = 检查在你打开之前不会进行。检查只向 GitHub 询问公开的发行版。不会发送任何关于你或你的磁盘的信息，{0} 也不会自行安装发行版。
 automatic_checks = 自动检查更新
 automatic_checks_caption = {0} 打开时检查一次，保持打开时每天检查一次。检查只询问公开的发行版，{0} 从不会自行安装。
+automatic_checks_unsaved = 本次会话中自动检查已关闭。该选择未能保存。已保存的选择将在下次打开 {0} 时生效。
 update_notes = 发行说明
 update_covered = 此发行版在付费覆盖日期 {0} 之内。
 update_later = {0} 的 Pro 保持到 {1}。版本 {2} 于 {3} 发布，晚于该日期，因此没有安装。

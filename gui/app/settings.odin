@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:strings"
 
 import "jm:i18n"
+import "jm:sqlite3"
 
 import "../../settings"
 import "../command"
@@ -52,6 +53,11 @@ settings_close :: proc(d: ^Desk) {
 
 settings_answer :: proc(d: ^Desk, allocator := context.temp_allocator) -> query.Settings_Result {
 	r: query.Settings_Result
+	// The unsaved flag is reported even when nothing is kept, so About can
+	// say that checks are off for this session.
+	if d.update_save_failed {
+		r.automatic_checks_unsaved = true
+	}
 	if d.settings == nil {
 		return r
 	}
@@ -66,8 +72,11 @@ settings_answer :: proc(d: ^Desk, allocator := context.temp_allocator) -> query.
 			r.theme = .Dark
 		}
 	}
-	if value, found := settings.get(d.settings, settings.UPDATES, allocator); found {
-		r.automatic_checks = value == "on"
+	// A choice this session could not write stays off, whatever the store says.
+	if !d.update_save_failed {
+		if value, found := settings.get(d.settings, settings.UPDATES, allocator); found {
+			r.automatic_checks = value == "on"
+		}
 	}
 	return r
 }
@@ -89,12 +98,23 @@ remember_theme :: proc(d: ^Desk, c: command.Theme) {
 }
 
 // remember_updates keeps the opt-in. Off is written, so a later run stays
-// off; a store that never had the key stays off without this write.
+// off; a store that never had the key stays off without this write. A
+// missing store or a failed write leaves checks off for this session and
+// leaves the stored choice for the next launch. It does not try again.
 remember_updates :: proc(d: ^Desk, on: bool) {
 	if d.settings == nil {
+		d.update_save_failed = true
+		fmt.eprintln("leita: could not keep the update choice: settings are not open")
 		return
 	}
-	keep_setting(d, settings.UPDATES, "on" if on else "off")
+	if err := settings.set(d.settings, settings.UPDATES, "on" if on else "off"); err != nil {
+		d.update_save_failed = true
+		fault := err.(sqlite3.Fault) or_else sqlite3.Fault{}
+		fmt.eprintln("leita: could not keep the update choice:", fault.text)
+		delete(fault.text, d.settings.db.allocator)
+		return
+	}
+	d.update_save_failed = false
 }
 
 // remember_dismiss hides the notice for version until a different one is

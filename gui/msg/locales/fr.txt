@@ -41,6 +41,7 @@ update_failed = La mise à jour a échoué : {0}
 update_privacy = Les vérifications restent désactivées tant que vous ne les activez pas. Une vérification ne demande à GitHub que la version publique. Rien sur vous ni sur vos disques n’est envoyé, et {0} n’installe jamais une version de lui-même.
 automatic_checks = Vérifier les mises à jour automatiquement
 automatic_checks_caption = Une vérification à l’ouverture de {0}, et une par jour tant qu’il reste ouvert. La vérification ne demande que la version publique, et {0} n’en installe jamais.
+automatic_checks_unsaved = Les vérifications automatiques sont désactivées pour cette session. Le choix n’a pas pu être enregistré. Le choix enregistré s’applique à la prochaine ouverture de {0}.
 update_notes = Notes de version
 update_covered = Cette version est couverte jusqu’au {0}.
 update_later = {0} reste Pro jusqu’au {1}. La version {2} est sortie le {3}, après cette date, elle n’a donc pas été installée.

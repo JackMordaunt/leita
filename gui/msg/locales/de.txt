@@ -39,6 +39,7 @@ update_failed = Das Update ist fehlgeschlagen: {0}
 update_privacy = Prüfungen bleiben aus, bis Sie sie einschalten. Eine Prüfung fragt bei GitHub nur das öffentliche Release ab. Es wird nichts über Sie oder Ihre Datenträger gesendet, und {0} installiert nie selbst ein Release.
 automatic_checks = Automatisch nach Updates suchen
 automatic_checks_caption = Eine Prüfung, wenn {0} startet, und eine am Tag, solange es geöffnet bleibt. Die Prüfung fragt nur das öffentliche Release ab, und {0} installiert nie eines.
+automatic_checks_unsaved = Automatische Prüfungen sind für diese Sitzung aus. Die Auswahl konnte nicht gespeichert werden. Die gespeicherte Auswahl gilt, wenn {0} das nächste Mal geöffnet wird.
 update_notes = Versionshinweise
 update_covered = Dieses Release liegt im bezahlten Zeitraum bis {0}.
 update_later = {0} bleibt Pro bis {1}. Version {2} erschien am {3}, also danach, und wurde nicht installiert.
