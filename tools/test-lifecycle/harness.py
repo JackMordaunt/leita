@@ -6,10 +6,12 @@
 # does not mark those cases, and it does not read LEITA_UPDATE_SEED.
 
 import gzip
+import hashlib
 import io
 import lzma
 import os
 import shutil
+import signal
 import struct
 import subprocess
 import sys
@@ -36,9 +38,188 @@ SIBLING = frozenset({
 })
 
 # A host that already has these is left alone. The namespace cases mount a
-# tmpfs over the path instead of writing the host copy.
+# tmpfs on the existing parent (/usr/local or /var/lib) and create the child
+# only inside that overlay, so a missing libexec or /var/lib/leita is not
+# created on the host.
 HOST_RECORDER = Path("/usr/local/libexec/leita/leita")
 HOST_STATE = Path("/var/lib/leita")
+JOURNAL_CASES = (
+    "linux_journal_alive_across_update",
+    "linux_journal_stop",
+    "linux_journal_restart",
+)
+
+# What a fixture run may carry into a namespace. sudo receives these as
+# arguments to `env -i`, never the ambient environment. A secret is absent
+# because it is not in this set.
+FIXTURE_ENV_KEYS = frozenset({
+    "PATH",
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "USERPROFILE",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "XDG_DATA_HOME",
+    "XDG_CONFIG_HOME",
+    "XDG_CACHE_HOME",
+    "XDG_RUNTIME_DIR",
+    "LOCALAPPDATA",
+    "SYSTEMROOT",
+    "TMPDIR",
+    "TEMP",
+    "TMP",
+    "LD_LIBRARY_PATH",
+    "LEITA_COLOR",
+    "LEITA_BIN",
+    "LEITA_RELEASE_BASE",
+    "LEITA_RELEASED",
+    "TARGET",
+    "LOOSE",
+    "HOST_MNT_NS",
+})
+
+# Exits 97 or 98 before the payload when this process is still the host mount
+# namespace or the new one is not private. namespaced() prepends it to the
+# only shell it runs, and that shell is already inside unshare.
+NAMESPACE_GUARD = r"""
+set -euo pipefail
+self=$(readlink /proc/self/ns/mnt)
+if [ -z "${HOST_MNT_NS:-}" ] || [ "$self" = "$HOST_MNT_NS" ]; then
+  echo "namespace: not a new mount namespace" >&2
+  exit 97
+fi
+if ! awk '
+  BEGIN { found = 0 }
+  $5 == "/" {
+    found = 1
+    opts = ""
+    for (i = 7; i <= NF; i++) {
+      if ($i == "-") break
+      opts = opts " " $i
+    }
+    if (opts ~ /shared:/ || opts ~ /master:/ || opts ~ /propagate_from:/ || opts ~ /unbindable/) exit 1
+  }
+  END { if (!found) exit 1 }
+' /proc/self/mountinfo; then
+  echo "namespace: root mount is not private" >&2
+  exit 98
+fi
+"""
+
+# Mount the existing parent. The child directory is created after the mount,
+# so it lands on the tmpfs. Do not mkdir the parent: that would be the host.
+PACKAGE_SCRIPT = r"""
+set -eu
+if [ ! -d "$TARGET" ]; then
+  echo "namespace: package path does not exist; not creating it on the host" >&2
+  exit 99
+fi
+mount -t tmpfs tmpfs "$TARGET"
+mkdir -p "$TARGET/leita-lifecycle-ci"
+cp "$LEITA_BIN" "$TARGET/leita-lifecycle-ci/leita"
+chmod 755 "$TARGET/leita-lifecycle-ci/leita"
+before=$(sha256sum "$TARGET/leita-lifecycle-ci/leita" | awk '{print $1}')
+set +e
+"$TARGET/leita-lifecycle-ci/leita" update >"$TARGET/lifecycle.out" 2>"$TARGET/lifecycle.err"
+code=$?
+set -e
+after=$(sha256sum "$TARGET/leita-lifecycle-ci/leita" | awk '{print $1}')
+printf 'code=%s\nbefore=%s\nafter=%s\n' "$code" "$before" "$after"
+echo '<<<ERR>>>'
+cat "$TARGET/lifecycle.err" 2>/dev/null || true
+echo '<<<END>>>'
+"""
+
+JOURNAL_PATH_SCRIPT = r"""
+set -eu
+if [ ! -d /usr/local ]; then
+  echo "namespace: /usr/local does not exist; not creating it on the host" >&2
+  exit 99
+fi
+mount -t tmpfs tmpfs /usr/local
+mkdir -p /usr/local/libexec/leita
+cp "$LEITA_BIN" /usr/local/libexec/leita/leita
+chmod 755 /usr/local/libexec/leita/leita
+before=$(sha256sum /usr/local/libexec/leita/leita | awk '{print $1}')
+set +e
+/usr/local/libexec/leita/leita update >/usr/local/lifecycle.out 2>/usr/local/lifecycle.err
+code=$?
+set -e
+after=$(sha256sum /usr/local/libexec/leita/leita | awk '{print $1}')
+printf 'code=%s\nbefore=%s\nafter=%s\n' "$code" "$before" "$after"
+echo '<<<ERR>>>'
+cat /usr/local/lifecycle.err
+echo '<<<END>>>'
+"""
+
+JOURNAL_RUN_SCRIPT = r"""
+set -euo pipefail
+if [ ! -d /var/lib ]; then
+  echo "namespace: /var/lib does not exist; not creating it on the host" >&2
+  exit 99
+fi
+mount -t tmpfs tmpfs /var/lib
+mkdir -p /var/lib/leita/journal
+cp "$LEITA_BIN" /var/lib/leita/leita
+chmod 755 /var/lib/leita/leita
+echo "copied=$(sha256sum /var/lib/leita/leita | awk '{print $1}')"
+pid=""
+pid2=""
+cleanup() {
+  if [ -n "${pid2:-}" ]; then
+    kill -TERM "$pid2" 2>/dev/null || true
+  fi
+  if [ -n "${pid:-}" ]; then
+    kill -TERM "$pid" 2>/dev/null || true
+  fi
+}
+trap cleanup EXIT
+/var/lib/leita/leita journal run >/var/lib/leita/journal.log 2>/var/lib/leita/journal.err &
+pid=$!
+sleep 1
+if ! kill -0 "$pid" 2>/dev/null; then
+  echo journal_exited
+  echo '<<<ERR>>>'
+  cat /var/lib/leita/journal.err 2>/dev/null || true
+  echo '<<<END>>>'
+  exit 0
+fi
+echo journal_alive
+"$LOOSE" update >/var/lib/leita/update.out 2>/var/lib/leita/update.err || true
+if kill -0 "$pid" 2>/dev/null; then
+  echo journal_survived
+else
+  echo journal_died
+fi
+kill -TERM "$pid" 2>/dev/null || true
+set +e
+wait "$pid"
+set -e
+if kill -0 "$pid" 2>/dev/null; then
+  echo journal_still_running
+else
+  echo journal_stopped
+  pid=""
+fi
+/var/lib/leita/leita journal run >/var/lib/leita/journal2.log 2>/var/lib/leita/journal2.err &
+pid2=$!
+sleep 1
+if kill -0 "$pid2" 2>/dev/null; then
+  echo journal_restarted
+  kill -TERM "$pid2" 2>/dev/null || true
+  set +e
+  wait "$pid2"
+  set -e
+  pid2=""
+else
+  echo journal_restart_failed
+  echo '<<<ERR2>>>'
+  cat /var/lib/leita/journal2.err 2>/dev/null || true
+  echo '<<<END>>>'
+fi
+"""
 
 
 def system_name():
@@ -732,16 +913,309 @@ def update_cases(results, old, new, dev, seed, asset, test_line, update_key):
     guard(results, "update_symlink_loose_follows_real", symlink_loose)
 
 
-def namespaced(script, env, timeout=60):
-    """Run script as root in a private mount namespace. Writes stay on the tmpfs."""
-    proc = subprocess.run(
-        ["unshare", "--user", "--map-root-user", "--mount", "bash", "-c", script],
-        env=env,
+def namespace_env(env):
+    """Fixture values that may cross into sudo. Secrets and other ambient values do not."""
+    kept = {}
+    for key, value in env.items():
+        if key not in FIXTURE_ENV_KEYS or key == "HOST_MNT_NS":
+            continue
+        if not isinstance(value, str) or "\0" in value or "\n" in value or "\r" in value:
+            continue
+        kept[key] = value
+    return kept
+
+
+def namespace_argv(script, env, kind):
+    """Argument array for a private mount namespace. `env -i` is the whole environment."""
+    command = ["env", "-i", *[f"{key}={env[key]}" for key in sorted(env)], "bash", "-c", script]
+    if kind == "user":
+        return ["unshare", "--user", "--map-root-user", "--mount", "--propagation", "private", *command]
+    if kind == "root":
+        return ["sudo", "-n", "--", "unshare", "--mount", "--propagation", "private", *command]
+    raise RuntimeError(f"namespace kind {kind} is not user or root")
+
+
+def _probe(argv):
+    return subprocess.run(
+        argv,
+        stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
-        timeout=timeout,
+        timeout=15,
     )
-    return proc
+
+
+def namespace_kind():
+    """'user' when an unprivileged mount namespace works, else 'root' via sudo -n.
+
+    The payload is not part of either probe. A password prompt is never used.
+    """
+    if shutil.which("unshare"):
+        user = _probe(["unshare", "--user", "--map-root-user", "--mount", "--propagation", "private", "true"])
+        if user.returncode == 0:
+            return "user", ""
+        user_err = (user.stderr or user.stdout or "unshare failed").strip()
+    else:
+        user_err = "unshare is not installed"
+    if shutil.which("sudo") and shutil.which("unshare"):
+        root = _probe(["sudo", "-n", "true"])
+        if root.returncode == 0:
+            return "root", ""
+        root_err = (root.stderr or root.stdout or "sudo -n failed").strip()
+    elif not shutil.which("unshare"):
+        root_err = "unshare is not installed"
+    else:
+        root_err = "sudo is not installed"
+    detail = (
+        f"user namespace is unavailable ({user_err}) and passwordless sudo -n "
+        f"cannot open a root mount namespace ({root_err})"
+    )
+    return "", detail
+
+
+def _namespace_parent_env():
+    """Environment of sudo or unshare itself, before `env -i` installs the fixture."""
+    path = os.environ.get("PATH", "")
+    kept = {"PATH": path or "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}
+    for key in ("LANG", "LC_ALL", "USER", "LOGNAME"):
+        value = os.environ.get(key)
+        if value and "\0" not in value and "\n" not in value and "\r" not in value:
+            kept[key] = value
+    return kept
+
+
+def _kill_namespace(pid):
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return
+    except PermissionError:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            return
+
+
+def _run_namespace(argv, timeout):
+    proc = subprocess.Popen(
+        argv,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+        env=_namespace_parent_env(),
+    )
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_namespace(proc.pid)
+        out, err = proc.communicate()
+        err = (err or "") + "\nnamespace: timed out\n"
+        code = proc.returncode if proc.returncode is not None else 124
+        return subprocess.CompletedProcess(argv, code, out or "", err)
+    return subprocess.CompletedProcess(argv, proc.returncode, out or "", err or "")
+
+
+def namespaced(script, env, timeout=60):
+    """Run script as root in a private mount namespace.
+
+    The shell is started only after unshare has created the namespace, and the
+    guard inside that shell returns before the payload if the namespace is the
+    host's or is not private. Nothing here falls back to running the payload
+    on the host.
+    """
+    kind, detail = namespace_kind()
+    if not kind:
+        return subprocess.CompletedProcess([], 127, "", detail + "\n")
+    try:
+        host_ns = os.readlink("/proc/self/ns/mnt")
+    except OSError as err:
+        return subprocess.CompletedProcess([], 127, "", f"could not read the host mount namespace: {err}\n")
+    kept = namespace_env(env)
+    kept["HOST_MNT_NS"] = host_ns
+    return _run_namespace(namespace_argv(NAMESPACE_GUARD + script, kept, kind), timeout)
+
+
+def _mark(path):
+    if not path.exists() and not path.is_symlink():
+        return ("missing",)
+    st = path.lstat()
+    return (st.st_dev, st.st_ino, st.st_mode)
+
+
+def _hash_prefix(path, size):
+    digest = hashlib.sha256()
+    remaining = size
+    with path.open("rb") as handle:
+        while remaining:
+            chunk = handle.read(min(1024 * 1024, remaining))
+            if not chunk:
+                break
+            digest.update(chunk)
+            remaining -= len(chunk)
+    return digest.hexdigest()
+
+
+def host_hold():
+    """Identity of the host recorder and state a namespace must not change.
+
+    The host recorder may append to its logs and replace journal/status while
+    a case runs. Those bytes may grow. The recorder binary and the directory
+    inodes may not change, and a missing path must stay missing.
+    """
+    held = {"id": {}, "prefix": {}}
+    for path in (
+        Path("/usr/local"),
+        Path("/usr/local/libexec"),
+        Path("/usr/local/libexec/leita"),
+        HOST_RECORDER,
+        Path("/var/lib"),
+        HOST_STATE,
+        HOST_STATE / "journal",
+    ):
+        held["id"][str(path)] = _mark(path)
+    if HOST_RECORDER.is_file() and not HOST_RECORDER.is_symlink():
+        size = HOST_RECORDER.stat().st_size
+        held["prefix"][str(HOST_RECORDER)] = (size, _hash_prefix(HOST_RECORDER, size), True)
+    if HOST_STATE.is_dir() and not HOST_STATE.is_symlink():
+        for dirpath, dirnames, filenames in os.walk(HOST_STATE, followlinks=False):
+            dirnames.sort()
+            for name in dirnames:
+                child = Path(dirpath) / name
+                held["id"][str(child)] = _mark(child)
+            for name in sorted(filenames):
+                child = Path(dirpath) / name
+                if child.name == "status":
+                    continue
+                held["id"][str(child)] = _mark(child)
+                if child.is_symlink() or not child.is_file():
+                    continue
+                size = child.stat().st_size
+                held["prefix"][str(child)] = (size, _hash_prefix(child, size), False)
+    return held
+
+
+def host_changed(before):
+    """How the host recorder or state differs from before, or '' when it held."""
+    problems = []
+    for path_s, mark in before["id"].items():
+        now = _mark(Path(path_s))
+        if mark == ("missing",):
+            if now != ("missing",):
+                problems.append(f"{path_s} appeared on the host")
+            continue
+        if now != mark:
+            problems.append(f"{path_s} identity changed")
+    for path_s, (size, digest, exact) in before["prefix"].items():
+        path = Path(path_s)
+        if not path.is_file() or path.is_symlink():
+            problems.append(f"{path_s} is no longer that file")
+            continue
+        now = path.stat().st_size
+        if exact and now != size:
+            problems.append(f"{path_s} bytes changed")
+            continue
+        if now < size:
+            problems.append(f"{path_s} shrank")
+            continue
+        if _hash_prefix(path, size) != digest:
+            problems.append(f"{path_s} bytes changed")
+    recorder_dir = HOST_RECORDER.parent
+    if recorder_dir.is_dir() and not recorder_dir.is_symlink():
+        known = {Path(path).name for path in before["id"] if Path(path).parent == recorder_dir}
+        for name in os.listdir(recorder_dir):
+            if name not in known:
+                problems.append(f"{recorder_dir / name} appeared on the host")
+    if HOST_STATE.is_dir() and not HOST_STATE.is_symlink():
+        known = set(before["id"])
+        for dirpath, dirnames, filenames in os.walk(HOST_STATE, followlinks=False):
+            for name in list(dirnames) + list(filenames):
+                child = Path(dirpath) / name
+                if str(child) in known:
+                    continue
+                rel = child.relative_to(HOST_STATE).as_posix()
+                if rel == "journal/status" or (rel.startswith("journal/") and rel.endswith(".log")):
+                    continue
+                problems.append(f"{child} appeared on the host")
+    return "; ".join(problems)
+
+
+def _under(path, parent):
+    resolved = Path(path).resolve()
+    root = Path(parent).resolve()
+    return resolved == root or root in resolved.parents
+
+
+def framed_err(stdout, marker="<<<ERR>>>"):
+    if marker not in stdout:
+        return ""
+    err = stdout.split(marker, 1)[1]
+    if "<<<END>>>" in err:
+        err = err.split("<<<END>>>", 1)[0]
+    return err.strip()
+
+
+def namespace_detail(proc):
+    detail = tail("\n".join(part for part in (proc.stdout, proc.stderr) if part))
+    if proc.returncode not in (0, None):
+        return f"exit {proc.returncode}: {detail}" if detail else f"exit {proc.returncode}"
+    return detail or "the namespace produced no output"
+
+
+def remove_work(work):
+    """Remove a temp directory this harness created. A root-owned leftover uses sudo -n."""
+    if work is None:
+        return
+    shutil.rmtree(work, ignore_errors=True)
+    if not work.exists():
+        return
+    root = Path(tempfile.gettempdir()).resolve()
+    try:
+        resolved = work.resolve()
+    except OSError:
+        return
+    if resolved == root or root not in resolved.parents:
+        return
+    if not resolved.name.startswith(("pkg-", "jpath-", "journal-")):
+        return
+    if shutil.which("sudo") is None:
+        return
+    subprocess.run(
+        ["sudo", "-n", "rm", "-rf", "--", str(resolved)],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+
+def _fail_journal(results, detail):
+    for case_id in JOURNAL_CASES:
+        record(results, case_id, False, detail)
+
+
+def _field(stdout, name):
+    found = [line.split("=", 1)[1] for line in stdout.splitlines() if line.startswith(name + "=")]
+    if not found:
+        return None
+    return found[-1]
+
+
+def _path_result(proc, want_hash):
+    """Refusal parse for a namespaced copy of the real executable."""
+    if _field(proc.stdout, "code") is None or _field(proc.stdout, "before") is None:
+        return (False, namespace_detail(proc))
+    before = _field(proc.stdout, "before")
+    after = _field(proc.stdout, "after")
+    err = framed_err(proc.stdout)
+    try:
+        code = int(_field(proc.stdout, "code"))
+    except (TypeError, ValueError):
+        return (False, namespace_detail(proc))
+    if before != want_hash:
+        return (False, "the namespaced executable was not a copy of the real file: " + namespace_detail(proc))
+    return (code, before, after, err)
 
 
 def linux_path_cases(results, old, new_bytes, seed, asset):
@@ -749,104 +1223,92 @@ def linux_path_cases(results, old, new_bytes, seed, asset):
         return
 
     def package_refused():
-        if not shutil.which("unshare"):
-            return False, "unshare is not installed, so a package path was not exercised"
         target = "/usr/libexec" if Path("/usr/libexec").is_dir() else "/usr/share"
         if not Path(target).is_dir():
-            return False, "no /usr directory was available to mount a package path over"
+            return False, "no existing /usr directory was available to mount a package path over"
+        if _under(old, target):
+            return False, f"{old} is under {target}; mounting there would hide the executable"
+        before_host = host_hold()
         work = Path(tempfile.mkdtemp(prefix="pkg-"))
+        outcome = (False, "the package path was not exercised")
+        caught = None
         try:
             directory = release_dir(work, asset, new_bytes, NEW_VERSION, seed)
-            script = r"""
-set -eu
-mount -t tmpfs tmpfs "$TARGET"
-mkdir -p "$TARGET/leita-lifecycle-ci"
-cp "$LEITA_BIN" "$TARGET/leita-lifecycle-ci/leita"
-chmod 755 "$TARGET/leita-lifecycle-ci/leita"
-before=$(sha256sum "$TARGET/leita-lifecycle-ci/leita" | awk '{print $1}')
-set +e
-"$TARGET/leita-lifecycle-ci/leita" update >"$OUT" 2>"$ERR"
-code=$?
-set -e
-after=$(sha256sum "$TARGET/leita-lifecycle-ci/leita" | awk '{print $1}')
-printf 'code=%s\nbefore=%s\nafter=%s\n' "$code" "$before" "$after"
-"""
-            env, _folder = child_env(work)
-            env.update({
+            env, _folder = child_env(work, {
                 "LEITA_BIN": str(old),
                 "LEITA_RELEASE_BASE": str(directory),
                 "TARGET": target,
-                "OUT": str(work / "out.txt"),
-                "ERR": str(work / "err.txt"),
-                "LEITA_COLOR": "never",
             })
-            proc = namespaced(script, env)
-            text = proc.stdout + "\n" + proc.stderr
-            err = (work / "err.txt").read_text(encoding="utf-8", errors="replace") if (work / "err.txt").exists() else ""
-            if "code=" not in proc.stdout:
-                return False, tail(text)
-            code_line = [line for line in proc.stdout.splitlines() if line.startswith("code=")][-1]
-            before = [line for line in proc.stdout.splitlines() if line.startswith("before=")][-1].split("=", 1)[1]
-            after = [line for line in proc.stdout.splitlines() if line.startswith("after=")][-1].split("=", 1)[1]
-            code = int(code_line.split("=", 1)[1])
-            if before != after or code == 0 or "package manager" not in err:
-                return False, tail(err or text)
-            return True, "a path under /usr outside /usr/local was left in place"
+            if os.environ.get("LD_LIBRARY_PATH"):
+                env["LD_LIBRARY_PATH"] = os.environ["LD_LIBRARY_PATH"]
+            proc = namespaced(PACKAGE_SCRIPT, env)
+            parsed = _path_result(proc, hashlib.sha256(Path(old).read_bytes()).hexdigest())
+            if parsed[0] is False:
+                outcome = parsed
+            else:
+                code, before, after, err = parsed
+                if before != after or code == 0 or "package manager" not in err:
+                    outcome = (False, tail(err) or namespace_detail(proc))
+                else:
+                    outcome = (True, "a path under /usr outside /usr/local was left in place")
+        except Exception as err:
+            caught = err
         finally:
-            shutil.rmtree(work, ignore_errors=True)
+            remove_work(work)
+        problem = host_changed(before_host)
+        if problem:
+            return False, problem
+        if caught is not None:
+            raise caught
+        return outcome
 
     def journal_path():
-        # The host recorder, when it exists, stays on disk. The mount hides
-        # that directory inside the namespace, and the writes land on a tmpfs.
-        if not shutil.which("unshare"):
-            return False, "unshare is not installed, so the journal path was not exercised"
-        if not Path("/usr/local/libexec").is_dir():
-            return False, "/usr/local/libexec does not exist; creating it would write to this host"
+        # Writes land on a tmpfs mounted on the existing /usr/local. The
+        # recorder path is created only after that mount.
+        if not Path("/usr/local").is_dir():
+            return False, "/usr/local does not exist; not creating it on this host"
+        if _under(old, "/usr/local"):
+            return False, f"{old} is under /usr/local; mounting there would hide the executable"
+        before_host = host_hold()
         work = Path(tempfile.mkdtemp(prefix="jpath-"))
+        outcome = (False, "the journal path was not exercised")
+        caught = None
         try:
             directory = release_dir(work, asset, new_bytes, NEW_VERSION, seed)
-            script = r"""
-set -eu
-mount -t tmpfs tmpfs /usr/local/libexec
-mkdir -p /usr/local/libexec/leita
-cp "$LEITA_BIN" /usr/local/libexec/leita/leita
-chmod 755 /usr/local/libexec/leita/leita
-before=$(sha256sum /usr/local/libexec/leita/leita | awk '{print $1}')
-set +e
-/usr/local/libexec/leita/leita update >"$OUT" 2>"$ERR"
-code=$?
-set -e
-after=$(sha256sum /usr/local/libexec/leita/leita | awk '{print $1}')
-printf 'code=%s\nbefore=%s\nafter=%s\n' "$code" "$before" "$after"
-"""
-            env, _folder = child_env(work)
-            env.update({
+            env, _folder = child_env(work, {
                 "LEITA_BIN": str(old),
                 "LEITA_RELEASE_BASE": str(directory),
-                "OUT": str(work / "out.txt"),
-                "ERR": str(work / "err.txt"),
-                "LEITA_COLOR": "never",
             })
-            proc = namespaced(script, env)
-            err = (work / "err.txt").read_text(encoding="utf-8", errors="replace") if (work / "err.txt").exists() else ""
-            if "before=" not in proc.stdout:
-                return False, tail(proc.stdout + proc.stderr)
-            before = [line for line in proc.stdout.splitlines() if line.startswith("before=")][-1].split("=", 1)[1]
-            after = [line for line in proc.stdout.splitlines() if line.startswith("after=")][-1].split("=", 1)[1]
-            code = int([line for line in proc.stdout.splitlines() if line.startswith("code=")][-1].split("=", 1)[1])
-            if before != after or code == 0:
-                return False, "the journal recorder path was replaced: " + tail(err)
-            if "package manager" in err and "journal" not in err.lower():
-                return False, "the path was refused as a package path, not as the journal recorder: " + tail(err)
-            # A refusal that only says the directory cannot be written is not
-            # the journal rule. The tmpfs is writable by the namespace root,
-            # so a replaced file is a miss. An unchanged file whose refusal
-            # names the recorder passes.
-            if "journal" not in err.lower() and "recorder" not in err.lower():
-                return False, "the file was unchanged but the refusal is not the journal recorder: " + tail(err or proc.stderr)
-            return True, "the exact recorder path was not replaced"
+            if os.environ.get("LD_LIBRARY_PATH"):
+                env["LD_LIBRARY_PATH"] = os.environ["LD_LIBRARY_PATH"]
+            proc = namespaced(JOURNAL_PATH_SCRIPT, env)
+            parsed = _path_result(proc, hashlib.sha256(Path(old).read_bytes()).hexdigest())
+            if parsed[0] is False:
+                outcome = parsed
+            else:
+                code, before, after, err = parsed
+                if before != after or code == 0:
+                    outcome = (False, "the journal recorder path was replaced: " + (tail(err) or namespace_detail(proc)))
+                elif "package manager" in err and "journal" not in err.lower():
+                    outcome = (False, "the path was refused as a package path, not as the journal recorder: " + tail(err))
+                elif "journal" not in err.lower() and "recorder" not in err.lower():
+                    # A refusal that only says the directory cannot be written is not
+                    # the journal rule. The tmpfs is writable by the namespace root,
+                    # so a replaced file is a miss. An unchanged file whose refusal
+                    # names the recorder passes.
+                    outcome = (False, "the file was unchanged but the refusal is not the journal recorder: " + tail(err or proc.stderr))
+                else:
+                    outcome = (True, "the exact recorder path was not replaced")
+        except Exception as err:
+            caught = err
         finally:
-            shutil.rmtree(work, ignore_errors=True)
+            remove_work(work)
+        problem = host_changed(before_host)
+        if problem:
+            return False, problem
+        if caught is not None:
+            raise caught
+        return outcome
 
     guard(results, "update_package_refused", package_refused)
     guard(results, "update_journal_path_not_replaced", journal_path)
@@ -855,96 +1317,43 @@ printf 'code=%s\nbefore=%s\nafter=%s\n' "$code" "$before" "$after"
 def linux_journal_cases(results, old, new_bytes, seed, asset):
     if system_name() != "linux":
         return
-    work = Path(tempfile.mkdtemp(prefix="journal-"))
-    created_state = False
     try:
-        if not shutil.which("unshare"):
-            detail = "unshare is not installed, so the recorder was not started"
-            for case_id in (
-                "linux_journal_alive_across_update",
-                "linux_journal_stop",
-                "linux_journal_restart",
-            ):
-                record(results, case_id, False, detail)
+        before_host = host_hold()
+    except OSError as err:
+        _fail_journal(results, f"could not read the host recorder or state: {err}")
+        return
+    work = None
+    try:
+        if not Path("/var/lib").is_dir():
+            _fail_journal(results, "/var/lib does not exist; not creating it on this host")
             return
-        if not HOST_STATE.exists():
-            made = subprocess.run(["sudo", "-n", "mkdir", "-p", str(HOST_STATE)], capture_output=True, text=True)
-            if made.returncode != 0:
-                detail = "passwordless sudo cannot prepare /var/lib/leita, and creating it without sudo would skip the mount"
-                for case_id in (
-                    "linux_journal_alive_across_update",
-                    "linux_journal_stop",
-                    "linux_journal_restart",
-                ):
-                    record(results, case_id, False, detail)
-                return
-            created_state = True
+        if _under(old, "/var/lib"):
+            _fail_journal(results, f"{old} is under /var/lib; mounting there would hide the executable")
+            return
+        work = Path(tempfile.mkdtemp(prefix="journal-"))
         directory = release_dir(work, asset, new_bytes, NEW_VERSION, seed)
         loose = place(old, work / "loose" / exe_name())
-        script = r"""
-set -euo pipefail
-mount -t tmpfs tmpfs /var/lib/leita
-mkdir -p /var/lib/leita/journal
-"$LEITA_BIN" journal run >"$LOG" 2>"$ERR" &
-pid=$!
-sleep 1
-if ! kill -0 "$pid" 2>/dev/null; then
-  echo journal_exited
-  exit 0
-fi
-echo journal_alive
-# A loose copy, not the recorder. The host recorder is not this file.
-LEITA_COLOR=never LEITA_RELEASE_BASE="$LEITA_RELEASE_BASE" "$LOOSE" update >"$UPD" 2>"$UPDERR" || true
-if kill -0 "$pid" 2>/dev/null; then
-  echo journal_survived
-else
-  echo journal_died
-fi
-kill -TERM "$pid" 2>/dev/null || true
-wait "$pid" || true
-if kill -0 "$pid" 2>/dev/null; then
-  echo journal_still_running
-else
-  echo journal_stopped
-fi
-"$LEITA_BIN" journal run >"$LOG2" 2>"$ERR2" &
-pid2=$!
-sleep 1
-if kill -0 "$pid2" 2>/dev/null; then
-  echo journal_restarted
-  kill -TERM "$pid2" 2>/dev/null || true
-  wait "$pid2" || true
-else
-  echo journal_restart_failed
-fi
-"""
-        env = os.environ.copy()
-        env.pop("LEITA_UPDATE_SEED", None)
-        env.update({
+        if _under(loose, "/var/lib") or _under(directory, "/var/lib"):
+            _fail_journal(results, "the loose copy or the release is under /var/lib")
+            return
+        extra = {
             "LEITA_BIN": str(old),
             "LOOSE": str(loose),
             "LEITA_RELEASE_BASE": str(directory),
-            "LOG": str(work / "journal.log"),
-            "ERR": str(work / "journal.err"),
-            "LOG2": str(work / "journal2.log"),
-            "ERR2": str(work / "journal2.err"),
-            "UPD": str(work / "update.out"),
-            "UPDERR": str(work / "update.err"),
-            "LEITA_COLOR": "never",
-            "PATH": os.environ.get("PATH", ""),
-            "HOME": str(work / "home"),
-        })
-        proc = namespaced(script, env, timeout=40)
+        }
+        if os.environ.get("LD_LIBRARY_PATH"):
+            extra["LD_LIBRARY_PATH"] = os.environ["LD_LIBRARY_PATH"]
+        env, _folder = child_env(work, extra)
+        proc = namespaced(JOURNAL_RUN_SCRIPT, env, timeout=60)
         text = proc.stdout
-        err = (work / "journal.err").read_text(encoding="utf-8", errors="replace") if (work / "journal.err").exists() else ""
+        want = hashlib.sha256(Path(old).read_bytes()).hexdigest()
+        if f"copied={want}" not in text:
+            detail = "the running recorder was not a copy of the real executable: " + namespace_detail(proc)
+            _fail_journal(results, detail)
+            return
         if "journal_alive" not in text:
-            detail = tail(err or proc.stderr or text) or "the recorder exited immediately"
-            for case_id in (
-                "linux_journal_alive_across_update",
-                "linux_journal_stop",
-                "linux_journal_restart",
-            ):
-                record(results, case_id, False, detail)
+            detail = framed_err(text) or namespace_detail(proc)
+            _fail_journal(results, detail or "the recorder exited immediately")
             return
         record(
             results,
@@ -958,26 +1367,26 @@ fi
             "journal_stopped" in text,
             "SIGTERM stopped the recorder" if "journal_stopped" in text else "the recorder was still running after SIGTERM",
         )
+        restart_err = framed_err(text, "<<<ERR2>>>")
         record(
             results,
             "linux_journal_restart",
             "journal_restarted" in text,
-            "the recorder started again" if "journal_restarted" in text else tail((work / "journal2.err").read_text(encoding="utf-8", errors="replace") if (work / "journal2.err").exists() else text),
+            "the recorder started again" if "journal_restarted" in text else (restart_err or namespace_detail(proc)),
         )
     except Exception as err:
         detail = f"{type(err).__name__}: {err}"
-        for case_id in (
-            "linux_journal_alive_across_update",
-            "linux_journal_stop",
-            "linux_journal_restart",
-        ):
+        for case_id in JOURNAL_CASES:
             results.setdefault(case_id, {"id": case_id, "status": "fail", "detail": detail})
     finally:
-        shutil.rmtree(work, ignore_errors=True)
-        if created_state:
-            subprocess.run(["sudo", "-n", "rmdir", str(HOST_STATE)], capture_output=True)
-        elif not HOST_STATE.exists():
-            print("lifecycle: host /var/lib/leita disappeared; that must not happen", file=sys.stderr)
+        remove_work(work)
+        try:
+            problem = host_changed(before_host)
+        except OSError as err:
+            problem = f"could not read the host recorder or state: {err}"
+        if problem:
+            _fail_journal(results, problem)
+            print(f"lifecycle: {problem}", file=sys.stderr)
 
 
 def payload_path(dest, name):
