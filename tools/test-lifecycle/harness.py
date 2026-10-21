@@ -528,7 +528,10 @@ def update_cases(results, old, new, dev, seed, asset, test_line, update_key):
             before = binary.read_bytes()
             if os.name == "nt":
                 user = "*S-1-1-0"  # Everyone, including the runner process token.
-                proc = subprocess.run(["icacls", str(folder), "/deny", f"{user}:(OI)(CI)(W,D,DC)"], capture_output=True, text=True)
+                # Deny specific writes, not generic W: W includes SYNCHRONIZE,
+                # also required to read/execute the program being tested.
+                # https://learn.microsoft.com/en-us/windows/win32/fileio/file-security-and-access-rights
+                proc = subprocess.run(["icacls", str(folder), "/deny", f"{user}:(OI)(CI)(WD,AD,WEA,WA,D,DC)"], capture_output=True, text=True)
                 if proc.returncode != 0:
                     return False, tail(proc.stderr) or "icacls could not remove write access"
             else:
@@ -546,6 +549,9 @@ def update_cases(results, old, new, dev, seed, asset, test_line, update_key):
                     pass
                 else:
                     return False, "permission fixture still permits creating a file beside the executable"
+                readable, version_out, version_err = invoke(binary, ["--version"], env)
+                if readable != 0:
+                    return False, "permission fixture prevents execution: " + tail(version_out + version_err)
                 code, _out, err = invoke(binary, ["update"], env)
             finally:
                 if os.name != "nt":
@@ -1379,7 +1385,7 @@ def darwin_packages(results, update_key, licence_key):
         results.setdefault("packaged_dmg", {"id": "packaged_dmg", "status": "fail", "detail": detail})
 
 
-def windows_installer(results):
+def windows_installer(results, built_cli):
     if system_name() != "windows":
         return
 
@@ -1398,6 +1404,9 @@ def windows_installer(results):
         try:
             pack = work / "pack"
             shutil.copytree(ROOT / "build" / "release", pack)
+            # build/release/leita.exe is the last CLI build (the dev fixture).
+            # Use the versioned CLI that the archive case packages instead.
+            shutil.copy2(built_cli, pack / exe_name())
             # Match release.yml: the installer consumes the archive staging
             # tree, which includes the repository's licence and notices.
             for notice in ("LICENSE.md", "THIRD_PARTY.md"):
@@ -1493,7 +1502,7 @@ def run(directory, sha, system):
     linux_journal_cases(results, old, new.read_bytes(), update_key.seed, asset)
     packaging_cases(results, new, update_key.public_hex, licence_key)
     darwin_packages(results, update_key.public_hex, licence_key)
-    windows_installer(results)
+    windows_installer(results, new)
     return results
 
 
