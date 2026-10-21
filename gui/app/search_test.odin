@@ -100,7 +100,7 @@ search_fixture :: proc(t: ^testing.T, name: string) -> string {
 		body := make([]byte, 1024 * (1 + len(f)), context.temp_allocator)
 		testing.expect(t, os.write_entire_file(fmt.tprintf("%s%s", root, f), body) == nil)
 	}
-	return root
+	return stored_path(root)
 }
 
 // A search of a finished scan answers its best hits first, each with its

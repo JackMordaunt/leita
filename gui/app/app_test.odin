@@ -40,7 +40,6 @@ import "../../scan"
 import "../../schedule"
 import "../../settings"
 import "../../update"
-import "../../version"
 import "../command"
 import "../msg"
 import "../query"
@@ -77,6 +76,8 @@ rig_open :: proc(
 	made_up := false,
 	scheduler: ^schedule.Host = nil,
 	monitor_argv: []string = nil,
+	update_key: []byte = nil,
+	update_exe := "",
 ) {
 	if !made_up {
 		env_share()
@@ -97,6 +98,8 @@ rig_open :: proc(
 		release_base = release_base,
 		scheduler = scheduler,
 		monitor_argv = monitor_argv,
+		update_key = update_key,
+		update_exe = update_exe,
 	)
 	r.data = data_host(&r.h)
 	view.model_init(&r.m, path)
@@ -329,6 +332,25 @@ under :: proc(dir: string, names: ..string) -> string {
 	return strings.to_string(sb)
 }
 
+// stored_path returns scan.location after resolve when ODIN_OS is Windows,
+// and dir otherwise.
+@(private)
+stored_path :: proc(dir: string) -> string {
+	when ODIN_OS != .Windows {
+		return dir
+	}
+	named, _, err := scan.resolve(dir)
+	if err != nil {
+		return dir
+	}
+	defer scan.target_destroy(&named)
+	got := scan.location(named, context.temp_allocator)
+	if got == "" {
+		return dir
+	}
+	return got
+}
+
 // The name carries this process's id so two test runs do not share the path.
 @(private = "file")
 fixture :: proc(t: ^testing.T, name: string) -> string {
@@ -349,7 +371,7 @@ fixture :: proc(t: ^testing.T, name: string) -> string {
 	write(t, fmt.tprintf("%s/photos/big.raw", root), 256 * 1024)
 	write(t, fmt.tprintf("%s/photos/small.jpg", root), 8 * 1024)
 	write(t, fmt.tprintf("%s/notes.txt", root), 4 * 1024)
-	return root
+	return stored_path(root)
 }
 
 @(test)
@@ -1593,7 +1615,7 @@ projects :: proc(t: ^testing.T, name: string) -> string {
 	write(t, fmt.tprintf("%s/rust/target/CACHEDIR.TAG", root), 4 * 1024)
 	write(t, fmt.tprintf("%s/plain/build/out.o", root), 32 * 1024)
 	age(t, fmt.tprintf("%s/web/node_modules", root), 30)
-	return root
+	return stored_path(root)
 }
 
 // The candidates projects makes, as the Reclaim list names them: joined on the
@@ -1948,7 +1970,7 @@ big_fixture :: proc(t: ^testing.T, name: string) -> string {
 		}
 	}
 	testing.expect(t, ok, "could not make the big fixture")
-	return root
+	return stored_path(root)
 }
 
 // A big chart says only its top layer to a screen reader, its folders closed,
@@ -3676,33 +3698,45 @@ monitoring_warns_of_running_only_while_logged_in_from_the_start :: proc(t: ^test
 }
 
 // publish_release writes a release as release.yml does for update.asset(.Window):
-// the build, its sha256 and the version, in dir.
+// the build, version.txt, and sha256sums.txt signed by priv. The signature is
+// not listed in the sums. priv is a throwaway test key, not the release key.
 @(private = "file")
-publish_release :: proc(t: ^testing.T, dir, build, version: string) {
+publish_release :: proc(t: ^testing.T, dir, build, version: string, priv: ^ed25519.Private_Key) {
 	name := update.asset(.Window)
 	testing.expect(t, name != "", "a release is built for this platform")
 	testing.expect(t, os.make_directory(dir) == nil, "could not make the release")
-	digest := hash.hash_string(.SHA256, build, context.temp_allocator)
-	sums := fmt.tprintf("%s  %s\n", string(hex.encode(digest, context.temp_allocator)), name)
+	asset_sum := string(hex.encode(hash.hash_string(.SHA256, build, context.temp_allocator), context.temp_allocator))
+	version_sum := string(hex.encode(hash.hash_string(.SHA256, version, context.temp_allocator), context.temp_allocator))
+	sums := fmt.tprintf("%s  %s\n%s  version.txt\n", asset_sum, name, version_sum)
 	testing.expect(t, os.write_entire_file(fmt.tprintf("%s/%s", dir, name), build) == nil)
-	testing.expect(t, os.write_entire_file(fmt.tprintf("%s/sha256sums.txt", dir), sums) == nil)
 	testing.expect(t, os.write_entire_file(fmt.tprintf("%s/version.txt", dir), version) == nil)
+	testing.expect(t, os.write_entire_file(fmt.tprintf("%s/sha256sums.txt", dir), sums) == nil)
+	sig: [ed25519.SIGNATURE_SIZE]byte
+	ed25519.sign(priv, transmute([]byte)sums, sig[:])
+	testing.expect(t, os.write_entire_file(fmt.tprintf("%s/sha256sums.txt.sig", dir), sig[:]) == nil)
 }
 
 // About asks the release nothing until Check for updates is clicked, then reads
-// it where the host was told and says what it holds. A newer release is
-// offered as Update when this build can be replaced, or Download otherwise.
-// A release that cannot be reached says so.
+// it where the host was told and says what it holds. installed's path contains
+// /.mount_, which install_of reports as an AppImage, so a newer release is
+// Download. A release that cannot be reached says so.
 @(test)
 about_checks_the_release_on_request_only :: proc(t: ^testing.T) {
 	root := fixture(t, "update")
 	defer os.remove_all(root)
 	release := fmt.tprintf("%s-release", root)
 	defer os.remove_all(release)
-	publish_release(t, release, "a newer window", "v9.9.9\n")
+	installed := fmt.tprintf("%s/.mount_leita/leita", root)
+	testing.expect(t, os.make_directory(fmt.tprintf("%s/.mount_leita", root)) == nil)
+	testing.expect(t, os.write_entire_file(installed, "this window") == nil)
+	key: ed25519.Private_Key
+	testing.expect(t, ed25519.private_key_generate(&key), "a throwaway release key")
+	pub: [ed25519.PUBLIC_KEY_SIZE]byte
+	ed25519.private_key_public_bytes(&key, pub[:])
+	publish_release(t, release, "a newer window", "v9.9.9\n", &key)
 
 	r: Rig
-	rig_open(&r, root, release_base = release)
+	rig_open(&r, root, release_base = release, update_key = pub[:], update_exe = installed)
 	defer rig_close(&r)
 	testing.expect(t, settle(&r, "Done"))
 	testing.expect(t, choose(&r, "About Leita"))
@@ -3728,29 +3762,18 @@ about_checks_the_release_on_request_only :: proc(t: ^testing.T) {
 		settle(&r, "Version v9.9.9 of Leita is available."),
 		"the newer release is named",
 	)
-	if update.why_not(update.default_config(.Window, version.VERSION)) == .None {
-		testing.expect(
-			t,
-			settle(&r, "Update"),
-			"a replaceable build is offered an update in place",
-		)
-		testing.expect(t, !ui.probe_tagged(&r.p, "Download the update"))
-	} else {
-		testing.expect(
-			t,
-			settle(&r, "Download the update"),
-			"a build that cannot be replaced is sent to the release page",
-		)
-		testing.expect(t, !ui.probe_tagged(&r.p, "Update"))
-	}
+	testing.expect(
+		t,
+		settle(&r, "Download the update"),
+		"an AppImage path is not replaced in place",
+	)
+	testing.expect(t, !ui.probe_tagged(&r.p, "Update"))
 
-	// The same release when this window's own build is the release's: current.
-	exe, exe_err := os.get_executable_path(context.temp_allocator)
-	testing.expect(t, exe_err == nil)
-	body, read_err := os.read_entire_file(exe, context.temp_allocator)
+	// The same release when installed's bytes are the release's: current.
+	body, read_err := os.read_entire_file(installed, context.temp_allocator)
 	testing.expect(t, read_err == nil)
 	os.remove_all(release)
-	publish_release(t, release, string(body), "v1.0.0\n")
+	publish_release(t, release, string(body), "v1.0.0\n", &key)
 	testing.expect(t, ui.probe_click_top(&r.p, "Check for updates"))
 	hand_on(&r)
 	testing.expect(

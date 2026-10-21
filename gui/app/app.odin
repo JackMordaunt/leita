@@ -201,6 +201,14 @@ Desk :: struct {
 	update_can_apply: bool,
 	update_thread:    ^thread.Thread,
 	updates:          ^stream.Port(Updated),
+	// update_key is the throwaway Ed25519 public key a test signs its fixture
+	// with. Empty means the key compiled into the build, which a debug build
+	// does not have.
+	update_key:       [32]byte,
+	update_key_set:   bool,
+	// update_exe is the executable a test asks the check to classify. "" is
+	// this process.
+	update_exe:       string,
 	// When leita first ran here, the start of the evaluation (licence.first_use).
 	first_use:        time.Time,
 	// Searching (search.odin): each live Search need's finding, each pass out
@@ -250,7 +258,9 @@ licence is kept beside the history store and checked against licence_key, nil
 for the keys leita was built with. A licence key is exchanged for its licence at
 activate_url, "" for LEITA_ACTIVATE_URL or else ACTIVATE_URL. Monitoring is
 handed to scheduler running monitor_argv, nil for the system's scheduler running
-this binary (monitor.odin).
+this binary (monitor.odin). update_key is 32 bytes of a fixture's Ed25519
+public key; nil uses the key the build was given. update_exe is that fixture's
+executable; "" is this process. allocator builds the desk.
 */
 init :: proc(
 	h: ^Host,
@@ -264,8 +274,10 @@ init :: proc(
 	thumbs := "",
 	scheduler: ^schedule.Host = nil,
 	monitor_argv: []string = nil,
+	update_key: []byte = nil,
+	update_exe := "",
+	allocator := context.allocator,
 ) {
-	allocator := context.allocator
 	ui.inbox_init(&h.inbox, allocator)
 	h.workers = stream.workers_start(worker_count(), allocator)
 	h.desk = {
@@ -284,6 +296,11 @@ init :: proc(
 		recording     = &h.recording,
 		scratch       = new(search.Scratch, allocator),
 	}
+	if len(update_key) == 32 {
+		copy(h.desk.update_key[:], update_key)
+		h.desk.update_key_set = true
+	}
+	h.desk.update_exe = update_exe
 	msg.init(h.desk.words, .English)
 	history_open(&h.desk, kept)
 	settings_open(&h.desk, licence.path_beside(kept, context.temp_allocator, settings.FILE))

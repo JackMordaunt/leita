@@ -43,9 +43,12 @@ Updated :: struct {
 // Update_Job is what the thread works from, heap allocated for it.
 @(private = "file")
 Update_Job :: struct {
-	base:  string, // owned; "" for the release update names
-	apply: bool,
-	port:  ^stream.Port(Updated),
+	base:    string, // owned; "" for the release update names
+	apply:   bool,
+	port:    ^stream.Port(Updated),
+	key:     [32]byte, // the test fixture's public key, when has_key
+	has_key: bool,
+	exe:     string, // owned; "" for this process
 }
 
 // update_open keeps base as the release to ask, "" for update.default_config's
@@ -62,9 +65,14 @@ update_begin :: proc(d: ^Desk, apply: bool) {
 	}
 	job := new(Update_Job)
 	job^ = {
-		base  = strings.clone(d.update_base),
-		apply = apply,
-		port  = d.updates,
+		base    = strings.clone(d.update_base),
+		apply   = apply,
+		port    = d.updates,
+		has_key = d.update_key_set,
+		exe     = strings.clone(d.update_exe),
+	}
+	if d.update_key_set {
+		job.key = d.update_key
 	}
 	d.update_state = .Applying if apply else .Checking
 	d.update_thread = thread.create_and_start_with_poly_data(
@@ -81,6 +89,14 @@ update_main :: proc(job: ^Update_Job) {
 	if job.base != "" {
 		cfg.base = job.base
 	}
+	// A 32-byte key is the fixture's. Anything else keeps the compiled key,
+	// and a build with neither fails the signature check closed.
+	if job.has_key {
+		cfg.public_key = job.key[:]
+	}
+	if job.exe != "" {
+		cfg.exe = job.exe
+	}
 	u := Updated {
 		applied = job.apply,
 	}
@@ -93,6 +109,7 @@ update_main :: proc(job: ^Update_Job) {
 	}
 	port := job.port
 	delete(job.base)
+	delete(job.exe)
 	free(job)
 	stream.port_send(port^, u)
 }
