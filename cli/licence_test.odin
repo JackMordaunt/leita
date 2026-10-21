@@ -6,6 +6,7 @@ import "core:encoding/base64"
 import "core:encoding/hex"
 import "core:fmt"
 import "core:os"
+import "core:path/filepath"
 import "core:strings"
 import "core:testing"
 import "core:time"
@@ -56,7 +57,8 @@ data_folder :: proc(t: ^testing.T) -> (dir, kept: string) {
 	err: os.Error
 	dir, err = os.make_directory_temp("", "leita-licence-cli-*", context.temp_allocator)
 	testing.expect(t, err == nil)
-	return dir, fmt.tprintf("%s/data/history.db", dir)
+	joined, _ := filepath.join({dir, "data", "history.db"}, context.temp_allocator)
+	return dir, joined
 }
 
 // licence_says runs leita licence args, returning the exit code and what it said
@@ -81,7 +83,7 @@ a_licence_is_added_shown_and_removed :: proc(t: ^testing.T) {
 		key  = s.pub[:],
 		now  = time.unix(1_800_000_000, 0),
 	}
-	beside := fmt.tprintf("%s/data/licence", dir)
+	beside, _ := filepath.join({dir, "data", "licence"}, context.temp_allocator)
 	kept_at := licence.path_beside(kept, context.temp_allocator)
 	testing.expect_value(t, kept_at, beside)
 	testing.expect(t, kept_at != kept)
@@ -172,7 +174,7 @@ leita_licence_holds_a_licence_for_one_run :: proc(t: ^testing.T) {
 	// This build has no release stamp, so the line does not grant Pro once the
 	// evaluation is over. The paid-through cutoff is what the gate asks.
 	testing.expect(t, !unlocked, "an unstamped build stays Free after the evaluation")
-	beside := fmt.tprintf("%s/data/licence", dir)
+	beside, _ := filepath.join({dir, "data", "licence"}, context.temp_allocator)
 	testing.expect_value(t, licence.path_beside(kept, context.temp_allocator), beside)
 	testing.expect(t, !os.exists(beside), "and keeps nothing")
 

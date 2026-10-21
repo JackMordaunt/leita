@@ -276,8 +276,14 @@ the_receipt_key_keeps_the_lines_permissions :: proc(t: ^testing.T) {
 	receipt, rerr := os.stat(receipt_path(path, context.temp_allocator), context.temp_allocator)
 	testing.expect(t, rerr == nil)
 	defer os.file_info_delete(receipt, context.temp_allocator)
-	testing.expect(t, line.mode == mode)
-	testing.expect(t, receipt.mode == line.mode)
+	// On Windows a writable file reports Permissions_Read_Write_All, not the
+	// Unix bits chmod was given. The receipt must match the line either way.
+	when ODIN_OS == .Windows {
+		testing.expect(t, line.mode == os.Permissions_Read_Write_All, "the line stays writable")
+	} else {
+		testing.expect(t, line.mode == mode, "the line is owner read/write")
+	}
+	testing.expect(t, receipt.mode == line.mode, "the receipt takes the line's mode")
 
 	elsewhere, _ := filepath.join({dir, "elsewhere.db"}, context.temp_allocator)
 	_, missing := read_receipt(elsewhere)
