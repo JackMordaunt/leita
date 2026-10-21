@@ -1,5 +1,7 @@
 package leita_view
 
+import "core:strings"
+
 import "jm:ui"
 import "jm:ui/ops"
 import "jm:ui/primer"
@@ -107,6 +109,9 @@ licence_dialog :: proc(gtx: ^ui.Ctx, m: ^Model) {
 				.Small,
 				color = primer.color(.Fg_Color_Muted),
 			)
+			if line := build_rights(gtx, r, gtx.allocator); line != "" {
+				primer.text(gtx, line, .Small, color = primer.color(.Fg_Color_Muted))
+			}
 		} else {
 			primer.text(gtx, tr(.Licence_Terms))
 			if r.trial_left > 0 {
@@ -158,6 +163,31 @@ licence_dialog :: proc(gtx: ^ui.Ctx, m: ^Model) {
 @(private)
 licensed_to :: proc(gtx: ^ui.Ctx, r: ^query.Licence_Result) -> string {
 	return trf(gtx, .Licensed_To, r.licensee)
+}
+
+// build_rights names the paid-through date and whether this installed
+// build is inside it. A date that does not cover this build does not say
+// the application expired.
+@(private)
+build_rights :: proc(
+	gtx: ^ui.Ctx,
+	r: ^query.Licence_Result,
+	allocator := context.allocator,
+) -> string {
+	if r.paid_through == "" {
+		return ""
+	}
+	cover := trf(gtx, .Licence_Coverage, r.paid_through)
+	build: string
+	switch {
+	case r.release_at == "":
+		build = tr(.Licence_Build_Unstamped)
+	case r.build_covered:
+		build = tr(.Licence_Build_Covered)
+	case:
+		build = trf(gtx, .Licence_Build_Later, r.release_at)
+	}
+	return strings.concatenate({cover, " ", build}, allocator)
 }
 
 // trial_left says how long the trial of the paid features has left.

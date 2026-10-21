@@ -256,6 +256,8 @@ Model :: struct {
 	settings_read:    bool,
 	settings_open:    bool,
 	settings_dialog:  Settings_Dialog,
+	// What automatic checks were set to until the host answers (about.odin).
+	checks_want:      Maybe(bool),
 	// The Monitoring dialog (monitor.odin): whether it is open, the place typed
 	// to watch, the change count when one was sent until the host answers,
 	// what the switch was set to by the change in flight, if that is what it
@@ -585,6 +587,7 @@ status :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result) {
 			}
 		}
 		renewal_banner(gtx)
+		update_notice(gtx)
 		return
 	}
 	if primer.slot(gtx, lines = 2) {
@@ -596,6 +599,7 @@ status :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result) {
 	notice(gtx, m, prog.notice)
 	trial_banner(gtx, m)
 	renewal_banner(gtx)
+	update_notice(gtx)
 }
 
 // state_line is the status' first line: the scan's state, its counters, and
@@ -719,7 +723,14 @@ message_line :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result) {
 	}
 	ui.flexible(gtx, 1)
 	if ui.stack(gtx) {
-		primer.truncate(gtx, top.text, title = top.detail, max_width = ui.INF, inline = true, color = fg)
+		primer.truncate(
+			gtx,
+			top.text,
+			title = top.detail,
+			max_width = ui.INF,
+			inline = true,
+			color = fg,
+		)
 		primer.tooltip(gtx, top.detail, ui.last_widget(gtx))
 	}
 	if len(msgs) == 1 {
@@ -870,11 +881,7 @@ entry :: proc(
 	defer ui.scope_close(&s)
 	ui.row(gtx, gap = 12, align = .Center)
 	ui.flexible(gtx, 3)
-	clicked, name := name_button(
-		gtx,
-		e.name,
-		e.directory ? .File_Directory_Fill : .File,
-	)
+	clicked, name := name_button(gtx, e.name, e.directory ? .File_Directory_Fill : .File)
 	opened = clicked && e.directory
 	row_menu(gtx, m, .Contents, name, {node = e.node, name = e.name, directory = e.directory})
 	if ui.widget_state(gtx, name.id).hovered {

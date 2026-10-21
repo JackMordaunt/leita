@@ -416,6 +416,12 @@ hot *args: deps
 # those of the packages only the window imports, search among them. Not -all-packages, which would run every jm:ui
 # suite the window imports too.
 #
+# The opt-in startup and daily check, and no install. The lifecycle
+# workflow runs tools/test-schedule-lifecycle/harness.py, which runs this.
+schedule-evidence:
+    mkdir -p build/test/app
+    {{odin}} test gui/app -debug {{san}} {{flags}} {{curl_open}} {{sdl3_link}} -define:ODIN_TEST_NAMES=leita_app.automatic_checks_once_at_startup_and_once_a_day,leita_app.automatic_checks_reach_the_release_through_the_host -out:build/test/app/schedule-evidence{{exe}}
+
 # Run the window's suites under ASan
 gui-test: deps
     mkdir -p build/test/app
