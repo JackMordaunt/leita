@@ -282,19 +282,35 @@ def _wait_until(seconds, pred):
 
 
 def _finish(proc, env, binary):
+    # Read both pipes. wait returns while they still hold the child's output.
     try:
-        proc.wait(timeout=40)
+        out_b, err_b = proc.communicate(timeout=40)
     except subprocess.TimeoutExpired:
         proc.kill()
-        proc.wait(timeout=10)
-        return 1, "", "timed out"
+        out_b, err_b = _drain_after_kill(proc)
+        err_text = _decode(err_b).strip()
+        detail = f"timed out\n{err_text}" if err_text else "timed out"
+        return 1, _decode(out_b), detail
+    if proc.returncode != 0:
+        return proc.returncode, _decode(out_b), _decode(err_b)
     run_env = dict(env)
     run_env.pop("LEITA_UPDATE_HOLD_COMMIT", None)
     run_env.pop("LEITA_RELEASE_BASE", None)
     code, out, err = harness.invoke(binary, ["--version"], run_env)
-    if proc.returncode != 0:
-        return proc.returncode, out, err
     return code, out, err
+
+
+def _drain_after_kill(proc):
+    try:
+        return proc.communicate(timeout=10)
+    except subprocess.TimeoutExpired as err:
+        return err.stdout or b"", err.stderr or b""
+
+
+def _decode(data):
+    if not data:
+        return ""
+    return data.decode("utf-8", "replace")
 
 
 def _drain(proc):
