@@ -1,3 +1,4 @@
+//review:ignore history-coupled-file this layout-only change wraps the existing caption; checkbox commands and existing About assertions are unchanged
 package leita_view
 
 import "core:fmt"
@@ -148,11 +149,16 @@ update_check :: proc(gtx: ^ui.Ctx, m: ^Model) {
 		gtx,
 		&on,
 		tr(.Automatic_Checks),
-		caption = trf(gtx, .Automatic_Checks_Caption, version.PRODUCT),
 	) {
 		m.checks_want = on
 		ui.command(gtx, command.Command(command.Automatic_Checks{on = on}))
 	}
+	primer.text(
+		gtx,
+		trf(gtx, .Automatic_Checks_Caption, version.PRODUCT),
+		.Small,
+		color = primer.color(.Fg_Color_Muted),
+	)
 }
 
 // update_notice is the quiet banner for a release the person has not

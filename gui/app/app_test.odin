@@ -1678,7 +1678,19 @@ reclaim_offers_only_what_rebuilds_and_deletes_what_is_chosen :: proc(t: ^testing
 	confirm(t, &r, "Clean up", "Delete")
 	testing.expect(t, settle(&r, "Deleted 1 folder and freed 135.2 kB"))
 	testing.expect(t, !os.exists(fmt.tprintf("%s/rust/target", root)))
-	testing.expect(t, settle(&r, "Nothing here is safe to reclaim."))
+	testing.expect(t, settle(&r, RUST_TARGET, present = false), "target leaves the list")
+	testing.expect(t, !ui.probe_tagged(&r.p, WEB_NODE_MODULES), "dependencies stay absent")
+	when ODIN_OS == .Windows {
+		// Check project candidates separately from the system Recycle Bin.
+		testing.expect(
+			t,
+			ui.probe_tagged(&r.p, "Nothing here is safe to reclaim.") ||
+			ui.probe_tagged(&r.p, "Empty Trash"),
+			"the project is empty; only the system Recycle Bin may remain",
+		)
+	} else {
+		testing.expect(t, settle(&r, "Nothing here is safe to reclaim."))
+	}
 
 	// The host deletes only what it offered, whatever it is sent: here the top.
 	forged := command.Clean {
