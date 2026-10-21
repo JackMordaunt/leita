@@ -5,9 +5,7 @@ import "core:fmt"
 import "core:testing"
 import win "core:sys/windows"
 
-// link_to points link at target. core:os symlink is Unsupported on Windows
-// (file_windows.odin returns that without calling the API). CreateSymbolicLinkW
-// is the call, with the unprivileged flag a developer-mode runner accepts.
+// link_to points link at target with CreateSymbolicLinkW.
 @(private)
 link_to :: proc(t: ^testing.T, target, link: string, allocator := context.temp_allocator) -> bool {
 	wide_link := win.utf8_to_wstring(link, allocator)
