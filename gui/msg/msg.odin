@@ -13,7 +13,9 @@ message whose argument 0 is a count is plural, and picks its form by it.
 To add a message, add its member here and its line to locales/en.txt; msg_test
 fails until every other locale translates it. Licence_Terms and
 Trial_Ended_Body are one sentence, the free boundary LICENSE.md states, and a
-locale keeps that English sentence until it has its own.
+locale keeps that English sentence until it has its own. Licence_Privacy says
+the key is sent to fetch the licence, and again only when a stored licence no
+longer verifies; a translation keeps both.
 
 Both halves of the window read it: the view for what it draws, and the host for
 the notices and problems it words.

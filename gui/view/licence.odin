@@ -1,6 +1,5 @@
 package leita_view
 
-
 import "jm:ui"
 import "jm:ui/ops"
 import "jm:ui/primer"
@@ -16,7 +15,8 @@ runs under, or that it runs free for personal use with a link to buy one. The
 key from the shop's receipt is pasted into its field, or a licence itself, or a
 licence is opened from a file; the host exchanges a key for its licence, checks
 the licence, and the dialog shows the licence it now runs under, or why it would
-not take it. The key is the one thing leita sends, once, and the dialog says so.
+not take it. The key is the one thing leita sends, and the dialog says so.
+A stored line that no longer verifies is exchanged once more.
 */
 
 // BUY_URL is where Buy a licence goes, unless LEITA_BUY_URL names another, as
@@ -99,6 +99,9 @@ licence_dialog :: proc(gtx: ^ui.Ctx, m: ^Model) {
 		if why, ok := m.licence_why.?; ok && !r.unlocked {
 			primer.inline_message(gtx, locked_text(gtx, why), .Warning)
 		}
+		if r.renewal != "" && !r.licensed {
+			primer.inline_message(gtx, r.renewal, .Warning)
+		}
 		if r.licensed {
 			primer.heading(gtx, licensed_to(gtx, r), level = 2, variant = .Small)
 			primer.text(
@@ -175,6 +178,22 @@ send_licence :: proc(gtx: ^ui.Ctx, m: ^Model, r: ^query.Licence_Result, text: st
 		gtx,
 		command.Command(command.Add_Licence{text = command.text_make(text), file = file}),
 	)
+}
+
+/*
+renewal_banner says that a stored licence no longer verified and the receipt
+key could not be exchanged. It stays up for this start. The licence dialog
+says the same for as long as this copy stays free.
+*/
+@(private)
+renewal_banner :: proc(gtx: ^ui.Ctx) {
+	r, _ := ui.need(gtx, query.Licence{}, query.Licence_Result)
+	if r == nil || r.renewal == "" || r.licensed {
+		return
+	}
+	// The title is for a reader. Drawn, it is the same word as the menu item,
+	// and a probe cannot tell them apart.
+	primer.banner(gtx, tr(.Licence), r.renewal, .Warning, hide_title = true)
 }
 
 /*

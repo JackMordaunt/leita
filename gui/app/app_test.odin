@@ -2650,6 +2650,11 @@ a_licence_is_checked_kept_and_read_back :: proc(t: ^testing.T) {
 		rig_open(&r, root, kept = kept, licence_key = s.pub[:])
 		defer rig_close(&r)
 		testing.expect(t, settle(&r, "Done"))
+		// A receipt left beside an older line must not survive a licence opened
+		// from a file: that line was not fetched by exchanging the key.
+		receipt := fmt.tprintf("%s/licence-key", data)
+		old_key := "LEITA-OLD\n"
+		testing.expect(t, os.write_entire_file(receipt, old_key) == nil)
 		open_licence(t, &r)
 		testing.expect(t, ui.probe_click(&r.p, "Buy a licence"))
 		ui.probe_frame(&r.p)
@@ -2682,6 +2687,7 @@ a_licence_is_checked_kept_and_read_back :: proc(t: ^testing.T) {
 		testing.expect(t, settle(&r, "Licensed to ada@example.com"), "the licence from the file is taken")
 		testing.expect(t, settle(&r, "Professional · order ord_7 · issued 2026-10-11T00:00:00Z"))
 		testing.expect(t, os.exists(fmt.tprintf("%s/licence", data)), "and kept")
+		testing.expect(t, !os.exists(receipt), "and the receipt it was not fetched with is dropped")
 	}
 
 	// leita starts again and runs under the licence kept.
@@ -2795,6 +2801,215 @@ a_licence_key_is_exchanged_for_its_licence :: proc(t: ^testing.T) {
 	testing.expect(t, read_err == nil, "which is kept")
 	testing.expect_value(t, strings.trim_space(string(kept)), s.line)
 	testing.expect_value(t, ui.text_string(&r.m.licence_text), "")
+	key_file := fmt.tprintf("%s/licence-key", data)
+	key_bytes, key_err := os.read_entire_file(key_file, context.temp_allocator)
+	testing.expect(t, key_err == nil, "the receipt key is kept beside the line")
+	testing.expect_value(t, strings.trim_space(string(key_bytes)), "LEITA-SOLD")
+	testing.expect(t, same_mode(t, fmt.tprintf("%s/licence", data), key_file), "with the line's permissions")
+}
+
+// Shop is the licence server for one test: the line it returns for the one key
+// it sold, and how many times /activate was posted.
+@(private = "file")
+Shop :: struct {
+	line: string,
+	hits: int,
+}
+
+// answer_shop answers /activate and counts each POST, including a refusal.
+@(private = "file")
+answer_shop :: proc(conn: ^loopback.Conn, req: loopback.Request) {
+	s := (^Shop)(conn.server.user)
+	if req.method == "POST" && req.path == "/activate" {
+		sync.atomic_add(&s.hits, 1)
+	}
+	switch {
+	case req.method == "POST" &&
+	     req.path == "/activate" &&
+	     strings.contains(req.body, `"key":"LEITA-SOLD"`):
+		body := strings.concatenate({`{"licence":"`, s.line, `"}`}, context.temp_allocator)
+		loopback.send(
+			conn,
+			fmt.tprintf(
+				"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n%s",
+				len(body),
+				body,
+			),
+		)
+	case req.path == "/activate":
+		refusal := `{"error":"unknown","message":"This licence key is not one the shop sold.\nmore detail"}`
+		loopback.send(
+			conn,
+			fmt.tprintf(
+				"HTTP/1.1 404 Not Found\r\nContent-Length: %d\r\n\r\n%s",
+				len(refusal),
+				refusal,
+			),
+		)
+	case:
+		loopback.send(conn, "HTTP/1.1 500 Oops\r\nContent-Length: 0\r\n\r\n")
+	}
+}
+
+// store_licence writes line as the licence kept in data, and receipt beside it
+// when receipt is not empty.
+@(private = "file")
+store_licence :: proc(t: ^testing.T, data, line, receipt: string) {
+	path := fmt.tprintf("%s/licence", data)
+	testing.expect_value(t, licence.save(path, line), licence.Error.None)
+	if receipt != "" {
+		testing.expect_value(t, licence.save_receipt(path, receipt), licence.Error.None)
+	}
+}
+
+// licence_bytes is the licence file in data, exactly as it is stored.
+@(private = "file")
+licence_bytes :: proc(data: string) -> string {
+	b, _ := os.read_entire_file(fmt.tprintf("%s/licence", data), context.temp_allocator)
+	return string(b)
+}
+
+// same_mode reports whether the two paths are the same permission bits.
+@(private = "file")
+same_mode :: proc(t: ^testing.T, a, b: string) -> bool {
+	ai, aerr := os.stat(a, context.temp_allocator)
+	bi, berr := os.stat(b, context.temp_allocator)
+	if aerr == nil {
+		defer os.file_info_delete(ai, context.temp_allocator)
+	}
+	if berr == nil {
+		defer os.file_info_delete(bi, context.temp_allocator)
+	}
+	return testing.expect(t, aerr == nil && berr == nil) && ai.mode == bi.mode
+}
+
+// quiet_desk waits long enough for a second exchange to have been posted, and
+// drains whatever the desk sent in that time.
+@(private = "file")
+quiet_desk :: proc(r: ^Rig) {
+	ui.probe_advance(&r.p, 20, 1.0 / 60)
+	hand_on(r)
+	deadline := time.tick_now()._nsec + i64(200 * time.Millisecond)
+	for time.tick_now()._nsec < deadline {
+		if ui.inbox_pending(&r.h.inbox) {
+			ui.inbox_drain(&r.h.inbox, &r.p.layout)
+			ui.probe_frame(&r.p)
+			hand_on(r)
+		}
+		time.sleep(time.Millisecond)
+	}
+}
+
+// A stored line that still verifies is not sent anywhere, receipt or not. One
+// whose signature fails, with a receipt key beside it, is exchanged once: the
+// line that comes back replaces it, and a refusal or no network leaves the
+// copy free, says so, and keeps the line it had. Nothing is sent a second time.
+@(test)
+a_stored_line_that_no_longer_verifies_is_exchanged_once :: proc(t: ^testing.T) {
+	root := fixture(t, "licence_refresh")
+	defer os.remove_all(root)
+	data := fmt.tprintf("%s-data", root)
+	os.remove_all(data)
+	defer os.remove_all(data)
+	kept := fmt.tprintf("%s/history.db", data)
+	current := signer_make(t)
+	defer delete(current.line, runtime.heap_allocator())
+	old := signer_make(t)
+	defer delete(old.line, runtime.heap_allocator())
+	shop := Shop {
+		line = current.line,
+	}
+	srv, up := loopback.start(answer_shop, &shop, runtime.heap_allocator())
+	if !testing.expect(t, up, "the shop's server started") {
+		return
+	}
+	defer loopback.stop(srv)
+	url := loopback.url(srv, "/activate")
+	UNREACHABLE :: "Leita could not reach the licence server. Check the connection, or open the licence file from your receipt instead."
+	REFUSED :: "This licence key is not one the shop sold."
+
+	{
+		store_licence(t, data, current.line, "LEITA-SOLD")
+		r: Rig
+		rig_open(&r, root, kept = kept, licence_key = current.pub[:], activate_url = url)
+		defer rig_close(&r)
+		testing.expect(t, settle(&r, "Done"))
+		testing.expect(t, r.h.desk.licensed, "a line that verifies is in use")
+		testing.expect_value(t, sync.atomic_load(&shop.hits), 0)
+		got, ok := licence.read_receipt(fmt.tprintf("%s/licence", data))
+		testing.expect(t, ok && got == "LEITA-SOLD", "and its receipt stays")
+	}
+
+	{
+		store_licence(t, data, "not a licence", "LEITA-SOLD")
+		before := sync.atomic_load(&shop.hits)
+		r: Rig
+		rig_open(&r, root, kept = kept, licence_key = current.pub[:], activate_url = url)
+		defer rig_close(&r)
+		testing.expect(t, settle(&r, "Done"))
+		testing.expect(t, !r.h.desk.licensed)
+		testing.expect_value(t, sync.atomic_load(&shop.hits), before)
+		testing.expect_value(t, licence_bytes(data), "not a licence\n")
+	}
+
+	{
+		store_licence(t, data, old.line, "LEITA-SOLD")
+		r: Rig
+		rig_open(&r, root, kept = kept, licence_key = current.pub[:], activate_url = url)
+		defer rig_close(&r)
+		testing.expect(t, settle(&r, "Done"))
+		open_licence(t, &r)
+		testing.expect(t, settle(&r, "Licensed to ada@example.com"), "the new line is taken")
+		testing.expect_value(t, sync.atomic_load(&shop.hits), 1)
+		testing.expect_value(t, strings.trim_space(licence_bytes(data)), current.line)
+		got, ok := licence.read_receipt(fmt.tprintf("%s/licence", data))
+		testing.expect(t, ok && got == "LEITA-SOLD", "the receipt key stays")
+		testing.expect(
+			t,
+			same_mode(t, fmt.tprintf("%s/licence", data), fmt.tprintf("%s/licence-key", data)),
+		)
+		quiet_desk(&r)
+		testing.expect_value(t, sync.atomic_load(&shop.hits), 1)
+	}
+
+	{
+		store_licence(t, data, old.line, "LEITA-UNSOLD")
+		before := licence_bytes(data)
+		was := sync.atomic_load(&shop.hits)
+		r: Rig
+		rig_open(&r, root, kept = kept, licence_key = current.pub[:], activate_url = url)
+		defer rig_close(&r)
+		testing.expect(t, settle(&r, REFUSED), "a refusal says so")
+		testing.expect(t, !r.h.desk.licensed, "and this copy stays free")
+		testing.expect_value(t, licence_bytes(data), before)
+		testing.expect_value(t, sync.atomic_load(&shop.hits), was + 1)
+		quiet_desk(&r)
+		testing.expect_value(t, sync.atomic_load(&shop.hits), was + 1)
+		testing.expect(t, ui.probe_tagged(&r.p, REFUSED))
+	}
+
+	{
+		store_licence(t, data, old.line, "LEITA-SOLD")
+		before := licence_bytes(data)
+		r: Rig
+		rig_open(
+			&r,
+			root,
+			kept = kept,
+			licence_key = current.pub[:],
+			activate_url = "http://127.0.0.1:9/activate",
+		)
+		defer rig_close(&r)
+		testing.expect(t, settle(&r, UNREACHABLE), "no network says so")
+		testing.expect(t, !r.h.desk.licensed)
+		testing.expect_value(t, licence_bytes(data), before)
+		testing.expect(t, !r.h.desk.activating && !r.h.desk.refreshing && r.h.desk.renew_key == "")
+		open_licence(t, &r)
+		testing.expect(t, settle(&r, UNREACHABLE), "the dialog says so too")
+		quiet_desk(&r)
+		testing.expect(t, !r.h.desk.activating && !r.h.desk.refreshing)
+		testing.expect_value(t, licence_bytes(data), before)
+	}
 }
 
 // LEITA_ACTIVATE_URL replaces the whole default. An explicit URL outranks it,
