@@ -4,17 +4,18 @@ package reclaim
 import "core:strings"
 import "core:sys/posix"
 
-// host_confine is path as realpath resolves it, ".." included, in the temp
-// allocator. The original text is resolved before ".." is collapsed: collapsing
-// first cancels a symlink and names a different directory, which the symlink
-// test records. The buffer is walk.Path, 4096 bytes.
+// host_confine is where path leads on this machine, in the temp allocator.
+// Each component is resolved on its own, and ".." is applied only after a
+// directory that was entered. One realpath of the whole text is not proof:
+// it can name the parent of a file, so a path that never entered the file
+// looks like a path inside the home. Collapsing ".." in the text first would
+// also cancel a symlink and name a different directory, which the symlink
+// test records. A missing tail stays on the last directory that resolved.
+// The buffer is walk.Path, 4096 bytes.
 @(private)
 host_confine :: proc(path: string) -> Confinement {
 	if path == "" {
 		return {"", true}
-	}
-	if got, how := resolve(path); how != .Missing {
-		return {got, how == .Found}
 	}
 	parts := split_components(path)
 	cur: string
@@ -30,8 +31,17 @@ host_confine :: proc(path: string) -> Confinement {
 		case "", ".":
 			continue
 		case "..":
+			// ".." of a file is not the parent. Refuse rather than cancel it.
+			if !is_directory(cur) {
+				return {"", false}
+			}
 			cur = dir_parent(cur)
 			continue
+		}
+		// The next name is inside cur, so cur has to be a directory. A file
+		// here is the same refusal as ".." after it: the rest was not walked.
+		if !is_directory(cur) {
+			return {"", false}
 		}
 		got, how := resolve(join_path(cur, part))
 		switch how {
@@ -45,6 +55,22 @@ host_confine :: proc(path: string) -> Confinement {
 		}
 	}
 	return {cur, true}
+}
+
+// is_directory is whether path, already resolved, is a directory. A stat
+// failure is not a directory: a component that cannot be shown to be one
+// does not let the rest of the path through.
+@(private)
+is_directory :: proc(path: string, allocator := context.temp_allocator) -> bool {
+	if path == "" {
+		return false
+	}
+	st: posix.stat_t
+	cpath := strings.clone_to_cstring(path, allocator)
+	if posix.stat(cpath, &st) != .OK {
+		return false
+	}
+	return posix.S_ISDIR(st.st_mode)
 }
 
 @(private)
