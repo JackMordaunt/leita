@@ -28,6 +28,7 @@ OWNED = [
     "host_pro_persisted_offline",
     "host_pro_later_ineligible",
     "host_update_explicit_only",
+    "host_update_opt_in",
     "host_update_check_available",
     "host_update_apply",
     "host_update_offline",
@@ -154,15 +155,10 @@ def build(bindir):
     print("BUILD keys and binaries", flush=True)
     host.ensure_sqlite()
 
-    def compile_key():
-        # A public hex that contains a letter.
-        while True:
-            key = fixture.keygen()
-            if any(ch in "abcdef" for ch in key.public_hex):
-                return key
-    current = compile_key()
-    previous = compile_key()
-    update = compile_key()
+    # Passed through as a single-quoted -define. Do not reshape the hex.
+    current = fixture.keygen()
+    previous = fixture.keygen()
+    update = fixture.keygen()
     line = fixture.mint_licence(
         current.seed, host.ORDER, host.EMAIL, host.SCOPE, "pro", host.PAID_THROUGH, host.ISSUED,
     )
@@ -219,6 +215,7 @@ def cases(bins):
         ("host_pro_persisted_offline", lambda: scenarios.pro_persisted(bins, export=True)),
         ("host_pro_later_ineligible", lambda: scenarios.pro_later_ineligible(bins)),
         ("host_update_explicit_only", lambda: scenarios.update_explicit_only(bins)),
+        ("host_update_opt_in", lambda: scenarios.update_opt_in(bins)),
         ("host_update_check_available", lambda: scenarios.update_check_available(bins)),
         ("host_update_apply", lambda: scenarios.update_apply(bins)),
         ("host_update_offline", lambda: scenarios.update_offline(bins)),

@@ -98,6 +98,7 @@ The first three arguments are target, explicit isolated state directory, and
 
 - `-png PATH`: current frame at 2×.
 - `-await TAG`: wait up to 120 s for the real host/view to show a tag.
+- `-click-top TAG`: click the last-drawn control with that tag. `-click` hits the first one, which a dialog can cover.
 - `-rescan`: Ctrl+R, then wait for a newer generation to finish (Linux).
 - `-pick PATH`: answer the UI's pending save/open dialog.
 - `-signal PATH`, `-await-file PATH`: synchronize an external fixture mutation.
@@ -127,4 +128,4 @@ same list to standard error.
 `lifecycle.py` drives this host through a local activation server and signed
 release fixture (`tools/test-licence-lifecycle`). It writes light and dark PNGs,
 MP4s, a contact sheet and `index.html` into a directory outside the repository.
-The runs use throwaway keys. There is no automatic-update preference to turn on.
+The runs use throwaway keys. Automatic checks are off until About's checkbox is turned on. Opting in runs one signed local check and does not install a release.

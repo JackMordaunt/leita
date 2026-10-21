@@ -13,17 +13,25 @@ capture_defines=()
 capture_os=()
 # Optional fixture defines. Empty values are omitted so an ordinary capture
 # stays a development build with no licence or update key.
+# The value is single-quoted. The shell's outer double quotes keep those quotes.
 for capture_name in LEITA_LICENCE_KEY LEITA_UPDATE_KEY LEITA_RELEASED; do
   capture_value=$(printenv "$capture_name" || true)
   if [ -n "$capture_value" ]; then
-    # Unquoted. The harness supplies hex that contains a-f.
-    capture_defines+=("-define:${capture_name}=${capture_value}")
+    capture_defines+=("-define:${capture_name}='${capture_value}'")
   fi
 done
 case "$(uname -s)" in
   Linux) capture_os+=(-define:JM_HTTP_DLOPEN=true) ;;
   Darwin) capture_os+=(-minimum-os-version:11.0) ;;
 esac
+# pdf's test file is compiled into this host and #load's a font from the
+# repo's jm checkout. A worktree with an empty submodule still builds when
+# that file is the one in the pinned JM.
+capture_font="$capture_root/jm/ui/shape/testdata/ascii.ttf"
+if [ ! -f "$capture_font" ]; then
+  mkdir -p "$(dirname "$capture_font")"
+  ln -s "$capture_jm/ui/shape/testdata/ascii.ttf" "$capture_font"
+fi
 mkdir -p "$(dirname "$capture_out")"
 "${ODIN:-odin}" build tools/capture -o:minimal -vet -strict-style \
   "-collection:jm=$capture_jm" "-define:LEITA_VERSION=$capture_version" \

@@ -72,7 +72,7 @@ main :: proc() {
 	args := os.args
 	if len(args) < 4 {
 		fail(
-			"usage: capture TARGET ISOLATED_DATA_DIR light|dark [jm headless steps] [-await TAG] [-absent TAG] [-tags PATH] [-rescan] [-pick PATH] [-signal PATH] [-await-file PATH] [-frames PREFIX COUNT]",
+			"usage: capture TARGET ISOLATED_DATA_DIR light|dark [jm headless steps] [-await TAG] [-absent TAG] [-click-top TAG] [-tags PATH] [-rescan] [-pick PATH] [-signal PATH] [-await-file PATH] [-frames PREFIX COUNT]",
 		)
 	}
 	if args[3] != "light" && args[3] != "dark" {fail("theme must be light or dark")}
@@ -163,6 +163,17 @@ main :: proc() {
 					time.sleep(10 * time.Millisecond)
 				}
 			}
+		case "-click-top":
+			// -click is the first area with the tag. A quiet banner and the
+			// dialog on top of it can share a name; this hits the last-drawn one.
+			if i + 1 >= len(args) {fail("-click-top needs a tag")}
+			i += 1
+			if movie.active {fail("use -tap while recording")}
+			if !ui.probe_click_top(&h.p, args[i]) {
+				dump_tags(&h)
+				fail(fmt.tprintf("no %q on top to click", args[i]))
+			}
+			ui.probe_frame(&h.p)
 		case "-rescan":
 			before := model.generation
 			ui.probe_key(&h.p, .R, {.Ctrl})

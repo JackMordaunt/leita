@@ -32,8 +32,12 @@ SERVER_SLOW = "The licence server did not answer in time; try again."
 REPORTS_LOCKED = "PDF and HTML reports need a licence now the 30-day Pro evaluation has ended. A CSV or JSON of this scan is still free."
 TRIAL_OVER = "Your 30-day Pro evaluation has ended"
 CHECKING = "Checking for updates…"
-UPDATE_PRIVACY = "Only when you click, Leita asks GitHub for the latest release. Nothing about you or your disks is sent."
+UPDATE_PRIVACY = (
+    "Checks stay off until you turn them on. A check asks GitHub for the public release only. "
+    "Nothing about you or your disks is sent, and Leita never installs a release by itself."
+)
 UPDATE_UNREACHABLE = "Leita could not reach the release page. Check the connection."
+COVERED_BUILD = f"Pro covers releases through {PAID_THROUGH}. This installed build is covered."
 
 
 def system_name():
@@ -120,6 +124,53 @@ def run_capture(binary, target, data, theme, steps, env, timeout):
     return proc
 
 
+# Parent directory names skipped when picking a Windows bash.
+BASH_SKIP_DIRS = {"system32", "sysnative", "windowsapps"}
+
+
+def define_flag(name, value):
+    """One argv element: -define:NAME='VALUE'."""
+    if "'" in value:
+        raise ValueError(f"{name} contains a single quote")
+    return f"-define:{name}='{value}'"
+
+
+def prefer_bash(candidates):
+    """The first bash whose parent directory is not in BASH_SKIP_DIRS. "" when none."""
+    for raw in candidates:
+        candidate = Path(raw)
+        if candidate.name.lower() not in {"bash", "bash.exe"}:
+            continue
+        if candidate.parent.name.lower() in BASH_SKIP_DIRS:
+            continue
+        return str(candidate)
+    return ""
+
+
+def windows_bash():
+    found = prefer_bash(
+        str(Path(directory) / "bash.exe")
+        for directory in os.environ.get("PATH", "").split(os.pathsep)
+        if directory
+    )
+    if not found:
+        raise RuntimeError(
+            "Git bash is required to build the capture host on Windows. "
+            "System32\\bash.exe is the WSL launcher and is not used."
+        )
+    return found
+
+
+def run_checked(cmd, cwd, env=None):
+    proc = subprocess.run(cmd, cwd=cwd, env=env, text=True, capture_output=True)
+    if proc.returncode != 0:
+        detail = "\n".join(part.strip() for part in (proc.stdout, proc.stderr) if part and part.strip())
+        if detail:
+            print(detail, flush=True)
+        raise RuntimeError(detail[-1500:] or f"{cmd[0]} exited {proc.returncode}")
+    return proc
+
+
 def odin_build(package, dest, defines):
     """Build one package the way the capture driver is built: minimal, vetted."""
     dest = Path(dest)
@@ -143,7 +194,7 @@ def odin_build(package, dest, defines):
         cmd.append("-minimum-os-version:11.0")
     cmd.extend(defines)
     cmd.append(f"-out:{dest}")
-    subprocess.run(cmd, cwd=ROOT, check=True)
+    run_checked(cmd, ROOT)
 
 
 def build_capture(dest, licence_keys, update_key, released):
@@ -157,8 +208,8 @@ def build_capture(dest, licence_keys, update_key, released):
     env["LEITA_RELEASED"] = released
     env["CAPTURE_OUT"] = str(dest)
     script = "tools/capture/build"
-    command = ["bash", script] if os.name == "nt" else [script]
-    subprocess.run(command, cwd=ROOT, env=env, check=True)
+    command = [windows_bash(), script] if os.name == "nt" else [script]
+    run_checked(command, ROOT, env)
 
 
 def build_cli(dest, licence_keys, released):
@@ -166,8 +217,8 @@ def build_cli(dest, licence_keys, released):
         "cmd/cli",
         dest,
         [
-            f"-define:LEITA_LICENCE_KEY={licence_keys}",
-            f"-define:LEITA_RELEASED={released}",
+            define_flag("LEITA_LICENCE_KEY", licence_keys),
+            define_flag("LEITA_RELEASED", released),
         ],
     )
 
@@ -202,7 +253,7 @@ def cli_licence_file(data_home):
     return folder / "licence"
 
 
-def run_host(binary, work, steps, activate, release, theme="light", timeout=90, extra=None, copy=False, line="", receipt="", fresh=True):
+def run_host(binary, work, steps, activate, release, theme="light", timeout=150, extra=None, copy=False, line="", receipt="", fresh=True):
     """Run one headless host. fresh rewrites first-use and, when given, the line."""
     work = Path(work)
     data = prepare_data(work / "data", line if fresh else "", receipt if fresh else "")
@@ -240,3 +291,21 @@ def stored_text(path):
     if not file.exists():
         return ""
     return file.read_text(encoding="ascii").strip()
+
+
+def setting_value(data, key):
+    """One settings.db value beside the history file, or None when it was not written."""
+    import sqlite3
+    path = Path(data) / "settings.db"
+    if not path.exists():
+        return None
+    con = sqlite3.connect(path)
+    try:
+        row = con.execute("select value from setting where key = ?", (key,)).fetchone()
+    except sqlite3.Error:
+        return None
+    finally:
+        con.close()
+    if row is None:
+        return None
+    return row[0]
