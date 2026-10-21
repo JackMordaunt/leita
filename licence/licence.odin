@@ -759,7 +759,9 @@ read :: proc(path: string) -> (string, Error) {
 
 // save keeps text, a licence already checked, at path as the one in use,
 // making its folder if need be, and replacing any licence kept before.
-save :: proc(path, text: string) -> Error {
+// The bytes already at path stay there when the replacement cannot be
+// written or renamed into place: the destination is not truncated first.
+save :: proc(path, text: string, allocator := context.temp_allocator) -> Error {
 	if path == "" {
 		return .Unwritable
 	}
@@ -768,11 +770,85 @@ save :: proc(path, text: string) -> Error {
 			return .Unwritable
 		}
 	}
-	line := strings.concatenate({strings.trim_space(text), "\n"}, context.temp_allocator)
-	if os.write_entire_file(path, transmute([]byte)line) != nil {
+	line := strings.concatenate({strings.trim_space(text), "\n"}, allocator)
+	mode, use := prior_mode(path, allocator)
+	if !replace_file(path, transmute([]byte)line, mode, use, allocator) {
 		return .Unwritable
 	}
 	return .None
+}
+
+// prior_mode is the permission of the file at path, when there is one.
+@(private)
+prior_mode :: proc(
+	path: string,
+	allocator := context.temp_allocator,
+) -> (
+	mode: os.Permissions,
+	ok: bool,
+) {
+	info, err := os.stat(path, allocator)
+	if err != nil {
+		return
+	}
+	defer os.file_info_delete(info, allocator)
+	return info.mode, true
+}
+
+// replace_file publishes data as path by writing a sibling and renaming it
+// over path. A failure, including a failure of that rename, leaves whatever
+// path already held. The sibling is path with ".new" appended, and it is
+// removed when the rename does not happen. mode, when ok, is applied to the
+// sibling before the rename, so the published file has it and a failure of
+// the chmod does not discard the previous file.
+@(private)
+replace_file :: proc(
+	path: string,
+	data: []byte,
+	mode: os.Permissions,
+	ok: bool,
+	allocator := context.temp_allocator,
+) -> bool {
+	stage, serr := strings.concatenate({path, ".new"}, allocator)
+	if serr != nil {
+		return false
+	}
+	f, err := os.open(
+		stage,
+		os.O_WRONLY | os.O_CREATE | os.O_TRUNC,
+		os.Permissions_Read_All + {.Write_User},
+	)
+	if err != nil {
+		return false
+	}
+	wrote := 0
+	for wrote < len(data) {
+		n, werr := os.write(f, data[wrote:])
+		if werr != nil || n < 1 {
+			os.close(f)
+			os.remove(stage)
+			return false
+		}
+		wrote += n
+	}
+	if os.sync(f) != nil {
+		os.close(f)
+		os.remove(stage)
+		return false
+	}
+	if os.close(f) != nil {
+		os.remove(stage)
+		return false
+	}
+	if ok && os.chmod(stage, mode) != nil {
+		os.remove(stage)
+		return false
+	}
+	if os.rename(stage, path) != nil {
+		os.remove(stage)
+		return false
+	}
+	return true
 }
 
 // keep checks text against key, nil for the keys leita was built with, and, if it
@@ -899,12 +975,12 @@ read_receipt :: proc(licence_path: string) -> (key: string, ok: bool) {
 // save_receipt keeps key beside the line at licence_path, with the mode
 // os.stat reports for that line, not a fixed Unix mode. The line must already
 // be there, so its mode is known.
-save_receipt :: proc(licence_path, key: string) -> Error {
+save_receipt :: proc(licence_path, key: string, allocator := context.temp_allocator) -> Error {
 	text := strings.trim_space(key)
 	if licence_path == "" || !receipt_ok(text) || !os.exists(licence_path) {
 		return .Unwritable
 	}
-	path := receipt_path(licence_path, context.temp_allocator)
+	path := receipt_path(licence_path, allocator)
 	if path == "" {
 		return .Unwritable
 	}
@@ -913,18 +989,15 @@ save_receipt :: proc(licence_path, key: string) -> Error {
 			return .Unwritable
 		}
 	}
-	line := strings.concatenate({text, "\n"}, context.temp_allocator)
-	if os.write_entire_file(path, transmute([]byte)line) != nil {
-		return .Unwritable
-	}
-	info, serr := os.stat(licence_path, context.temp_allocator)
+	line := strings.concatenate({text, "\n"}, allocator)
+	info, serr := os.stat(licence_path, allocator)
 	if serr != nil {
-		os.remove(path)
 		return .Unwritable
 	}
-	defer os.file_info_delete(info, context.temp_allocator)
-	if os.chmod(path, info.mode) != nil {
-		os.remove(path)
+	defer os.file_info_delete(info, allocator)
+	// The receipt takes the line's mode. A failed write or rename leaves a
+	// receipt already beside the line where it was.
+	if !replace_file(path, transmute([]byte)line, info.mode, true, allocator) {
 		return .Unwritable
 	}
 	return .None

@@ -82,9 +82,12 @@ second are a real UTC civil time: hour `00`–`23`, minute and second `00`–`59
 (a leap second, second `60`, is rejected), and the day is valid for that
 month, including 29 February only in a leap year.
 
-`paidThrough` is the end of the paid annual term. A later settled term may
-move it forward. It does not move backward. How the server derives it from
-Polar is the server's contract; the line carries the instant only.
+`paidThrough` is the end of the paid annual term the server will serve for
+this key. A later settled term may move it forward. A full refund can move
+that served instant earlier. A partial refund does not withdraw the line and
+does not move the instant. How the server derives it from Polar is the
+server's contract; the line carries the instant only. A line already on disk
+stays valid offline until a later activation replaces it.
 
 ## Base64
 
@@ -153,7 +156,10 @@ feature set.
 Compare instants, not local clocks, download dates, or the subscription's
 current billing state. A release is Pro-eligible when its authenticated
 release instant is less than or equal to `paidThrough`. Equal is eligible.
-The release stays eligible offline after cancellation. A release whose
+The release stays eligible offline after cancellation. A full refund can
+make the server serve an earlier instant, or no line; the copy already on
+disk is unchanged until activation replaces it, and it stays eligible
+offline for a release at or before the instant it carries. A release whose
 instant is later runs Free and still opens records. A build with no
 authenticated release instant is not eligible.
 
@@ -225,9 +231,11 @@ alphabet needs no escapes. The app verifies the line offline against the
 public keys it was built with. A 200 whose body is not this object, or whose
 line does not verify, grants nothing.
 
-The same key returns the same stored line. A line already issued is still
-returned after cancellation or a refund: cancellation stops renewal, and a
-refund does not remotely disable a copy. Neither deletes the line.
+Cancellation stops renewal. The server still returns the line already
+issued. A full refund can move the served `paidThrough` earlier; activation
+returns that line, or 404 when no line remains for the key. A partial refund
+does not withdraw the line. A line already on disk stays valid offline. The
+server does not disable it.
 
 Errors, JSON:
 
