@@ -2,6 +2,7 @@
 package update
 
 import "core:fmt"
+import "core:mem"
 import "core:os"
 import win "core:sys/windows"
 
@@ -24,6 +25,14 @@ DACL_SECURITY_INFORMATION :: win.SECURITY_INFORMATION(0x4)
 SETTABLE_ATTRIBUTES :: win.DWORD(
 	0x00000001 | 0x00000002 | 0x00000004 | 0x00000020 | 0x00000080 | 0x00000100 | 0x00002000,
 )
+
+// Multiple of 4, so the descriptor buffer is DWORD-aligned.
+@(private)
+SECURITY_DESCRIPTOR_ALIGN :: 8
+@(private)
+SECURITY_DESCRIPTOR_MAX :: 1 << 20
+@(private)
+SECURITY_READ_ATTEMPTS :: 4
 
 // os.change_mode on Windows passes the wrong structure size to
 // SetFileInformationByHandle. Copy the attributes and the DACL with the
@@ -50,23 +59,9 @@ preserve_permissions :: proc(exe, fresh: string, allocator := context.temp_alloc
 		err := win.GetLastError()
 		return false, fmt.tprintf("SetFileAttributesW error %d", err)
 	}
-	needed: win.DWORD
-	sized := win.GetFileSecurityW(wide_exe, DACL_SECURITY_INFORMATION, nil, 0, &needed)
-	err := win.GetLastError()
-	if needed == 0 || needed > 1_048_576 || (!sized && err != win.ERROR_INSUFFICIENT_BUFFER) {
-		return false, fmt.tprintf("GetFileSecurityW error %d needed %d", err, needed)
-	}
-	buf := make([]byte, needed, allocator)
-	read := win.GetFileSecurityW(
-		wide_exe,
-		DACL_SECURITY_INFORMATION,
-		win.PSECURITY_DESCRIPTOR(raw_data(buf)),
-		needed,
-		&needed,
-	)
-	if !read {
-		err = win.GetLastError()
-		return false, fmt.tprintf("GetFileSecurityW error %d needed %d", err, needed)
+	buf, why := read_dacl(wide_exe, allocator)
+	if why != "" {
+		return false, why
 	}
 	wrote := SetFileSecurityW(
 		wide_fresh,
@@ -74,10 +69,46 @@ preserve_permissions :: proc(exe, fresh: string, allocator := context.temp_alloc
 		win.PSECURITY_DESCRIPTOR(raw_data(buf)),
 	)
 	if !wrote {
-		err = win.GetLastError()
+		err := win.GetLastError()
 		return false, fmt.tprintf("SetFileSecurityW error %d", err)
 	}
 	return true, ""
+}
+
+// read_dacl loads the DACL into aligned storage. It starts at 256 bytes and
+// grows to the reported size, up to 1 MiB, for at most four tries. A nil
+// descriptor is not passed. Any error other than a short buffer fails closed.
+@(private)
+read_dacl :: proc(wide: win.wstring, allocator := context.temp_allocator) -> (buf: []byte, note: string) {
+	size := 256
+	for attempt in 0 ..< SECURITY_READ_ATTEMPTS {
+		block, aerr := mem.alloc_bytes(size, SECURITY_DESCRIPTOR_ALIGN, allocator)
+		if aerr != .None || len(block) < size {
+			return nil, fmt.tprintf("security buffer alloc error %v", aerr)
+		}
+		needed: win.DWORD
+		read := win.GetFileSecurityW(
+			wide,
+			DACL_SECURITY_INFORMATION,
+			win.PSECURITY_DESCRIPTOR(raw_data(block)),
+			win.DWORD(size),
+			&needed,
+		)
+		err := win.GetLastError()
+		if read {
+			return block, ""
+		}
+		grow :=
+			err == win.ERROR_INSUFFICIENT_BUFFER &&
+			int(needed) > size &&
+			int(needed) <= SECURITY_DESCRIPTOR_MAX
+		if grow && attempt + 1 < SECURITY_READ_ATTEMPTS {
+			size = int(needed)
+			continue
+		}
+		return nil, fmt.tprintf("GetFileSecurityW(read) error %d needed %d size %d", err, needed, size)
+	}
+	return nil, "GetFileSecurityW(read) stopped"
 }
 
 @(private)
