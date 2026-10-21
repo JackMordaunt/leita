@@ -896,8 +896,9 @@ read_receipt :: proc(licence_path: string) -> (key: string, ok: bool) {
 	return key, true
 }
 
-// save_receipt keeps key beside the line at licence_path, with that line's
-// file permissions. The line must already be there, so its mode is known.
+// save_receipt keeps key beside the line at licence_path, with the mode
+// os.stat reports for that line, not a fixed Unix mode. The line must already
+// be there, so its mode is known.
 save_receipt :: proc(licence_path, key: string) -> Error {
 	text := strings.trim_space(key)
 	if licence_path == "" || !receipt_ok(text) || !os.exists(licence_path) {
