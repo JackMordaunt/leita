@@ -118,13 +118,14 @@ recycle-bin enumerator is a COM object, so CoInitializeEx asks for the apartment
 the shell expects. It is released only when this call was the one that
 initialized the thread.
 
-A successful answer that names files is kept. An answer of zero, or a failure,
-is not the last word while folder holds this user's $I records: overlay skips a
-bin of zero bytes, so a file that is already in the folder would not be offered.
-The size is the one stored in the $I record, which is what the shell itself
-sums, or the $R file's size when the record says 0. A folder both call empty
-stays at the shell's zero, and a volume the shell will not query whose folder
-is empty or unreadable stays out.
+A positive shell size is kept. A size of zero is not, even when the shell
+still names items: overlay skips a bin of zero bytes, so this user's folder
+is measured. The size is the one stored in the $I record, which is what the
+shell itself sums, or the $R file's size when the record says 0. Another
+account's folder is not read. An administrator can list it, and emptying
+still removes only this account's bin. A folder both call empty stays at the
+shell's zero, and a volume the shell will not query whose folder is empty or
+unreadable stays out.
 */
 @(private)
 query_recycle_bin :: proc(
@@ -148,7 +149,9 @@ query_recycle_bin :: proc(
 		bytes = u64(max(info.i64Size, 0))
 		items = u64(max(info.i64NumItems, 0))
 	}
-	if ok && (bytes > 0 || items > 0) {
+	// A count with a zero size is not a size. overlay drops bytes == 0, so this
+	// user's folder is still read. A positive size is the shell's own sum.
+	if ok && bytes > 0 {
 		return
 	}
 	disk_bytes, disk_items, disk_ok := recycle_folder_usage(folder, allocator)

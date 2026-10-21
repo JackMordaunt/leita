@@ -1761,7 +1761,23 @@ reclaim_offers_the_recycle_bin :: proc(t: ^testing.T) {
 				os.remove(file)
 			}
 		}
-		testing.expect(t, os.exists(file), "in the Recycle Bin")
+		if !os.exists(file) {
+			// Name the other folder. Do not treat it as this account's bin.
+			other_record, other_file := recycled_elsewhere(root, "old.bin")
+			defer if other_record != "" {
+				os.remove(other_record)
+			}
+			defer if other_file != "" {
+				os.remove(other_file)
+			}
+			testing.expectf(
+				t,
+				false,
+				"old.bin is not in this account's Recycle Bin; another folder held %s",
+				other_file if other_file != "" else "nothing",
+			)
+			return
+		}
 
 		sync.guard(&trash_env)
 		profile := strings.clone(

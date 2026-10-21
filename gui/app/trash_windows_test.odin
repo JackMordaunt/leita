@@ -8,18 +8,57 @@ import "core:path/filepath"
 import "core:strings"
 import "core:unicode/utf16"
 
+import "../../home"
 import "../files"
 
 /*
-recycled finds what the Recycle Bin holds of dir's entry name: the $I record
-saying where it was, and the $R file itself beside it, or "" for both. The Bin
-cannot be pointed elsewhere the way XDG_DATA_HOME points the freedesktop.org
-Trash, so it is read where it is, at the top of dir's drive, in a folder per
-user. A record is matched on the end of the path it holds, dir's last name and
-name, since the shell may hold the path long where dir holds it short
-(RUNNER~1 for runneradmin).
+recycled finds what this account's Recycle Bin holds of dir's entry name: the
+$I record saying where it was, and the $R file beside it, or "" for both. The
+folder is `<volume>\$Recycle.Bin\<sid>` for this process's token, the same
+folder Reclaim sizes and the only one SHEmptyRecycleBinW empties. Another
+account's folder is not this bin: an administrator can list it. A record is
+matched on the end of the path it holds, dir's last name and name, since the
+shell may hold the path long where dir holds it short (RUNNER~1 for
+runneradmin).
 */
 recycled :: proc(dir, name: string) -> (record, file: string) {
+	who := home.user(context.temp_allocator)
+	defer home.user_destroy(&who, context.temp_allocator)
+	if who.uid == "" {
+		return "", ""
+	}
+	folder := fmt.tprintf(`%s\$Recycle.Bin\%s`, filepath.volume_name(dir), who.uid)
+	return recycled_in(folder, fmt.tprintf(`\%s\%s`, filepath.base(dir), name))
+}
+
+// recycled_in is the $I and $R in folder whose record ends with want.
+@(private = "file")
+recycled_in :: proc(folder, want: string) -> (record, file: string) {
+	entries, err := os.read_all_directory_by_path(folder, context.temp_allocator)
+	if err != nil {
+		return "", ""
+	}
+	for e in entries {
+		if !strings.has_prefix(e.name, "$I") {
+			continue
+		}
+		was := recorded(e.fullpath)
+		if len(was) >= len(want) && strings.equal_fold(was[len(was) - len(want):], want) {
+			return e.fullpath, fmt.tprintf(`%s\$R%s`, folder, e.name[2:])
+		}
+	}
+	return "", ""
+}
+
+/*
+recycled_elsewhere is a $I/$R pair for dir's name in some other listable
+folder under that volume's $Recycle.Bin. A failure of recycled names it, so
+the next run shows where the shell put the file. "" when no other folder has
+it. The pair is the caller's to delete.
+*/
+recycled_elsewhere :: proc(dir, name: string) -> (record, file: string) {
+	who := home.user(context.temp_allocator)
+	defer home.user_destroy(&who, context.temp_allocator)
 	bin := fmt.tprintf(`%s\$Recycle.Bin`, filepath.volume_name(dir))
 	want := fmt.tprintf(`\%s\%s`, filepath.base(dir), name)
 	users, err := os.read_all_directory_by_path(bin, context.temp_allocator)
@@ -27,17 +66,12 @@ recycled :: proc(dir, name: string) -> (record, file: string) {
 		return "", ""
 	}
 	for user in users {
-		// Another user's folder refuses to list, and that is not ours to look in.
-		entries, _ := os.read_all_directory_by_path(user.fullpath, context.temp_allocator)
-		for e in entries {
-			if !strings.has_prefix(e.name, "$I") {
-				continue
-			}
-			was := recorded(e.fullpath)
-			if len(was) >= len(want) && strings.equal_fold(was[len(was) - len(want):], want) {
-				r := fmt.tprintf(`%s\$R%s`, user.fullpath, e.name[2:])
-				return e.fullpath, r
-			}
+		if who.uid != "" && strings.equal_fold(user.name, who.uid) {
+			continue
+		}
+		record, file = recycled_in(user.fullpath, want)
+		if file != "" {
+			return
 		}
 	}
 	return "", ""
