@@ -892,14 +892,17 @@ a_link_to_a_protected_path_is_refused_before_anything_is_written :: proc(t: ^tes
 	cfg.base = path.join(f.root, "nowhere", allocator = ta)
 	cfg.exe = link
 	r := apply(cfg)
+	// A Windows reparse point whose target does not open is a link. Linux
+	// reads the target path and classifies it.
+	package_reason := Reason.Package
+	when ODIN_OS == .Windows {
+		package_reason = .Link
+	}
 	testing.expect_value(t, r.outcome, Outcome.Refused)
-	testing.expect_value(t, r.reason, Reason.Package)
+	testing.expect_value(t, r.reason, package_reason)
 	testing.expect(t, !exists(package_target), "the package path was not created")
-	testing.expect(
-		t,
-		!exists(strings.concatenate({package_target, LOCK_SUFFIX}, ta)),
-		"no lock beside a refused path",
-	)
+	expect_no_scratch(t, package_target)
+	expect_no_scratch(t, link)
 
 	installer := `C:\Program Files\Leita\leita-update-test-not-a-real-file.exe`
 	link_i := path.join(f.root, "link-installer", allocator = ta)
@@ -908,8 +911,15 @@ a_link_to_a_protected_path_is_refused_before_anything_is_written :: proc(t: ^tes
 	}
 	cfg.exe = link_i
 	r = apply(cfg)
+	installer_reason := Reason.Installer
+	when ODIN_OS == .Windows {
+		installer_reason = .Link
+	}
 	testing.expect_value(t, r.outcome, Outcome.Refused)
-	testing.expect_value(t, r.reason, Reason.Installer)
+	testing.expect_value(t, r.reason, installer_reason)
+	testing.expect(t, !exists(installer), "the installer path was not created")
+	expect_no_scratch(t, installer)
+	expect_no_scratch(t, link_i)
 
 	link_j := path.join(f.root, "link-journal", allocator = ta)
 	if !link_to(t, JOURNAL_COPY, link_j) {
@@ -922,11 +932,19 @@ a_link_to_a_protected_path_is_refused_before_anything_is_written :: proc(t: ^tes
 	}
 	cfg.exe = link_j
 	r = apply(cfg)
+	journal_reason := Reason.Journal
+	when ODIN_OS == .Windows {
+		journal_reason = .Link
+	}
 	testing.expect_value(t, r.outcome, Outcome.Refused)
-	testing.expect_value(t, r.reason, Reason.Journal)
+	testing.expect_value(t, r.reason, journal_reason)
 	if had {
 		testing.expect_value(t, read(JOURNAL_COPY), before)
+	} else {
+		testing.expect(t, !exists(JOURNAL_COPY), "the journal path was not created")
 	}
+	expect_no_scratch(t, JOURNAL_COPY)
+	expect_no_scratch(t, link_j)
 
 	when ODIN_OS != .Windows {
 		// The cleaned form of a /usr path is refused even when the file is absent.
@@ -944,7 +962,16 @@ a_link_to_a_protected_path_is_refused_before_anything_is_written :: proc(t: ^tes
 	r = apply(cfg)
 	testing.expect_value(t, r.outcome, Outcome.Refused)
 	testing.expect_value(t, r.reason, Reason.Link)
-	testing.expect(t, !exists(strings.concatenate({a, ".new"}, ta)), "a loop writes no scratch")
+	expect_no_scratch(t, a)
+	expect_no_scratch(t, b)
+}
+
+@(private)
+expect_no_scratch :: proc(t: ^testing.T, p: string) {
+	ta := context.temp_allocator
+	testing.expect(t, !exists(strings.concatenate({p, ".new"}, ta)), "no .new")
+	testing.expect(t, !exists(strings.concatenate({p, ".old"}, ta)), "no .old")
+	testing.expect(t, !exists(strings.concatenate({p, LOCK_SUFFIX}, ta)), "no lock")
 }
 
 @(test)

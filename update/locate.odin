@@ -25,6 +25,27 @@ resolve_exe :: proc(exe: string, allocator := context.temp_allocator) -> (real: 
 			return "", .Link, false
 		}
 		seen[cur] = {}
+		// A reparse point is resolved by opening its target. One that does not
+		// open is a link, and nothing is created for it.
+		when ODIN_OS == .Windows {
+			if reparse_point(cur, allocator) {
+				canon, cok := canonical_existing(cur)
+				if !cok {
+					return "", .Link, false
+				}
+				cleaned := lexical_clean(canon)
+				fi, serr := os.lstat(cleaned, allocator)
+				kind := os.File_Type.Undetermined
+				if serr == nil {
+					kind = fi.type
+				}
+				os.file_info_delete(fi, allocator)
+				if kind != .Regular {
+					return "", .Cannot_Replace, false
+				}
+				return cleaned, .None, true
+			}
+		}
 		fi, err := os.lstat(cur, allocator)
 		if err != nil {
 			if err == .Not_Exist {
