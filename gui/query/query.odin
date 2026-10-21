@@ -392,9 +392,15 @@ Theme_Choice :: enum u8 {
 Settings_Result :: struct {
 	language: string, // a BCP 47 tag, as i18n.locale_tag gives it; "" when none was chosen
 	theme:    Theme_Choice,
-	// automatic_checks is the opted-in release check. False when the person
-	// has not chosen it, including a store from before the setting existed.
-	automatic_checks: bool,
+	// automatic_checks is the opted-in release check for this session. False
+	// when the person has not chosen it, including a store from before the
+	// setting existed, and when this session could not write the choice.
+	automatic_checks:         bool,
+	// automatic_checks_unsaved is true when this session could not write the
+	// choice. automatic_checks is then false until the process ends. The
+	// stored choice is unchanged and applies the next launch. False when the
+	// choice was kept, so an older answer still reads as saved.
+	automatic_checks_unsaved: bool,
 }
 
 /*

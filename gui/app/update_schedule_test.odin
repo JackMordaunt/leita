@@ -5,6 +5,7 @@ import "core:os"
 import "core:sync"
 import "core:testing"
 
+import "jm:sqlite3"
 import "jm:stream"
 
 import "../../settings"
@@ -39,13 +40,29 @@ the_schedule_bounds_sleep_and_clock_changes :: proc(t: ^testing.T) {
 	off := build_moment(false, false, 0, T + 3 * DAY_SEC, 0, M, M, false)
 	testing.expect_value(t, due(off), Due_Check.None)
 
-	testing.expect_value(t, due(build_moment(true, false, 0, T, 0, M, M, false)), Due_Check.Startup)
+	testing.expect_value(
+		t,
+		due(build_moment(true, false, 0, T, 0, M, M, false)),
+		Due_Check.Startup,
+	)
 	// Another window recorded a check 30s ago.
-	testing.expect_value(t, due(build_moment(true, false, T, T + 30, 0, M, M, false)), Due_Check.Peer)
+	testing.expect_value(
+		t,
+		due(build_moment(true, false, T, T + 30, 0, M, M, false)),
+		Due_Check.Peer,
+	)
 	// A clock a minute ahead of ours is the same startup, not a new one.
-	testing.expect_value(t, due(build_moment(true, false, T + 60, T, 0, M, M, false)), Due_Check.Peer)
+	testing.expect_value(
+		t,
+		due(build_moment(true, false, T + 60, T, 0, M, M, false)),
+		Due_Check.Peer,
+	)
 	// Opening Leita again after the coalesce is a new startup check.
-	testing.expect_value(t, due(build_moment(true, false, T, T + 5 * 60, 0, M, M, false)), Due_Check.Startup)
+	testing.expect_value(
+		t,
+		due(build_moment(true, false, T, T + 5 * 60, 0, M, M, false)),
+		Due_Check.Startup,
+	)
 
 	// A day of the window staying open.
 	day := build_moment(true, true, T, T + DAY_SEC, M, M + DAY_NS, M, true)
@@ -244,7 +261,11 @@ automatic_checks_once_at_startup_and_once_a_day :: proc(t: ^testing.T) {
 	)
 	desk_step(first, Tick{})
 	testing.expect_value(t, schedule_count(first), 4)
-	set_schedule_clock(first, T + 7 * DAY_SEC - 10 * 3600, M + DAY_NS + i64(1_000_000_000) + DAY_NS)
+	set_schedule_clock(
+		first,
+		T + 7 * DAY_SEC - 10 * 3600,
+		M + DAY_NS + i64(1_000_000_000) + DAY_NS,
+	)
 	desk_step(first, Tick{})
 	testing.expect_value(t, schedule_count(first), 5)
 	testing.expect_value(t, first.update_state, query.Update_State.Idle)
@@ -290,4 +311,107 @@ automatic_checks_once_at_startup_and_once_a_day :: proc(t: ^testing.T) {
 
 	kept, _ := settings.get(again.settings, settings.UPDATE_DISMISSED, context.temp_allocator)
 	testing.expect_value(t, kept, "v1")
+}
+
+@(private)
+set_query_only :: proc(t: ^testing.T, d: ^Desk, on: bool) {
+	sql := "PRAGMA query_only = ON" if on else "PRAGMA query_only = OFF"
+	testing.expect(t, sqlite3.exec(d.settings.db, sql) == nil, sql)
+}
+
+// A store that already says on cannot take the write. The persisted choice
+// stays on, this session checks nothing, and a failed opt-in stays off.
+// A later write that succeeds clears the flag and follows the choice.
+@(test)
+a_failed_update_choice_checks_nothing_until_it_is_saved :: proc(t: ^testing.T) {
+	dir, derr := os.make_directory_temp("", "leita-schedule-ro-*", context.temp_allocator)
+	testing.expect(t, derr == nil, "a temp directory")
+	defer os.remove_all(dir)
+	path := fmt.tprintf("%s/%s", dir, settings.FILE)
+
+	T :: i64(1_700_000_000)
+	M :: i64(1_000_000_000)
+	d := schedule_open(t, path)
+	defer schedule_close(d)
+	set_schedule_clock(d, T, M)
+	testing.expect(
+		t,
+		settings.set(d.settings, settings.UPDATES, "on") == nil,
+		"the store starts on",
+	)
+	testing.expect(t, settings.set(d.settings, settings.LANGUAGE, "de") == nil)
+	testing.expect(t, update_enabled(d), "the saved choice would check")
+
+	set_query_only(t, d, true)
+	remember_updates(d, false)
+	kept, kept_ok := settings.get(d.settings, settings.UPDATES, context.temp_allocator)
+	testing.expect(t, kept_ok && kept == "on", "the failed opt-out leaves the stored choice")
+	testing.expect(t, d.update_save_failed)
+	testing.expect(t, !update_enabled(d))
+	failed := settings_answer(d)
+	testing.expect(t, !failed.automatic_checks, "effective checks are off")
+	testing.expect(t, failed.automatic_checks_unsaved)
+	testing.expect_value(t, failed.language, "de")
+	desk_step(d, Tick{})
+	testing.expect_value(t, schedule_count(d), 0)
+	testing.expect_value(t, d.update_state, query.Update_State.Idle)
+	testing.expect(t, d.update_thread == nil, "a failed opt-out starts no check")
+	desk_step(d, Tick{})
+	testing.expect_value(t, schedule_count(d), 0)
+
+	// Asking to turn checks on cannot succeed while the write is refused.
+	remember_updates(d, true)
+	still_on, still_ok := settings.get(d.settings, settings.UPDATES, context.temp_allocator)
+	testing.expect(t, still_ok && still_on == "on", "the failed opt-in changes nothing stored")
+	testing.expect(t, d.update_save_failed)
+	testing.expect(t, !update_enabled(d), "a failed opt-in stays off")
+	desk_step(d, Tick{})
+	testing.expect_value(t, schedule_count(d), 0)
+
+	set_query_only(t, d, false)
+	remember_updates(d, false)
+	testing.expect(t, !d.update_save_failed, "a saved choice clears the flag")
+	off, off_ok := settings.get(d.settings, settings.UPDATES, context.temp_allocator)
+	testing.expect(t, off_ok && off == "off")
+	testing.expect(t, !update_enabled(d))
+	saved_off := settings_answer(d)
+	testing.expect(t, !saved_off.automatic_checks)
+	testing.expect(t, !saved_off.automatic_checks_unsaved)
+	desk_step(d, Tick{})
+	testing.expect_value(t, schedule_count(d), 0)
+
+	set_query_only(t, d, true)
+	remember_updates(d, true)
+	stayed, stayed_ok := settings.get(d.settings, settings.UPDATES, context.temp_allocator)
+	testing.expect(t, stayed_ok && stayed == "off", "a failed opt-in leaves off stored")
+	testing.expect(t, d.update_save_failed)
+	testing.expect(t, !update_enabled(d))
+	failed_on := settings_answer(d)
+	testing.expect(t, !failed_on.automatic_checks)
+	testing.expect(t, failed_on.automatic_checks_unsaved)
+	desk_step(d, Tick{})
+	testing.expect_value(t, schedule_count(d), 0)
+
+	set_query_only(t, d, false)
+	remember_updates(d, true)
+	testing.expect(t, !d.update_save_failed)
+	on, on_ok := settings.get(d.settings, settings.UPDATES, context.temp_allocator)
+	testing.expect(t, on_ok && on == "on")
+	testing.expect(t, update_enabled(d))
+	saved_on := settings_answer(d)
+	testing.expect(t, saved_on.automatic_checks)
+	testing.expect(t, !saved_on.automatic_checks_unsaved)
+	desk_step(d, Tick{})
+	testing.expect_value(t, schedule_count(d), 1)
+	desk_step(d, Tick{})
+	testing.expect_value(t, schedule_count(d), 1)
+
+	bare: Desk
+	remember_updates(&bare, true)
+	testing.expect(t, bare.update_save_failed, "a missing store cannot save the choice")
+	testing.expect(t, !update_enabled(&bare))
+	missing := settings_answer(&bare)
+	testing.expect(t, !missing.automatic_checks)
+	testing.expect(t, missing.automatic_checks_unsaved)
+	testing.expect_value(t, missing.language, "")
 }

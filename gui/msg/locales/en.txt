@@ -45,6 +45,7 @@ update_failed = The update failed: {0}
 update_privacy = Checks stay off until you turn them on. A check asks GitHub for the public release only. Nothing about you or your disks is sent, and {0} never installs a release by itself.
 automatic_checks = Check for updates automatically
 automatic_checks_caption = One check when {0} opens, and one a day while it stays open. The check asks only for the public release, and {0} never installs one.
+automatic_checks_unsaved = Automatic checks are off for this session. The choice could not be saved. The saved choice applies the next time {0} opens.
 update_notes = Release notes
 update_covered = This release is within the paid-through date {0}.
 update_later = {0} stays Pro through {1}. Version {2} was released {3}, which is after that, so it was not installed.

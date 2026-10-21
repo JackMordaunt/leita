@@ -97,7 +97,12 @@ update_check :: proc(gtx: ^ui.Ctx, m: ^Model) {
 	r, _ := ui.need(gtx, query.Update{}, query.Update_Result)
 	s, _ := ui.need(gtx, query.Settings{}, query.Settings_Result)
 	if s != nil {
-		if want, chosen := m.checks_want.?; chosen && want == s.automatic_checks {
+		// A failed write is off for this session, so the optimistic box
+		// follows that instead of the click. A saved answer drops it once
+		// the host agrees.
+		if s.automatic_checks_unsaved {
+			m.checks_want = nil
+		} else if want, chosen := m.checks_want.?; chosen && want == s.automatic_checks {
 			m.checks_want = nil
 		}
 	}
@@ -152,6 +157,10 @@ update_check :: proc(gtx: ^ui.Ctx, m: ^Model) {
 	) {
 		m.checks_want = on
 		ui.command(gtx, command.Command(command.Automatic_Checks{on = on}))
+	}
+	// The saved choice is unchanged. This does not say the click took effect.
+	if s != nil && s.automatic_checks_unsaved {
+		primer.inline_message(gtx, trf(gtx, .Automatic_Checks_Unsaved, version.PRODUCT), .Warning)
 	}
 }
 

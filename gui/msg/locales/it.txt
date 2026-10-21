@@ -38,6 +38,7 @@ update_failed = Aggiornamento non riuscito: {0}
 update_privacy = I controlli restano disattivati finché non li attivi. Un controllo chiede a GitHub solo la release pubblica. Non viene inviato nulla su di te o sui tuoi dischi, e {0} non installa mai una release da solo.
 automatic_checks = Cerca aggiornamenti automaticamente
 automatic_checks_caption = Un controllo all’apertura di {0} e uno al giorno finché resta aperto. Il controllo chiede solo la release pubblica, e {0} non ne installa mai una.
+automatic_checks_unsaved = I controlli automatici sono disattivati per questa sessione. La scelta non è stata salvata. La scelta salvata vale alla prossima apertura di {0}.
 update_notes = Note di rilascio
 update_covered = Questa release rientra nella data di copertura {0}.
 update_later = {0} resta Pro fino al {1}. La versione {2} è uscita il {3}, dopo quella data, quindi non è stata installata.

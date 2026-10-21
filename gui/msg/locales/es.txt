@@ -41,6 +41,7 @@ update_failed = La actualización falló: {0}
 update_privacy = Las comprobaciones siguen desactivadas hasta que las active. Una comprobación pide a GitHub solo la versión pública. No se envía nada sobre usted ni sus discos, y {0} nunca instala una versión por sí mismo.
 automatic_checks = Buscar actualizaciones automáticamente
 automatic_checks_caption = Una comprobación cuando {0} se abre y una al día mientras sigue abierto. La comprobación solo pide la versión pública, y {0} nunca instala una.
+automatic_checks_unsaved = Las comprobaciones automáticas están desactivadas en esta sesión. La elección no se pudo guardar. La elección guardada se aplica la próxima vez que se abra {0}.
 update_notes = Notas de la versión
 update_covered = Esta versión está dentro de la fecha de cobertura {0}.
 update_later = {0} sigue siendo Pro hasta {1}. La versión {2} se publicó el {3}, después de esa fecha, así que no se instaló.

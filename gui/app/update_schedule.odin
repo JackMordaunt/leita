@@ -163,11 +163,12 @@ update_consider :: proc(d: ^Desk) -> bool {
 	return false
 }
 
-// update_enabled is the opted-in setting. Absent is off, which is how a
-// store written before the setting, and a window that cannot keep one,
-// stay off.
+// update_enabled is the opted-in setting for this session. Absent is off,
+// which is how a store written before the setting, and a window that cannot
+// keep one, stay off. A choice this session could not write is off too,
+// whatever the store still says, and nothing is asked of the network.
 update_enabled :: proc(d: ^Desk, allocator := context.temp_allocator) -> bool {
-	if d.settings == nil {
+	if d.update_save_failed || d.settings == nil {
 		return false
 	}
 	value, found := settings.get(d.settings, settings.UPDATES, allocator)

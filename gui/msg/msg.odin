@@ -59,6 +59,7 @@ Msg :: enum u16 {
 	Update_Privacy,
 	Automatic_Checks,
 	Automatic_Checks_Caption,
+	Automatic_Checks_Unsaved,
 	Update_Notes,
 	Update_Covered,
 	Update_Later,
