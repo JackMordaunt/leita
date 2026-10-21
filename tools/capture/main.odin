@@ -14,6 +14,7 @@ import "../../gui/view"
 import "jm:ui"
 import "jm:ui/ops"
 import "jm:ui/render"
+import "./argv"
 
 // Rasterise the current draws and clips at 2×, then restore their transforms.
 png :: proc(h: ^render.Headless, path: string, movie: ^Movie = nil) -> bool {
@@ -70,7 +71,7 @@ write_tags :: proc(
 }
 
 main :: proc() {
-	args := os.args
+	args := argv.program_args()
 	if len(args) < 4 {
 		fail(
 			"usage: capture TARGET ISOLATED_DATA_DIR light|dark [jm headless steps] [-await TAG] [-await-absent TAG] [-absent TAG] [-click-top TAG] [-tags PATH] [-rescan] [-pick PATH] [-signal PATH] [-await-file PATH] [-frames PREFIX COUNT]",
