@@ -121,13 +121,17 @@ monitor_snapshot_count :: proc(t: ^testing.T, b: ^Monitor_Bench) -> int {
 	hs: history.Store
 	testing.expect(t, history.open(&hs, b.c.paths.history) == nil)
 	defer history.close(&hs)
-	place := monitor.place_of(b.place)
-	when ODIN_OS == .Darwin {
-		// macOS's temp folder is under /var, a link to /private/var, which a
-		// scan resolves (scratch in gui/app/app_test.odin meets the same).
-		info, _ := os.stat(place, context.temp_allocator)
-		place = info.fullpath
+	// History keeps the place as the scan names it. history.place_of is the
+	// tree root, and scan.location returns that path. The watched path can
+	// be another spelling of the same directory.
+	given := monitor.place_of(b.place)
+	target, _, err := scan.resolve(given)
+	testing.expect_value(t, err, scan.Error.None)
+	if err != nil {
+		return 0
 	}
+	defer scan.target_destroy(&target)
+	place := scan.location(target, context.temp_allocator)
 	snaps, _ := history.list(&hs, place)
 	return len(snaps)
 }

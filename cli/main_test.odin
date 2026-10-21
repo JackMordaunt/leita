@@ -105,8 +105,8 @@ a_report_of_a_directory_reads_back :: proc(t: ^testing.T) {
 
 	dir, dir_err := os.temp_directory(context.temp_allocator)
 	testing.expect(t, dir_err == nil, "no temp directory")
-	// Resolved the way a scan itself resolves what it is given, so the
-	// path compared below matches what the report names on every OS.
+	// Where the fixture is made. The comparison below uses the path
+	// scan.resolve stores for this directory, the name the report writes.
 	info, stat_err := os.stat(dir, context.temp_allocator)
 	testing.expect(t, stat_err == nil, "the temp directory is not there")
 	dir = strings.trim_right(info.fullpath, `/\`)
@@ -142,11 +142,19 @@ a_report_of_a_directory_reads_back :: proc(t: ^testing.T) {
 	testing.expect_value(t, totals["directories"].(json.Integer), 1)
 	files := top["largest_files"].(json.Array)
 	testing.expect_value(t, len(files), 3)
-	// The scan joins what it finds under the target with the platform's separator.
+	// The report joins names under the target as scan.resolve spells it, with
+	// the platform separator. That spelling is what the assertion compares.
+	named, _, name_err := scan.resolve(root)
+	testing.expect_value(t, name_err, scan.Error.None)
+	defer scan.target_destroy(&named)
+	canonical := root
+	if name_err == nil {
+		canonical = scan.location(named, context.temp_allocator)
+	}
 	testing.expect_value(
 		t,
 		files[0].(json.Object)["path"].(json.String),
-		fmt.tprintf("%s%ssub%sb.mp4", root, scan.SEPARATOR, scan.SEPARATOR),
+		fmt.tprintf("%s%ssub%sb.mp4", canonical, scan.SEPARATOR, scan.SEPARATOR),
 	)
 	testing.expect(t, top["compared"].(json.Null) == nil, "no store, so no earlier scan")
 	space := top["space"].(json.Object)
