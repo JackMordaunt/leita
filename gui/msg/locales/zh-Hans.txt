@@ -37,7 +37,25 @@ update_no_curl = {0} 需要 libcurl 才能检查更新，但此系统中没有�
 update_unreachable = {0} 无法连接到发布页面。请检查网络连接。
 update_not_published = 最新发布版本中没有适用于此系统的 {0} 构建。
 update_failed = 更新失败：{0}
-update_privacy = 仅在您点击时，{0} 才会向 GitHub 查询最新版本。不会发送任何关于您或您的磁盘的信息。
+update_privacy = 检查在你打开之前不会进行。检查只向 GitHub 询问公开的发行版。不会发送任何关于你或你的磁盘的信息，{0} 也不会自行安装发行版。
+automatic_checks = 自动检查更新
+automatic_checks_caption = {0} 打开时检查一次，保持打开时每天检查一次。检查只询问公开的发行版，{0} 从不会自行安装。
+update_notes = 发行说明
+update_covered = 此发行版在付费覆盖日期 {0} 之内。
+update_later = {0} 的 Pro 保持到 {1}。版本 {2} 于 {3} 发布，晚于该日期，因此没有安装。
+update_unstamped = {0} 的 Pro 保持到 {1}。此发行版没有经过验证的发布日期，因此没有安装。
+update_package = 软件包管理器会更新此副本。没有替换它。
+update_scoop = Scoop 会更新此副本。没有替换它。
+update_app_image = 此副本是 AppImage。请下载新的。没有替换它。
+update_installer = 安装程序会更新此副本。没有替换它。
+update_bundle = 此副本在应用程序包内。请下载新的应用程序。没有替换它。
+update_journal = 这是记录器。请更新你运行的副本，然后重新打开记录。没有替换它。
+update_link = 此副本是链接。请自行安装发行版。没有替换它。
+update_dev = 这是开发版本。请下载发行版来更新。没有替换它。
+licence_coverage = Pro 覆盖到 {0} 为止的发行版。
+licence_build_covered = 已安装的此版本在覆盖范围内。
+licence_build_later = 已安装的此版本（{0}）晚于该日期。Pro 保留在该日期覆盖的版本上。
+licence_build_unstamped = 此版本没有发布日期，因此该日期不覆盖它。
 
 # How the scan is going
 status_empty = 输入一个目录，查看磁盘空间被什么占用。

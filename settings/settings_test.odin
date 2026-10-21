@@ -56,3 +56,37 @@ settings_outlast_the_connection_that_wrote_them :: proc(t: ^testing.T) {
 	testing.expect(t, ok)
 	testing.expect_value(t, language, "ja")
 }
+
+// A store that never heard of automatic checks has no such key. Two
+// connections cannot both claim the same check.
+@(test)
+one_of_two_stores_claims_the_check :: proc(t: ^testing.T) {
+	dir, derr := os.make_directory_temp("", "leita-settings-*", context.temp_allocator)
+	testing.expect(t, derr == nil)
+	defer os.remove_all(dir)
+	path, _ := filepath.join({dir, FILE}, context.temp_allocator)
+
+	first, second: Store
+	testing.expect(t, open(&first, path) == nil)
+	testing.expect(t, open(&second, path) == nil)
+	defer close(&first)
+	defer close(&second)
+
+	_, found := get(&first, UPDATES, context.temp_allocator)
+	testing.expect(t, !found, "automatic checks are absent until chosen")
+
+	won_a, err_a := replace_if(&first, UPDATE_CHECKED, "", "1700000000")
+	testing.expect(t, err_a == nil)
+	testing.expect(t, won_a)
+	won_b, err_b := replace_if(&second, UPDATE_CHECKED, "", "1700000001")
+	testing.expect(t, err_b == nil)
+	testing.expect(t, !won_b, "the second window sees the first's check")
+	got, ok := get(&second, UPDATE_CHECKED, context.temp_allocator)
+	testing.expect(t, ok)
+	testing.expect_value(t, got, "1700000000")
+
+	// The window that has seen the new value can claim the next one.
+	won_c, err_c := replace_if(&second, UPDATE_CHECKED, "1700000000", "1700086400")
+	testing.expect(t, err_c == nil)
+	testing.expect(t, won_c)
+}

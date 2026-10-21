@@ -38,7 +38,25 @@ update_no_curl = O {0} precisa da libcurl para verificar atualizações, e este 
 update_unreachable = O {0} não conseguiu acessar a página da versão. Verifique a conexão.
 update_not_published = A versão mais recente não tem uma compilação do {0} para este sistema.
 update_failed = A atualização falhou: {0}
-update_privacy = Somente quando você clica, o {0} pergunta ao GitHub qual é a versão mais recente. Nada sobre você ou seus discos é enviado.
+update_privacy = As verificações ficam desligadas até você ativá-las. Uma verificação pede ao GitHub só a versão pública. Nada sobre você ou seus discos é enviado, e {0} nunca instala uma versão sozinho.
+automatic_checks = Verificar atualizações automaticamente
+automatic_checks_caption = Uma verificação quando {0} abre e uma por dia enquanto ele permanecer aberto. A verificação pede só a versão pública, e {0} nunca instala uma.
+update_notes = Notas da versão
+update_covered = Esta versão está dentro da data de cobertura {0}.
+update_later = {0} continua Pro até {1}. A versão {2} foi lançada em {3}, depois dessa data, então não foi instalada.
+update_unstamped = {0} continua Pro até {1}. Esta versão não tem uma data de lançamento autenticada, então não foi instalada.
+update_package = Um gerenciador de pacotes atualiza esta cópia. Ela não foi substituída.
+update_scoop = O Scoop atualiza esta cópia. Ela não foi substituída.
+update_app_image = Esta cópia é um AppImage. Baixe o novo. Ela não foi substituída.
+update_installer = O instalador atualiza esta cópia. Ela não foi substituída.
+update_bundle = Esta cópia está dentro do pacote do aplicativo. Baixe o novo aplicativo. Ela não foi substituída.
+update_journal = Esta é a gravadora. Atualize a cópia que você executa e ligue a gravação de novo. Ela não foi substituída.
+update_link = Esta cópia é um link. Instale a versão você mesmo. Ela não foi substituída.
+update_dev = Esta é uma compilação de desenvolvimento. Baixe uma versão para atualizá-la. Ela não foi substituída.
+licence_coverage = O Pro cobre versões até {0}.
+licence_build_covered = Esta compilação instalada está coberta.
+licence_build_later = Esta compilação instalada ({0}) é posterior a essa data. O Pro permanece nas compilações que a data cobre.
+licence_build_unstamped = Esta compilação não tem data de lançamento, então essa data não a cobre.
 
 # How the scan is going
 status_empty = Informe uma pasta para ver o que está ocupando o disco.

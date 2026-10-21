@@ -35,7 +35,25 @@ update_no_curl = {0} 앱이 업데이트를 확인하려면 libcurl이 필요하
 update_unreachable = {0} 앱이 릴리스 페이지에 연결할 수 없습니다. 연결을 확인하세요.
 update_not_published = 최신 릴리스에는 이 시스템용 {0} 빌드가 없습니다.
 update_failed = 업데이트에 실패했습니다: {0}
-update_privacy = 클릭할 때만 {0} 앱이 GitHub에 최신 릴리스를 문의합니다. 사용자나 디스크에 관한 정보는 전송되지 않습니다.
+update_privacy = 확인은 켤 때까지 하지 않습니다. 확인은 GitHub에 공개 릴리스만 묻습니다. 사용자나 디스크에 대한 정보는 보내지 않으며, {0}이(가) 스스로 릴리스를 설치하지 않습니다.
+automatic_checks = 업데이트를 자동으로 확인
+automatic_checks_caption = {0}을(를) 열 때 한 번, 열려 있는 동안 하루에 한 번 확인합니다. 확인은 공개 릴리스만 묻고, {0}이(가) 직접 설치하지는 않습니다.
+update_notes = 릴리스 노트
+update_covered = 이 릴리스는 {0}까지의 사용 기간에 포함됩니다.
+update_later = {0}은(는) {1}까지 Pro로 유지됩니다. 버전 {2}은(는) {3}에 나왔고 그 날짜 이후이므로 설치하지 않았습니다.
+update_unstamped = {0}은(는) {1}까지 Pro로 유지됩니다. 이 릴리스에는 확인된 출시일이 없어 설치하지 않았습니다.
+update_package = 패키지 관리자가 이 사본을 업데이트합니다. 바꾸지 않았습니다.
+update_scoop = Scoop이 이 사본을 업데이트합니다. 바꾸지 않았습니다.
+update_app_image = 이 사본은 AppImage입니다. 새 파일을 받으세요. 바꾸지 않았습니다.
+update_installer = 설치 프로그램이 이 사본을 업데이트합니다. 바꾸지 않았습니다.
+update_bundle = 이 사본은 앱 묶음 안에 있습니다. 새 앱을 받으세요. 바꾸지 않았습니다.
+update_journal = 이것은 기록기입니다. 실행하는 사본을 업데이트한 뒤 기록을 다시 켜세요. 바꾸지 않았습니다.
+update_link = 이 사본은 링크입니다. 릴리스는 직접 설치하세요. 바꾸지 않았습니다.
+update_dev = 이것은 개발 빌드입니다. 업데이트하려면 릴리스를 받으세요. 바꾸지 않았습니다.
+licence_coverage = Pro는 {0}까지의 릴리스를 포함합니다.
+licence_build_covered = 설치된 이 빌드는 포함됩니다.
+licence_build_later = 설치된 이 빌드({0})는 그 날짜보다 늦습니다. Pro는 그 날짜가 포함하는 빌드에 남습니다.
+licence_build_unstamped = 이 빌드에는 릴리스 날짜가 없어 그 날짜가 포함하지 않습니다.
 
 # How the scan is going
 status_empty = 디스크를 무엇이 사용하는지 보려면 디렉터리를 지정하세요.

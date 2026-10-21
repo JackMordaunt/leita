@@ -36,7 +36,25 @@ update_no_curl = {0} braucht libcurl, um nach Updates zu suchen, und dieses Syst
 update_unreachable = {0} konnte die Release-Seite nicht erreichen. Prüfen Sie die Verbindung.
 update_not_published = Das neueste Release enthält keinen Build von {0} für dieses System.
 update_failed = Das Update ist fehlgeschlagen: {0}
-update_privacy = Nur wenn Sie klicken, fragt {0} bei GitHub nach dem neuesten Release. Es werden keine Angaben über Sie oder Ihre Datenträger gesendet.
+update_privacy = Prüfungen bleiben aus, bis Sie sie einschalten. Eine Prüfung fragt bei GitHub nur das öffentliche Release ab. Es wird nichts über Sie oder Ihre Datenträger gesendet, und {0} installiert nie selbst ein Release.
+automatic_checks = Automatisch nach Updates suchen
+automatic_checks_caption = Eine Prüfung, wenn {0} startet, und eine am Tag, solange es geöffnet bleibt. Die Prüfung fragt nur das öffentliche Release ab, und {0} installiert nie eines.
+update_notes = Versionshinweise
+update_covered = Dieses Release liegt im bezahlten Zeitraum bis {0}.
+update_later = {0} bleibt Pro bis {1}. Version {2} erschien am {3}, also danach, und wurde nicht installiert.
+update_unstamped = {0} bleibt Pro bis {1}. Dieses Release hat kein geprüftes Erscheinungsdatum und wurde nicht installiert.
+update_package = Ein Paketmanager aktualisiert diese Kopie. Sie wurde nicht ersetzt.
+update_scoop = Scoop aktualisiert diese Kopie. Sie wurde nicht ersetzt.
+update_app_image = Diese Kopie ist ein AppImage. Laden Sie das neue herunter. Sie wurde nicht ersetzt.
+update_installer = Das Installationsprogramm aktualisiert diese Kopie. Sie wurde nicht ersetzt.
+update_bundle = Diese Kopie liegt im App-Bundle. Laden Sie die neue App herunter. Sie wurde nicht ersetzt.
+update_journal = Das ist der Recorder. Aktualisieren Sie die Kopie, die Sie ausführen, und schalten Sie die Aufzeichnung wieder ein. Sie wurde nicht ersetzt.
+update_link = Diese Kopie ist ein Link. Installieren Sie das Release selbst. Sie wurde nicht ersetzt.
+update_dev = Das ist ein Entwicklungsbuild. Laden Sie ein Release herunter, um ihn zu aktualisieren. Er wurde nicht ersetzt.
+licence_coverage = Pro deckt Releases bis {0} ab.
+licence_build_covered = Dieser installierte Build ist abgedeckt.
+licence_build_later = Dieser installierte Build ({0}) liegt nach diesem Datum. Pro bleibt auf den Builds, die das Datum abdeckt.
+licence_build_unstamped = Dieser Build hat kein Erscheinungsdatum, daher deckt dieses Datum ihn nicht ab.
 
 # How the scan is going
 status_empty = Geben Sie einen Ordner an, um zu sehen, was den Speicherplatz belegt.
