@@ -213,14 +213,14 @@ def write_release(directory, files, version, released, seed, bad_hash=False, bad
             raise TypeError(f"{name} must be bytes")
         (directory / name).write_bytes(data)
     version_text = version if version.endswith("\n") else version + "\n"
-    (directory / VERSION_NAME).write_text(version_text, encoding="ascii")
+    (directory / VERSION_NAME).write_bytes(version_text.encode("ascii"))
     listed = dict(files)
     listed[VERSION_NAME] = version_text.encode("ascii")
     if not omit_released:
         released_text = released if released.endswith("\n") else released + "\n"
         if len(released_text.encode("ascii")) != 21:
             raise ValueError("released.txt is the 20-character instant and one LF")
-        (directory / RELEASED_NAME).write_text(released_text, encoding="ascii")
+        (directory / RELEASED_NAME).write_bytes(released_text.encode("ascii"))
         listed[RELEASED_NAME] = released_text.encode("ascii")
     lines = [_sha256_line(name, listed[name]) for name in sorted(listed)]
     if bad_hash:
