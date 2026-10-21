@@ -29,8 +29,8 @@ commit_verified :: proc(exe, fresh: string) -> (status: Commit_Status, note: str
 	if !backup_target(exe, old, part) {
 		return .Backup, ""
 	}
-	if !preserve_permissions(exe, fresh) {
-		return .Permission, ""
+	if kept, why := preserve_permissions(exe, fresh); !kept {
+		return .Permission, why
 	}
 	if !hold_for_commit() {
 		return .Hold, ""

@@ -173,6 +173,12 @@ install_of :: proc(
 ) -> Install {
 	p, _ := strings.replace_all(exe, "\\", "/", allocator)
 	lower := strings.to_lower(p, allocator)
+	// Windows roots a leading slash on the current drive, so the cleaned
+	// form of /usr/bin is D:/usr/bin. The prefixes below are that tail.
+	unix := p
+	if len(p) >= 3 && p[1] == ':' && p[2] == '/' {
+		unix = p[2:]
+	}
 	switch {
 	case strings.contains(p, ".app/Contents/"):
 		return .Bundle
@@ -180,16 +186,16 @@ install_of :: proc(
 		return .App_Image
 	case strings.contains(lower, "/program files"):
 		return .Installer
-	case p == JOURNAL_COPY:
+	case p == JOURNAL_COPY || unix == JOURNAL_COPY:
 		return .Journal
 	case strings.contains(lower, "/scoop/apps/"):
 		return .Scoop
-	case strings.has_prefix(p, "/usr/") &&
-	     !strings.has_prefix(p, "/usr/local/"),
-	     strings.has_prefix(p, "/opt/homebrew/"),
-	     strings.contains(p, "/Cellar/"),
-	     strings.has_prefix(p, "/nix/store/"),
-	     strings.has_prefix(p, "/snap/"):
+	case strings.has_prefix(unix, "/usr/") &&
+	     !strings.has_prefix(unix, "/usr/local/"),
+	     strings.has_prefix(unix, "/opt/homebrew/"),
+	     strings.contains(unix, "/Cellar/"),
+	     strings.has_prefix(unix, "/nix/store/"),
+	     strings.has_prefix(unix, "/snap/"):
 		return .Package
 	}
 	return .Loose
@@ -491,7 +497,8 @@ apply :: proc(cfg: Config, allocator := context.temp_allocator) -> (r: Result) {
 			&r,
 			.Failed,
 			.Cannot_Replace,
-			"could not keep the permissions of %s, so it was not replaced",
+			"%s: could not keep the permissions of %s, so it was not replaced",
+			note,
 			rel.exe,
 		)
 	case .Hold:

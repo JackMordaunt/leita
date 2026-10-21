@@ -8,15 +8,18 @@ import "core:sys/posix"
 
 // preserve_permissions copies the mode bits. A failure leaves the live
 // executable untouched: the caller has not replaced it yet.
-preserve_permissions :: proc(exe, fresh: string, allocator := context.temp_allocator) -> bool {
+preserve_permissions :: proc(exe, fresh: string, allocator := context.temp_allocator) -> (ok: bool, note: string) {
 	info, err := os.stat(exe, allocator)
 	if err != nil {
 		os.file_info_delete(info, allocator)
-		return false
+		return false, fmt.tprintf("stat error %v", err)
 	}
 	mode := info.mode & os.Permissions_All
 	os.file_info_delete(info, allocator)
-	return os.change_mode(fresh, mode) == nil
+	if cerr := os.change_mode(fresh, mode); cerr != nil {
+		return false, fmt.tprintf("chmod error %v", cerr)
+	}
+	return true, ""
 }
 
 // replace_atomically is rename(2) over the existing path. The directory
