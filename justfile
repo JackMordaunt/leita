@@ -145,7 +145,7 @@ cli mode="debug": sqlite
     *) echo "cli: the mode is debug or release, not {{mode}}" >&2; exit 1 ;;
     esac
     mkdir -p build/{{mode}}
-    {{odin}} build . $opt {{flags}} {{curl_open}} -out:build/{{mode}}/{{bin}}{{exe}}
+    {{odin}} build cmd/cli $opt {{flags}} {{curl_open}} -out:build/{{mode}}/{{bin}}{{exe}}
 
 # The window, debug with AddressSanitizer or release optimised.
 #
@@ -162,7 +162,7 @@ gui mode="debug": deps
     # console behind it; a debug one keeps its console, where printing goes.
     if [ "{{os()}}" = windows ] && [ "{{mode}}" = release ]; then opt="$opt -subsystem:windows"; fi
     mkdir -p build/{{mode}}/app
-    {{odin}} build gui $opt {{flags}} {{curl_open}} {{sdl3_link}} -out:build/{{mode}}/app/{{gui}}{{exe}}
+    {{odin}} build cmd/gui $opt {{flags}} {{curl_open}} {{sdl3_link}} -out:build/{{mode}}/app/{{gui}}{{exe}}
     if [ "{{os()}}" = windows ]; then
         # The window does not start without either DLL beside it, so a build
         # that lacks one stops here rather than shipping a window that cannot run.
@@ -256,7 +256,7 @@ run *args:
 # run on its own: it is what keeps THIRD_PARTY.md equal to the window's list.
 test: sqlite
     mkdir -p build/test
-    {{odin}} test . -all-packages -debug {{san}} {{flags}} {{curl_open}} -out:build/test/{{bin}}{{exe}}
+    {{odin}} test cmd/cli -all-packages -debug {{san}} {{flags}} {{curl_open}} -out:build/test/{{bin}}{{exe}}
     {{odin}} test gui/notices -debug {{san}} {{flags}} -out:build/test/notices{{exe}}
 
 # The btrfs and walk tests on a btrfs image made, mounted and filled for them,
@@ -311,8 +311,8 @@ mount-test *args:
 # the command line does not import it, and its test is what renders
 # THIRD_PARTY.md.
 check:
-    {{odin}} check . {{check_flags}}
-    {{odin}} check . -debug {{check_flags}}
+    {{odin}} check cmd/cli {{check_flags}}
+    {{odin}} check cmd/cli -debug {{check_flags}}
     {{odin}} check gui/notices -no-entry-point {{check_flags}}
 
 # The jm submodule, when JM does not name another checkout, SQLite, which keeps
@@ -367,8 +367,8 @@ sdl3-static:
         || { tail -n 30 build/sdl3-static.log >&2; exit 1; }
     cp build/sdl3-static/libSDL3.a build/sdl3-static/sdl3.pc ui/shell/lib/
 
-# The window with its view hot-reloaded. The host (gui/host) owns the window and
-# the scan; the view runs as gui/child in a subprocess, rebuilt here whenever an
+# The window with its view hot-reloaded. The host (cmd/gui-host) owns the window and
+# the scan; the view runs as cmd/gui-child in a subprocess, rebuilt here whenever an
 # .odin file it is made of changes, into its own timestamped binary under
 # build/hot, named in build/hot/view.watch, which the host re-reads and respawns
 # from (ui/shell.run_host). The scan keeps running across reloads; a change to
@@ -382,19 +382,19 @@ hot *args: deps
     #!/usr/bin/env bash
     set -euo pipefail
     mkdir -p build/debug/app build/hot
-    {{odin}} build gui/host {{hot_opt}} {{flags}} {{curl_open}} {{sdl3_link}} -out:build/debug/app/{{gui}}-host{{exe}}
+    {{odin}} build cmd/gui-host {{hot_opt}} {{flags}} {{curl_open}} {{sdl3_link}} -out:build/debug/app/{{gui}}-host{{exe}}
     rm -f build/hot/view.watch
     (
       last=""
       n=0
       while true; do
-        srcs=(gui/child/*.odin gui/view/*.odin gui/query/*.odin gui/command/*.odin human/*.odin)
+        srcs=(cmd/gui-child/*.odin gui/view/*.odin gui/query/*.odin gui/command/*.odin human/*.odin)
         mt=$({ stat -c %Y "${srcs[@]}" 2>/dev/null || stat -f %m "${srcs[@]}"; } | sort -n | tail -1)
         if [ "$mt" != "$last" ]; then
           last=$mt
           n=$((n + 1))
           out=build/hot/view-$(date +%s)-${n}{{exe}}
-          if {{odin}} build gui/child {{hot_opt}} {{flags}} -out:"$out"; then
+          if {{odin}} build cmd/gui-child {{hot_opt}} {{flags}} -out:"$out"; then
             printf '%s' "$out" > build/hot/view.watch
             echo "hot: view ready $out"
             ls -t build/hot/view-* | tail -n +3 | xargs -r rm -f
@@ -419,7 +419,7 @@ hot *args: deps
 # Run the window's suites under ASan
 gui-test: deps
     mkdir -p build/test/app
-    {{odin}} test gui -debug {{san}} {{flags}} {{curl_open}} {{sdl3_link}} -out:build/test/app/{{gui}}-main{{exe}}
+    {{odin}} test cmd/gui -debug {{san}} {{flags}} {{curl_open}} {{sdl3_link}} -out:build/test/app/{{gui}}-main{{exe}}
     {{odin}} test gui/app -debug {{san}} {{flags}} {{curl_open}} {{sdl3_link}} -out:build/test/app/{{gui}}{{exe}}
     {{odin}} test gui/files -debug {{san}} {{flags}} -out:build/test/app/{{gui}}-files{{exe}}
     {{odin}} test gui/view -debug {{san}} {{flags}} -out:build/test/app/{{gui}}-view{{exe}}

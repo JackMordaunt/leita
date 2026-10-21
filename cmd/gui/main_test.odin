@@ -16,6 +16,7 @@ a_flag_makes_leita_the_command_line :: proc(t: ^testing.T) {
 	testing.expect_value(t, launch({"journal"}), Launch.Terminal)
 	testing.expect_value(t, launch({"licence"}), Launch.Terminal)
 	testing.expect_value(t, launch({"history"}), Launch.Terminal)
+	testing.expect_value(t, launch({"update"}), Launch.Terminal)
 	testing.expect_value(t, launch({"a", "b"}), Launch.Terminal)
 }
 

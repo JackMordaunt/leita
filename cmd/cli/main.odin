@@ -18,8 +18,8 @@ import "core:os"
 
 @(require) import "jm:debug"
 
-import "appid"
-import "cli"
+import "../../appid"
+import "../../cli"
 
 main :: proc() {
 	os.exit(run())

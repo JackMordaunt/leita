@@ -350,6 +350,12 @@ key from your receipt. The terms are in [LICENSE.md](LICENSE.md).
 
 ## Build from source
 
+The executable entrypoints are `cmd/cli` and `cmd/gui`. Package `cli` owns
+argument parsing and maps commands to domain operations. The window calls typed
+domain operations through `gui/app`; `cmd/gui` first routes terminal invocations
+to the same `cli` package. The development hot reload executables live in
+`cmd/gui-host` and `cmd/gui-child`.
+
 leita is written in [Odin](https://odin-lang.org) and builds with
 [just](https://just.systems). `just deps` fetches the jm submodule and builds
 the libraries both binaries link. On macOS and Linux that includes SDL3, built

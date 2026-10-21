@@ -10,8 +10,8 @@ import "core:debug/trace"
 @(require) import "jm:debug"
 import "jm:ui/child"
 
-import "../msg"
-import "../view"
+import "../../gui/msg"
+import "../../gui/view"
 
 main :: proc() {
 	when ODIN_DEBUG {

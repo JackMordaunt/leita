@@ -1,4 +1,4 @@
-package leita_monitor
+package leita_cli
 
 import "core:flags"
 import "core:fmt"
@@ -16,6 +16,7 @@ import "../gui/msg"
 import "../history"
 import "../human"
 import "../licence"
+import "../monitor"
 import "../schedule"
 import "../settings"
 import "../term"
@@ -26,7 +27,7 @@ The monitor's command line, which both binaries answer as their first argument
 scheduler's entry runs whichever binary turned monitoring on.
 */
 
-USAGE :: `leita monitor — scan the places you watch on a schedule, while leita is closed.
+MONITOR_USAGE :: `leita monitor — scan the places you watch on a schedule, while leita is closed.
 
 Watch
   leita monitor add PATH [--every hourly|daily|weekly] [LIMITS]
@@ -56,9 +57,9 @@ crossed raises an alert, once, as a desktop notification and in list.
 // scheduler, the command the scheduler is to run, whether the paid features
 // are unlocked, how an alert is shown on the desktop, nil for not at all,
 // and what its output may carry, plain unless a person is watching.
-Context :: struct {
+Monitor_Context :: struct {
 	style:    term.Style,
-	paths:    Paths,
+	paths:    monitor.Paths,
 	host:     schedule.Host,
 	argv:     []string, // what the scheduler runs: this binary, monitor, run
 	aside:    io.Writer, // where a note beside the answer goes: stderr, or the answer's writer when nil
@@ -71,11 +72,11 @@ Context :: struct {
 
 // LOCKED says why a Pro command was refused. Listing, turning monitoring off
 // and removing a place are not refused: the record stays reachable.
-LOCKED :: "scheduled scans need a licence now the 30-day Pro evaluation has ended; monitoring can still be turned off, and places removed. add one with leita licence add, or in Leita, the window, under Licence in its settings"
+MONITOR_LOCKED :: "scheduled scans need a licence now the 30-day Pro evaluation has ended; monitoring can still be turned off, and places removed. add one with leita licence add, or in Leita, the window, under Licence in its settings"
 
 // dispatch carries out the monitor command args names, saying how it went on w,
 // and returns the exit code.
-dispatch :: proc(c: Context, args: []string, w: io.Writer) -> int {
+monitor_dispatch :: proc(c: Monitor_Context, args: []string, w: io.Writer) -> int {
 	verb := args[0] if len(args) > 0 else "run"
 	rest := args[1:] if len(args) > 0 else nil
 	switch verb {
@@ -84,14 +85,14 @@ dispatch :: proc(c: Context, args: []string, w: io.Writer) -> int {
 			all: bool `usage:"Scan every watched place, due or not."`,
 		}
 		f: Run_Flags
-		if code, ok := parse(c, &f, rest, w); !ok {
+		if code, ok := monitor_parse(c, &f, rest, w); !ok {
 			return code
 		}
 		if !c.unlocked {
-			errorf(c, w, LOCKED)
-			return EXIT_FAILED
+			monitor_errorf(c, w, MONITOR_LOCKED)
+			return monitor.EXIT_FAILED
 		}
-		return run(
+		return monitor.run(
 			{
 				paths = c.paths,
 				now = c.now,
@@ -103,8 +104,8 @@ dispatch :: proc(c: Context, args: []string, w: io.Writer) -> int {
 			w,
 		)
 	case "list":
-		heal(c, w)
-		return list(c, w)
+		monitor_heal(c, w)
+		return monitor_list(c, w)
 	case "add":
 		Add_Flags :: struct {
 			path:        string `args:"pos=0,required" usage:"The directory or drive to watch."`,
@@ -118,17 +119,17 @@ dispatch :: proc(c: Context, args: []string, w: io.Writer) -> int {
 		f := Add_Flags {
 			every = "daily",
 		}
-		if code, ok := parse(c, &f, rest, w); !ok {
+		if code, ok := monitor_parse(c, &f, rest, w); !ok {
 			return code
 		}
 		if !c.unlocked {
-			errorf(c, w, LOCKED)
-			return EXIT_FAILED
+			monitor_errorf(c, w, MONITOR_LOCKED)
+			return monitor.EXIT_FAILED
 		}
 		every, ok := settings.frequency_named(f.every)
 		if !ok {
-			errorf(c, w, "--every is hourly, daily or weekly, not %q", f.every)
-			return EXIT_FAILED
+			monitor_errorf(c, w, "--every is hourly, daily or weekly, not %q", f.every)
+			return monitor.EXIT_FAILED
 		}
 		limits := settings.Limits {
 			warn_used   = f.warn_used,
@@ -138,67 +139,72 @@ dispatch :: proc(c: Context, args: []string, w: io.Writer) -> int {
 		}
 		for v, name in ([2]int{f.warn_used, f.fail_used}) {
 			if v < 0 || v > 100 {
-				errorf(
+				monitor_errorf(
 					c,
 					w,
 					"--%s is a percent, 0 to 100, not %d",
 					"warn-used" if name == 0 else "fail-used",
 					v,
 				)
-				return EXIT_FAILED
+				return monitor.EXIT_FAILED
 			}
 		}
 		if f.full_within < 0 {
-			errorf(c, w, "--full-within is days, not %d", f.full_within)
-			return EXIT_FAILED
+			monitor_errorf(c, w, "--full-within is days, not %d", f.full_within)
+			return monitor.EXIT_FAILED
 		}
 		if f.min_free != "" {
 			if limits.min_free, ok = human.parse_bytes(f.min_free); !ok {
-				errorf(c, w, "cannot read --min-free %q: a size such as 20GB or 20GiB", f.min_free)
-				return EXIT_FAILED
+				monitor_errorf(
+					c,
+					w,
+					"cannot read --min-free %q: a size such as 20GB or 20GiB",
+					f.min_free,
+				)
+				return monitor.EXIT_FAILED
 			}
 		}
-		heal(c, w)
-		return add(c, f.path, every, limits, w)
+		monitor_heal(c, w)
+		return monitor_add(c, f.path, every, limits, w)
 	case "remove":
 		Remove_Flags :: struct {
 			path: string `args:"pos=0,required" usage:"The place to stop watching."`,
 		}
 		f: Remove_Flags
-		if code, ok := parse(c, &f, rest, w); !ok {
+		if code, ok := monitor_parse(c, &f, rest, w); !ok {
 			return code
 		}
-		heal(c, w)
-		return remove(c, f.path, w)
+		monitor_heal(c, w)
+		return monitor_remove(c, f.path, w)
 	case "on":
 		if !c.unlocked {
-			errorf(c, w, LOCKED)
-			return EXIT_FAILED
+			monitor_errorf(c, w, MONITOR_LOCKED)
+			return monitor.EXIT_FAILED
 		}
-		return switch_on(c, w)
+		return monitor_switch_on(c, w)
 	case "off":
-		return switch_off(c, w)
+		return monitor_switch_off(c, w)
 	case "-h", "--help", "help":
-		print_usage(c, w)
+		monitor_print_usage(c, w)
 		return 0
 	}
-	errorf(c, w, "no monitor command %q", verb)
+	monitor_errorf(c, w, "no monitor command %q", verb)
 	fmt.wprintln(w)
-	print_usage(c, w)
-	return EXIT_FAILED
+	monitor_print_usage(c, w)
+	return monitor.EXIT_FAILED
 }
 
 // print_usage writes USAGE on w: plain, byte for byte; for a person, with weight.
 @(private)
-print_usage :: proc(c: Context, w: io.Writer) {
+monitor_print_usage :: proc(c: Monitor_Context, w: io.Writer) {
 	b := strings.builder_make(context.temp_allocator)
-	term.write_usage(&b, c.style, "leita monitor", USAGE)
+	term.write_usage(&b, c.style, "leita monitor", MONITOR_USAGE)
 	fmt.wprint(w, strings.to_string(b))
 }
 
 // errorf says what went wrong on w, the prefix in bold for a person.
 @(private)
-errorf :: proc(c: Context, w: io.Writer, format: string, args: ..any) {
+monitor_errorf :: proc(c: Monitor_Context, w: io.Writer, format: string, args: ..any) {
 	fmt.wprintfln(
 		w,
 		"%s %s",
@@ -209,109 +215,102 @@ errorf :: proc(c: Context, w: io.Writer, format: string, args: ..any) {
 
 // notef says what a person should know on w, the prefix in bold for them.
 @(private)
-notef :: proc(c: Context, w: io.Writer, format: string, args: ..any) {
+monitor_notef :: proc(c: Monitor_Context, w: io.Writer, format: string, args: ..any) {
 	fmt.wprintfln(w, "%s %s", term.painted(c.style, {.Bold}, "note:"), fmt.tprintf(format, ..args))
 }
 
 // parse reads args into f, saying what is wrong on w; it fails with the exit
 // code to return, 0 for a request for help, which USAGE answers.
 @(private)
-parse :: proc(c: Context, f: ^$T, args: []string, w: io.Writer) -> (code: int, ok: bool) {
+monitor_parse :: proc(
+	c: Monitor_Context,
+	f: ^$T,
+	args: []string,
+	w: io.Writer,
+) -> (
+	code: int,
+	ok: bool,
+) {
 	switch e in flags.parse(f, args, .Unix) {
 	case nil:
 		return 0, true
 	case flags.Help_Request:
-		print_usage(c, w)
+		monitor_print_usage(c, w)
 		return 0, false
 	case flags.Parse_Error:
-		errorf(c, w, "%s", e.message)
+		monitor_errorf(c, w, "%s", e.message)
 	case flags.Validation_Error:
-		errorf(c, w, "%s", e.message)
+		monitor_errorf(c, w, "%s", e.message)
 	case flags.Open_File_Error:
-		errorf(c, w, "cannot open %s: %v", e.filename, e.errno)
+		monitor_errorf(c, w, "cannot open %s: %v", e.filename, e.errno)
 	}
 	fmt.wprintln(w, "leita monitor -h lists what it takes")
-	return EXIT_FAILED, false
+	return monitor.EXIT_FAILED, false
 }
 
 // open_settings opens the settings store, saying why not on w.
 @(private)
-open_settings :: proc(c: Context, st: ^settings.Store, w: io.Writer) -> bool {
+monitor_open_settings :: proc(c: Monitor_Context, st: ^settings.Store, w: io.Writer) -> bool {
 	if err := settings.open(st, c.paths.settings); err != nil {
-		errorf(c, w, "cannot open %s: %s", c.paths.settings, history.describe(err))
+		monitor_errorf(c, w, "cannot open %s: %s", c.paths.settings, history.describe(err))
 		return false
 	}
 	return true
 }
 
-// place_of is path as a place is watched: absolute, in the temp allocator.
-place_of :: proc(path: string) -> string {
-	abs, err := os.get_absolute_path(path, context.temp_allocator)
-	if err != nil {
-		return path
-	}
-	if len(abs) > 1 {
-		abs = strings.trim_right(abs, `/\`)
-		if len(abs) == 2 && abs[1] == ':' {
-			abs = strings.concatenate({abs, `\`}, context.temp_allocator)
-		}
-	}
-	return abs
-}
-
 @(private)
-add :: proc(
-	c: Context,
+monitor_add :: proc(
+	c: Monitor_Context,
 	path: string,
 	every: settings.Frequency,
 	limits: settings.Limits,
 	w: io.Writer,
 ) -> int {
 	st: settings.Store
-	if !open_settings(c, &st, w) {
-		return EXIT_FAILED
+	if !monitor_open_settings(c, &st, w) {
+		return monitor.EXIT_FAILED
 	}
 	defer settings.close(&st)
-	place := place_of(path)
+	place := monitor.place_of(path)
 	if !os.exists(place) {
-		errorf(c, w, "%s is not there", place)
-		return EXIT_FAILED
+		monitor_errorf(c, w, "%s is not there", place)
+		return monitor.EXIT_FAILED
 	}
 	if err := settings.watch(
 		&st,
 		{place = place, every = every, added = time.to_unix_seconds(c.now), limits = limits},
 	); err != nil {
-		errorf(c, w, "cannot watch %s: %s", place, history.describe(err))
-		return EXIT_FAILED
+		monitor_errorf(c, w, "cannot watch %s: %s", place, history.describe(err))
+		return monitor.EXIT_FAILED
 	}
 	fmt.wprintfln(w, "watching %s, %s", place, settings.FREQUENCY_NAMES[every])
 	if !settings.monitoring(&st) {
-		notef(c, w, "monitoring is off; leita monitor on turns it on")
+		monitor_notef(c, w, "monitoring is off; leita monitor on turns it on")
 	}
 	return 0
 }
 
 @(private)
-remove :: proc(c: Context, path: string, w: io.Writer) -> int {
+monitor_remove :: proc(c: Monitor_Context, path: string, w: io.Writer) -> int {
 	st: settings.Store
-	if !open_settings(c, &st, w) {
-		return EXIT_FAILED
+	if !monitor_open_settings(c, &st, w) {
+		return monitor.EXIT_FAILED
 	}
 	defer settings.close(&st)
 	// The place as given first, so one no longer there can still be removed.
-	for place in ([]string{path, place_of(path)}) {
+	for place in ([]string{path, monitor.place_of(path)}) {
 		found, err := settings.unwatch(&st, place)
 		if err != nil {
-			errorf(c, w, "cannot stop watching %s: %s", place, history.describe(err))
-			return EXIT_FAILED
+			monitor_errorf(c, w, "cannot stop watching %s: %s", place, history.describe(err))
+			return monitor.EXIT_FAILED
 		}
 		if found {
 			fmt.wprintfln(w, "no longer watching %s", place)
 			return 0
 		}
 	}
-	errorf(c, w, "%s is not watched", path)
-	return EXIT_FAILED
+	monitor_errorf(c, w, "%s is not watched", path)
+	return monitor.EXIT_FAILED
 }
 
 /*
@@ -321,7 +320,7 @@ by the other binary, would run what is no longer there. It says so once,
 beside the answer, since the person asked for something else.
 */
 @(private)
-heal :: proc(c: Context, w: io.Writer) {
+monitor_heal :: proc(c: Monitor_Context, w: io.Writer) {
 	st: settings.Store
 	if settings.open(&st, c.paths.settings) != nil {
 		return
@@ -337,7 +336,7 @@ heal :: proc(c: Context, w: io.Writer) {
 	aside := c.aside if c.aside.procedure != nil else w
 	entry := schedule.describe(c.host)
 	if problem, _ := schedule.install(c.host, c.argv); problem != "" {
-		errorf(
+		monitor_errorf(
 			c,
 			aside,
 			"the %s ran %s and cannot be moved to %s: %s",
@@ -348,30 +347,30 @@ heal :: proc(c: Context, w: io.Writer) {
 		)
 		return
 	}
-	notef(c, aside, "the %s ran %s; it now runs %s", entry, was, c.argv[0])
+	monitor_notef(c, aside, "the %s ran %s; it now runs %s", entry, was, c.argv[0])
 }
 
 // switch_on hands the monitor to the scheduler, then turns monitoring on.
-switch_on :: proc(c: Context, w: io.Writer) -> int {
+monitor_switch_on :: proc(c: Monitor_Context, w: io.Writer) -> int {
 	st: settings.Store
-	if !open_settings(c, &st, w) {
-		return EXIT_FAILED
+	if !monitor_open_settings(c, &st, w) {
+		return monitor.EXIT_FAILED
 	}
 	defer settings.close(&st)
 	problem, state := schedule.install(c.host, c.argv)
 	if problem != "" {
-		errorf(c, w, "cannot add the %s: %s", schedule.describe(c.host), problem)
-		return EXIT_FAILED
+		monitor_errorf(c, w, "cannot add the %s: %s", schedule.describe(c.host), problem)
+		return monitor.EXIT_FAILED
 	}
 	if err := settings.set_monitoring(&st, true); err != nil {
 		schedule.remove(c.host)
-		errorf(c, w, "cannot turn monitoring on: %s", history.describe(err))
-		return EXIT_FAILED
+		monitor_errorf(c, w, "cannot turn monitoring on: %s", history.describe(err))
+		return monitor.EXIT_FAILED
 	}
 	fmt.wprintfln(w, "monitoring is on: the %s runs it every hour", schedule.describe(c.host))
 	switch state {
 	case .While_Logged_In:
-		notef(
+		monitor_notef(
 			c,
 			w,
 			"it runs only while %s is logged in; to run it always: loginctl enable-linger %s",
@@ -379,7 +378,7 @@ switch_on :: proc(c: Context, w: io.Writer) -> int {
 			c.host.login,
 		)
 	case .Unknown:
-		notef(
+		monitor_notef(
 			c,
 			w,
 			"The linger state is unknown, so it is not known whether " +
@@ -392,29 +391,29 @@ switch_on :: proc(c: Context, w: io.Writer) -> int {
 
 // switch_off turns monitoring off, then takes the job out of the scheduler,
 // which disables it before deleting its files.
-switch_off :: proc(c: Context, w: io.Writer) -> int {
+monitor_switch_off :: proc(c: Monitor_Context, w: io.Writer) -> int {
 	st: settings.Store
-	if !open_settings(c, &st, w) {
-		return EXIT_FAILED
+	if !monitor_open_settings(c, &st, w) {
+		return monitor.EXIT_FAILED
 	}
 	defer settings.close(&st)
 	if err := settings.set_monitoring(&st, false); err != nil {
-		errorf(c, w, "cannot turn monitoring off: %s", history.describe(err))
-		return EXIT_FAILED
+		monitor_errorf(c, w, "cannot turn monitoring off: %s", history.describe(err))
+		return monitor.EXIT_FAILED
 	}
 	if problem := schedule.remove(c.host); problem != "" {
-		errorf(c, w, "cannot remove the %s: %s", schedule.describe(c.host), problem)
-		return EXIT_FAILED
+		monitor_errorf(c, w, "cannot remove the %s: %s", schedule.describe(c.host), problem)
+		return monitor.EXIT_FAILED
 	}
 	fmt.wprintln(w, "monitoring is off, and nothing is scheduled")
 	return 0
 }
 
 @(private)
-list :: proc(c: Context, w: io.Writer) -> int {
+monitor_list :: proc(c: Monitor_Context, w: io.Writer) -> int {
 	st: settings.Store
-	if !open_settings(c, &st, w) {
-		return EXIT_FAILED
+	if !monitor_open_settings(c, &st, w) {
+		return monitor.EXIT_FAILED
 	}
 	defer settings.close(&st)
 	switch {
@@ -441,8 +440,8 @@ list :: proc(c: Context, w: io.Writer) -> int {
 	}
 	watches, err := settings.watches(&st, context.temp_allocator)
 	if err != nil {
-		errorf(c, w, "cannot read what is watched: %s", history.describe(err))
-		return EXIT_FAILED
+		monitor_errorf(c, w, "cannot read what is watched: %s", history.describe(err))
+		return monitor.EXIT_FAILED
 	}
 	if len(watches) == 0 {
 		fmt.wprintln(w, "no place is watched; leita monitor add PATH watches one")
@@ -457,7 +456,7 @@ list :: proc(c: Context, w: io.Writer) -> int {
 			term.painted(c.style, {.Bold}, watch.place),
 			settings.FREQUENCY_NAMES[watch.every],
 		)
-		if limits := limits_text(watch.limits); limits != "" {
+		if limits := monitor_limits_text(watch.limits); limits != "" {
 			fmt.wprintfln(w, "  alerts on %s", limits)
 		}
 		last, ok := settings.last_run(&st, watch.place, context.temp_allocator)
@@ -468,7 +467,7 @@ list :: proc(c: Context, w: io.Writer) -> int {
 			fmt.wprintfln(
 				w,
 				"  %s  %s %s",
-				when_(last.started),
+				monitor_when_(last.started),
 				term.painted(c.style, {.Bold}, "failed:"),
 				last.problem,
 			)
@@ -476,18 +475,18 @@ list :: proc(c: Context, w: io.Writer) -> int {
 			fmt.wprintfln(
 				w,
 				"  %s  %s, %s",
-				when_(last.started),
+				monitor_when_(last.started),
 				human.bytes(last.bytes),
-				how_read(last),
+				monitor.how_read(last),
 			)
 		}
-		raised, _ := settings.alerts(&st, watch.place, LIST_ALERTS, context.temp_allocator)
+		raised, _ := settings.alerts(&st, watch.place, MONITOR_LIST_ALERTS, context.temp_allocator)
 		for r in raised {
-			if a, known := alert_of(r); known {
+			if a, known := monitor.alert_of(r); known {
 				fmt.wprintfln(
 					w,
 					"  %s  %s %s",
-					when_(r.raised),
+					monitor_when_(r.raised),
 					term.painted(c.style, {.Bold}, "alert:"),
 					alert.say(english, a, r.place, r.problem),
 				)
@@ -498,12 +497,12 @@ list :: proc(c: Context, w: io.Writer) -> int {
 }
 
 // LIST_ALERTS is how many of a place's newest alerts list shows.
-LIST_ALERTS :: 5
+MONITOR_LIST_ALERTS :: 5
 
 // limits_text says what a place is checked against, in a line, "" for nothing,
 // in the temp allocator.
 @(private)
-limits_text :: proc(l: settings.Limits) -> string {
+monitor_limits_text :: proc(l: settings.Limits) -> string {
 	parts := make([dynamic]string, context.temp_allocator)
 	if l.warn_used > 0 {
 		append(&parts, fmt.tprintf("%d%% used", l.warn_used))
@@ -525,7 +524,7 @@ limits_text :: proc(l: settings.Limits) -> string {
 
 // when_ is a run's start on the local clock, in the temp allocator.
 @(private)
-when_ :: proc(unix: i64) -> string {
+monitor_when_ :: proc(unix: i64) -> string {
 	return timefmt.local(time.unix(unix, 0), "%Y-%m-%d %H:%M", context.temp_allocator)
 }
 
@@ -536,26 +535,30 @@ store, the system's scheduler, and this binary, by the path it was started by
 (schedule.this_program), as what the scheduler runs. It says how it went on
 standard output, a note beside it on standard error, and returns the exit code.
 */
-run_command_line :: proc(args: []string) -> int {
+monitor_run_command_line :: proc(args: []string) -> int {
 	mode, _ := term.parse_mode(os.get_env("LEITA_COLOR", context.temp_allocator))
 	style := term.detect(terminal.is_terminal(os.stdout), mode)
 	kept := history.default_path(context.temp_allocator)
 	if kept == "" {
-		errorf({style = style}, os.to_writer(os.stderr), "no folder to keep leita's data in")
-		return EXIT_FAILED
+		monitor_errorf(
+			{style = style},
+			os.to_writer(os.stderr),
+			"no folder to keep leita's data in",
+		)
+		return monitor.EXIT_FAILED
 	}
 	host := schedule.host_default(context.temp_allocator)
-	paths := paths_beside(kept, context.temp_allocator)
+	paths := monitor.paths_beside(kept, context.temp_allocator)
 	now := time.now()
-	_, unlocked, problem := licence_beside(
+	_, unlocked, problem := monitor.licence_beside(
 		kept,
 		os.get_env(licence.ENV, context.temp_allocator),
 		now,
 	)
 	if problem != "" {
-		notef({style = style}, os.to_writer(os.stderr), "%s", problem)
+		monitor_notef({style = style}, os.to_writer(os.stderr), "%s", problem)
 	}
-	c := Context {
+	c := Monitor_Context {
 		style    = style,
 		paths    = paths,
 		host     = host,
@@ -563,55 +566,18 @@ run_command_line :: proc(args: []string) -> int {
 		aside    = os.to_writer(os.stderr),
 		unlocked = unlocked,
 		now      = now,
-		notify   = show,
+		notify   = monitor_show,
 		desktop  = alert.SYSTEM,
 	}
-	return dispatch(c, args, os.to_writer(os.stdout))
-}
-
-/*
-licence_beside is whose licence leita runs under at now for the stores beside
-the history store at kept, "" for none, and whether Pro works. Pro is
-licence.entitled_to_pro: the paid-through grant for this build, or the 30-day
-evaluation (settings.trial_began). given is the licence LEITA_LICENCE holds for
-this run, in place of the one kept. key is what a licence is checked against,
-nil for the key leita was built with. problem says why given was not taken, ""
-when it was or there is none; the run goes on without it. The command line's
-report and the monitor both ask here. In the temp allocator.
-*/
-licence_beside :: proc(
-	kept, given: string,
-	now: time.Time,
-	key: []byte = nil,
-) -> (
-	licensee: string,
-	unlocked: bool,
-	problem: string,
-) {
-	l, from, err := licence.in_use(licence.path_beside(kept, context.temp_allocator), given, key)
-	if from == .Env && err != .None {
-		problem = fmt.tprintf(
-			"%s holds no licence this leita takes: %s",
-			licence.ENV,
-			licence.describe(err),
-		)
-	}
-	checked: licence.Licence
-	if err == .None {
-		licensee = l.licensee
-		checked = l
-	}
-	return licensee,
-		licence.entitled_to_pro(checked, settings.trial_began(kept, now), now),
-		problem
+	return monitor_dispatch(c, args, os.to_writer(os.stdout))
 }
 
 // show runs a notification's command for real, and says whether it ran.
 @(private)
-show :: proc(argv: []string, _: rawptr) -> bool {
-	return sh.exec(argv, {timeout = NOTIFY_TIMEOUT}, context.temp_allocator).ok
+monitor_show :: proc(argv: []string, _: rawptr) -> bool {
+	return sh.exec(argv, {timeout = MONITOR_NOTIFY_TIMEOUT}, context.temp_allocator).ok
 }
 
 // NOTIFY_TIMEOUT is how long a notification's command may take: one that hangs
 // must not hold up the scans after it.
-NOTIFY_TIMEOUT :: 20 * time.Second
+MONITOR_NOTIFY_TIMEOUT :: 20 * time.Second

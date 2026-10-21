@@ -7,7 +7,7 @@ scans the watched places that are due, at the gentle pace, keeps each in the
 history store the window reads, records how it went in settings.db, and exits.
 
 Nothing runs unless the person turned monitoring on, and turning it off removes
-the scheduler's entry (command.odin). The window and the command line share
+the scheduler's entry (package schedule). The window and the command line share
 what is watched through settings.db, so either can change it.
 */
 package leita_monitor
@@ -290,7 +290,6 @@ words_of :: proc(st: ^settings.Store) -> ^msg.Strings {
 
 // how_read says how a run read its place, as survey.how_read words it; a run
 // recorded before the monitor kept its count and time says only that it updated.
-@(private)
 how_read :: proc(r: settings.Run) -> string {
 	taken := time.unix(r.taken, 0) if r.taken != 0 else time.Time{}
 	return survey.how_read(r.updated, r.why, r.reread, taken)

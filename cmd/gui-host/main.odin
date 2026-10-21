@@ -2,7 +2,7 @@
 Leita-host: the window half of Leita under hot reload. It owns the window
 and the application, the scan and the pipeline answering the view, and runs the
 view in a subprocess it respawns whenever the pointer file names a new build of
-gui/child. Editing the view reloads it in place; the scan keeps running.
+cmd/gui-child. Editing the view reloads it in place; the scan keeps running.
 
 	Leita-host build/hot/view.watch [PATH]
 
@@ -17,10 +17,10 @@ import "core:os"
 @(require) import "jm:debug"
 import "jm:ui/shell"
 
+import "../../gui/app"
+@(require) import "../../gui/leaks"
 import "../../history"
 import "../../version"
-import "../app"
-@(require) import "../leaks"
 
 main :: proc() {
 	when ODIN_DEBUG {

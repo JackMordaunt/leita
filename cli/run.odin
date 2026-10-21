@@ -16,7 +16,6 @@ import "core:time"
 import "../history"
 import "../home"
 import "../human"
-import "../journal"
 import "../licence"
 import "../monitor"
 import "../ntfs"
@@ -143,14 +142,13 @@ EXIT_FAIL  :: 3 // the scan finished; a --fail-used or --min-free limit was cros
 run :: proc(args: []string) -> int {
 	defer free_all(context.temp_allocator)
 
-	// leita monitor ... is monitoring's own command line (package monitor), and
-	// leita journal ... the change recorder's (package journal).
+	// The monitor and journal subcommands each read the rest of the arguments.
 	if is_subcommand(args) {
 		switch args[0] {
 		case "monitor":
-			return monitor.run_command_line(args[1:])
+			return monitor_run_command_line(args[1:])
 		case "journal":
-			return journal.run_command_line(args[1:])
+			return journal_command_line(args[1:])
 		case "licence":
 			return licence_command_line(args[1:])
 		case "history":
