@@ -101,6 +101,14 @@ def movie(bins, theme, dest, steps, activate_shop, release, line="", receipt="",
         scenarios.finish(work)
 
 
+def paced_type(text):
+    """One character per text event, drawn by the following hold."""
+    steps = []
+    for ch in text:
+        steps.extend(["-type", ch, "-hold", "2"])
+    return steps
+
+
 def movie_activation(bins, theme, dest):
     shop = fixture.Shop()
     shop.lines[scenarios.KEY_OK] = bins.line
@@ -113,8 +121,8 @@ def movie_activation(bins, theme, dest):
         "-tap", "Settings",
         "-tap", "Licence",
         "-tap", scenarios.FIELD,
-        "-type", scenarios.KEY_OK,
-        "-hold", "12",
+        "-hold", "8",
+        *paced_type(scenarios.KEY_OK),
         "-cue", "Exchange the key",
         "-tap", scenarios.ADD,
         "-hold", "50",

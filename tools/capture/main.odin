@@ -133,10 +133,10 @@ main :: proc() {
 				if os.write_entire_file(value, "ready\n") != nil {fail("signal write failed")}
 			case "-await", "-await-file", "-absent", "-tags":
 				if movie.active && flag == "-await" {
-					if !ui.probe_tagged(
-						&h.p,
-						value,
-					) {fail(fmt.tprintf("movie did not reach %s", value))}
+					if !ui.probe_tagged(&h.p, value) {
+						dump_tags(&h)
+						fail(fmt.tprintf("movie did not reach %s", value))
+					}
 					continue
 				}
 				if flag == "-tags" {
@@ -186,7 +186,9 @@ main :: proc() {
 				free_all(context.temp_allocator)
 			}
 		case:
-			if movie.active {fail("use -tap, -hold and -glide while recording")}
+			// -type only queues a Text event. The next -hold draws it.
+			if movie.active &&
+			   flag != "-type" {fail("use -tap, -hold, -glide and -type while recording")}
 			handled, ok := render.headless_step(&h, args, &i)
 			if !handled || !ok {fail(fmt.tprintf("failed step: %s", flag))}
 		}

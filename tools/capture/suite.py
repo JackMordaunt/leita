@@ -2,7 +2,8 @@
 """Capture current Leita views and a verified, disposable growth scenario.
 
 Licence and update flows are tools/capture/lifecycle.py. This script does not
-activate a licence or talk to a release server.
+activate a licence or talk to a release server. A recording types with -type
+and draws that text on the next hold.
 """
 import argparse
 import hashlib
