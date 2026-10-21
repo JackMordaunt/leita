@@ -7,11 +7,11 @@
 
 <p align="center"><b>leita</b> <i>(Old Norse, verb)</i> — “to search, to seek.”</p>
 
-<h3 align="center">Instant disk search, with reports.</h3>
+<h3 align="center">A disk space analyzer for Linux, Windows, and macOS.</h3>
 
-<p align="center">See what is filling any drive the moment you open it, then hand the answer on as a report.</p>
+<p align="center">Find what’s filling your disks, see what changed, and share the answer.</p>
 
-<p align="center"><b>Free to scan and clean up, for everyone</b> · Pro for comparisons, schedules and client reports · source published · no telemetry · Linux, Windows and macOS</p>
+<p align="center"><b>Free for everyone, including organisations</b> · Pro for tracking, automation and reports · source published · no telemetry</p>
 <p align="center"><a href="https://mordaunt.dev/leita/">Download Leita, a disk space analyzer for Linux, Windows and macOS</a> · <a href="https://mordaunt.dev/leita/buy/">Plans and pricing</a></p>
 
 <p align="center">
