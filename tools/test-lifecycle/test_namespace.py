@@ -96,7 +96,8 @@ class NamespaceCommandTest(unittest.TestCase):
             seen.extend(argv)
             return subprocess.CompletedProcess(argv, 0, "", "")
 
-        with patch.object(harness.subprocess, "run", side_effect=fake_run), \
+        with patch.object(harness.shutil, "which", side_effect=lambda name: "/fixture/" + name), \
+             patch.object(harness.subprocess, "run", side_effect=fake_run), \
              patch.object(harness, "_run_namespace", side_effect=fake_exec), \
              patch.object(harness.os, "readlink", return_value="mnt:[1]"):
             harness.namespaced("echo payload-marker", {
@@ -131,7 +132,8 @@ class NamespaceCommandTest(unittest.TestCase):
             seen.extend(argv)
             return subprocess.CompletedProcess(argv, 0, "", "")
 
-        with patch.object(harness.subprocess, "run", side_effect=fake_run), \
+        with patch.object(harness.shutil, "which", side_effect=lambda name: "/fixture/" + name), \
+             patch.object(harness.subprocess, "run", side_effect=fake_run), \
              patch.object(harness, "_run_namespace", side_effect=fake_exec), \
              patch.object(harness.os, "readlink", return_value="mnt:[9]"):
             proc = harness.namespaced("echo payload-marker", {"PATH": "/usr/bin"})
@@ -145,7 +147,8 @@ class NamespaceCommandTest(unittest.TestCase):
         def fake_run(argv, **kwargs):
             return subprocess.CompletedProcess(argv, 1, "", "unshare: write failed /proc/self/uid_map: Operation not permitted\n")
 
-        with patch.object(harness.subprocess, "run", side_effect=fake_run), \
+        with patch.object(harness.shutil, "which", side_effect=lambda name: "/fixture/" + name), \
+             patch.object(harness.subprocess, "run", side_effect=fake_run), \
              patch.object(harness.subprocess, "Popen", side_effect=AssertionError("payload executed")):
             proc = harness.namespaced("echo HOST_SIDE_MUTATION", {"PATH": "/usr/bin", "LEITA_UPDATE_SEED": "seed-secret"})
         self.assertEqual(proc.returncode, 127)
@@ -153,6 +156,15 @@ class NamespaceCommandTest(unittest.TestCase):
         self.assertIn("sudo -n", proc.stderr)
         self.assertNotIn("HOST_SIDE_MUTATION", proc.stdout + proc.stderr)
         self.assertNotIn("seed-secret", proc.stderr)
+
+    def test_missing_tools_do_not_probe_or_execute_the_script(self):
+        with patch.object(harness.shutil, "which", return_value=None), \
+             patch.object(harness.subprocess, "run", side_effect=AssertionError("probe executed")), \
+             patch.object(harness.subprocess, "Popen", side_effect=AssertionError("payload executed")):
+            proc = harness.namespaced("echo HOST_SIDE_MUTATION", {"PATH": "/missing"})
+        self.assertEqual(proc.returncode, 127)
+        self.assertIn("unshare is not installed", proc.stderr)
+        self.assertNotIn("HOST_SIDE_MUTATION", proc.stdout + proc.stderr)
 
     def test_run_namespace_closes_stdin_and_starts_a_new_session(self):
         with patch.object(harness.subprocess, "Popen") as popen:
