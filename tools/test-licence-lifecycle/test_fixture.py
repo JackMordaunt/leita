@@ -1,6 +1,7 @@
 # Fixture checks that do not build Leita. A signature here is throwaway.
 
 import base64
+import hashlib
 import json
 import threading
 import time
@@ -79,13 +80,21 @@ class FixtureTest(unittest.TestCase):
             sig = (directory / "sha256sums.txt.sig").read_bytes()
             self.assertEqual(len(sig), 64)
             self.assertNotIn(b"sha256sums.txt.sig", sums)
-            self.assertEqual(len((directory / fixture.RELEASED_NAME).read_bytes()), 21)
+            released = (directory / fixture.RELEASED_NAME).read_bytes()
+            version = (directory / "version.txt").read_bytes()
+            self.assertEqual(released, b"2026-12-01T00:00:00Z\n")
+            self.assertEqual(version, b"v0.2.0\n")
             source = Path(__file__).resolve().parents[2] / "update" / "update.odin"
             self.assertIn(f'RELEASED_FILE :: "{fixture.RELEASED_NAME}"', source.read_text(encoding="utf-8"))
             self.assertTrue(fixture.verify_bytes(key.public_hex, sums, sig))
+            for name, body in (("version.txt", version), (fixture.RELEASED_NAME, released)):
+                digest = hashlib.sha256(body).hexdigest()
+                self.assertIn(f"{digest}  {name}\n".encode("ascii"), sums)
             with fixture.ReleaseServer(directory, delay=0) as server:
                 with urllib.request.urlopen(server.url + "/version.txt", timeout=2) as response:
                     self.assertEqual(response.read(), b"v0.2.0\n")
+                with urllib.request.urlopen(server.url + "/" + fixture.RELEASED_NAME, timeout=2) as response:
+                    self.assertEqual(response.read(), b"2026-12-01T00:00:00Z\n")
                 self.assertEqual(server.requests[0]["path"], "version.txt")
 
 
