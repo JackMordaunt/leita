@@ -19,6 +19,7 @@ import tarfile
 import tempfile
 import time
 import traceback
+import unittest
 import zipfile
 from pathlib import Path
 
@@ -49,6 +50,32 @@ JOURNAL_CASES = (
     "linux_journal_stop",
     "linux_journal_restart",
 )
+
+# Directory-only deny. No (OI), (CI), or (IO): those inheritance flags are
+# copied onto children, and icacls propagates them onto the executable already
+# in the folder. The eighth Windows run then failed CreateProcess(--version)
+# with WinError 5. With the flags omitted, icacls applies the ACE to this
+# directory alone, so the copied binary keeps its own allow entry and can run.
+# WD/AD/DC are add-file, add-subdirectory, and delete-child on a directory.
+# https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/icacls
+WINDOWS_DIRECTORY_WRITE_DENY = "(WD,AD,WEA,WA,D,DC)"
+
+
+def windows_directory_deny_command(folder):
+    """icacls argv that denies writes to this directory and not to its files."""
+    return ["icacls", str(folder), "/deny", f"*S-1-1-0:{WINDOWS_DIRECTORY_WRITE_DENY}"]
+
+
+class WindowsDirectoryDenyTest(unittest.TestCase):
+    def test_deny_ace_is_not_inherited_by_the_executable(self):
+        command = windows_directory_deny_command(r"C:\temp\perm\bin")
+        self.assertEqual(command[:3], ["icacls", r"C:\temp\perm\bin", "/deny"])
+        ace = command[3]
+        self.assertEqual(ace, "*S-1-1-0:(WD,AD,WEA,WA,D,DC)")
+        for flag in ("(OI)", "(CI)", "(IO)", "(NP)"):
+            self.assertNotIn(flag, ace)
+        self.assertNotIn(":W", ace)
+        self.assertNotIn("GW", ace)
 
 # What a fixture run may carry into a namespace. sudo receives these as
 # arguments to `env -i`, never the ambient environment. A secret is absent
@@ -710,10 +737,7 @@ def update_cases(results, old, new, dev, seed, asset, test_line, update_key):
             before = binary.read_bytes()
             if os.name == "nt":
                 user = "*S-1-1-0"  # Everyone, including the runner process token.
-                # Deny specific writes, not generic W: W includes SYNCHRONIZE,
-                # also required to read/execute the program being tested.
-                # https://learn.microsoft.com/en-us/windows/win32/fileio/file-security-and-access-rights
-                proc = subprocess.run(["icacls", str(folder), "/deny", f"{user}:(OI)(CI)(WD,AD,WEA,WA,D,DC)"], capture_output=True, text=True)
+                proc = subprocess.run(windows_directory_deny_command(folder), capture_output=True, text=True)
                 if proc.returncode != 0:
                     return False, tail(proc.stderr) or "icacls could not remove write access"
             else:

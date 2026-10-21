@@ -3994,16 +3994,55 @@ answer_scheduled_release :: proc(conn: ^loopback.Conn, req: loopback.Request) {
 	loopback.send(conn, string(body))
 }
 
+// os.remove_all on Windows deletes a non-empty directory through
+// SHFileOperationW. AddressSanitizer aborts in that shell call. This
+// walks with read_directory and os.remove. The handle is closed before
+// the directory itself is removed, which Windows requires.
+@(private = "file")
+remove_tree :: proc(dir: string) -> os.Error {
+	if dir == "" || !os.exists(dir) {
+		return nil
+	}
+	entries, err := os.read_all_directory_by_path(dir, context.temp_allocator)
+	if err != nil {
+		return err
+	}
+	defer os.file_info_slice_delete(entries, context.temp_allocator)
+	for entry in entries {
+		if entry.fullpath == "" {
+			continue
+		}
+		if entry.type == .Directory {
+			if nerr := remove_tree(entry.fullpath); nerr != nil {
+				return nerr
+			}
+		} else if nerr := os.remove(entry.fullpath); nerr != nil && nerr != .Not_Exist {
+			return nerr
+		}
+	}
+	err = os.remove(dir)
+	if err == .Not_Exist {
+		return nil
+	}
+	return err
+}
+
+@(private = "file")
+expect_tree_gone :: proc(t: ^testing.T, dir: string) {
+	testing.expect(t, remove_tree(dir) == nil, dir)
+	testing.expect(t, !os.exists(dir), dir)
+}
+
 // The host's real timer and update thread fetch a signed HTTP release at
 // startup and after a controlled day. No Check or Apply command is sent.
 @(test)
 automatic_checks_reach_the_release_through_the_host :: proc(t: ^testing.T) {
 	root := fixture(t, "schedule_http")
-	defer os.remove_all(root)
+	defer expect_tree_gone(t, root)
 	data := fmt.tprintf("%s-data", root)
-	defer os.remove_all(data)
+	defer expect_tree_gone(t, data)
 	release := fmt.tprintf("%s-release", root)
-	defer os.remove_all(release)
+	defer expect_tree_gone(t, release)
 	key: ed25519.Private_Key
 	testing.expect(t, ed25519.private_key_generate(&key))
 	pub: [ed25519.PUBLIC_KEY_SIZE]byte
