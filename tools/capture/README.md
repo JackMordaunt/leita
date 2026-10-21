@@ -111,9 +111,10 @@ The first three arguments are target, explicit isolated state directory, and
 - `-cue TEXT`: show an explicit external-action caption; an empty string clears it.
 - `-stream`: use the synthetic frame clock (requires `LEITA_SYNTHETIC`).
 
-Inside a movie, use `-tap` instead of instantaneous headless clicks. `-await TAG`
-asserts the expected state at that frame; it fails rather than silently hiding
-extra scan time. `-png` always omits the pointer and cue, even inside a movie.
+Inside a movie, use `-tap` instead of instantaneous headless clicks. `-type`
+queues text and the next `-hold` draws it. `-await TAG` asserts the expected
+state at that frame; it fails rather than silently hiding extra scan time.
+`-png` always omits the pointer and cue, even inside a movie.
 
 All input dispatch and host responses are real. Theme selection is the only
 view-state override. The caller owns the step list and must use generated
