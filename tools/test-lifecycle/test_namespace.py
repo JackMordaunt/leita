@@ -195,6 +195,7 @@ class NamespaceCommandTest(unittest.TestCase):
         seen = {}
         calls = []
         real_run = harness.subprocess.run
+        real_is_dir = Path.is_dir
 
         def spy(argv, *args, **kwargs):
             calls.append(list(argv))
@@ -213,7 +214,9 @@ class NamespaceCommandTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             old = Path(directory) / "leita"
             old.write_bytes(b"real-executable")
-            with patch.object(harness, "system_name", return_value="linux"), \
+            with patch.object(harness.Path, "is_dir", autospec=True,
+                              side_effect=lambda path: path == Path("/var/lib") or real_is_dir(path)), \
+                 patch.object(harness, "system_name", return_value="linux"), \
                  patch.object(harness, "namespaced", side_effect=fake_namespaced), \
                  patch.object(harness, "release_dir", return_value=Path(directory)), \
                  patch.object(harness, "host_hold", return_value={"id": {}, "prefix": {}}), \

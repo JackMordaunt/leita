@@ -18,6 +18,7 @@ import sys
 import tarfile
 import tempfile
 import time
+import traceback
 import zipfile
 from pathlib import Path
 
@@ -404,7 +405,7 @@ def guard(results, case_id, fn):
     try:
         ok, detail = fn()
     except Exception as err:
-        ok, detail = False, f"{type(err).__name__}: {err}"
+        ok, detail = False, f"{type(err).__name__}: {err}\n{traceback.format_exc(limit=8)}"
     record(results, case_id, ok, detail)
 
 
