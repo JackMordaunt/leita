@@ -43,6 +43,7 @@ jobs:
           submodules: true
           persist-credentials: false
       - uses: ./.github/actions/setup
+        id: setup
 
       - name: this commit
         run: |
@@ -72,14 +73,19 @@ jobs:
           set -euo pipefail
           mkdir -p "$LIFECYCLE_DIR"
           if command -v python3 >/dev/null 2>&1; then py=python3; else py=python; fi
+          status=0
           if [ -f tools/test-licence-lifecycle/harness.py ]; then
-            "$py" tools/test-licence-lifecycle/harness.py
+            "$py" tools/test-licence-lifecycle/harness.py || status=1
           fi
           if [ -f tools/test-schedule-lifecycle/harness.py ]; then
-            "$py" tools/test-schedule-lifecycle/harness.py
+            "$py" tools/test-schedule-lifecycle/harness.py || status=1
           fi
+          exit "$status"
 
       - name: lifecycle
+        # Collect updater evidence even when a sibling failed; the job and
+        # gate still fail, while artifacts show every independent result.
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         env:
           LIFECYCLE_DIR: build/lifecycle
           LIFECYCLE_SHA: ${{ github.sha }}
