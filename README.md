@@ -161,8 +161,9 @@ writes it for a program.
   from the receipt was kept beside it, leita sends that key once more, to the
   same address. If that request cannot reach the server, or the server has no
   line, this copy stays free and says so, and the licence already kept stays.
-  `leita update`, and Check for updates in About, download files from the
-  latest release on GitHub, `releases/latest/download`: a GET for
+  Manual checks in About and `leita update --check`, plus automatic checks
+  if you enable them, read the latest release on GitHub,
+  `releases/latest/download`: a GET for
   `sha256sums.txt`, its signature, `version.txt`, `released.txt` and, if you
   ask for the update, the new program. A signature that does not verify is
   not installed. These requests carry the User-Agent `leita/<version>` and
@@ -170,7 +171,7 @@ writes it for a program.
   sends nothing. The source is published, so you can check.
 - **No account.** On Linux the release needs glibc 2.39 or newer and
   libstdc++. The window carries SDL3. libcurl is opened only for that POST
-  and for an update you ask for, and leita runs without it. Windows's zip carries `SDL3.dll` and
+  and for update checks and downloads, and leita runs without it. Windows's zip carries `SDL3.dll` and
   `accesskit.dll` beside the window.
 - **Your data stays with you.** Scans, settings and the deletion record stay
   on your machine.
@@ -227,16 +228,23 @@ arguments: `/Applications/Leita.app/Contents/MacOS/Leita ~ --report usage.pdf`.
 
 ## Updating
 
-Nothing updates leita for you, and nothing checks. When you want to know, run
+Leita never installs an update automatically. Automatic checks are off by
+default. Enable them in About to check once when the window opens and once
+a day while it stays open. A notice offers the release notes and an explicit
+Update or Download action; dismissing it hides that version. Turning checks
+off stops future scheduled checks. No scan or disk data is sent.
+
+You can always check manually in About or run
 `leita update --check`: it prints this version and the latest release's, and
 exits 0 when they match, 2 when a newer one is out and 1 when it could not
 ask or the release signature did not verify. `leita update` downloads the new
 build of the program you ran (a patch from your build when the release has
 one), requires the signature of `sha256sums.txt` to verify, checks the
 download against the sha256 that file names, and replaces the program; run it
-again to use the new one. The old program stays beside it as `leita.old`. If
-an update is interrupted, the next `leita update` puts that previous program
-back before it tries again. In the window, About has Check for updates; a
+again to use the new one. The updater locks the installation, keeps the old
+program beside it as `leita.old` (`leita.exe.old` on Windows), and replaces
+the executable in one filesystem operation. An interruption before replacement
+leaves the installed program in place. In the window, About has Check for updates; a
 newer release is offered as Update, which replaces the window the same way,
 or as Download, the release page, for a copy that is not replaced in place.
 
@@ -251,9 +259,9 @@ binary is not replaced either, and a running recorder is left as it is; after
 you update the copy you run, `sudo leita journal on` installs that copy and
 restarts the recorder. A macOS app is sealed by its signature, so it is
 replaced whole, by the new disk image. On Linux the update needs libcurl,
-which most desktops have. On Windows the running program cannot be
-overwritten, so the old one is renamed to `leita.exe.old` and the next update
-removes it.
+which most desktops have. On Windows, replacement requires filesystem support
+for replacing an open executable in place; otherwise Leita leaves the installed
+program unchanged and offers the release page.
 
 ## Where leita keeps things
 
