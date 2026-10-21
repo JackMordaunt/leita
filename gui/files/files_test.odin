@@ -53,11 +53,28 @@ a_background_job_frees_its_path_with_the_callers_allocator :: proc(t: ^testing.T
 	testing.expect_value(t, debug.issue_count(&da), 0)
 }
 
+// temp_root is the temp directory reached without a symbolic link in the path.
+// delete_tree opens each ancestor with O_NOFOLLOW and refuses a link, and macOS
+// names its temp directory under /var, a link to /private/var. stat follows the
+// link; on Darwin, F_GETPATH names the directory that open reached.
+@(private)
+temp_root :: proc() -> string {
+	base, err := os.temp_directory(context.temp_allocator)
+	if err != nil {
+		return ""
+	}
+	info, stat_err := os.stat(base, context.temp_allocator)
+	if stat_err != nil || info.fullpath == "" {
+		return strings.trim_right(base, `/\`)
+	}
+	return strings.trim_right(info.fullpath, `/\`)
+}
+
 // delete_tree takes a read-only tree, deletes a link inside as a link, leaving
 // what it points at, and refuses a link given as the tree.
 @(test)
 delete_tree_is_careful_with_links_and_read_only_trees :: proc(t: ^testing.T) {
-	base, _ := os.temp_directory(context.temp_allocator)
+	base := temp_root()
 	root := strings.concatenate(
 		{base, fmt.tprintf("/leita_files_delete_%d", os.get_pid())},
 		context.temp_allocator,
