@@ -292,6 +292,7 @@ init :: proc(
 	monitor_argv: []string = nil,
 	update_key: []byte = nil,
 	update_exe := "",
+	update_time: ^Update_Time = nil,
 	allocator := context.allocator,
 ) {
 	ui.inbox_init(&h.inbox, allocator)
@@ -317,6 +318,7 @@ init :: proc(
 		h.desk.update_key_set = true
 	}
 	h.desk.update_exe = update_exe
+	h.desk.update_time = update_time
 	msg.init(h.desk.words, .English)
 	history_open(&h.desk, kept)
 	settings_open(&h.desk, licence.path_beside(kept, context.temp_allocator, settings.FILE))

@@ -18,8 +18,8 @@ whose: the mark and the name, the version, the business that makes it, what
 it is for, the licence it runs under as the licence dialog says it, where to
 read more, and a link to the licences of what it is built on, which opens a
 dialog of every component's notice in its place. Under the version it offers
-to check for updates, but only when asked: nothing in Leita checks on its own,
-and the one request a check makes is the one its line below the button says.
+to check for updates when asked, and to opt in to one check at startup and
+one a day. Neither check installs a release.
 */
 
 // BUSINESS is who makes and sells leita, as LICENSE.md names the Licensor.
@@ -60,7 +60,7 @@ about_dialog :: proc(gtx: ^ui.Ctx, m: ^Model) {
 				)
 			}
 		}
-		update_check(gtx)
+		update_check(gtx, m)
 		primer.text(gtx, tr(.Tagline), weight = .Semibold)
 		primer.text(gtx, tr(.Explainer))
 		if line := licence_line(gtx); line != "" {
@@ -86,28 +86,41 @@ about_dialog :: proc(gtx: ^ui.Ctx, m: ^Model) {
 }
 
 /*
-update_check is the Check for updates button and what the host found. It sends
-command.Check_Update when clicked and at no other time. A newer release is
-offered as Update, which replaces this window's own file, when the host says this
-copy can be replaced in place, and otherwise as Download, which opens the
-release page: the installer, the dmg, a package manager's file or an AppImage
-is not Leita's to overwrite.
+update_check is the Check for updates button and what the host found. The
+button sends command.Check_Update. A newer release that this copy may take
+is Update; one a package owns, or one outside the paid-through date, is
+Download, which opens the release page. The checkbox is the opt-in, off
+until the person turns it on.
 */
 @(private)
-update_check :: proc(gtx: ^ui.Ctx) {
+update_check :: proc(gtx: ^ui.Ctx, m: ^Model) {
 	r, _ := ui.need(gtx, query.Update{}, query.Update_Result)
+	s, _ := ui.need(gtx, query.Settings{}, query.Settings_Result)
+	if s != nil {
+		if want, chosen := m.checks_want.?; chosen && want == s.automatic_checks {
+			m.checks_want = nil
+		}
+	}
 	state := r.state if r != nil else query.Update_State.Idle
 	busy := state == .Checking || state == .Applying
+	offer := r != nil && (state == .Available || (state == .Failed && r.problem == .Ineligible))
+	may_apply := offer && r.can_apply && r.coverage != .Later && r.coverage != .Unstamped
 	if ui.row(gtx, gap = 8, align = .Center) {
 		if primer.button(gtx, tr(.Check_Updates), size = .Small, inactive = busy) && !busy {
 			ui.command(gtx, command.Command(command.Check_Update{}))
 		}
-		if state == .Available {
-			if r.can_apply {
+		if offer {
+			if may_apply {
 				if primer.button(gtx, tr(.Update_Now), .Primary, .Small) {
 					ui.command(gtx, command.Command(command.Apply_Update{}))
 				}
-			} else if primer.button(gtx, tr(.Download_Update), .Primary, .Small, trailing = .Link_External) {
+			} else if primer.button(
+				gtx,
+				tr(.Download_Update),
+				.Primary,
+				.Small,
+				trailing = .Link_External,
+			) {
 				ui.open_url(gtx, r.page)
 			}
 		}
@@ -115,12 +128,73 @@ update_check :: proc(gtx: ^ui.Ctx) {
 	if line := update_line(gtx, r); line != "" {
 		primer.text(gtx, line, .Small, color = primer.color(.Fg_Color_Muted))
 	}
+	if line := coverage_line(gtx, r); line != "" {
+		primer.text(gtx, line, .Small, color = primer.color(.Fg_Color_Muted))
+	}
+	if line := guidance_line(gtx, r); line != "" && offer {
+		primer.text(gtx, line, .Small, color = primer.color(.Fg_Color_Muted))
+	}
+	if offer && r.latest != "" && primer.link(gtx, tr(.Update_Notes)) {
+		ui.open_url(gtx, r.page)
+	}
 	primer.text(
 		gtx,
 		trf(gtx, .Update_Privacy, version.PRODUCT),
 		.Small,
 		color = primer.color(.Fg_Color_Muted),
 	)
+	on := m.checks_want.? or_else (s != nil && s.automatic_checks)
+	if primer.checkbox(
+		gtx,
+		&on,
+		tr(.Automatic_Checks),
+		caption = trf(gtx, .Automatic_Checks_Caption, version.PRODUCT),
+	) {
+		m.checks_want = on
+		ui.command(gtx, command.Command(command.Automatic_Checks{on = on}))
+	}
+}
+
+// update_notice is the quiet banner for a release the person has not
+// dismissed. Download and Update are explicit. Dismiss hides this version.
+@(private)
+update_notice :: proc(gtx: ^ui.Ctx) {
+	r, _ := ui.need(gtx, query.Update{}, query.Update_Result)
+	if r == nil || !r.notice || r.latest == "" {
+		return
+	}
+	desc := coverage_line(gtx, r)
+	if desc == "" {
+		desc = guidance_line(gtx, r)
+	}
+	may_apply := r.can_apply && r.coverage != .Later && r.coverage != .Unstamped
+	primary := tr(.Update_Now) if may_apply else tr(.Download_Update)
+	switch primer.banner(
+		gtx,
+		trf(gtx, .Update_Available, version.PRODUCT, r.latest),
+		desc,
+		.Info,
+		primary = primary,
+		secondary = tr(.Update_Notes),
+		dismissible = true,
+	) {
+	case .None:
+	case .Primary:
+		if may_apply {
+			ui.command(gtx, command.Command(command.Apply_Update{}))
+		} else if r.page != "" {
+			ui.open_url(gtx, r.page)
+		}
+	case .Secondary:
+		if r.page != "" {
+			ui.open_url(gtx, r.page)
+		}
+	case .Dismiss:
+		ui.command(
+			gtx,
+			command.Command(command.Dismiss_Update{version = command.text_make(r.latest)}),
+		)
+	}
 }
 
 // update_line says where the check stands, "" until one is asked for.
@@ -153,9 +227,60 @@ update_line :: proc(gtx: ^ui.Ctx, r: ^query.Update_Result) -> string {
 			return trf(gtx, .Update_Unreachable, version.PRODUCT)
 		case .Not_Published:
 			return trf(gtx, .Update_Not_Published, version.PRODUCT)
+		case .Ineligible:
+			return ""
 		case .None, .Other:
 			return trf(gtx, .Update_Failed, r.detail)
 		}
+	}
+	return ""
+}
+
+// coverage_line says whether a retained Pro installation may take the
+// candidate. None says nothing: the date does not apply.
+@(private)
+coverage_line :: proc(gtx: ^ui.Ctx, r: ^query.Update_Result) -> string {
+	if r == nil {
+		return ""
+	}
+	switch r.coverage {
+	case .None:
+		return ""
+	case .Covered:
+		return trf(gtx, .Update_Covered, r.paid_through)
+	case .Later:
+		return trf(gtx, .Update_Later, version.PRODUCT, r.paid_through, r.latest, r.released)
+	case .Unstamped:
+		return trf(gtx, .Update_Unstamped, version.PRODUCT, r.paid_through)
+	}
+	return ""
+}
+
+// guidance_line says which installer owns this copy, when one does.
+@(private)
+guidance_line :: proc(gtx: ^ui.Ctx, r: ^query.Update_Result) -> string {
+	if r == nil {
+		return ""
+	}
+	switch r.guidance {
+	case .None:
+		return ""
+	case .Package:
+		return tr(.Update_Package)
+	case .Scoop:
+		return tr(.Update_Scoop)
+	case .App_Image:
+		return tr(.Update_App_Image)
+	case .Installer:
+		return tr(.Update_Installer)
+	case .Bundle:
+		return tr(.Update_Bundle)
+	case .Journal:
+		return tr(.Update_Journal)
+	case .Link:
+		return tr(.Update_Link)
+	case .Dev:
+		return tr(.Update_Dev)
 	}
 	return ""
 }

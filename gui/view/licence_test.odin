@@ -68,3 +68,105 @@ no_licence_answer_is_locked_after_the_first_frame :: proc(t: ^testing.T) {
 	ui.probe_advance(&h.p, 10, 1.0 / 60)
 	testing.expect(t, c.m.export_open, "unlocked, Export opens")
 }
+
+@(private = "file")
+rights_frame :: proc(gtx: ^ui.Ctx, user: rawptr) {
+	view(gtx, (^Model)(user))
+}
+
+// The licence dialog names the paid-through date and this build's rights.
+// The date is not the evaluation ending.
+@(test)
+the_licence_dialog_names_paid_through_and_this_build :: proc(t: ^testing.T) {
+	m: Model
+	model_init(&m, "/top")
+	m.settings_read = true
+	m.licence_open = true
+	defer model_destroy(&m)
+	fonts := []ops.Font_Ref {
+		{0, ui.default_font(), 400},
+		{1, ui.default_font(), 500},
+		{2, ui.default_font(), 600},
+		{3, ui.default_font(), 400},
+	}
+	h: render.Headless
+	render.headless_init(&h, rights_frame, &m, {1000, 700}, fonts)
+	defer render.headless_destroy(&h)
+	ui.probe_deliver(
+		&h.p,
+		query.Progress{},
+		query.Progress_Result{generation = 1, state = .Done, target = "/top"},
+	)
+	ui.probe_deliver(
+		&h.p,
+		query.Licence{},
+		query.Licence_Result {
+			licensed = true,
+			unlocked = true,
+			licensee = "Ada",
+			tier = "Professional",
+			order = "ord_7",
+			issued = "2026-10-19T12:00:00Z",
+			paid_through = "2027-10-19T00:00:00Z",
+			release_at = "2026-10-01T00:00:00Z",
+			build_covered = true,
+		},
+	)
+	ui.probe_advance(&h.p, 4, 1.0 / 60)
+	testing.expect(
+		t,
+		ui.probe_tagged(
+			&h.p,
+			"Pro covers releases through 2027-10-19T00:00:00Z. This installed build is covered.",
+		),
+	)
+	testing.expect(t, !ui.probe_tagged(&h.p, "Your 30-day Pro evaluation has ended"))
+
+	ui.probe_deliver(
+		&h.p,
+		query.Licence{},
+		query.Licence_Result {
+			licensed = true,
+			unlocked = false,
+			licensee = "Ada",
+			tier = "Professional",
+			order = "ord_7",
+			issued = "2026-10-19T12:00:00Z",
+			paid_through = "2027-10-19T00:00:00Z",
+			release_at = "2028-01-01T00:00:00Z",
+			build_covered = false,
+		},
+	)
+	ui.probe_advance(&h.p, 2, 1.0 / 60)
+	testing.expect(
+		t,
+		ui.probe_tagged(
+			&h.p,
+			"Pro covers releases through 2027-10-19T00:00:00Z. This installed build (2028-01-01T00:00:00Z) is after that date. Pro stays on the builds the date covers.",
+		),
+	)
+	testing.expect(
+		t,
+		!ui.probe_tagged(&h.p, "expired"),
+		"the paid-through date is not called an expiry",
+	)
+
+	ui.probe_deliver(
+		&h.p,
+		query.Licence{},
+		query.Licence_Result {
+			licensed = true,
+			unlocked = false,
+			licensee = "Ada",
+			paid_through = "2027-10-19T00:00:00Z",
+		},
+	)
+	ui.probe_advance(&h.p, 2, 1.0 / 60)
+	testing.expect(
+		t,
+		ui.probe_tagged(
+			&h.p,
+			"Pro covers releases through 2027-10-19T00:00:00Z. This build has no release date, so that date does not cover it.",
+		),
+	)
+}

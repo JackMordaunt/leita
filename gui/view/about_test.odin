@@ -120,51 +120,130 @@ about_checks_for_updates_on_request_and_shows_the_result :: proc(t: ^testing.T) 
 	ui.probe_advance(&h.p, 10, 1.0 / 60)
 	testing.expect(t, ui.probe_tagged(&h.p, "Check for updates"), "the button is there")
 	testing.expect(t, sent(&h.p, command.Check_Update) == nil, "opening About checks nothing")
-	testing.expect(t, !ui.probe_tagged(&h.p, "This is the latest version of Leita."), "and says nothing of a check")
-	testing.expect(t, ui.probe_tagged(&h.p, "Only when you click, Leita asks GitHub for the latest release. Nothing about you or your disks is sent."))
+	testing.expect(
+		t,
+		!ui.probe_tagged(&h.p, "This is the latest version of Leita."),
+		"and says nothing of a check",
+	)
+	testing.expect(
+		t,
+		ui.probe_tagged(
+			&h.p,
+			"Checks stay off until you turn them on. A check asks GitHub for the public release only. Nothing about you or your disks is sent, and Leita never installs a release by itself.",
+		),
+	)
+	testing.expect(
+		t,
+		ui.probe_tagged(&h.p, "Check for updates automatically"),
+		"automatic checks are offered, off until chosen",
+	)
+	testing.expect(t, sent(&h.p, command.Automatic_Checks) == nil, "opening About does not opt in")
+	testing.expect(t, ui.probe_click_top(&h.p, "Check for updates automatically"))
+	if got, ok := sent(&h.p, command.Automatic_Checks).?;
+	   testing.expect(t, ok, "the checkbox opts in") {
+		testing.expect(t, got.on)
+	}
 
 	testing.expect(t, ui.probe_click_top(&h.p, "Check for updates"))
 	testing.expect(t, sent(&h.p, command.Check_Update) != nil, "the click asks the host to check")
+	if auto, ok := sent(&h.p, command.Automatic_Checks).?; ok {
+		testing.expect(t, !auto.on, "the manual check does not turn automatic checks on")
+	}
 
 	// A check under way cannot be started again.
 	ui.probe_deliver(&h.p, query.Update{}, query.Update_Result{state = .Checking, page = PAGE})
 	ui.probe_advance(&h.p, 2, 1.0 / 60)
 	testing.expect(t, ui.probe_tagged(&h.p, "Checking for updates…"))
 
-	ui.probe_deliver(&h.p, query.Update{}, query.Update_Result{state = .Current, latest = "v1.0.0", page = PAGE})
+	ui.probe_deliver(
+		&h.p,
+		query.Update{},
+		query.Update_Result{state = .Current, latest = "v1.0.0", page = PAGE},
+	)
 	ui.probe_advance(&h.p, 2, 1.0 / 60)
-	testing.expect(t, ui.probe_tagged(&h.p, "This is the latest version of Leita."), "current is said")
+	testing.expect(
+		t,
+		ui.probe_tagged(&h.p, "This is the latest version of Leita."),
+		"current is said",
+	)
 	testing.expect(t, !ui.probe_tagged(&h.p, "Update"), "and offers no update")
 
 	// Newer, and this copy can be replaced: Update runs the update.
-	ui.probe_deliver(&h.p, query.Update{}, query.Update_Result{state = .Available, latest = "v9.9.9", can_apply = true, page = PAGE})
+	ui.probe_deliver(
+		&h.p,
+		query.Update{},
+		query.Update_Result{state = .Available, latest = "v9.9.9", can_apply = true, page = PAGE},
+	)
 	ui.probe_advance(&h.p, 2, 1.0 / 60)
-	testing.expect(t, ui.probe_tagged(&h.p, "Version v9.9.9 of Leita is available."), "the newer version is named")
+	testing.expect(
+		t,
+		ui.probe_tagged(&h.p, "Version v9.9.9 of Leita is available."),
+		"the newer version is named",
+	)
 	testing.expect(t, !ui.probe_tagged(&h.p, "Download the update"))
 	testing.expect(t, ui.probe_click_top(&h.p, "Update"))
-	testing.expect(t, sent(&h.p, command.Apply_Update) != nil, "Update asks the host to replace this copy")
+	testing.expect(
+		t,
+		sent(&h.p, command.Apply_Update) != nil,
+		"Update asks the host to replace this copy",
+	)
 
 	// Newer, and this copy is not Leita's to replace: Download opens the page.
-	ui.probe_deliver(&h.p, query.Update{}, query.Update_Result{state = .Available, latest = "v9.9.9", page = PAGE})
+	ui.probe_deliver(
+		&h.p,
+		query.Update{},
+		query.Update_Result{state = .Available, latest = "v9.9.9", page = PAGE},
+	)
 	ui.probe_advance(&h.p, 2, 1.0 / 60)
 	testing.expect(t, ui.probe_tagged(&h.p, "Version v9.9.9 of Leita is available."))
-	testing.expect(t, !ui.probe_tagged(&h.p, "Update"), "no Update button for a copy that cannot be replaced")
+	testing.expect(
+		t,
+		!ui.probe_tagged(&h.p, "Update"),
+		"no Update button for a copy that cannot be replaced",
+	)
 	testing.expect_value(t, ui.probe_opened_url(&h.p), "")
 	testing.expect(t, ui.probe_click_top(&h.p, "Download the update"))
 	ui.probe_advance(&h.p, 2, 1.0 / 60)
 	testing.expect_value(t, ui.probe_opened_url(&h.p), PAGE)
 
-	ui.probe_deliver(&h.p, query.Update{}, query.Update_Result{state = .Applied, latest = "v9.9.9", page = PAGE})
+	ui.probe_deliver(
+		&h.p,
+		query.Update{},
+		query.Update_Result{state = .Applied, latest = "v9.9.9", page = PAGE},
+	)
 	ui.probe_advance(&h.p, 2, 1.0 / 60)
 	testing.expect(t, ui.probe_tagged(&h.p, "Updated. Restart Leita to use the new version."))
 
-	ui.probe_deliver(&h.p, query.Update{}, query.Update_Result{state = .Failed, problem = .No_Library, page = PAGE})
+	ui.probe_deliver(
+		&h.p,
+		query.Update{},
+		query.Update_Result{state = .Failed, problem = .No_Library, page = PAGE},
+	)
 	ui.probe_advance(&h.p, 2, 1.0 / 60)
-	testing.expect(t, ui.probe_tagged(&h.p, "Leita needs libcurl to check for updates, and this system has none. Install the curl package, or download the update from the release page."))
+	testing.expect(
+		t,
+		ui.probe_tagged(
+			&h.p,
+			"Leita needs libcurl to check for updates, and this system has none. Install the curl package, or download the update from the release page.",
+		),
+	)
 
-	ui.probe_deliver(&h.p, query.Update{}, query.Update_Result{state = .Failed, problem = .Other, detail = "cannot move the file aside", page = PAGE})
+	ui.probe_deliver(
+		&h.p,
+		query.Update{},
+		query.Update_Result {
+			state = .Failed,
+			problem = .Other,
+			detail = "cannot move the file aside",
+			page = PAGE,
+		},
+	)
 	ui.probe_advance(&h.p, 2, 1.0 / 60)
-	testing.expect(t, ui.probe_tagged(&h.p, "The update failed: cannot move the file aside"), "an error the window has no words for is said as it was")
+	testing.expect(
+		t,
+		ui.probe_tagged(&h.p, "The update failed: cannot move the file aside"),
+		"an error the window has no words for is said as it was",
+	)
 }
 
 // About names the free boundary: once the Pro evaluation has ended, scanning
@@ -192,7 +271,11 @@ about_says_disk_work_stays_free :: proc(t: ^testing.T) {
 		ui.probe_tagged(&h.p, "Free to scan, chart, search, clean up and export this scan."),
 		"after the evaluation, disk work stays free",
 	)
-	testing.expect(t, !ui.probe_tagged(&h.p, "You can try Pro"), "and the evaluation is not still running")
+	testing.expect(
+		t,
+		!ui.probe_tagged(&h.p, "You can try Pro"),
+		"and the evaluation is not still running",
+	)
 
 	ui.probe_deliver(&h.p, query.Licence{}, query.Licence_Result{unlocked = true, trial_left = 12})
 	ui.probe_advance(&h.p, 2, 1.0 / 60)
@@ -209,4 +292,68 @@ about_says_disk_work_stays_free :: proc(t: ^testing.T) {
 		!ui.probe_tagged(&h.p, "Free to scan, chart, search, clean up and export this scan."),
 		"the ended line is replaced while the evaluation runs",
 	)
+}
+
+@(private = "file")
+notice_frame :: proc(gtx: ^ui.Ctx, user: rawptr) {
+	scheme := primer.theme_scheme(.Light)
+	primer.use(&scheme, .Light)
+	defer primer.use(nil)
+	primer.use_fonts(FONTS)
+	update_notice(gtx)
+	_ = user
+}
+
+// A release outside the paid-through date is explained and downloaded, not
+// installed. Dismissing the banner names that version.
+@(test)
+a_release_after_paid_through_is_explained_and_not_installed :: proc(t: ^testing.T) {
+	m: Model
+	defer model_destroy(&m)
+	fonts := []ops.Font_Ref {
+		{0, ui.default_font(), 400},
+		{1, ui.default_font(), 500},
+		{2, ui.default_font(), 600},
+		{3, ui.default_font(), 400},
+	}
+	h: render.Headless
+	render.headless_init(&h, notice_frame, &m, {900, 700}, fonts)
+	defer render.headless_destroy(&h)
+
+	PAGE :: "https://example.test/releases/latest"
+	ui.probe_deliver(
+		&h.p,
+		query.Update{},
+		query.Update_Result {
+			state = .Available,
+			latest = "v9",
+			can_apply = true,
+			page = PAGE,
+			notice = true,
+			coverage = .Later,
+			paid_through = "2026-10-19T00:00:00Z",
+			released = "2026-10-19T00:00:01Z",
+		},
+	)
+	ui.probe_advance(&h.p, 2, 1.0 / 60)
+	testing.expect(t, ui.probe_tagged(&h.p, "Version v9 of Leita is available."))
+	testing.expect(
+		t,
+		ui.probe_tagged(
+			&h.p,
+			"Leita stays Pro through 2026-10-19T00:00:00Z. Version v9 was released 2026-10-19T00:00:01Z, which is after that, so it was not installed.",
+		),
+	)
+	testing.expect(t, !ui.probe_tagged(&h.p, "Update"), "the banner does not install it")
+	testing.expect_value(t, ui.probe_opened_url(&h.p), "")
+	testing.expect(t, ui.probe_click_top(&h.p, "Download the update"))
+	ui.probe_advance(&h.p, 2, 1.0 / 60)
+	testing.expect_value(t, ui.probe_opened_url(&h.p), PAGE)
+	testing.expect(t, sent(&h.p, command.Apply_Update) == nil)
+
+	testing.expect(t, ui.probe_click_top(&h.p, "Dismiss banner"))
+	if got, ok := sent(&h.p, command.Dismiss_Update).?;
+	   testing.expect(t, ok, "dismiss names the version") {
+		testing.expect_value(t, command.text_of(&got.version), "v9")
+	}
 }

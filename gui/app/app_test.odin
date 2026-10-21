@@ -78,6 +78,7 @@ rig_open :: proc(
 	monitor_argv: []string = nil,
 	update_key: []byte = nil,
 	update_exe := "",
+	update_time: ^Update_Time = nil,
 ) {
 	if !made_up {
 		env_share()
@@ -100,6 +101,7 @@ rig_open :: proc(
 		monitor_argv = monitor_argv,
 		update_key = update_key,
 		update_exe = update_exe,
+		update_time = update_time,
 	)
 	r.data = data_host(&r.h)
 	view.model_init(&r.m, path)
@@ -3952,4 +3954,80 @@ the_recorder_toggle_does_not_hold_the_desk_while_pkexec_asks :: proc(t: ^testing
 		"the change settles when pkexec returns",
 	)
 	testing.expect(t, time.tick_since(began) >= 2 * time.Second, "not before it did")
+}
+
+@(private = "file")
+Schedule_HTTP_Fixture :: struct {
+	directory: string,
+	checks: int, // atomic count of manifest requests
+}
+
+@(private = "file")
+answer_scheduled_release :: proc(conn: ^loopback.Conn, req: loopback.Request) {
+	f := (^Schedule_HTTP_Fixture)(conn.server.user)
+	if req.path == "/sha256sums.txt" {
+		sync.atomic_add(&f.checks, 1)
+	}
+	name := strings.trim_prefix(req.path, "/")
+	if strings.contains(name, "/") || strings.contains(name, "..") {
+		loopback.send(conn, "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n")
+		return
+	}
+	body, err := os.read_entire_file(fmt.tprintf("%s/%s", f.directory, name), context.temp_allocator)
+	if err != nil {
+		loopback.send(conn, "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n")
+		return
+	}
+	loopback.send(conn, fmt.tprintf("HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n", len(body)))
+	loopback.send(conn, string(body))
+}
+
+// The host's real timer and update thread fetch a signed HTTP release at
+// startup and after a controlled day. No Check or Apply command is sent.
+@(test)
+automatic_checks_reach_the_release_through_the_host :: proc(t: ^testing.T) {
+	root := fixture(t, "schedule_http")
+	defer os.remove_all(root)
+	data := fmt.tprintf("%s-data", root)
+	defer os.remove_all(data)
+	release := fmt.tprintf("%s-release", root)
+	defer os.remove_all(release)
+	key: ed25519.Private_Key
+	testing.expect(t, ed25519.private_key_generate(&key))
+	pub: [ed25519.PUBLIC_KEY_SIZE]byte
+	ed25519.private_key_public_bytes(&key, pub[:])
+	publish_release(t, release, "the next signed window", "v9.9.9\n", &key)
+	installed := fmt.tprintf("%s/installed", root)
+	testing.expect(t, os.write_entire_file(installed, "the current window") == nil)
+	st: settings.Store
+	if !testing.expect(t, settings.open(&st, fmt.tprintf("%s/%s", data, settings.FILE)) == nil) {
+		return
+	}
+	testing.expect(t, settings.set(&st, settings.UPDATES, "on") == nil)
+	settings.close(&st)
+	f := Schedule_HTTP_Fixture{directory = release}
+	srv, up := loopback.start(answer_scheduled_release, &f, runtime.heap_allocator())
+	if !testing.expect(t, up) {
+		return
+	}
+	defer loopback.stop(srv)
+	clock := Update_Time{wall = 1_700_000_000, mono = 1_000_000_000}
+	r: Rig
+	rig_open(&r, root, kept = fmt.tprintf("%s/history.db", data), release_base = loopback.url(srv, ""), update_key = pub[:], update_exe = installed, update_time = &clock)
+	defer rig_close(&r)
+	testing.expect(t, settle(&r, "Version v9.9.9 of Leita is available."), "startup reaches the signed release and shows its notice")
+	testing.expect_value(t, sync.atomic_load(&f.checks), 1)
+	sync.atomic_store(&clock.wall, clock.wall + DAY_SEC)
+	sync.atomic_store(&clock.mono, clock.mono + DAY_NS)
+	deadline := time.tick_now()._nsec + i64(10 * time.Second)
+	for sync.atomic_load(&f.checks) < 2 && time.tick_now()._nsec < deadline {
+		ui.probe_frame(&r.p)
+		hand_on(&r)
+		time.sleep(time.Millisecond)
+	}
+	testing.expect_value(t, sync.atomic_load(&f.checks), 2)
+	testing.expect(t, settle(&r, "Version v9.9.9 of Leita is available."))
+	body, err := os.read_entire_file(installed, context.temp_allocator)
+	testing.expect(t, err == nil)
+	testing.expect(t, string(body) == "the current window", "automatic checks never install")
 }
