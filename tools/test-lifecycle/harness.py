@@ -527,8 +527,8 @@ def update_cases(results, old, new, dev, seed, asset, test_line, update_key):
             binary = place(old, folder / exe_name())
             before = binary.read_bytes()
             if os.name == "nt":
-                user = os.environ.get("USERNAME", "")
-                proc = subprocess.run(["icacls", str(folder), "/deny", f"{user}:(W,D)"], capture_output=True, text=True)
+                user = "*S-1-1-0"  # Everyone, including the runner process token.
+                proc = subprocess.run(["icacls", str(folder), "/deny", f"{user}:(OI)(CI)(W,D,DC)"], capture_output=True, text=True)
                 if proc.returncode != 0:
                     return False, tail(proc.stderr) or "icacls could not remove write access"
             else:
@@ -536,6 +536,16 @@ def update_cases(results, old, new, dev, seed, asset, test_line, update_key):
             env, _data = child_env(work)
             env["LEITA_RELEASE_BASE"] = str(directory)
             try:
+                # Verify the fixture really denies creation before testing the updater.
+                # A successful update under an ineffective ACL proves nothing.
+                try:
+                    with (folder / "permission-probe").open("xb"):
+                        pass
+                #review:ignore error-swallowed PermissionError is the required successful fixture assertion
+                except PermissionError:
+                    pass
+                else:
+                    return False, "permission fixture still permits creating a file beside the executable"
                 code, _out, err = invoke(binary, ["update"], env)
             finally:
                 if os.name != "nt":
@@ -1386,7 +1396,12 @@ def windows_installer(results):
             return False, "Inno Setup 6 is not installed, so the installer was not built"
         work = Path(tempfile.mkdtemp(prefix="setup-"))
         try:
-            pack = ROOT / "build" / "release"
+            pack = work / "pack"
+            shutil.copytree(ROOT / "build" / "release", pack)
+            # Match release.yml: the installer consumes the archive staging
+            # tree, which includes the repository's licence and notices.
+            for notice in ("LICENSE.md", "THIRD_PARTY.md"):
+                shutil.copy2(ROOT / notice, pack / notice)
             number = "0.0.2.0"
             env = os.environ.copy()
             env.update({
