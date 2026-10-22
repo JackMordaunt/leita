@@ -3,12 +3,11 @@
 # tools/abi-gate/floors.conf, per kind (cli, gui) and architecture, runs the
 # artifacts on old userspace, and runs the whole test suite on native arm64.
 #
-# This is not the release gate yet. release.yml neither calls it nor reads
-# the floors: the artifacts it builds today need glibc 2.38 (cli) and 2.39
-# (gui). When the lowered artifacts exist, the floors are set from what they
-# measure, "-" becomes a version, and the release job runs
+# release.yml is the release gate: it builds the command line with just
+# cli-baseline and runs
 #   tools/abi-gate/abi_gate.py --require-floor
-# on every shipped executable.
+# on every shipped Linux executable against floors.conf. This workflow adds the
+# fixture tests, runs on old userspace, and the native arm64 suite.
 #
 # Triggers: a push that touches the gate or this file runs the fixture tests
 # and the native arm64 suite. A manual run with a release run's id as run-id
