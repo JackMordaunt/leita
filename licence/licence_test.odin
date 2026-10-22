@@ -771,7 +771,13 @@ a_kept_file_gives_its_mode_and_a_missing_one_gives_none :: proc(t: ^testing.T) {
 
 	mode, found := prior_mode(path)
 	testing.expect(t, found, "a kept file had no mode")
-	testing.expect_value(t, mode & os.Permissions_All, os.Permissions{.Read_User, .Write_User})
+	// os.stat on Windows gives read and write to owner, group and other alike (it has no
+	// POSIX modes), so there is no owner-only mode to compare.
+	when ODIN_OS != .Windows {
+		testing.expect_value(t, mode & os.Permissions_All, os.Permissions{.Read_User, .Write_User})
+	} else {
+		testing.expect(t, .Read_User in mode, "a kept file was not readable")
+	}
 	_, absent := prior_mode(fmt.tprintf("%s/absent", dir))
 	testing.expect(t, !absent, "a missing file had a mode")
 }
