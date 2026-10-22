@@ -160,10 +160,7 @@ a_chmod_of_an_unsearchable_directory_does_not_follow_a_link :: proc(t: ^testing.
 	holder := join_path(root, "/holder")
 	testing.expect(t, os.make_directory(holder) == nil)
 	testing.expect(t, os.symlink(victim, join_path(holder, "/link")) == nil)
-	dir := posix.open(
-		strings.clone_to_cstring(holder, context.temp_allocator),
-		{.DIRECTORY, .CLOEXEC},
-	)
+	dir, _ := open_dir_at(posix.AT_FDCWD, strings.clone_to_cstring(holder, context.temp_allocator), true)
 	testing.expect(t, dir != -1)
 	defer posix.close(dir)
 	followed := fchmod_nofollow(

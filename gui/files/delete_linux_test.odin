@@ -96,7 +96,7 @@ unmount :: proc(target: string) {
 // look_at is what look says of the entry at path, asked through its folder.
 @(private = "file")
 look_at :: proc(path: string) -> (Look, posix.Errno) {
-	dir := posix.open(strings.clone_to_cstring(os.dir(path), context.temp_allocator), {.DIRECTORY})
+	dir, _ := open_dir_at(posix.AT_FDCWD, strings.clone_to_cstring(os.dir(path), context.temp_allocator), true)
 	defer posix.close(dir)
 	return look(dir, strings.clone_to_cstring(os.base(path), context.temp_allocator))
 }
