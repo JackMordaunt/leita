@@ -651,8 +651,9 @@ jobs:
             sh -euc "rpm -i /dist/${rpm#dist/}; leita --version; Leita --version; rpm -e leita; test ! -e /usr/lib/systemd/system/leita-journal.service"
           sudo apt-get install -y --no-install-recommends xvfb
           status=0
-          xvfb-run -a timeout 10 build/release/app/Leita "$RUNNER_TEMP" || status=$?
+          SDL_LOGGING='*=debug' xvfb-run -a timeout 10 build/release/app/Leita "$RUNNER_TEMP" > "$RUNNER_TEMP/window.log" 2>&1 || status=$?
           if [ "$status" != 124 ]; then
+            tail -n 60 "$RUNNER_TEMP/window.log"
             echo "::error::the window exited with $status on X before 10 seconds were up"
             exit 1
           fi
