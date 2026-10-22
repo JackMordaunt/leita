@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Fetch and prepare the old-kernel guests tools/vm/run boots: tools/vm/prepare [DIR]
+#
+# DIR (default $LEITA_VM_DIR, else ~/.cache/leita-vm) receives, for each guest,
+# DIR/kern/NAME-vmlinuz, DIR/kern/NAME-initrd.img and DIR/img/NAME.raw, a Debian
+# image whose root has /sbin/leita-vm-init (guest/init) put in it. Nothing runs as
+# root: debugfs reads and writes the image file. A finished file is not fetched
+# again. The guests are
+#   stretch  Debian 9.13, Linux 4.9.0-18: no statx (4.11), no mount id (5.8)
+#   buster   Debian 10, Linux 4.19.0-27:  statx, no mount id
+# Needs curl, qemu-img, debugfs, sha256sum, sha512sum.
+set -euo pipefail
+dir=${1:-${LEITA_VM_DIR:-$HOME/.cache/leita-vm}}
+here=$(cd "$(dirname "$0")" && pwd)
+mkdir -p "$dir/img" "$dir/kern" "$dir/dl"
+
+sr=https://cdimage.debian.org/cdimage/openstack/archive/9.13.41-20220629
+st=debian-9.13.41-20220629-openstack-amd64.qcow2
+br=https://cloud.debian.org/images/cloud/buster/20240703-1797
+bu=debian-10-nocloud-amd64-20240703-1797.qcow2
+
+fetch() { # URL FILE SUMS-URL HASH-TOOL
+	[ -f "$dir/dl/$2" ] && return
+	curl -fL --max-time 1800 -o "$dir/dl/$2.part" "$1/$2"
+	want=$(curl -fs "$3" | awk -v f="$2" '$2 == f {print $1}')
+	got=$($4 "$dir/dl/$2.part" | awk '{print $1}')
+	[ -n "$want" ] && [ "$want" = "$got" ] || { echo "prepare: $2 does not match its checksum" >&2; exit 1; }
+	mv "$dir/dl/$2.part" "$dir/dl/$2"
+}
+
+# NAME QCOW2 ROOT-PARTITION-START-SECTOR KERNEL-RELEASE INIT-DIR-IN-IMAGE
+guest() {
+	name=$1 qcow=$2 start=$3 rel=$4 sbin=$5
+	[ -f "$dir/img/$name.raw" ] && [ -f "$dir/kern/$name-vmlinuz" ] && return
+	qemu-img convert -O raw "$dir/dl/$qcow" "$dir/img/$name.raw.part"
+	img="$dir/img/$name.raw.part?offset=$((start * 512))"
+	debugfs -R "dump /boot/vmlinuz-$rel-amd64 $dir/kern/$name-vmlinuz" "$img"
+	debugfs -R "dump /boot/initrd.img-$rel-amd64 $dir/kern/$name-initrd.img" "$img"
+	debugfs -w -R "write $here/guest/init $sbin/leita-vm-init" "$img"
+	debugfs -w -R "set_inode_field $sbin/leita-vm-init mode 0100755" "$img"
+	mv "$dir/img/$name.raw.part" "$dir/img/$name.raw"
+}
+
+fetch "$sr" "$st" "$sr/SHA256SUMS" sha256sum
+fetch "$br" "$bu" "$br/SHA512SUMS" sha512sum
+guest stretch "$st" 2048 4.9.0-18 /sbin
+guest buster "$bu" 262144 4.19.0-27 /usr/sbin
+echo "prepare: guests ready in $dir"

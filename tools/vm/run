@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Boot an old-kernel guest and run the command line in it:
+#   tools/vm/run GUEST LEITA [WALK-TEST] [-- guest args]
+# GUEST is stretch (Linux 4.9, no statx) or buster (Linux 4.19, no mount id); see
+# tools/vm/prepare. LEITA is the command line to scan with, WALK-TEST the walk
+# package's test binary (just baseline-test), run in the guest too. The guest
+# boots its own kernel under KVM from a throwaway copy of the image, builds a
+# fixture tree, runs tools/vm/guest/run, and the serial console is this command's
+# output, ending in RESULT lines; the exit status is 1 if a check failed, 2 if the
+# guest did not finish. Set EXPECT=nofallback for a binary built without the
+# statx fallback: its scan is then expected to fail the way it did before.
+# LEITA_VM_DIR names the prepared directory, LEITA_VM_MEM the guest's MB (1024).
+set -euo pipefail
+here=$(cd "$(dirname "$0")" && pwd)
+dir=${LEITA_VM_DIR:-$HOME/.cache/leita-vm}
+guest=${1:?usage: run GUEST LEITA [WALK-TEST]}
+leita=${2:?usage: run GUEST LEITA [WALK-TEST]}
+walk_test=${3:-}
+for f in "$dir/img/$guest.raw" "$dir/kern/$guest-vmlinuz" "$dir/kern/$guest-initrd.img"; do
+	[ -f "$f" ] || { echo "run: $f is missing; tools/vm/prepare first" >&2; exit 2; }
+done
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+mkdir "$work/t"
+cp "$leita" "$work/t/leita"
+[ -z "$walk_test" ] || cp "$walk_test" "$work/t/walk-test"
+cp "$here/guest/run" "$work/t/guest.sh"
+cp "$here/../linux-baseline/probe" "$work/t/probe"
+echo "EXPECT=${EXPECT:-fallback}" > "$work/t/env"
+mke2fs -q -t ext2 -d "$work/t" "$work/tools.img" 96M
+timeout "${LEITA_VM_TIMEOUT:-600}" qemu-system-x86_64 -enable-kvm -cpu host -smp 2 -m "${LEITA_VM_MEM:-1024}" \
+	-nographic -no-reboot -net none \
+	-kernel "$dir/kern/$guest-vmlinuz" -initrd "$dir/kern/$guest-initrd.img" \
+	-append "root=/dev/vda1 rw console=ttyS0 init=/sbin/leita-vm-init panic=-1 quiet" \
+	-drive "file=$dir/img/$guest.raw,format=raw,if=virtio,snapshot=on" \
+	-drive "file=$work/tools.img,format=raw,if=virtio,readonly=on" </dev/null | tr -d '\r' | tee "$work/out"
+grep -q '^LEITA-VM-DONE' "$work/out" || { echo "run: the guest did not finish" >&2; exit 2; }
+! grep -q '^RESULT FAIL' "$work/out"
