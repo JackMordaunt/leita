@@ -1683,6 +1683,11 @@ def packaging_cases(results, built_cli, update_key, licence_key):
 
     def packages():
         env = build_env(NEW_VERSION, licence_key, update_key, STAMP)
+        # just package refuses a binary that loads libstdc++, which only a build at
+        # the glibc floor (release.yml's) avoids; the caller names it, and only
+        # this build takes it.
+        if os.environ.get("LEITA_PACKAGE_FLOOR"):
+            env["LEITA_GLIBC_FLOOR"] = os.environ["LEITA_PACKAGE_FLOOR"]
         proc = subprocess.run(["just", "package"], cwd=ROOT, env=env, capture_output=True, text=True, timeout=900)
         log = tail(proc.stdout + "\n" + proc.stderr, 1500)
         out = ROOT / "build" / "package"
