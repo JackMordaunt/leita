@@ -88,15 +88,63 @@ else
 	grep -qi 'needs root\|permission' /tmp/j.out && res FAIL journal-not-root-message "said root or permission: $(head -n 1 /tmp/j.out)" || res PASS journal-not-root-message "did not blame root"
 fi
 
+# The other commands a scan and a report reach, with history on: the earlier scan
+# of the place, the folder times of an incremental read, each report format, the
+# licence, history, and the journal's status. Each is run as the user would; one
+# that fails on a kernel the plain scan handles is a call the fallback missed.
+if [ "$EXPECT" != nofallback ]; then
+	cmd() { # NAME ARGS...
+		name=$1; shift
+		"$leita" "$@" >/tmp/c.out 2>/tmp/c.err
+		crc=$?
+		detail="rc=$crc; read: $(grep -m1 '^read ' /tmp/c.out | cut -c1-120); stderr: $(grep -v '^note: this kernel' /tmp/c.err | head -n 3 | tr '\n' '|')"
+		if [ "$crc" = 0 ] && ! grep -q '^error' /tmp/c.err && ! grep -q 'could not be read' /tmp/c.err; then
+			res PASS "cmd $name" "$detail"
+		else
+			res FAIL "cmd $name" "$detail"
+		fi
+	}
+	cmd scan-first "$fx"
+	touch $fx/a/b/c/touched; echo more >> $fx/a/b/c/touched; sync
+	cmd scan-second-incremental "$fx"
+	if grep -q '^read .*updated' /tmp/c.out; then
+		res PASS incremental-read "the second scan read only what changed: $(grep -m1 '^read ' /tmp/c.out | cut -c1-120)"
+	else
+		res FAIL incremental-read "the second scan did not update the first: $(grep -m1 '^read ' /tmp/c.out | cut -c1-120)"
+	fi
+	# What an incremental read reports must be what a whole read does: a changed
+	# folder it did not see would show here as a figure that is too old.
+	$leita --report /tmp/inc.json "$fx" >/dev/null 2>&1
+	echo more >> $fx/a/b/c/touched; dd if=/dev/zero of=$fx/a/grown bs=1000 count=40 2>/dev/null; sync
+	$leita --report /tmp/inc.json "$fx" >/dev/null 2>&1
+	$leita --whole --report /tmp/whole.json "$fx" >/dev/null 2>&1
+	inc=$(grep '"totals"' /tmp/inc.json); whole=$(grep '"totals"' /tmp/whole.json)
+	[ -n "$inc" ] && [ "$inc" = "$whole" ] && res PASS incremental-matches-whole "$inc" || res FAIL incremental-matches-whole "incremental: $inc; whole: $whole"
+	cmd scan-whole --whole "$fx"
+	cmd report-csv --report /tmp/r.csv "$fx"
+	cmd report-json --report /tmp/r.json "$fx"
+	cmd report-html --report /tmp/r.html "$fx"
+	cmd report-pdf --report /tmp/r.pdf "$fx"
+	cmd history history
+	cmd history-place history "$fx"
+	cmd licence licence
+	cmd journal-status journal status
+	for f in r.csv r.json r.html r.pdf; do
+		[ -s /tmp/$f ] && res PASS "report-file $f" "$(wc -c </tmp/$f) bytes" || res FAIL "report-file $f" "missing or empty"
+	done
+fi
+
 # The probe and the walk's own tests, on this kernel.
 if [ "$EXPECT" != nofallback ]; then
 	wt=
 	[ -f $t/walk-test ] && { cp $t/walk-test /tmp/walk-test; chmod +x /tmp/walk-test; wt=/tmp/walk-test; }
 	sh $t/probe $leita $wt 2>&1 | sed 's/^/probe: /'
 	if [ -n "$wt" ]; then
-		LEITA_MOUNT_TEST=1 /tmp/walk-test >/tmp/wt.out 2>&1
+		(cd /var/tmp && LEITA_MOUNT_TEST=1 /tmp/walk-test >/tmp/wt.out 2>&1)
 		wrc=$?
-		res INFO walk-test-tail "$(grep -h 'tests in\|ERROR\|MNT_ID' /tmp/wt.out | head -n 24 | cut -c1-260 | tr '\n' '|')"
+		# The first two distinct errors of each failing test, not every repeat.
+		res INFO walk-test-failures "$(grep -h 'ERROR' /tmp/wt.out | sed -E 's/^.*\] \[([^]]*)\(\)\] (.*)$/\1 \2/' | awk '{split($1, a, ":"); if (seen[a[3]]++ < 2) print}' | cut -c1-200 | tr '\n' '|')"
+		res INFO walk-test-summary "$(grep -h 'tests in' /tmp/wt.out | tr '\n' ' ')"
 		res INFO walk-test-mount-id "$(grep -h "kernel's statx mask" /tmp/wt.out | cut -c1-300 | head -n 1)"
 		[ "$wrc" = 0 ] && res PASS walk-test "rc=0" || res FAIL walk-test "rc=$wrc"
 	fi
