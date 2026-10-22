@@ -9,9 +9,23 @@ import "core:sync"
 import "core:sys/linux"
 import "core:testing"
 
+import "../kstat"
 import "../scan"
 
-// The tests that set statx_missing, which is the whole process's, take turns.
+// Whether this kernel has statx, asked of the kernel itself with the raw call and
+// not by its version, so a backport or a stripped kernel is taken as it answers.
+kernel_has_statx :: proc() -> bool {
+	st: linux.Statx
+	return linux.statx(linux.AT_FDCWD, "/", {}, {.INO}, &st) != .ENOSYS
+}
+
+// Whether this kernel's statx gives a mount id (Linux 5.8), asked the same way.
+kernel_gives_mount_ids :: proc() -> bool {
+	st: linux.Statx
+	return linux.statx(linux.AT_FDCWD, "/", {}, {.MNT_ID}, &st) == .NONE && .MNT_ID in st.mask
+}
+
+// The tests that set kstat.missing, which is the whole process's, take turns.
 @(private = "file")
 flag_turn: sync.Mutex
 
@@ -63,6 +77,10 @@ fixture :: proc(t: ^testing.T, name: string, size: int) -> (root: string, ok: bo
 // What the walk needs of an entry, fstatat's answer equals statx's.
 @(test)
 test_the_fstatat_fallback_answers_as_statx_does :: proc(t: ^testing.T) {
+	if !kernel_has_statx() {
+		log.warnf("skipped: this kernel has no statx (Linux 4.11), so there is no answer to compare with")
+		return
+	}
 	root, ok := fixture(t, "fallback_same", 100_000)
 	if !ok {
 		return
@@ -73,12 +91,12 @@ test_the_fstatat_fallback_answers_as_statx_does :: proc(t: ^testing.T) {
 		want, got: linux.Statx
 		testing.expect_value(
 			t,
-			linux.statx(linux.AT_FDCWD, path, {.SYMLINK_NOFOLLOW}, {.TYPE, .MODE, .NLINK, .INO, .SIZE, .BLOCKS}, &want),
+			linux.statx(linux.AT_FDCWD, path, {.SYMLINK_NOFOLLOW}, {.TYPE, .MODE, .NLINK, .INO, .SIZE, .BLOCKS, .ATIME, .MTIME, .CTIME}, &want),
 			linux.Errno.NONE,
 		)
 		testing.expect_value(
 			t,
-			stat_fallback(linux.AT_FDCWD, path, {.SYMLINK_NOFOLLOW}, &got),
+			kstat.fallback(linux.AT_FDCWD, path, {.SYMLINK_NOFOLLOW}, &got),
 			linux.Errno.NONE,
 		)
 		testing.expect_value(t, got.mode, want.mode)
@@ -86,6 +104,10 @@ test_the_fstatat_fallback_answers_as_statx_does :: proc(t: ^testing.T) {
 		testing.expect_value(t, got.nlink, want.nlink)
 		testing.expect_value(t, got.size, want.size)
 		testing.expect_value(t, got.blocks, want.blocks)
+		testing.expect_value(t, got.mtime, want.mtime)
+		testing.expect_value(t, got.ctime, want.ctime)
+		testing.expect_value(t, got.atime, want.atime)
+		testing.expect(t, linux.Statx_Mask{.MTIME, .CTIME} - got.mask == {}, "the fallback gave no times, so a changed folder is not seen")
 		testing.expect_value(t, got.dev_major, want.dev_major)
 		testing.expect_value(t, got.dev_minor, want.dev_minor)
 		testing.expect(t, .MNT_ID not_in got.mask, "the fallback claimed a mount id")
@@ -96,7 +118,7 @@ test_the_fstatat_fallback_answers_as_statx_does :: proc(t: ^testing.T) {
 	testing.expect_value(t, errno, linux.Errno.NONE)
 	defer linux.close(fd)
 	via, direct: linux.Statx
-	testing.expect_value(t, stat_fallback(fd, "", {.EMPTY_PATH}, &via), linux.Errno.NONE)
+	testing.expect_value(t, kstat.fallback(fd, "", {.EMPTY_PATH}, &via), linux.Errno.NONE)
 	testing.expect_value(t, linux.statx(fd, "", {.EMPTY_PATH}, {.INO}, &direct), linux.Errno.NONE)
 	testing.expect_value(t, via.ino, direct.ino)
 }
@@ -112,27 +134,27 @@ test_only_enosys_falls_back :: proc(t: ^testing.T) {
 	}
 	defer os.remove_all(root)
 	path := fmt.ctprintf("%s/a.bin", root)
-	was := sync.atomic_exchange(&statx_missing, false)
-	defer sync.atomic_store(&statx_missing, was)
+	was := sync.atomic_exchange(&kstat.missing, false)
+	defer sync.atomic_store(&kstat.missing, was)
 
 	st: linux.Statx
-	testing.expect_value(t, stat_with(refused, linux.AT_FDCWD, path, {}, {.BLOCKS}, &st), linux.Errno.EACCES)
-	testing.expect(t, !bool(sync.atomic_load(&statx_missing)), "a refusal was taken for a missing call")
+	testing.expect_value(t, kstat.with(refused, linux.AT_FDCWD, path, {}, {.BLOCKS}, &st), linux.Errno.EACCES)
+	testing.expect(t, !bool(sync.atomic_load(&kstat.missing)), "a refusal was taken for a missing call")
 	testing.expect_value(t, st.blocks, 0)
 
-	testing.expect_value(t, stat_with(no_statx, linux.AT_FDCWD, path, {}, {.BLOCKS}, &st), linux.Errno.NONE)
-	testing.expect(t, bool(sync.atomic_load(&statx_missing)), "ENOSYS was not remembered")
+	testing.expect_value(t, kstat.with(no_statx, linux.AT_FDCWD, path, {}, {.BLOCKS}, &st), linux.Errno.NONE)
+	testing.expect(t, bool(sync.atomic_load(&kstat.missing)), "ENOSYS was not remembered")
 	testing.expect(t, st.blocks > 0, "the fallback gave a size of 0 for a file of 4096 bytes")
 	testing.expect_value(t, st.size, 4096)
 
 	// Remembered: the kernel's call is not asked again, even one that would answer.
 	asked = 0
-	testing.expect_value(t, stat_with(counting, linux.AT_FDCWD, path, {}, {.BLOCKS}, &st), linux.Errno.NONE)
+	testing.expect_value(t, kstat.with(counting, linux.AT_FDCWD, path, {}, {.BLOCKS}, &st), linux.Errno.NONE)
 	testing.expect_value(t, asked, 0)
 
 	// A refusal of the fallback itself is still the refusal.
 	missing := fmt.ctprintf("%s/none", root)
-	testing.expect_value(t, stat_with(no_statx, linux.AT_FDCWD, missing, {}, {.BLOCKS}, &st), linux.Errno.ENOENT)
+	testing.expect_value(t, kstat.with(no_statx, linux.AT_FDCWD, missing, {}, {.BLOCKS}, &st), linux.Errno.ENOENT)
 }
 
 @(private = "file")
@@ -154,15 +176,19 @@ counting :: proc "contextless" (
 // The kernel's dev_t packing, checked against the device statx reports for /.
 @(test)
 test_dev_split_matches_statx :: proc(t: ^testing.T) {
+	if !kernel_has_statx() {
+		log.warnf("skipped: this kernel has no statx (Linux 4.11), so there is no device to compare with")
+		return
+	}
 	st: linux.Statx
 	old: linux.Stat
 	testing.expect_value(t, linux.statx(linux.AT_FDCWD, "/", {}, {.INO}, &st), linux.Errno.NONE)
 	testing.expect_value(t, linux.fstatat(linux.AT_FDCWD, "/", &old, {}), linux.Errno.NONE)
-	major, minor := dev_split(u64(old.dev))
+	major, minor := kstat.dev_split(u64(old.dev))
 	testing.expect_value(t, major, st.dev_major)
 	testing.expect_value(t, minor, st.dev_minor)
 	// 259:3 (an nvme partition) packs as 0x103_03 | ..., and a minor above 255 spreads.
-	major, minor = dev_split(u64(259) << 8 | 3 | u64(1) << 20)
+	major, minor = kstat.dev_split(u64(259) << 8 | 3 | u64(1) << 20)
 	testing.expect_value(t, major, 259)
 	testing.expect_value(t, minor, 3 | 1 << 8)
 }
@@ -184,11 +210,11 @@ test_a_walk_without_statx_sizes_every_file :: proc(t: ^testing.T) {
 	normal: scan.Tree
 	testing.expect_value(t, scan.tree_init(&normal, 1), scan.Error.None)
 	defer scan.tree_destroy(&normal)
-	was := sync.atomic_exchange(&statx_missing, false)
-	defer sync.atomic_store(&statx_missing, was)
+	was := sync.atomic_exchange(&kstat.missing, false)
+	defer sync.atomic_store(&kstat.missing, was)
 	testing.expect_value(t, read(root, &normal, Config{}), Error.None)
 
-	sync.atomic_store(&statx_missing, true)
+	sync.atomic_store(&kstat.missing, true)
 	old: scan.Tree
 	testing.expect_value(t, scan.tree_init(&old, 1), scan.Error.None)
 	defer scan.tree_destroy(&old)
@@ -209,7 +235,11 @@ test_a_walk_without_statx_sizes_every_file :: proc(t: ^testing.T) {
 	count, _ := scan.unread(&old)
 	testing.expect_value(t, count, 0)
 	testing.expect_value(t, scan.gaps(&old), scan.Gaps{.Statx, .Mount_Id})
-	testing.expect(t, .Statx not_in scan.gaps(&normal), "a kernel with statx was said to lack it")
+	if kernel_has_statx() {
+		testing.expect(t, .Statx not_in scan.gaps(&normal), "a kernel with statx was said to lack it")
+	} else {
+		testing.expect(t, .Statx in scan.gaps(&normal), "a kernel without statx was not said to lack it")
+	}
 }
 
 /*
@@ -229,8 +259,8 @@ test_the_walk_reports_a_mount_id_gap_as_the_kernel_answers :: proc(t: ^testing.T
 	}
 	defer os.remove_all(root)
 
-	was := sync.atomic_exchange(&statx_missing, false)
-	defer sync.atomic_store(&statx_missing, was)
+	was := sync.atomic_exchange(&kstat.missing, false)
+	defer sync.atomic_store(&kstat.missing, was)
 
 	st: linux.Statx
 	croot := strings.clone_to_cstring(root, context.temp_allocator)
@@ -272,8 +302,8 @@ test_a_refusal_under_the_fallback_is_still_unknown :: proc(t: ^testing.T) {
 	}
 	defer os.remove_all(root)
 	defer let_search(root)
-	was := sync.atomic_exchange(&statx_missing, true)
-	defer sync.atomic_store(&statx_missing, was)
+	was := sync.atomic_exchange(&kstat.missing, true)
+	defer sync.atomic_store(&kstat.missing, was)
 
 	tree: scan.Tree
 	testing.expect_value(t, scan.tree_init(&tree, 1), scan.Error.None)

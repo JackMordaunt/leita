@@ -9,6 +9,7 @@ import "core:sync"
 import "core:sys/linux"
 
 import "../btrfs"
+import "../kstat"
 import "../scan"
 
 /*
@@ -53,7 +54,7 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 				scan.mark_gap(w.writer.tree, .Mount_Id)
 			}
 		}
-		if sync.atomic_load(&statx_missing) {
+		if sync.atomic_load(&kstat.missing) {
 			scan.mark_gap(w.writer.tree, .Statx)
 			scan.mark_gap(w.writer.tree, .Mount_Id)
 		}
@@ -329,16 +330,6 @@ kind_of :: proc(type: linux.Dirent_Type, errno: linux.Errno, mode: linux.Mode) -
 	return .File
 }
 
-// statx's signature, so a test can stand in for the kernel.
-@(private)
-Statx_Call :: #type proc "contextless" (
-	dir: linux.Fd,
-	name: cstring,
-	flags: linux.FD_Flags,
-	mask: linux.Statx_Mask,
-	st: ^linux.Statx,
-) -> linux.Errno
-
 // How many times statx is asked before an EINTR is taken as its answer.
 @(private)
 STATX_TRIES :: 4
@@ -350,7 +341,7 @@ every time ends as one not known rather than a hang.
 */
 @(private)
 stat_entry :: proc(
-	ask: Statx_Call,
+	ask: kstat.Call,
 	dir: linux.Fd,
 	name: cstring,
 	flags: linux.FD_Flags,

@@ -12,6 +12,7 @@ import "core:sys/linux"
 import "core:testing"
 
 import "../btrfs"
+import "../kstat"
 import "../scan"
 
 /*
@@ -86,7 +87,7 @@ test_walk_charges_btrfs_extents_or_says_why :: proc(t: ^testing.T) {
 		path := strings.clone_to_cstring(scan.path(&tree, i, context.temp_allocator))
 		defer delete(path)
 		st: linux.Statx
-		if linux.statx(linux.AT_FDCWD, path, {.SYMLINK_NOFOLLOW}, {.BLOCKS}, &st) == .NONE {
+		if kstat.statx(linux.AT_FDCWD, path, {.SYMLINK_NOFOLLOW}, {.BLOCKS}, &st) == .NONE {
 			blocks += st.blocks * 512
 			if !searched {
 				testing.expectf(
@@ -245,7 +246,7 @@ stand_in_directory :: proc(
 		st: linux.Statx
 		testing.expect_value(
 			t,
-			linux.statx(
+			kstat.statx(
 				linux.AT_FDCWD,
 				strings.clone_to_cstring(path, context.temp_allocator),
 				{},
@@ -346,7 +347,7 @@ test_a_refused_search_falls_back_to_st_blocks :: proc(t: ^testing.T) {
 		st: linux.Statx
 		testing.expect_value(
 			t,
-			linux.statx(linux.AT_FDCWD, path, {}, {.BLOCKS}, &st),
+			kstat.statx(linux.AT_FDCWD, path, {}, {.BLOCKS}, &st),
 			linux.Errno.NONE,
 		)
 		testing.expectf(t, n.disk == st.blocks * 512, "%s charged %d, not st_blocks", path, n.disk)
@@ -405,7 +406,7 @@ make_linked_directories :: proc(
 	st: linux.Statx
 	testing.expect_value(
 		t,
-		linux.statx(
+		kstat.statx(
 			linux.AT_FDCWD,
 			strings.clone_to_cstring(first, context.temp_allocator),
 			{},

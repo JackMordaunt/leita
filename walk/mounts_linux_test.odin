@@ -176,6 +176,12 @@ the test only when LEITA_MOUNT_TEST says the mounts must be made.
 @(private = "file")
 bind :: proc(t: ^testing.T, source, target: string) -> bool {
 	c :: proc(s: string) -> cstring {return strings.clone_to_cstring(s, context.temp_allocator)}
+	// Without mount ids (statx before Linux 5.8) the walk cannot tell a bind from a
+	// directory, so what these tests expect of one is not this kernel's to give.
+	if !kernel_gives_mount_ids() {
+		log.warnf("skipped: this kernel gives no mount ids (Linux 5.8); a bind is walked as a directory")
+		return false
+	}
 	err := linux.mount(c(source), c(target), nil, {.BIND}, nil)
 	if err == .NONE {
 		return true

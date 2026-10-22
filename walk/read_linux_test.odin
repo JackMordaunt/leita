@@ -10,6 +10,7 @@ import "core:sys/linux"
 import "core:testing"
 import "core:thread"
 
+import "../kstat"
 import "../scan"
 
 /*
@@ -55,7 +56,7 @@ test_entries_are_read_in_inode_order :: proc(t: ^testing.T) {
 			context.temp_allocator,
 		)
 		st: linux.Statx
-		testing.expect(t, linux.statx(linux.AT_FDCWD, path, {}, {.INO}, &st) == .NONE)
+		testing.expect(t, kstat.statx(linux.AT_FDCWD, path, {}, {.INO}, &st) == .NONE)
 		testing.expectf(
 			t,
 			u64(st.ino) > last,
@@ -182,7 +183,7 @@ test_the_walk_stays_on_one_filesystem_but_not_one_device :: proc(t: ^testing.T) 
 	plain: linux.Statx
 	testing.expect_value(
 		t,
-		linux.statx(dir, "plain", {.NO_AUTOMOUNT}, {}, &plain),
+		kstat.statx(dir, "plain", {.NO_AUTOMOUNT}, {}, &plain),
 		linux.Errno.NONE,
 	)
 	stop, on, on_btrfs := stops_at(dir, raw_data(string("plain")), plain, here, here_btrfs)
@@ -195,7 +196,7 @@ test_the_walk_stays_on_one_filesystem_but_not_one_device :: proc(t: ^testing.T) 
 	procfs: linux.Statx
 	testing.expect_value(
 		t,
-		linux.statx(slash, "proc", {.NO_AUTOMOUNT}, {}, &procfs),
+		kstat.statx(slash, "proc", {.NO_AUTOMOUNT}, {}, &procfs),
 		linux.Errno.NONE,
 	)
 	stop, on, on_btrfs = stops_at(slash, raw_data(string("proc")), procfs, here, here_btrfs)
@@ -619,7 +620,7 @@ is_symlink :: proc(path: string) -> bool {
 		return false
 	}
 	st: linux.Statx
-	if linux.statx(linux.AT_FDCWD, cpath, {.SYMLINK_NOFOLLOW}, {.TYPE}, &st) != .NONE {
+	if kstat.statx(linux.AT_FDCWD, cpath, {.SYMLINK_NOFOLLOW}, {.TYPE}, &st) != .NONE {
 		return false
 	}
 	return linux.S_ISLNK(st.mode)
@@ -766,6 +767,12 @@ test_a_component_walk_does_not_follow_a_symlink :: proc(t: ^testing.T) {
 		dir,
 		strings.clone_to_cstring("real/nest", context.temp_allocator),
 	)
+	if beneath_err == .ENOSYS {
+		// openat2 is Linux 5.6; the walk opens a child with open_nofollow where it is
+		// missing (open_child), which the checks above cover.
+		log.warnf("skipped: this kernel has no openat2 (Linux 5.6); open_beneath is not asked")
+		return
+	}
 	testing.expect_value(t, beneath_err, linux.Errno.NONE)
 	linux.close(beneath)
 	_, beneath_link := open_beneath(

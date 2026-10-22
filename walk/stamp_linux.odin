@@ -22,6 +22,11 @@ changed_since :: proc(path: string, since: i64) -> bool {
 	if statx_compat(linux.AT_FDCWD, cpath, {}, {.MTIME, .CTIME}, &st) != .NONE {
 		return true
 	}
+	// A kernel that gave no times cannot say it did not change.
+	absent := linux.Statx_Mask{.MTIME, .CTIME} - st.mask
+	if absent != {} {
+		return true
+	}
 	stamp :: proc(ts: linux.Statx_Timestamp) -> i64 {
 		return ts.sec * 1_000_000_000 + i64(ts.nsec)
 	}
