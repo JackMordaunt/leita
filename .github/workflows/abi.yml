@@ -85,17 +85,19 @@ jobs:
           ARCH: ${{ matrix.arch }}
         run: |
           command -v zstd >/dev/null || sudo apt-get install -y --no-install-recommends zstd
-          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" -n "dist-linux-$ARCH" -D fetched
-          mkdir scan
-          for t in fetched/*-linux-"$ARCH".tar.zst; do tar --zstd -xf "$t" -C scan; done
-          find scan -type f \( -name leita -o -name Leita \) -print
+          # Under the runner's temp, not the checkout: the repository has a scan/
+          # package, and mkdir scan failed on it.
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" -n "dist-linux-$ARCH" -D "$RUNNER_TEMP/abi-fetched"
+          mkdir "$RUNNER_TEMP/abi-scan"
+          for t in "$RUNNER_TEMP/abi-fetched"/*-linux-"$ARCH".tar.zst; do tar --zstd -xf "$t" -C "$RUNNER_TEMP/abi-scan"; done
+          find "$RUNNER_TEMP/abi-scan" -type f \( -name leita -o -name Leita \) -print
       - name: scan on ${{ matrix.image }}
         env:
           IMAGE: ${{ matrix.image }}
           ARCH: ${{ matrix.arch }}
           ENFORCE: ${{ inputs.enforce && '--require-floor' || '' }}
         run: |
-          docker run --rm --platform "linux/$ARCH" -v "$PWD:/w:ro" -e ARCH -e ENFORCE "$IMAGE" bash -euc '
+          docker run --rm --platform "linux/$ARCH" -v "$PWD/tools/abi-gate:/gate:ro" -v "$RUNNER_TEMP/abi-scan:/scan:ro" -e ARCH -e ENFORCE "$IMAGE" bash -euc '
             if command -v apt-get >/dev/null; then
               apt-get update -qq && apt-get install -y -qq --no-install-recommends binutils python3 >/dev/null
             else
@@ -103,7 +105,7 @@ jobs:
             fi
             ldd --version | head -1
             status=0
-            for f in $(find /w/scan -type f \( -name leita -o -name Leita \)); do
+            for f in $(find /scan -type f \( -name leita -o -name Leita \)); do
               case $f in */app/Leita) kind=gui ;; *) kind=cli ;; esac
               echo "== $f ($kind)"
               out=$(ldd "$f" 2>&1) || true
@@ -112,7 +114,7 @@ jobs:
                 echo "::error::$f needs a newer glibc than $(ldd --version | head -1)"
                 status=1
               fi
-              python3 -I /w/tools/abi-gate/abi_gate.py --kind "$kind" --arch "$ARCH" $ENFORCE "$f" || status=1
+              python3 -I /gate/abi_gate.py --kind "$kind" --arch "$ARCH" $ENFORCE "$f" || status=1
             done
             exit $status'
 
