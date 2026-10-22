@@ -37,6 +37,18 @@ fchmod_nofollow :: proc(dir: posix.FD, name: cstring, mode: posix.mode_t) -> boo
 	return posix.fchmodat(dir, name, mode, {.SYMLINK_NOFOLLOW}) == .OK
 }
 
+// open_dir_at opens the directory name in parent, close on exec and, unless follow
+// is set, without following a link.
+@(private)
+open_dir_at :: proc(parent: posix.FD, name: cstring, follow := false) -> (fd: posix.FD, err: posix.Errno) {
+	flags: posix.O_Flags = {.DIRECTORY, .CLOEXEC} if follow else {.DIRECTORY, .NOFOLLOW, .CLOEXEC}
+	fd = posix.openat(parent, name, flags)
+	if fd == -1 {
+		err = posix.errno()
+	}
+	return
+}
+
 // rename_noreplace renames from to to, failing with Exists rather than replacing
 // whatever is at to: renamex_np(2)'s RENAME_EXCL makes the check and the rename one
 // step, so nothing can slip in between.

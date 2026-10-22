@@ -81,6 +81,35 @@ rename_at :: proc(from_dir: posix.FD, from: string, to_dir: posix.FD, to: string
 }
 
 /*
+open_dir_at opens the directory name in parent, close on exec and, unless follow is
+set, without following a link. Linux numbers the open flags per architecture, and
+core:sys/posix carries the x86 numbers only: on arm64 its DIRECTORY is O_DIRECT and
+its NOFOLLOW is O_LARGEFILE, so a folder would not open and a link would be
+followed. core:sys/linux's Open_Flags is right on both.
+*/
+@(private)
+open_dir_at :: proc(parent: posix.FD, name: cstring, follow := false) -> (fd: posix.FD, err: posix.Errno) {
+	flags: linux.Open_Flags = {.DIRECTORY, .CLOEXEC} if follow else {.DIRECTORY, .NOFOLLOW, .CLOEXEC}
+	got, errno := linux.openat(linux.Fd(parent), name, flags)
+	if errno != .NONE {
+		return -1, posix.Errno(i32(errno))
+	}
+	return posix.FD(got), .NONE
+}
+
+// create_new_at makes the file name in parent, owner read and write, close on exec,
+// refusing a name already there and a link at it (see open_dir_at for why this is
+// not posix.openat).
+@(private)
+create_new_at :: proc(parent: posix.FD, name: cstring) -> (fd: posix.FD, err: posix.Errno) {
+	got, errno := linux.openat(linux.Fd(parent), name, {.WRONLY, .CREAT, .EXCL, .NOFOLLOW, .CLOEXEC}, {.IRUSR, .IWUSR})
+	if errno != .NONE {
+		return -1, posix.Errno(i32(errno))
+	}
+	return posix.FD(got), .NONE
+}
+
+/*
 fchmod_nofollow changes the mode of name in dir on Linux, via fchmodat2 with
 AT_SYMLINK_NOFOLLOW. If that call fails, the caller leaves the directory unopened.
 There is no fallback that follows a link.
@@ -141,14 +170,9 @@ trash :: proc(path: string) -> Error {
 		name := base if n == 1 else fmt.tprintf("%s.%d", base, n)
 		info_name := strings.concatenate({name, ".trashinfo"}, context.temp_allocator)
 		cname := strings.clone_to_cstring(info_name, context.temp_allocator)
-		ifd := posix.openat(
-			info,
-			cname,
-			{.WRONLY, .CREAT, .EXCL, .NOFOLLOW, .CLOEXEC},
-			{.IRUSR, .IWUSR},
-		)
+		ifd, ierr := create_new_at(info, cname)
 		if ifd == -1 {
-			if posix.errno() == .EEXIST {
+			if ierr == .EEXIST {
 				continue
 			}
 			return .Denied
@@ -218,12 +242,13 @@ make_directory :: proc(path: string) -> (fd: posix.FD, err: Error) {
 	if posix.mkdirat(pfd, cname, posix.S_IRWXU) != .OK && posix.errno() != .EEXIST {
 		return -1, errno_error(i32(posix.errno()))
 	}
-	fd = posix.openat(pfd, cname, {.DIRECTORY, .NOFOLLOW, .CLOEXEC})
+	open_err: posix.Errno
+	fd, open_err = open_dir_at(pfd, cname)
 	if fd == -1 {
-		if posix.errno() == .ELOOP || posix.errno() == .ENOTDIR {
+		if open_err == .ELOOP || open_err == .ENOTDIR {
 			return -1, .Not_Directory
 		}
-		return -1, errno_error(i32(posix.errno()))
+		return -1, errno_error(i32(open_err))
 	}
 	return fd, .None
 }

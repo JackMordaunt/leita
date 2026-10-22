@@ -43,11 +43,8 @@ anything that is not a directory, is Not_Directory.
 @(private)
 open_directory :: proc(path: string) -> (fd: posix.FD, err: Error) {
 	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
-	start := "/" if strings.has_prefix(path, "/") else "."
-	fd = posix.open(
-		strings.clone_to_cstring(start, context.temp_allocator),
-		{.DIRECTORY, .CLOEXEC},
-	)
+	start: cstring = "/" if strings.has_prefix(path, "/") else "."
+	fd, _ = open_dir_at(posix.AT_FDCWD, start, true)
 	if fd == -1 {
 		return -1, .Missing
 	}
@@ -63,13 +60,15 @@ open_directory :: proc(path: string) -> (fd: posix.FD, err: Error) {
 			posix.close(fd)
 			return -1, .Not_Directory
 		}
-		next := posix.openat(
-			fd,
-			strings.clone_to_cstring(part, context.temp_allocator),
-			{.DIRECTORY, .NOFOLLOW, .CLOEXEC},
-		)
+		// A name is at most NAME_MAX, 255 bytes, so this buffer holds one and its NUL.
+		name: [256]u8
+		if len(part) >= len(name) {
+			posix.close(fd)
+			return -1, .Other
+		}
+		copy(name[:], part)
+		next, e := open_dir_at(fd, cstring(&name[0]))
 		if next == -1 {
-			e := posix.errno()
 			posix.close(fd)
 			#partial switch e {
 			case .ELOOP, .ENOTDIR:
@@ -188,14 +187,14 @@ remove_dir :: proc(
 	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
 	OWNER :: posix.S_IRWXU
 	changed := false
-	fd := posix.openat(parent, name, {.DIRECTORY, .NOFOLLOW, .CLOEXEC})
-	if fd == -1 && posix.errno() == .EACCES && at.mode & OWNER != OWNER {
+	fd, open_err := open_dir_at(parent, name)
+	if fd == -1 && open_err == .EACCES && at.mode & OWNER != OWNER {
 		// Its owner cannot list it. chmod by name follows a link, so a directory
 		// swapped for a symlink since the look would change the link's target.
 		// fchmod_nofollow refuses a link instead of following it.
 		changed = fchmod_nofollow(parent, name, at.mode + OWNER)
 		if changed {
-			fd = posix.openat(parent, name, {.DIRECTORY, .NOFOLLOW, .CLOEXEC})
+			fd, _ = open_dir_at(parent, name)
 		}
 	}
 	if fd == -1 {

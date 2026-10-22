@@ -231,3 +231,27 @@ a_trash_refuses_a_symlink_ancestor_and_a_linked_files_directory :: proc(t: ^test
 	entries, _ := os.read_all_directory_by_path(join_path(root, "/public"), context.temp_allocator)
 	testing.expect_value(t, len(entries), 0)
 }
+
+// open_directory opens a folder and refuses a link at any step of the path, whatever
+// the architecture numbers the open flags as: on arm64 the posix package's flags
+// opened no folder and followed every link.
+@(test)
+a_folder_opens_and_a_link_in_its_path_is_refused :: proc(t: ^testing.T) {
+	root := fixture(t, "open_directory")
+	defer os.remove_all(root)
+	testing.expect(t, os.make_directory(fmt.tprintf("%s/real", root)) == nil, "could not make the folder")
+	testing.expect(t, os.symlink(fmt.tprintf("%s/real", root), fmt.tprintf("%s/via", root)) == nil, "could not link")
+
+	fd, err := open_directory(fmt.tprintf("%s/real", root))
+	testing.expect_value(t, err, Error.None)
+	if err == .None {
+		posix.close(fd)
+	}
+	fd, err = open_directory(fmt.tprintf("%s/via", root))
+	testing.expect_value(t, err, Error.Not_Directory)
+	if err == .None {
+		posix.close(fd)
+	}
+	_, err = open_directory(fmt.tprintf("%s/absent", root))
+	testing.expect_value(t, err, Error.Missing)
+}
