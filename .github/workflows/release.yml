@@ -88,15 +88,13 @@
 # generates a throwaway pair and must not ship.
 #
 # The Linux window carries SDL3 inside it and opens libcurl only to activate
-# a licence, so it needs nothing a stock desktop lacks but glibc and
-# libstdc++: built on ubuntu-24.04, it needs glibc 2.39 (AccessKit's Rust
-# std refers to pidfd_spawnp, and the C built against 24.04's headers to
-# C23's __isoc23_strtol, 2.38), so it runs on Ubuntu 24.04 and Fedora 40
-# and later, and not on Debian 12 (2.36) or Ubuntu 22.04 (2.35). The build
-# step prints the version it needs. Reaching those would take building
-# Linux on ubuntu-22.04 with AccessKit built there from source, as arm64's
-# is (ASSUMPTION: its CMake builds SDL3 and Blend2D unchanged), or linking
-# with `zig cc -target x86_64-linux-gnu.2.35` in place of Odin's clang.
+# a licence, so it needs nothing a stock desktop lacks but glibc. It is built
+# with zig at the glibc 2.35 floor (LEITA_GLIBC_FLOOR, tools/linux/floor-env):
+# SDL3, Blend2D and the rest are compiled against 2.35's symbols, and the link
+# names none above 2.34. AccessKit's Rust std refers to pidfd_spawnp and
+# pidfd_getpid weakly, and a link against 2.35 leaves those two unversioned, so
+# the window starts where they are missing, and uses them where they are not.
+# zig links its own libc++ in, so the window needs no libstdc++.
 name: release
 
 on:
@@ -251,9 +249,11 @@ jobs:
           - os: ubuntu-24.04
             target: linux-amd64
             artifact: dist-linux-amd64
+            floor: "2.35"
           - os: ubuntu-24.04-arm
             target: linux-arm64
             artifact: dist-linux-arm64
+            floor: "2.35"
           - os: windows-2025
             target: windows-amd64
             artifact: dist-windows-amd64
@@ -276,6 +276,8 @@ jobs:
       # TARGET from the environment themselves.
       LEITA_TARGET: ${{ matrix.target }}
       LEITA_EXE: ${{ matrix.exe }}
+      # Empty off Linux, where it builds as it always did.
+      LEITA_GLIBC_FLOOR: ${{ matrix.floor }}
     steps:
       # As test.yml: the bytes built are the bytes committed.
       - name: keep line endings as committed (windows)
@@ -289,6 +291,24 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           cache: "false"
+
+      # zig, pinned by its SHA-256 for both architectures, links the Linux
+      # build at the glibc floor. Fetched, not installed from a package, so
+      # the compiler is the one every release uses.
+      - name: zig (linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          ver=0.17.0
+          case "$(uname -m)" in
+            x86_64) arch=x86_64 sum=1cbe9df9f27e6b78d14ccbca43b6703a404ef79ef1c463de901d7f088d4e2026 ;;
+            aarch64) arch=aarch64 sum=9e8d11661d4ae3bd57702a3832781e23ad151dde5798e16a5ccd503f65234ff8 ;;
+            *) echo "::error::no zig is pinned for $(uname -m)"; exit 1 ;;
+          esac
+          curl -sSfL --max-time 300 -o "$RUNNER_TEMP/zig.tar.xz" "https://ziglang.org/download/$ver/zig-$arch-linux-$ver.tar.xz"
+          echo "$sum  $RUNNER_TEMP/zig.tar.xz" | sha256sum -c
+          tar -xJf "$RUNNER_TEMP/zig.tar.xz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/zig-$arch-linux-$ver" >> "$GITHUB_PATH"
 
       # The justfile embeds LEITA_VERSION and the key. Each binary is then
       # searched for the key it was given, which the licence package keeps
@@ -351,8 +371,8 @@ jobs:
           # command line, which opens libcurl only for leita update.
           if [ "$RUNNER_OS" = Linux ]; then
             ldd "build/release/app/Leita"
-            if ldd "build/release/app/Leita" | grep -E 'libSDL3|libcurl'; then
-              echo "::error::the window links a shared SDL3 or libcurl"
+            if ldd "build/release/app/Leita" | grep -E 'libSDL3|libcurl|libstdc'; then
+              echo "::error::the window links a shared SDL3, libcurl or libstdc++"
               exit 1
             fi
             if ldd "build/release/leita" | grep -E 'libcurl'; then

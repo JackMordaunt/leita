@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# zig as the C compiler, the C++ compiler, the archiver and the link driver at
+# one glibc version, so the window links against the symbols that version
+# defines and not the build machine's. floor-env links it as cc, c++, clang
+# (Odin links by running clang) and ar; LEITA_ZIG_TARGET names the target,
+# such as x86_64-linux-gnu.2.35.
+#
+# Two arguments are rewritten for zig's linker (zig 0.17.0, the Odin the setup
+# action pins). Odin passes a library by path as -l:"/abs/path.a", and zig
+# stops with "error: cannot use absolute path as a system library: ...", so
+# the path stands alone. Odin passes a C++ library as -lstdc++, and zig has
+# none of its own to give it: -lc++ links zig's libc++ in statically, so the
+# binary has no libstdc++ NEEDED entry (the gui recipe reads it back).
+set -euo pipefail
+zig=${LEITA_ZIG:-zig}
+: "${LEITA_ZIG_TARGET:?zigcc: LEITA_ZIG_TARGET is not set}"
+tool=${0##*/}
+if [ "$tool" = ar ]; then exec "$zig" ar "$@"; fi
+args=()
+for a in "$@"; do
+    case "$a" in
+    -l:*) a=${a#-l:}; a=${a//\"/} ;;
+    -lstdc++) a=-lc++ ;;
+    esac
+    args+=("$a")
+done
+if [ "$tool" = c++ ]; then exec "$zig" c++ -target "$LEITA_ZIG_TARGET" "${args[@]}"; fi
+exec "$zig" cc -target "$LEITA_ZIG_TARGET" "${args[@]}"

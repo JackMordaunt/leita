@@ -54,7 +54,19 @@ odin  := env("ODIN", "odin")
 # the path, as jm's own justfile already normalises root for the same
 # reason.
 root  := replace(justfile_directory(), "\\", "/")
-jm    := env("JM", root / "jm")
+# LEITA_GLIBC_FLOOR, a glibc version such as 2.35, builds the Linux window and
+# everything it links against that glibc's symbols with zig (tools/linux/zigcc),
+# so the binary runs on that glibc and newer, not only on the system that built
+# it. LEITA_FLOOR_ARCH (x86_64 or aarch64) builds for the other architecture,
+# which needs its arm64 AccessKit (see deps). The libraries are built into a
+# checkout of jm of their own, build/floor-<version>-<arch>/jm, so none of the host's
+# own is linked by mistake.
+floor      := env("LEITA_GLIBC_FLOOR", "")
+floor_arch := env("LEITA_FLOOR_ARCH", arch())
+floor_dir  := root / "build/floor-" + floor + "-" + floor_arch
+floor_env  := ". \"" + root + "/tools/linux/floor-env\" \"" + root + "\" \"" + floor + "\" \"" + floor_arch + "\""
+odin_target := if floor == "" { "" } else if floor_arch == arch() { "" } else if floor_arch == "aarch64" { "-target:linux_arm64" } else { "-target:linux_amd64" }
+jm    := env("JM", if floor == "" { root / "jm" } else { floor_dir / "jm" })
 # Which leita a build is, the one place either binary learns it: the tag
 # described, or a bare commit as git describe names one, g and its hash, so Odin
 # never reads it as a number; dev without git. LEITA_VERSION=<v> sets it instead.
@@ -234,6 +246,7 @@ baseline-test arch="amd64" floor="2.26": (_baseline-stage arch floor)
 gui mode="debug": deps
     #!/usr/bin/env bash
     set -euo pipefail
+    if [ -n "{{floor}}" ]; then {{floor_env}}; fi
     case "{{mode}}" in
     debug) opt="-debug {{san}}" ;;
     release) opt="-o:speed -define:LEITA_LICENCE_KEY='$(just --justfile "{{justfile()}}" release-key)' -define:LEITA_UPDATE_KEY='$(just --justfile "{{justfile()}}" update-key)'" ;;
@@ -243,7 +256,18 @@ gui mode="debug": deps
     # console behind it; a debug one keeps its console, where printing goes.
     if [ "{{os()}}" = windows ] && [ "{{mode}}" = release ]; then opt="$opt -subsystem:windows"; fi
     mkdir -p build/{{mode}}/app
-    {{odin}} build cmd/gui $opt {{flags}} {{curl_open}} {{sdl3_link}} -out:build/{{mode}}/app/{{gui}}{{exe}}
+    {{odin}} build cmd/gui $opt {{odin_target}} {{flags}} {{curl_open}} {{sdl3_link}} -out:build/{{mode}}/app/{{gui}}{{exe}}
+    if [ -n "{{floor}}" ]; then
+        # The floor is a promise about the binary, so it is read back from it.
+        need=$(readelf -V "build/{{mode}}/app/{{gui}}" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -n 1)
+        echo "gui: needs ${need:-no glibc}, built at the glibc {{floor}} floor"
+        if [ -n "$need" ] && [ "$(printf '%s\n%s\n' "$need" "GLIBC_{{floor}}" | sort -V | tail -n 1)" != "GLIBC_{{floor}}" ]; then
+            echo "gui: $need is above the {{floor}} floor" >&2; exit 1
+        fi
+        if readelf -d "build/{{mode}}/app/{{gui}}" | grep -q 'libstdc++'; then
+            echo "gui: the window loads libstdc++, which a floor build links statically as libc++" >&2; exit 1
+        fi
+    fi
     if [ "{{os()}}" = windows ]; then
         # The window does not start without either DLL beside it, so a build
         # that lacks one stops here rather than shipping a window that cannot run.
@@ -428,9 +452,10 @@ check:
 # both binaries' scans, and zstd, which decodes the patches leita update applies:
 # all the command line links that is not Odin or the system's libcurl. Built by
 # jm's own recipes, once.
-sqlite:
+sqlite: floor-jm
     #!/usr/bin/env bash
     set -euo pipefail
+    if [ -n "{{floor}}" ]; then {{floor_env}}; fi
     if [ "{{jm}}" = "{{root}}/jm" ] && [ ! -e jm/.git ]; then git submodule update --init jm; fi
     cd "{{jm}}"
     ls sqlite3/lib/sqlite3.* >/dev/null 2>&1 || just sqlite
@@ -440,13 +465,33 @@ sqlite:
 # kb_text_shape to shape text, AccessKit for screen readers, and on macOS and
 # Linux SDL3 itself. Each is built or fetched by jm's own recipe, once, but
 # Linux's SDL3, which sdl3-static builds here.
+#
+# A floor build (LEITA_GLIBC_FLOOR) compiles all of them with zig. AccessKit's
+# prebuilt library exists for x86_64 only; where there is none, aarch64, it is
+# built from the tag jm pins, as a static library, with the host's own cargo
+# and cc: the Rust it holds names no glibc version until the link above.
 deps: sqlite
     #!/usr/bin/env bash
     set -euo pipefail
+    if [ -n "{{floor}}" ]; then {{floor_env}}; fi
     cd "{{jm}}"
     ls ui/blend2d/lib/*blend2d* >/dev/null 2>&1 || just blend2d
     ls ui/kb/lib/kb_text_shape.* >/dev/null 2>&1 || just kb
-    ls ui/accesskit/lib/*accesskit* >/dev/null 2>&1 || just accesskit
+    if [ -n "{{floor}}" ] && [ "{{floor_arch}}" = aarch64 ]; then
+        if [ ! -f ui/accesskit/lib/libaccesskit.a ]; then
+            ver=$(just --evaluate accesskit_ver)
+            src="{{floor_dir}}/accesskit-c"
+            rm -rf "$src"
+            git -c advice.detachedHead=false clone -q --depth 1 --branch "$ver" https://github.com/AccessKit/accesskit-c "$src"
+            ( PATH=$LEITA_ORIG_PATH; unset CC CXX
+              cargo rustc --manifest-path "$src/Cargo.toml" --target aarch64-unknown-linux-gnu --release --locked --lib --crate-type staticlib )
+            mkdir -p ui/accesskit/lib
+            cp "$src/target/aarch64-unknown-linux-gnu/release/libaccesskit.a" ui/accesskit/lib/
+            ( PATH=$LEITA_ORIG_PATH; llvm-strip --strip-debug ui/accesskit/lib/libaccesskit.a || strip --strip-debug ui/accesskit/lib/libaccesskit.a )
+        fi
+    else
+        ls ui/accesskit/lib/*accesskit* >/dev/null 2>&1 || just accesskit
+    fi
     just sdl3
     if [ "{{os()}}" = linux ]; then just --justfile "{{justfile()}}" sdl3-static; fi
 
@@ -612,6 +657,14 @@ package-built:
     v[0-9]*) v=${v#v}; head=${v%%-*}; rest=${v#"$head"}; rest=${rest#-}; pkgver=$head${rest:+~${rest//-/.}} ;;
     *) pkgver="0.0.0~${v//-/.}" ;;
     esac
+    # The packages name glibc and nothing else a binary loads, so a binary
+    # that loads another system library would be packaged without it.
+    for b in build/release/leita build/release/app/{{gui}}; do
+        if readelf -d "$b" | grep -q 'libstdc++'; then
+            echo "package: $b loads libstdc++, which nfpm.yaml does not require; build at the glibc floor (LEITA_GLIBC_FLOOR)" >&2
+            exit 1
+        fi
+    done
     glibc=$(objdump -T build/release/leita build/release/app/Leita | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1)
     out=build/package
     rm -rf "$out"
@@ -642,6 +695,22 @@ package-built:
         --runtime-file "$tools/runtime-{{runtime_ver}}-$m" "$app" "$out/$name.AppImage"
     rm -rf "$app"
     ls -l "$out"
+
+# The checkout of jm a floor build compiles the native libraries in, at the
+# commit the submodule is on; nothing when no floor is asked for or JM names one.
+[private]
+floor-jm:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ -z "{{floor}}" ] || [ "{{jm}}" != "{{floor_dir}}/jm" ]; then exit 0; fi
+    if [ ! -e jm/.git ]; then git submodule update --init jm; fi
+    want=$(git -C jm rev-parse HEAD)
+    if [ "$(git -C "{{jm}}" rev-parse HEAD 2>/dev/null || true)" != "$want" ]; then
+        rm -rf "{{jm}}"
+        mkdir -p "{{floor_dir}}"
+        git clone -q --no-checkout jm "{{jm}}"
+        git -C "{{jm}}" checkout -q "$want"
+    fi
 
 # Remove build/.
 clean:

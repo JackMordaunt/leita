@@ -78,19 +78,18 @@ scripts:
   preremove: packaging/linux/preremove.sh
   postremove: packaging/linux/postremove.sh
 
-# glibc and libstdc++ are all the binaries load (ldd); libcurl only to
-# activate a licence, opened at run time under either Debian name, so it
-# is recommended, not required.
+# glibc is all the binaries load (ldd), libstdc++ not among it: the window's
+# C++ is zig's own libc++, linked in. package-built stops where a binary names
+# libstdc++ all the same. libcurl is opened at run time, only to activate a
+# licence, under either Debian name, so it is recommended, not required.
 overrides:
   deb:
     depends:
       - libc6 (>= ${LEITA_GLIBC})
-      - libstdc++6
     recommends:
       - libcurl4t64 | libcurl3t64-gnutls | libcurl4 | libcurl3-gnutls
   rpm:
     depends:
       - glibc >= ${LEITA_GLIBC}
-      - libstdc++
     recommends:
       - libcurl
