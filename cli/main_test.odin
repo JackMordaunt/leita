@@ -97,6 +97,8 @@ and a file charged nothing is not among the largest files.
 */
 @(test)
 a_report_of_a_directory_reads_back :: proc(t: ^testing.T) {
+	stdio_shared()
+	defer stdio_done()
 	// A quote in a file name forces CSV quoting the way a comma does; this
 	// fixture differs by OS so the file can be created on every one of
 	// them, and the quote itself, doubled inside a quoted field, has its
@@ -165,6 +167,8 @@ a_report_of_a_directory_reads_back :: proc(t: ^testing.T) {
 // A report named .pdf is a PDF, on the paper asked for.
 @(test)
 a_pdf_report_is_written_on_its_paper :: proc(t: ^testing.T) {
+	stdio_shared()
+	defer stdio_done()
 	dir, dir_err := os.temp_directory(context.temp_allocator)
 	testing.expect(t, dir_err == nil, "no temp directory")
 	root := fmt.tprintf("%s/leita_report_pdf_%d", dir, os.get_pid())
@@ -186,6 +190,8 @@ a_pdf_report_is_written_on_its_paper :: proc(t: ^testing.T) {
 // A report the command line cannot write is refused before anything is read.
 @(test)
 a_report_it_cannot_write_is_refused :: proc(t: ^testing.T) {
+	stdio_shared()
+	defer stdio_done()
 	cases := [?]Options {
 		{report = "out.pdf", paper = "a5"},
 		{report = "out.csv", paper = "a4"},
@@ -204,6 +210,8 @@ a_report_it_cannot_write_is_refused :: proc(t: ^testing.T) {
 // A threshold flag that cannot be read is refused before anything is scanned.
 @(test)
 a_bad_threshold_flag_is_refused :: proc(t: ^testing.T) {
+	stdio_shared()
+	defer stdio_done()
 	cases := [?]Options {
 		{min_free = "big"},
 		{warn_used = 101},
@@ -224,6 +232,8 @@ its "thresholds" member stays null, since none was asked for.
 */
 @(test)
 no_threshold_flags_leaves_the_exit_code_unchanged :: proc(t: ^testing.T) {
+	stdio_shared()
+	defer stdio_done()
 	dir, dir_err := os.temp_directory(context.temp_allocator)
 	testing.expect(t, dir_err == nil, "no temp directory")
 	root := fmt.tprintf("%s/leita_threshold_unconfigured_%d", dir, os.get_pid())
@@ -351,6 +361,8 @@ snapshot_count :: proc(t: ^testing.T, path: string) -> i64 {
 // what changed since.
 @(test)
 a_second_scan_reports_what_changed :: proc(t: ^testing.T) {
+	stdio_shared()
+	defer stdio_done()
 	root, store := fresh(t, "leita_history_cli")
 	defer os.remove_all(root)
 	defer os.remove_all(filepath.dir(store))
@@ -389,6 +401,8 @@ a_second_scan_reports_what_changed :: proc(t: ^testing.T) {
 // run gives it whatever the flags.
 @(test)
 no_history_leaves_the_store_alone :: proc(t: ^testing.T) {
+	stdio_shared()
+	defer stdio_done()
 	root, store := fresh(t, "leita_no_history_cli")
 	defer os.remove_all(root)
 	write_zeros(t, fmt.tprintf("%s/a.bin", root), 1 << 20)
@@ -402,6 +416,8 @@ no_history_leaves_the_store_alone :: proc(t: ^testing.T) {
 // window and the monitor find it, whole or not; the next scan updates from it.
 @(test)
 a_scan_keeps_a_baseline_beside_the_store :: proc(t: ^testing.T) {
+	stdio_shared()
+	defer stdio_done()
 	root, store := fresh(t, "leita_baseline_cli")
 	defer os.remove_all(root)
 	defer os.remove_all(filepath.dir(store))
@@ -440,6 +456,8 @@ the heap. Without the fix it failed 4 runs in 4 (2026-10-13).
 */
 @(test)
 a_live_scan_keeps_a_baseline_beside_the_store :: proc(t: ^testing.T) {
+	stdio_shared()
+	defer stdio_done()
 	root, store := fresh(t, "leita_live_baseline_cli")
 	root = strings.clone(root)
 	defer delete(root)
@@ -525,6 +543,8 @@ long :: proc(path: string) -> string {
 // the scan unkept, not failed.
 @(test)
 a_busy_store_leaves_the_scan_unkept :: proc(t: ^testing.T) {
+	stdio_shared()
+	defer stdio_done()
 	root, store := fresh(t, "leita_busy_history_cli")
 	defer os.remove_all(root)
 	defer os.remove_all(filepath.dir(store))
@@ -545,6 +565,8 @@ a_busy_store_leaves_the_scan_unkept :: proc(t: ^testing.T) {
 // the command line keeps its own.
 @(test)
 a_store_written_briefly_elsewhere_is_waited_for :: proc(t: ^testing.T) {
+	stdio_shared()
+	defer stdio_done()
 	root, store := fresh(t, "leita_wait_history_cli")
 	defer os.remove_all(root)
 	defer os.remove_all(filepath.dir(store))
@@ -575,6 +597,8 @@ HOSTILE_SHOWN :: "=\u241b]52;c;ZXZpbA==\u2407\u241b[31m\u240aname\uFFFD<img src=
 // say_line is a line of standard error, and a name in it is shown without its controls.
 @(test)
 an_error_or_note_names_a_file_without_its_controls :: proc(t: ^testing.T) {
+	stdio_shared()
+	defer stdio_done()
 	for prefix in ([?]string{"error:", "note:"}) {
 		line := say_line(prefix, "cannot read %s: %v", HOSTILE, "denied")
 		want := fmt.tprintf("%s cannot read %s: denied", prefix, HOSTILE_SHOWN)
@@ -648,8 +672,8 @@ the_summary_shows_a_hostile_name_without_its_controls :: proc(t: ^testing.T) {
 // heap, for the caller to delete.
 @(private)
 capture_stdout :: proc(t: ^testing.T, opt: Options) -> (out: string, code: int) {
-	sync.mutex_lock(&stdio_mu)
-	defer sync.mutex_unlock(&stdio_mu)
+	sync.rw_mutex_lock(&stdio_rw)
+	defer sync.rw_mutex_unlock(&stdio_rw)
 	dir, _ := os.temp_directory(context.temp_allocator)
 	path := fmt.tprintf("%s/leita_hostile_stdout_%d", dir, os.get_pid())
 	defer os.remove(path)

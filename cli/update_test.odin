@@ -100,6 +100,8 @@ cfg_of :: proc(r: ^Release) -> update.Config {
 
 @(private = "file")
 update_says :: proc(cfg: update.Config, args: ..string) -> (int, string) {
+	stdio_shared()
+	defer stdio_done()
 	b := strings.builder_make(context.temp_allocator)
 	code := update_dispatch(cfg, args, strings.to_writer(&b))
 	return code, strings.to_string(b)

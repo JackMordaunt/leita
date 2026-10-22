@@ -111,6 +111,8 @@ monitor_bench_open :: proc(t: ^testing.T, b: ^Monitor_Bench) {
 // what it said.
 @(private = "file")
 monitor_run_monitor :: proc(b: ^Monitor_Bench, args: ..string) -> (int, string) {
+	stdio_shared()
+	defer stdio_done()
 	strings.builder_reset(&b.out)
 	code := monitor_dispatch(b.c, args, strings.to_writer(&b.out))
 	return code, strings.clone(strings.to_string(b.out), context.temp_allocator)

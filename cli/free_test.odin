@@ -156,11 +156,25 @@ scratch :: proc(t: ^testing.T, name: string) -> string {
 	return root
 }
 
-// stdio_mu keeps one test at a time pointing the process's standard streams at
-// its own files. The runners share those handles, and a second swap would write
-// into a file the first had already closed.
+// stdio_rw keeps the process's standard streams still while any test prints to
+// them. The runners share those handles. capture and capture_stdout point them at
+// a file of their own, and take the lock alone, so no other test runs a scan then:
+// one that did would print into that file (its note landing in this test's text, as
+// "database is locked" once did) or into one already closed (a use after free). A
+// test that calls the program's printing code holds the lock shared (stdio_shared),
+// so any number of them run together.
 @(private)
-stdio_mu: sync.Mutex
+stdio_rw: sync.RW_Mutex
+
+@(private)
+stdio_shared :: proc() {
+	sync.rw_mutex_shared_lock(&stdio_rw)
+}
+
+@(private)
+stdio_done :: proc() {
+	sync.rw_mutex_shared_unlock(&stdio_rw)
+}
 
 // capture runs one scan with Pro locked when locked is set, and returns its
 // exit code and what it printed. The text is in the temp allocator.
@@ -174,8 +188,8 @@ capture :: proc(
 	code: int,
 	out, err: string,
 ) {
-	sync.mutex_lock(&stdio_mu)
-	defer sync.mutex_unlock(&stdio_mu)
+	sync.rw_mutex_lock(&stdio_rw)
+	defer sync.rw_mutex_unlock(&stdio_rw)
 	dir, mk := os.make_directory_temp("", "leita-capture-*", context.temp_allocator)
 	if !testing.expect(t, mk == nil, "no temp directory") {
 		return

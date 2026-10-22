@@ -65,6 +65,8 @@ data_folder :: proc(t: ^testing.T) -> (dir, kept: string) {
 // on standard output.
 @(private = "file")
 licence_says :: proc(c: Licence_Context, args: ..string) -> (int, string) {
+	stdio_shared()
+	defer stdio_done()
 	b := strings.builder_make(context.temp_allocator)
 	code := licence_dispatch(c, args, strings.to_writer(&b))
 	return code, strings.to_string(b)

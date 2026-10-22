@@ -9,6 +9,8 @@ import "../journal"
 
 @(test)
 test_journal_dispatch_help_and_unknown :: proc(t: ^testing.T) {
+	stdio_shared()
+	defer stdio_done()
 	for word in ([]string{"help", "-h", "--help"}) {
 		b := strings.builder_make(context.temp_allocator)
 		testing.expect_value(t, journal_dispatch({}, {word}, strings.to_writer(&b)), EXIT_OK)

@@ -29,6 +29,8 @@ seeded :: proc(t: ^testing.T, done: []history.Action) -> (dir, kept: string) {
 // wrote on standard output.
 @(private = "file")
 history_says :: proc(kept: string, args: ..string) -> (int, string) {
+	stdio_shared()
+	defer stdio_done()
 	b := strings.builder_make(context.temp_allocator)
 	code := history_dispatch({kept = kept}, args, strings.to_writer(&b))
 	return code, strings.to_string(b)
