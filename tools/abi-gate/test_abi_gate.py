@@ -101,10 +101,19 @@ class Gate(unittest.TestCase):
             self.assertEqual(run("--require-floor").returncode, 1)
 
     def test_shipped_floors_parse(self):
+        # Every kind and arch has a line, a version or "-"; the gate reads it:
+        # a declared floor fails a binary above it, an undeclared one lists.
+        with open(os.path.join(os.path.dirname(GATE), "floors.conf")) as f:
+            rows = [l.split("#", 1)[0].split() for l in f]
+        floors = {(r[0], r[1]): r[2] for r in rows if len(r) == 3}
+        want = {(k, a) for k in ("cli", "gui") for a in ("amd64", "arm64")}
+        self.assertEqual(set(floors), want)
         for arch, fx in self.each():
-            r = subprocess.run(["python3", "-I", GATE, "--kind", "gui", "--arch",
-                                arch, fx["high"]], capture_output=True, text=True)
-            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            for kind in ("cli", "gui"):
+                declared = floors[(kind, arch)] != "-"
+                r = subprocess.run(["python3", "-I", GATE, "--kind", kind, "--arch",
+                                    arch, fx["high"]], capture_output=True, text=True)
+                self.assertEqual(r.returncode, 1 if declared else 0, r.stdout + r.stderr)
 
 
 if __name__ == "__main__":
