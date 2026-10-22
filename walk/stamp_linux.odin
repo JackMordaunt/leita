@@ -19,7 +19,7 @@ changed_since :: proc(path: string, since: i64) -> bool {
 		return true
 	}
 	st: linux.Statx
-	if linux.statx(linux.AT_FDCWD, cpath, {}, {.MTIME, .CTIME}, &st) != .NONE {
+	if statx_compat(linux.AT_FDCWD, cpath, {}, {.MTIME, .CTIME}, &st) != .NONE {
 		return true
 	}
 	stamp :: proc(ts: linux.Statx_Timestamp) -> i64 {
@@ -45,7 +45,7 @@ disk_of :: proc(path: string) -> (disk: u64, verdict: Verdict) {
 		return 0, .Unknown
 	}
 	st: linux.Statx
-	#partial switch linux.statx(linux.AT_FDCWD, cpath, {.SYMLINK_NOFOLLOW}, {.BLOCKS}, &st) {
+	#partial switch statx_compat(linux.AT_FDCWD, cpath, {.SYMLINK_NOFOLLOW}, {.BLOCKS}, &st) {
 	case .NONE:
 		return st.blocks * 512, .Sized
 	case .ENOENT, .ENOTDIR:
@@ -66,7 +66,7 @@ still_names :: proc(path: string, id: File_Id) -> bool {
 		return true
 	}
 	st: linux.Statx
-	#partial switch linux.statx(linux.AT_FDCWD, cpath, {.SYMLINK_NOFOLLOW}, {.INO}, &st) {
+	#partial switch statx_compat(linux.AT_FDCWD, cpath, {.SYMLINK_NOFOLLOW}, {.INO}, &st) {
 	case .NONE:
 		return statx_device(st) == id.device && u64(st.ino) == id.inode
 	case .ENOENT, .ENOTDIR:

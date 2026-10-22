@@ -341,7 +341,7 @@ A directory whose mode lists its names but refuses to let them be asked about:
 
 Root asks about anything, so the fixture means nothing there and the caller skips.
 */
-@(private = "file")
+@(private)
 listing_place :: proc(t: ^testing.T, name: string) -> (root: string, ok: bool) {
 	if linux.geteuid() == 0 {
 		log.info("skipped: root can ask about any entry")
@@ -377,12 +377,12 @@ listing_place :: proc(t: ^testing.T, name: string) -> (root: string, ok: bool) {
 }
 
 // Give the listing directory its search permission back, so it can be removed.
-@(private = "file")
+@(private)
 let_search :: proc(root: string) {
 	os.chmod(fmt.tprintf("%s/listing", root), {.Read_User, .Write_User, .Execute_User})
 }
 
-@(private = "file")
+@(private)
 node_named :: proc(tree: ^scan.Tree, name: string) -> (n: ^scan.Node, found: bool) {
 	for i in 0 ..< tree.count {
 		n = scan.node(tree, i)

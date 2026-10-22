@@ -5,6 +5,7 @@ import "base:intrinsics"
 import "core:mem"
 import "core:slice"
 import "core:strings"
+import "core:sync"
 import "core:sys/linux"
 
 import "../btrfs"
@@ -43,8 +44,18 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 	device, filesystem, on_btrfs := d.device, d.filesystem, d.btrfs
 	if device == 0 {
 		st: linux.Statx
-		if linux.statx(fd, "", {.EMPTY_PATH}, {}, &st) == .NONE {
+		if statx_compat(fd, "", {.EMPTY_PATH}, {.MNT_ID}, &st) == .NONE {
 			device = statx_device(st)
+			// Said once a directory, not once an entry: a kernel that never gives a
+			// mount id never gives it, and only a walk that reads a directory can have
+			// been short of one.
+			if .MNT_ID not_in st.mask {
+				scan.mark_gap(w.writer.tree, .Mount_Id)
+			}
+		}
+		if sync.atomic_load(&statx_missing) {
+			scan.mark_gap(w.writer.tree, .Statx)
+			scan.mark_gap(w.writer.tree, .Mount_Id)
 		}
 		filesystem, on_btrfs = filesystem_of(fd)
 	}
@@ -160,7 +171,7 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 				mask = {.TYPE, .INO, .MNT_ID}
 			}
 			flags := linux.FD_Flags{.SYMLINK_NOFOLLOW, .NO_AUTOMOUNT}
-			errno = stat_entry(linux.statx, fd, cstring(&s.names[l.at]), flags, mask, &st)
+			errno = stat_entry(statx_compat, fd, cstring(&s.names[l.at]), flags, mask, &st)
 		}
 		switch kind_of(l.type, errno, st.mode) {
 		case .Gone:

@@ -92,7 +92,7 @@ follow_link :: proc(
 	ok: bool,
 ) {
 	st: linux.Statx
-	errno := stat_entry(linux.statx, dir, name, {.NO_AUTOMOUNT}, {.TYPE, .INO}, &st)
+	errno := stat_entry(statx_compat, dir, name, {.NO_AUTOMOUNT}, {.TYPE, .INO}, &st)
 	if errno != .NONE || !linux.S_ISDIR(st.mode) {
 		return true, above, true
 	}
@@ -127,7 +127,7 @@ climb :: proc(w: ^Worker, dir: linux.Fd) -> (path: ^Ancestor, ok: bool) {
 	last: File_Id
 	for _ in 0 ..< CLIMB_LIMIT {
 		st: linux.Statx
-		if linux.statx(at, "", {.EMPTY_PATH}, {.INO}, &st) != .NONE {
+		if statx_compat(at, "", {.EMPTY_PATH}, {.INO}, &st) != .NONE {
 			break
 		}
 		id := File_Id {
@@ -177,7 +177,7 @@ walked_elsewhere :: proc(w: ^Worker, st: linux.Statx) -> bool {
 			continue
 		}
 		there: linux.Statx
-		if linux.statx(linux.AT_FDCWD, path, {.NO_AUTOMOUNT}, {.INO, .MNT_ID}, &there) != .NONE {
+		if statx_compat(linux.AT_FDCWD, path, {.NO_AUTOMOUNT}, {.INO, .MNT_ID}, &there) != .NONE {
 			continue
 		}
 		if there.mnt_id == s.mount && statx_device(there) == statx_device(st) && there.ino == st.ino {
