@@ -546,13 +546,17 @@ a_path_entry_is_the_running_program_only_when_it_is_the_same_file :: proc(t: ^te
 	testing.expect(t, os.make_directory(dir) == nil, "could not make the directory")
 	defer os.remove_all(dir)
 	exe := strings.concatenate({dir, "/leita"}, context.temp_allocator)
-	link := strings.concatenate({dir, "/le"}, context.temp_allocator)
 	other := strings.concatenate({dir, "/other"}, context.temp_allocator)
 	testing.expect(t, os.write_entire_file(exe, []byte{'x'}) == nil, "could not write the program")
 	testing.expect(t, os.write_entire_file(other, []byte{'x'}) == nil, "could not write another")
-	testing.expect(t, os.symlink(exe, link) == nil, "could not link")
-
-	testing.expect(t, same_executable(link, exe), "a link to the program was another file")
+	// A symbolic link on Windows needs a privilege a CI runner's account does not
+	// have by default, so only the other cases are asked there.
+	when ODIN_OS != .Windows {
+		link := strings.concatenate({dir, "/le"}, context.temp_allocator)
+		testing.expect(t, os.symlink(exe, link) == nil, "could not link")
+		testing.expect(t, same_executable(link, exe), "a link to the program was another file")
+	}
+	testing.expect(t, same_executable(exe, exe), "the program was another file")
 	testing.expect(t, !same_executable(other, exe), "another file was the program")
 	testing.expect(t, !same_executable(strings.concatenate({dir, "/absent"}, context.temp_allocator), exe), "a missing file was the program")
 }
