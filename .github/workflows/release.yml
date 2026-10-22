@@ -381,7 +381,12 @@ jobs:
             fi
             echo "glibc needed: $(objdump -T build/release/app/Leita build/release/leita | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1)"
           fi
-          if [ "$RUNNER_OS" = macOS ]; then otool -L "build/release/app/Leita"; fi
+          if [ "$RUNNER_OS" = macOS ]; then
+            otool -L "build/release/app/Leita"
+            # The floor in tools/macos/Info.plist.in, read back from what the
+            # linker wrote: a static library built for a newer macOS raises it.
+            python3 tools/macos/check_minos.py --floor 11.0 build/release/app/Leita build/release/leita
+          fi
 
       # Authenticode signing, so a downloaded exe is not an unknown
       # publisher's: Jack's decision (card 541) is an OV code-signing

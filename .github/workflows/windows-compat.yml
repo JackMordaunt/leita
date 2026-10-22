@@ -1,0 +1,70 @@
+# Runs a built Windows installer on the Windows systems GitHub hosts and
+# records, per stage, what happened (tools/windows/compat_probe.py): install,
+# version, a fixture scan, a scan of the system drive that says whether the
+# MFT reader or the walk read it, and an update check. By hand only:
+#
+#   gh workflow run windows-compat.yml -f run_id=<a release run's id>
+#
+# run_id names a release.yml run (a ci/release-* dry run will do) whose
+# dist-windows-amd64 artifact holds the installer; nothing is built here.
+#
+# What this can and cannot show:
+#   windows-2022  Windows Server 2022 x64. Not Windows 10 22H2 (build 19045).
+#   windows-11-arm  Windows 11 on Arm: the x64 installer runs under the OS's
+#                 x64 emulation, which is card 600's pilot. Its evidence says
+#                 so from the OS architecture and the installed exe's header.
+# Windows 10 22H2 and Windows 11 on x64 hardware are not hosted; their runs
+# need a person's machine or VM. The probe's `proves` list says which of
+# them a run was, and is empty for these runners' x64 Server images.
+name: windows-compat
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: release.yml run whose dist-windows-amd64 artifact holds the installer
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-11-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: dist-windows-amd64
+          path: installer
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+      - name: probe
+        run: |
+          set -euo pipefail
+          if command -v python3 >/dev/null 2>&1; then py=python3; else py=python; fi
+          "$py" --version
+          "$py" -m unittest discover -s tools/windows -p 'test_*.py'
+          setup=$(find installer -name '*-setup*.exe' | head -n 1)
+          echo "installer: $setup"
+          "$py" tools/windows/compat_probe.py --setup "$(cygpath -w "$PWD/$setup")" --out "$RUNNER_TEMP/evidence.json" || status=$?
+          cp "$RUNNER_TEMP/evidence.json" evidence-${{ matrix.os }}.json
+          { echo '```json'; cat evidence-${{ matrix.os }}.json; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          exit "${status:-0}"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: compat-${{ matrix.os }}
+          path: evidence-${{ matrix.os }}.json
+          if-no-files-found: ignore

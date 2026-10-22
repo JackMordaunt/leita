@@ -160,13 +160,14 @@ build mode="debug": (cli mode) (gui mode)
 cli mode="debug": sqlite
     #!/usr/bin/env bash
     set -euo pipefail
+    if [ -n "{{floor}}" ]; then {{floor_env}}; fi
     case "{{mode}}" in
     debug) opt="-debug {{san}}" ;;
     release) opt="-o:speed -define:LEITA_LICENCE_KEY='$(just --justfile "{{justfile()}}" release-key)' -define:LEITA_UPDATE_KEY='$(just --justfile "{{justfile()}}" update-key)'" ;;
     *) echo "cli: the mode is debug or release, not {{mode}}" >&2; exit 1 ;;
     esac
     mkdir -p build/{{mode}}
-    {{odin}} build cmd/cli $opt {{flags}} {{curl_open}} -out:build/{{mode}}/{{bin}}{{exe}}
+    {{odin}} build cmd/cli $opt {{odin_target}} {{flags}} {{curl_open}} -out:build/{{mode}}/{{bin}}{{exe}}
 
 # The staged jm of cli-baseline and baseline-test, its SQLite and zstd built with zig cc.
 [private]

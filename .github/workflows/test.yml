@@ -55,6 +55,10 @@ jobs:
       - name: glibc floor tooling (linux)
         if: runner.os == 'Linux'
         run: python -m unittest discover -s tools/linux -p 'test_*.py'
+      - name: compatibility tools
+        run: |
+          python -m unittest discover -s tools/macos -p 'test_*.py'
+          python -m unittest discover -s tools/windows -p 'test_*.py'
       # Odin, just, SDL3 on Linux and jm's native libraries, cached.
       - uses: ./.github/actions/setup
 
