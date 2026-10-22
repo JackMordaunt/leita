@@ -418,7 +418,7 @@ check-licence key=test_licence_key licence="": sqlite
     {{odin}} test licence -debug {{san}} {{flags}} "-define:LEITA_LICENCE_KEY='{{key}}'" "-define:LEITA_LICENCE_SAMPLE=$licence" -out:build/test/licence{{exe}}
 
 # The tests that mount: a delete with a tmpfs and a bind inside the tree being
-# deleted, and walks over binds of a directory above them and beside them. Each
+# deleted, and walks over binds of a directory above them and beside them, and over a tmpfs in a tmpfs. Each
 # runs in a user and mount namespace of its own (unshare -rm), which needs no root
 # and leaves nothing mounted; --sudo runs them as root instead, where sudo asks no
 # password. Skipped where neither can mount. Linux only: just mount-test [--sudo]
@@ -430,7 +430,7 @@ mount-test *args:
     {{odin}} build gui/files -build-mode:test -debug {{san}} {{flags}} \
         -define:ODIN_TEST_NAMES=leita_files.a_delete_never_crosses_a_mount -out:build/test/mount-test
     {{odin}} build walk -build-mode:test -debug {{san}} {{flags}} \
-        -define:ODIN_TEST_NAMES=walk.test_a_bind_of_an_ancestor_is_a_mount,walk.test_a_bind_of_a_walked_tree_is_counted_once -out:build/test/walk-mount-test
+        -define:ODIN_TEST_NAMES=walk.test_a_bind_of_an_ancestor_is_a_mount,walk.test_a_bind_of_a_walked_tree_is_counted_once,walk.test_a_tmpfs_inside_a_tmpfs_is_a_mount -out:build/test/walk-mount-test
     tests=(build/test/mount-test build/test/walk-mount-test)
     if [ "{{args}}" = --sudo ]; then
         for test in "${tests[@]}"; do sudo -n env LEITA_MOUNT_TEST=1 "$test"; done

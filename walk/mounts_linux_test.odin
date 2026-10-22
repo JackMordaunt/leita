@@ -124,6 +124,48 @@ test_a_bind_of_a_walked_tree_is_counted_once :: proc(t: ^testing.T) {
 }
 
 /*
+A tmpfs mounted inside a tmpfs is a mount, whatever the kernel's statfs says of it.
+CentOS 7.9's 3.10.0-1160 reported fsid 0 for each tmpfs it mounted (2026-10-22), so the filesystem's identity (fsid and
+type) is the same for both and only the device differs: a walk that starts in the
+outer one records inner as a mount and reads nothing beneath it. A walk of the
+directory holding both stops at outer, and so reads neither.
+*/
+@(test)
+test_a_tmpfs_inside_a_tmpfs_is_a_mount :: proc(t: ^testing.T) {
+	base := bind_place(t, "tmpfs")
+	defer os.remove_all(base)
+	outer := fmt.tprintf("%s/outer", base)
+	inner := fmt.tprintf("%s/inner", outer)
+	testing.expect(t, os.make_directory(outer) == nil)
+	if !mount_tmpfs(t, outer) {
+		return
+	}
+	defer unmount(outer)
+	testing.expect(t, os.make_directory(inner) == nil)
+	testing.expect(t, mount_tmpfs(t, inner))
+	defer unmount(inner)
+	testing.expect(t, os.write_entire_file(fmt.tprintf("%s/f", inner), make([]byte, 4096, context.temp_allocator)) == nil)
+	testing.expect(t, os.write_entire_file(fmt.tprintf("%s/g", outer), make([]byte, 4096, context.temp_allocator)) == nil)
+
+	tree := bind_walked(t, outer)
+	defer scan.tree_destroy(&tree)
+	flags, count := named_count(&tree, "inner")
+	testing.expect_value(t, count, 1)
+	testing.expectf(t, .Mount in flags, "inner is not a mount (%v)", flags)
+	_, files := named_count(&tree, "f")
+	testing.expectf(t, files == 0, "inner was walked: f recorded %d times", files)
+	_, files = named_count(&tree, "g")
+	testing.expect_value(t, files, 1)
+
+	whole := bind_walked(t, base)
+	defer scan.tree_destroy(&whole)
+	flags, _ = named_count(&whole, "outer")
+	testing.expectf(t, .Mount in flags, "outer is not a mount (%v)", flags)
+	_, files = named_count(&whole, "g")
+	testing.expectf(t, files == 0, "outer was walked: g recorded %d times", files)
+}
+
+/*
 A loop of links ends when links are followed: a/to_b leads to b and b/to_a back to
 a, and a/up to the start. Each link is followed until it would lead to a
 directory already on the way down, which it then stays: a/to_b is read, and
@@ -188,6 +230,23 @@ bind :: proc(t: ^testing.T, source, target: string) -> bool {
 	}
 	if os.get_env("LEITA_MOUNT_TEST", context.temp_allocator) != "" {
 		testing.fail_now(t, "LEITA_MOUNT_TEST is set, but a bind would not mount")
+	}
+	log.warnf("skipped: cannot mount here (%v); just mount-test runs this", err)
+	return false
+}
+
+/*
+A tmpfs on target. False, logged, where this process cannot mount, which fails the
+test only when LEITA_MOUNT_TEST says the mounts must be made.
+*/
+@(private = "file")
+mount_tmpfs :: proc(t: ^testing.T, target: string) -> bool {
+	err := linux.mount("tmpfs", strings.clone_to_cstring(target, context.temp_allocator), "tmpfs", {}, nil)
+	if err == .NONE {
+		return true
+	}
+	if os.get_env("LEITA_MOUNT_TEST", context.temp_allocator) != "" {
+		testing.fail_now(t, "LEITA_MOUNT_TEST is set, but a tmpfs would not mount")
 	}
 	log.warnf("skipped: cannot mount here (%v); just mount-test runs this", err)
 	return false
