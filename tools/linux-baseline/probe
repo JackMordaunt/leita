@@ -1,0 +1,143 @@
+#!/bin/sh
+# Run a baseline command line the way a server uses it: tools/linux-baseline/probe
+# LEITA [WALK-TEST]
+#
+# Run it on the userspace being probed, a container of that distribution or the
+# machine itself. A container proves the userspace, glibc and the tools; the
+# kernel is the host's. It prints one line a check and exits 1 on any FAIL. A
+# check this machine cannot make says SKIP and why, and is not a pass.
+#
+#   starts         leita --version, and leita -h, run
+#   hard links     three names of one file and a second file are two files
+#   mount          a tmpfs under the tree is not counted (needs CAP_SYS_ADMIN)
+#   no libcurl     leita update --check says it cannot, and does not crash
+#   interrupt      SIGINT ends a scan, and a scan after it is as before
+#   walk tests     the walk package's tests, cancellation among them, when a
+#                  WALK-TEST binary is given (just baseline-test)
+set -u
+leita=${1:?usage: probe LEITA [WALK-TEST]}
+walk_test=${2:-}
+failed=0
+say() { printf '%-12s %s\n' "$1" "$2"; }
+pass() { say "$1" "PASS $2"; }
+fail() { say "$1" "FAIL $2"; failed=1; }
+skip() { say "$1" "SKIP $2"; }
+
+glibc=$(ldd --version 2>&1 | sed -n '1s/.* //p')
+say userspace "glibc $glibc, $(uname -m), kernel $(uname -r)"
+if ldconfig -p 2>/dev/null | grep -q 'libcurl\.so'; then
+	say libcurl "present on this system; the no-libcurl check is not made here"
+	curl_here=1
+else
+	say libcurl "absent"
+	curl_here=0
+fi
+
+if "$leita" --version >/dev/null 2>&1 && "$leita" -h >/dev/null 2>&1; then
+	pass starts "$("$leita" --version)"
+else
+	fail starts "$("$leita" --version 2>&1 | head -n 2)"
+	exit 1
+fi
+
+work=$(mktemp -d)
+trap 'umount "$work/tree/mnt" 2>/dev/null; rm -rf "$work"' EXIT
+mkdir -p "$work/tree/a" "$work/tree/mnt"
+head -c 1048576 /dev/urandom > "$work/tree/a/f"
+ln "$work/tree/a/f" "$work/tree/a/g"
+ln "$work/tree/a/f" "$work/tree/a/h"
+head -c 2097152 /dev/urandom > "$work/tree/a/solo"
+export HOME="$work/home" XDG_DATA_HOME="$work/data" XDG_STATE_HOME="$work/state" XDG_CONFIG_HOME="$work/config"
+mkdir -p "$HOME"
+
+totals() {
+	"$leita" --no-history --report - --format json "$1" >"$work/out" 2>&1
+	sed -n 's/.*"totals": {"bytes": \([0-9]*\), "files": \([0-9]*\).*/\1 \2/p' "$work/out"
+	grep -q '"totals"' "$work/out" || head -n 3 "$work/out"
+}
+
+got=$(totals "$work/tree")
+if [ "$got" = "3145728 2" ]; then
+	pass "hard links" "3 names of a 1 MiB file and a 2 MiB file: $got bytes and files"
+else
+	fail "hard links" "wanted 3145728 2, got ${got:-no totals}"
+fi
+
+if mount -t tmpfs tmpfs "$work/tree/mnt" 2>/dev/null; then
+	head -c 4194304 /dev/urandom > "$work/tree/mnt/big"
+	got=$(totals "$work/tree")
+	if [ "$got" = "3145728 2" ]; then
+		pass mount "a 4 MiB file on a tmpfs inside the tree is not counted: $got"
+	else
+		fail mount "wanted 3145728 2 with the mount left out, got ${got:-no totals}"
+	fi
+	got=$(totals "$work/tree/mnt")
+	if [ "$got" = "4194304 1" ]; then
+		pass mount "the mount scanned itself reads its own file: $got"
+	else
+		fail mount "scanning the mount itself: wanted 4194304 1, got ${got:-no totals}"
+	fi
+	umount "$work/tree/mnt"
+else
+	skip mount "this process cannot mount a tmpfs (no CAP_SYS_ADMIN, or no mount command)"
+fi
+
+if [ "$curl_here" = 0 ]; then
+	out=$("$leita" update --check 2>&1)
+	rc=$?
+	case $rc in
+	0 | 1 | 2 | 3) pass "no libcurl" "update --check exit $rc, no crash: $(echo "$out" | head -n 1)" ;;
+	*) fail "no libcurl" "update --check exit $rc: $out" ;;
+	esac
+else
+	skip "no libcurl" "libcurl is installed here"
+fi
+
+mkdir -p "$work/big"
+i=0
+while [ $i -lt 40 ]; do
+	mkdir "$work/big/d$i"
+	j=0
+	while [ $j -lt 200 ]; do : > "$work/big/d$i/f$j"; j=$((j + 1)); done
+	i=$((i + 1))
+done
+# timeout sends the SIGINT and reports 124 itself: a shell that waits on a child
+# SIGINT killed would run its own EXIT trap: seen with the bash 4.2 that is
+# /bin/sh on amazonlinux:2, 2026-10-22, which deleted the work directory. The delay shortens until the
+# signal lands inside the scan.
+hit=
+for delay in 0.05 0.02 0.01 0.005 0.002 0.001; do
+	timeout -s INT $delay "$leita" --no-history --whole "$work/big" >/dev/null 2>&1
+	rc=$?
+	case $rc in
+	0) ;;
+	124) hit=$delay; break ;;
+	*) fail interrupt "SIGINT after $delay s: exit $rc"; hit=bad; break ;;
+	esac
+done
+case $hit in
+bad) ;;
+"") skip interrupt "the 8000-file scan finished before every SIGINT, down to 0.001 s" ;;
+*) pass interrupt "SIGINT $hit s into an 8000-file scan ended it: timeout exit 124, no hang" ;;
+esac
+got=$(totals "$work/tree")
+if [ "$got" = "3145728 2" ]; then pass interrupt "a scan after it reads the same: $got"; else fail interrupt "a scan after it: $got"; fi
+
+if [ -n "$walk_test" ]; then
+	# The tests make their fixtures under build/ in the directory they run in.
+	mkdir -p "$work/run/build"
+	case $walk_test in /*) ;; *) walk_test=$PWD/$walk_test ;; esac
+	if mount -t tmpfs tmpfs "$work/big" 2>/dev/null; then
+		umount "$work/big"
+		out=$(cd "$work/run" && LEITA_MOUNT_TEST=1 "$walk_test" 2>&1)
+	else
+		out=$(cd "$work/run" && "$walk_test" 2>&1)
+		skip "walk tests" "the mount tests did not run: this process cannot mount a tmpfs"
+	fi
+	summary=$(echo "$out" | grep 'Finished [0-9]* tests' | tail -n 1)
+	case $summary in
+	*"All tests were successful"*) pass "walk tests" "$summary" ;;
+	*) fail "walk tests" "${summary:-no summary}: $(echo "$out" | tail -n 3)" ;;
+	esac
+fi
+exit $failed

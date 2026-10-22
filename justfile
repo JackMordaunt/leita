@@ -209,6 +209,25 @@ cli-baseline arch="amd64" floor="2.26": (_baseline-stage arch floor)
         -define:LEITA_UPDATE_KEY="$(just --justfile "{{justfile()}}" update-key)" \
         $(echo "{{flags}}" | sed "s|-collection:jm={{jm}}|-collection:jm={{root}}/$stage/jm|") {{curl_open}} -out:"$stage/{{bin}}"
 
+# The walk's tests built the way cli-baseline builds the command line, to run on an
+# old glibc: hard links, the mount boundary, cancellation. Without ASan, which
+# zig cc does not carry -> build/baseline/<arch>/walk-test: just baseline-test
+# [amd64|arm64] [floor]. The mount tests run with LEITA_MOUNT_TEST=1 where the
+# process may mount; tools/linux-baseline/probe runs this and the command line.
+[linux]
+baseline-test arch="amd64" floor="2.26": (_baseline-stage arch floor)
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "{{arch}}" in
+    amd64) target=linux_amd64; march="-microarch:x86-64" ;;
+    arm64) target=linux_arm64; march="" ;;
+    *) echo "baseline-test: the arch is amd64 or arm64, not {{arch}}" >&2; exit 1 ;;
+    esac
+    stage=build/baseline/{{arch}}
+    export LEITA_BASELINE_ARCH={{arch}} LEITA_GLIBC_FLOOR={{floor}} ODIN_CLANG_PATH="{{root}}/tools/linux-baseline/zcc"
+    {{odin}} build walk -build-mode:test -target:$target $march -o:none \
+        $(echo "{{flags}}" | sed "s|-collection:jm={{jm}}|-collection:jm={{root}}/$stage/jm|") -out:"$stage/walk-test"
+
 # The window, debug with AddressSanitizer or release optimised.
 #
 # Build the window -> build/<mode>/app/Leita: just gui [release]
