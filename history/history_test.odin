@@ -269,3 +269,26 @@ a_snapshot_keeps_its_disk_and_an_older_store_gains_it :: proc(t: ^testing.T) {
 	testing.expect_value(t, snaps[0].disk, Disk{100 << 30, 40 << 30})
 	testing.expect_value(t, snaps[1].taken, 10)
 }
+
+// A baseline last written more than BASELINE_KEPT ago is deleted, a recent one and a
+// folder are not: the folder is listed without statx, so on Linux 4.9 as on 7.x.
+@(test)
+old_baselines_are_pruned_and_recent_ones_kept :: proc(t: ^testing.T) {
+	base, base_err := os.temp_directory(context.temp_allocator)
+	testing.expect(t, base_err == nil, "no temp directory")
+	root := fmt.tprintf("%s/leita_history_prune_%d", base, os.get_pid())
+	os.remove_all(root)
+	baselines := fmt.tprintf("%s/baselines", root)
+	testing.expect(t, os.make_directory_all(baselines) == nil || os.exists(baselines), "could not make the folder")
+	defer os.remove_all(root)
+	old := fmt.tprintf("%s/old.tree", baselines)
+	recent := fmt.tprintf("%s/recent.tree", baselines)
+	testing.expect(t, os.write_entire_file(old, []byte{'o'}) == nil, "could not write old")
+	testing.expect(t, os.write_entire_file(recent, []byte{'r'}) == nil, "could not write recent")
+	long_ago := time.time_add(time.now(), -2 * BASELINE_KEPT)
+	testing.expect(t, os.change_times(old, long_ago, long_ago) == nil, "could not age old")
+
+	prune_baselines(fmt.tprintf("%s/store.db", root), time.now())
+	testing.expect(t, !os.exists(old), "an old baseline was kept")
+	testing.expect(t, os.exists(recent), "a recent baseline was deleted")
+}

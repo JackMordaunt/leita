@@ -7,6 +7,7 @@ import "core:strings"
 import "core:time"
 
 import "../history"
+import "../kstat"
 import "../human"
 import "../licence"
 import "../settings"
@@ -160,7 +161,7 @@ show_licence :: proc(c: Licence_Context, w: io.Writer) -> int {
 @(private = "file")
 add_licence :: proc(c: Licence_Context, offered: string, w: io.Writer) -> int {
 	text := offered
-	if os.is_file(offered) {
+	if kstat.is_file(offered) {
 		read, err := licence.read(offered)
 		if err != .None {
 			say_error("%s", licence.describe(err))

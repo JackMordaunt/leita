@@ -534,3 +534,25 @@ task_scheduler_takes_and_gives_back_the_task_on_ci :: proc(t: ^testing.T) {
 	}
 	log.info("Task Scheduler is changed only on a Windows CI runner: left alone here")
 }
+
+// A PATH entry is the running program when it is the same file, whatever it is
+// called, and not when it is another one: found by stat without statx.
+@(test)
+a_path_entry_is_the_running_program_only_when_it_is_the_same_file :: proc(t: ^testing.T) {
+	base, base_err := os.temp_directory(context.temp_allocator)
+	testing.expect(t, base_err == nil, "no temp directory")
+	dir := strings.concatenate({base, "/leita_same_exe"}, context.temp_allocator)
+	os.remove_all(dir)
+	testing.expect(t, os.make_directory(dir) == nil, "could not make the directory")
+	defer os.remove_all(dir)
+	exe := strings.concatenate({dir, "/leita"}, context.temp_allocator)
+	link := strings.concatenate({dir, "/le"}, context.temp_allocator)
+	other := strings.concatenate({dir, "/other"}, context.temp_allocator)
+	testing.expect(t, os.write_entire_file(exe, []byte{'x'}) == nil, "could not write the program")
+	testing.expect(t, os.write_entire_file(other, []byte{'x'}) == nil, "could not write another")
+	testing.expect(t, os.symlink(exe, link) == nil, "could not link")
+
+	testing.expect(t, same_executable(link, exe), "a link to the program was another file")
+	testing.expect(t, !same_executable(other, exe), "another file was the program")
+	testing.expect(t, !same_executable(strings.concatenate({dir, "/absent"}, context.temp_allocator), exe), "a missing file was the program")
+}

@@ -23,6 +23,8 @@ import "core:strings"
 
 import "jm:sh"
 
+import "../kstat"
+
 // NAME is what the entry is called: the systemd units leita-monitor.service and
 // .timer, and the launchd agent's file. Task Scheduler's is TASK_NAME, and
 // launchd's label AGENT_LABEL.
@@ -120,7 +122,7 @@ host_destroy :: proc(h: ^Host, allocator := context.allocator) {
 
 // run_command runs argv for real, through jm:sh.
 run_command :: proc(argv: []string, _: rawptr) -> Outcome {
-	r := sh.exec(argv, {}, context.temp_allocator)
+	r := sh.exec(kstat.resolve_command(argv), {}, context.temp_allocator)
 	if r.ok {
 		return {ok = true, out = r.stdout}
 	}

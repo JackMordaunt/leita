@@ -4,6 +4,8 @@ import "core:os"
 import "core:path/filepath"
 import "core:strings"
 
+import "../kstat"
+
 /*
 The program an entry runs is the path leita was started by, kept as it was
 typed, rather than the executable's resolved path: a Homebrew leita is
@@ -66,11 +68,11 @@ stable_program :: proc(
 // folds case: the two strings are one path.
 @(private)
 same_executable :: proc(path, exe: string) -> bool {
-	found, found_err := os.stat(path, context.temp_allocator)
+	found, found_err := kstat.stat(path, context.temp_allocator)
 	if found_err != nil {
 		return false
 	}
-	running, running_err := os.stat(exe, context.temp_allocator)
+	running, running_err := kstat.stat(exe, context.temp_allocator)
 	if running_err != nil {
 		return false
 	}

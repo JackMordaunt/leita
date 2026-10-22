@@ -4,6 +4,8 @@ import "core:fmt"
 import "core:os"
 import "jm:selfupdate"
 
+import "../kstat"
+
 // Commit_Status is why the verified file did not become the executable.
 // Ok is the only status that changed the launch path. Every other status
 // leaves the previous executable where it was.
@@ -87,12 +89,12 @@ backup_target :: proc(exe, old, part: string) -> bool {
 
 @(private)
 same_size :: proc(a, b: string, allocator := context.temp_allocator) -> bool {
-	fa, ea := os.stat(a, allocator)
+	fa, ea := kstat.stat(a, allocator)
 	if ea != nil {
 		os.file_info_delete(fa, allocator)
 		return false
 	}
-	fb, eb := os.stat(b, allocator)
+	fb, eb := kstat.stat(b, allocator)
 	same := eb == nil && fa.size == fb.size
 	os.file_info_delete(fa, allocator)
 	os.file_info_delete(fb, allocator)

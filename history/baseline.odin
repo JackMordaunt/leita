@@ -6,6 +6,8 @@ import "core:os"
 import "core:path/filepath"
 import "core:time"
 
+import "../kstat"
+
 /*
 baseline_path is where a scan of place keeps its whole tree between runs, for
 survey.Fill.baseline: a file named for place's FNV-1a hash in a baselines folder
@@ -43,7 +45,7 @@ prune_baselines :: proc(store: string, now: time.Time) {
 	if join_err != nil {
 		return
 	}
-	files, read_err := os.read_all_directory_by_path(dir, context.temp_allocator)
+	files, read_err := kstat.read_directory(dir, context.temp_allocator)
 	if read_err != nil {
 		return
 	}
