@@ -249,11 +249,15 @@ jobs:
           - os: ubuntu-24.04
             target: linux-amd64
             artifact: dist-linux-amd64
+            arch: amd64
             floor: "2.35"
+            cli_floor: "2.17"
           - os: ubuntu-24.04-arm
             target: linux-arm64
             artifact: dist-linux-arm64
+            arch: arm64
             floor: "2.35"
+            cli_floor: "2.17"
           - os: windows-2025
             target: windows-amd64
             artifact: dist-windows-amd64
@@ -276,8 +280,11 @@ jobs:
       # TARGET from the environment themselves.
       LEITA_TARGET: ${{ matrix.target }}
       LEITA_EXE: ${{ matrix.exe }}
-      # Empty off Linux, where it builds as it always did.
+      # Empty off Linux, where it builds as it always did. This is the
+      # window's floor; the command line is rebuilt at LEITA_CLI_FLOOR.
       LEITA_GLIBC_FLOOR: ${{ matrix.floor }}
+      LEITA_CLI_FLOOR: ${{ matrix.cli_floor }}
+      LEITA_ARCH: ${{ matrix.arch }}
     steps:
       # As test.yml: the bytes built are the bytes committed.
       - name: keep line endings as committed (windows)
@@ -334,6 +341,14 @@ jobs:
           fi
           export LEITA_LICENCE_KEY LEITA_UPDATE_KEY
           just build release
+          # The command line ships from the baseline build, linked at
+          # LEITA_CLI_FLOOR (zig, above), not from the window's 2.35 build:
+          # it replaces build/release/leita, so the key checks, the package
+          # step and the Linux packages all take it.
+          if [ "$RUNNER_OS" = Linux ]; then
+            just cli-baseline "$LEITA_ARCH" "$LEITA_CLI_FLOOR"
+            cp "build/baseline/$LEITA_ARCH/leita" build/release/leita
+          fi
           for bin in "build/release/leita$LEITA_EXE" "build/release/app/Leita$LEITA_EXE"; do
             grep -aqiF "$LEITA_LICENCE_KEY" "$bin" || { echo "::error::$bin does not carry the licence key"; exit 1; }
             grep -aqiF "$LEITA_UPDATE_KEY" "$bin" || { echo "::error::$bin does not carry the update key"; exit 1; }
@@ -380,6 +395,10 @@ jobs:
               exit 1
             fi
             echo "glibc needed: $(objdump -T build/release/app/Leita build/release/leita | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1)"
+            # A binary needing a newer glibc than the floor floors.conf
+            # declares for it fails the release; an undeclared floor does too.
+            python3 -I tools/abi-gate/abi_gate.py --require-floor --kind cli --arch "$LEITA_ARCH" build/release/leita
+            python3 -I tools/abi-gate/abi_gate.py --require-floor --kind gui --arch "$LEITA_ARCH" build/release/app/Leita
           fi
           if [ "$RUNNER_OS" = macOS ]; then
             otool -L "build/release/app/Leita"
