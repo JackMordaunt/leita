@@ -160,6 +160,11 @@ runs:
     - name: native libraries (unix)
       if: runner.os != 'Windows' && steps.libs-cache.outputs.cache-hit != 'true'
       shell: bash
+      env:
+        # The host's own libraries, in jm. A floor build (LEITA_GLIBC_FLOOR, which
+        # release.yml sets for the job) compiles its own in build/floor-*/jm with zig,
+        # which is not installed yet here, and the recipes would look there.
+        LEITA_GLIBC_FLOOR: ""
       run: |
         (cd jm && just sqlite zstd blend2d kb sdl3)
         if [ "$RUNNER_OS" = Linux ]; then just sdl3-static; fi

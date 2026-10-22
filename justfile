@@ -505,9 +505,10 @@ deps: sqlite
 # action) and the one that runs it needs none of them but its desktop's own.
 [private]
 [linux]
-sdl3-static:
+sdl3-static: floor-jm
     #!/usr/bin/env bash
     set -euo pipefail
+    if [ -n "{{floor}}" ]; then {{floor_env}}; fi
     cd "{{jm}}"
     [ -f ui/shell/lib/libSDL3.a ] && exit 0
     rev=$(just --evaluate sdl3_rev)
