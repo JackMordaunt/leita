@@ -585,6 +585,14 @@ package-built:
     v[0-9]*) v=${v#v}; head=${v%%-*}; rest=${v#"$head"}; rest=${rest#-}; pkgver=$head${rest:+~${rest//-/.}} ;;
     *) pkgver="0.0.0~${v//-/.}" ;;
     esac
+    # The packages name glibc and nothing else a binary loads, so a binary
+    # that loads another system library would be packaged without it.
+    for b in build/release/leita build/release/app/{{gui}}; do
+        if readelf -d "$b" | grep -q 'libstdc++'; then
+            echo "package: $b loads libstdc++, which nfpm.yaml does not require; build at the glibc floor (LEITA_GLIBC_FLOOR)" >&2
+            exit 1
+        fi
+    done
     glibc=$(objdump -T build/release/leita build/release/app/Leita | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1)
     out=build/package
     rm -rf "$out"
