@@ -144,6 +144,7 @@ if [ "$EXPECT" != nofallback ]; then
 		wrc=$?
 		# The first two distinct errors of each failing test, not every repeat.
 		res INFO walk-test-failures "$(grep -h 'ERROR' /tmp/wt.out | sed -E 's/^.*\] \[([^]]*)\(\)\] (.*)$/\1 \2/' | awk '{split($1, a, ":"); if (seen[a[3]]++ < 2) print}' | cut -c1-200 | tr '\n' '|')"
+		res INFO walk-test-skips "$(grep -h 'skipped' /tmp/wt.out | sed -E 's/^.*\] //' | cut -c1-140 | sort | uniq -c | tr '\n' '|')"
 		res INFO walk-test-summary "$(grep -h 'tests in' /tmp/wt.out | tr '\n' ' ')"
 		res INFO walk-test-mount-id "$(grep -h "kernel's statx mask" /tmp/wt.out | cut -c1-300 | head -n 1)"
 		[ "$wrc" = 0 ] && res PASS walk-test "rc=0" || res FAIL walk-test "rc=$wrc"
