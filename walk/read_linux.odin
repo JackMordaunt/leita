@@ -404,7 +404,10 @@ stops, and the filesystem it lies on. A directory is only asked this when its de
 changes, which a scan of this machine's / did 13 times (2026-10-15), so the open and
 the statfs stay off the path almost every directory takes.
 
-The rule is the same filesystem, not the same device. Another filesystem mounted
+The rule is the same filesystem, not the same device, except where the kernel gives
+none to compare: statfs fsid 0, which CentOS 7.9's 3.10.0-1160 reported for /dev, /dev/shm and /run
+(2026-10-22), leaves the
+device the only thing that tells one from another, and a change of it is a mount. Another filesystem mounted
 here, /proc, /sys, a tmpfs /run or /tmp, another disk, a network or FUSE mount, is
 a mount: recorded, not walked, as the macOS and Windows readers treat one (e.mount
 in read_darwin.odin and read_windows.odin). A btrfs subvolume has a device of its
@@ -461,7 +464,10 @@ stops_at :: proc(
 	}
 	if fs.type != .BTRFS_SUPER_MAGIC {
 		filesystem = statfs_id(fs)
-		return filesystem != parent, filesystem, false
+		// fsid 0 carries no identity, so a filesystem of the parent's type looks the
+		// same as the parent's. This is only asked
+		// when the device changed, which then decides.
+		return filesystem != parent || fs.fsid == {}, filesystem, false
 	}
 	// The pool's UUID and the subvolume's flags need a descriptor opened for
 	// reading. A btrfs directory this user cannot open is walked as any unreadable
