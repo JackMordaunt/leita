@@ -1,0 +1,17 @@
+# Sourced by the justfile when LEITA_GLIBC_FLOOR names a glibc version, such as
+# 2.35: it points cc, c++, ar and Odin's clang at zig, targeting that version,
+# so the window and everything it links (SDL3, Blend2D, kb_text_shape, SQLite,
+# zstd) are compiled and linked against that glibc's symbols.
+#
+#   . tools/linux/floor-env ROOT FLOOR ARCH     ARCH is x86_64 or aarch64
+#
+# LEITA_ORIG_PATH keeps the PATH from before, for the steps that must run
+# host tools (cargo, which links its build scripts with the host's cc).
+root=$1 floor=$2 arch=$3
+command -v "${LEITA_ZIG:-zig}" >/dev/null || { echo "floor-env: zig is not on PATH (set LEITA_ZIG)" >&2; return 1; }
+export LEITA_ORIG_PATH=${LEITA_ORIG_PATH:-$PATH}
+export LEITA_ZIG_TARGET=$arch-linux-gnu.$floor
+shims=$root/build/floor-$floor-$arch/bin
+mkdir -p "$shims"
+for n in cc c++ clang ar; do ln -sf "$root/tools/linux/zigcc" "$shims/$n"; done
+export PATH=$shims:$LEITA_ORIG_PATH CC=$shims/cc CXX=$shims/c++

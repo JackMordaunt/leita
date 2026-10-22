@@ -52,6 +52,9 @@ jobs:
             export MANIFEST_TEST_BASH
           fi
           python -m unittest discover -s packaging -p 'test_*.py'
+      - name: glibc floor tooling (linux)
+        if: runner.os == 'Linux'
+        run: python -m unittest discover -s tools/linux -p 'test_*.py'
       # Odin, just, SDL3 on Linux and jm's native libraries, cached.
       - uses: ./.github/actions/setup
 
