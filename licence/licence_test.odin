@@ -755,3 +755,23 @@ the_instant_is_a_real_utc_day :: proc(t: ^testing.T) {
 	testing.expect(t, !instant_ok("2027-10-19T00:00:00z"))
 	testing.expect(t, !instant_ok("2027-10-19T00:00:00+00:00"))
 }
+
+// The mode a kept licence file has is the mode a replacement takes, and a name with
+// no file says there is none: asked without statx, so on Linux 4.9 as on 7.x.
+@(test)
+a_kept_file_gives_its_mode_and_a_missing_one_gives_none :: proc(t: ^testing.T) {
+	base, base_err := os.temp_directory(context.temp_allocator)
+	testing.expect(t, base_err == nil, "no temp directory")
+	dir := fmt.tprintf("%s/leita_licence_mode_%d", base, os.get_pid())
+	os.remove_all(dir)
+	testing.expect(t, os.make_directory(dir) == nil, "could not make the directory")
+	defer os.remove_all(dir)
+	path := fmt.tprintf("%s/licence", dir)
+	testing.expect(t, os.write_entire_file(path, []byte{'x'}, {.Read_User, .Write_User}) == nil, "could not write")
+
+	mode, found := prior_mode(path)
+	testing.expect(t, found, "a kept file had no mode")
+	testing.expect_value(t, mode & os.Permissions_All, os.Permissions{.Read_User, .Write_User})
+	_, absent := prior_mode(fmt.tprintf("%s/absent", dir))
+	testing.expect(t, !absent, "a missing file had a mode")
+}

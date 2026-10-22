@@ -6,10 +6,12 @@ import "core:os"
 import "core:strings"
 import "core:sys/posix"
 
+import "../kstat"
+
 // preserve_permissions copies the mode bits. A failure leaves the live
 // executable untouched: the caller has not replaced it yet.
 preserve_permissions :: proc(exe, fresh: string, allocator := context.temp_allocator) -> (ok: bool, note: string) {
-	info, err := os.stat(exe, allocator)
+	info, err := kstat.stat(exe, allocator)
 	if err != nil {
 		os.file_info_delete(info, allocator)
 		return false, fmt.tprintf("stat error %v", err)

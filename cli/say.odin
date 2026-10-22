@@ -110,3 +110,19 @@ say_unread :: proc(t: ^scan.Tree) {
 	}
 	say_note("%d %s could not be read%s", count, "folder" if count == 1 else "folders", hint)
 }
+
+/*
+say_gaps says what the kernel could not give, on standard error: the tree is
+accurate for what it holds, and this names what it cannot vouch for.
+*/
+say_gaps :: proc(t: ^scan.Tree) {
+	g := scan.gaps(t)
+	if .Statx in g {
+		say_note("this kernel has no statx (Linux 4.11); sizes came from fstatat")
+	}
+	if .Mount_Id in g {
+		say_note(
+			"this kernel gives no mount ids (Linux 5.8); a bind mount of a tree also scanned may be counted twice",
+		)
+	}
+}

@@ -6,6 +6,8 @@ import "core:os"
 import "core:strconv"
 import "core:strings"
 
+import "../kstat"
+
 /*
 Resolve what was given into a target backends can dispatch on.
 
@@ -32,17 +34,18 @@ resolve :: proc(
 	if made, choice, ok := synthetic(input, allocator); ok {
 		return made, choice, .None
 	}
-	info, stat_err := os.stat(input, context.temp_allocator)
+	info, stat_err := kstat.stat(input, context.temp_allocator)
 	if stat_err != nil {
 		if stat_err == io.Error.Permission_Denied {
 			return {}, {}, .Access_Denied
 		}
 		return {}, {}, .Target_Not_Found
 	}
-	path := info.fullpath
 
 	t.allocator = allocator
 	t.input = strings.clone(input, allocator)
+
+	path := info.fullpath
 
 	#partial switch info.type {
 	case .Block_Device, .Regular:

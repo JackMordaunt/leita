@@ -1041,3 +1041,22 @@ compress :: proc(t: ^testing.T, body, prefix: string) -> string {
 itoa :: proc(n: int) -> string {
 	return strings.clone(fmt.tprint(n), context.temp_allocator)
 }
+
+// same_size compares two files by stat, without statx: equal sizes are the same,
+// unequal or missing ones are not.
+@(test)
+two_files_are_the_same_size_only_when_both_are_there_and_equal :: proc(t: ^testing.T) {
+	base, base_err := os.temp_directory(context.temp_allocator)
+	testing.expect(t, base_err == nil, "no temp directory")
+	dir := fmt.tprintf("%s/leita_same_size_%d", base, os.get_pid())
+	os.remove_all(dir)
+	testing.expect(t, os.make_directory(dir) == nil, "could not make the directory")
+	defer os.remove_all(dir)
+	a, b, c := fmt.tprintf("%s/a", dir), fmt.tprintf("%s/b", dir), fmt.tprintf("%s/c", dir)
+	testing.expect(t, os.write_entire_file(a, []byte{'1', '2'}) == nil, "could not write a")
+	testing.expect(t, os.write_entire_file(b, []byte{'3', '4'}) == nil, "could not write b")
+	testing.expect(t, os.write_entire_file(c, []byte{'5'}) == nil, "could not write c")
+	testing.expect(t, same_size(a, b), "two files of 2 bytes differed")
+	testing.expect(t, !same_size(a, c), "files of 2 and 1 byte were the same")
+	testing.expect(t, !same_size(a, fmt.tprintf("%s/absent", dir)), "a missing file was the same size")
+}

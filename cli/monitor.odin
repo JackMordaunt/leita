@@ -15,6 +15,7 @@ import "../alert"
 import "../gui/msg"
 import "../history"
 import "../human"
+import "../kstat"
 import "../licence"
 import "../monitor"
 import "../schedule"
@@ -575,7 +576,7 @@ monitor_run_command_line :: proc(args: []string) -> int {
 // show runs a notification's command for real, and says whether it ran.
 @(private)
 monitor_show :: proc(argv: []string, _: rawptr) -> bool {
-	return sh.exec(argv, {timeout = MONITOR_NOTIFY_TIMEOUT}, context.temp_allocator).ok
+	return sh.exec(kstat.resolve_command(argv), {timeout = MONITOR_NOTIFY_TIMEOUT}, context.temp_allocator).ok
 }
 
 // NOTIFY_TIMEOUT is how long a notification's command may take: one that hangs

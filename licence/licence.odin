@@ -27,6 +27,7 @@ import "core:strconv"
 import "core:strings"
 import "core:time"
 
+import "../kstat"
 import "../version"
 
 // PREFIX begins a licence line. The dot is part of the prefix: the signed
@@ -787,7 +788,7 @@ prior_mode :: proc(
 	mode: os.Permissions,
 	ok: bool,
 ) {
-	info, err := os.stat(path, allocator)
+	info, err := kstat.stat(path, allocator)
 	if err != nil {
 		return
 	}
@@ -990,7 +991,7 @@ save_receipt :: proc(licence_path, key: string, allocator := context.temp_alloca
 		}
 	}
 	line := strings.concatenate({text, "\n"}, allocator)
-	info, serr := os.stat(licence_path, allocator)
+	info, serr := kstat.stat(licence_path, allocator)
 	if serr != nil {
 		return .Unwritable
 	}

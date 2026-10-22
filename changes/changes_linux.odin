@@ -6,6 +6,7 @@ import "core:sys/linux"
 import "core:time"
 
 import "../journal"
+import "../kstat"
 
 /*
 Linux keeps no history of changes that a run started later can read. fanotify
@@ -153,7 +154,7 @@ birth time gives 0 each time.
 identity_of :: proc(place: string) -> (volume, dir: [2]u64, ok: bool) {
 	cpath := strings.clone_to_cstring(place, context.temp_allocator)
 	st: linux.Statx
-	if linux.statx(linux.AT_FDCWD, cpath, {}, {.INO, .BTIME}, &st) != .NONE {
+	if kstat.statx(linux.AT_FDCWD, cpath, {}, {.INO, .BTIME}, &st) != .NONE {
 		return {}, {}, false
 	}
 	fsid := journal.fsid_of(place) or_return

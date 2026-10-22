@@ -9,6 +9,8 @@ import "core:time"
 
 import "jm:sh"
 
+import "../kstat"
+
 
 // packaged is whether a .deb or .rpm installed the service, and so owns it.
 packaged :: proc() -> bool {
@@ -65,7 +67,7 @@ switch_on :: proc() -> string {
 		{"systemctl", "restart", SERVICE},
 	}
 	for step in steps {
-		if r := sh.exec(step, {}, context.temp_allocator); !r.ok {
+		if r := sh.exec(kstat.resolve_command(step), {}, context.temp_allocator); !r.ok {
 			return sh.error(r, context.temp_allocator)
 		}
 	}
@@ -84,7 +86,7 @@ enable_packaged :: proc() -> string {
 	}
 	steps := [][]string{{"systemctl", "enable", SERVICE}, {"systemctl", "restart", SERVICE}}
 	for step in steps {
-		if r := sh.exec(step, {}, context.temp_allocator); !r.ok {
+		if r := sh.exec(kstat.resolve_command(step), {}, context.temp_allocator); !r.ok {
 			return sh.error(r, context.temp_allocator)
 		}
 	}
@@ -98,7 +100,7 @@ A service a package installed is disabled and left for the package to remove.
 */
 switch_off :: proc() -> string {
 	if os.exists(UNIT_PATH) || packaged() {
-		sh.exec({"systemctl", "disable", "--now", SERVICE}, {}, context.temp_allocator)
+		sh.exec(kstat.resolve_command({"systemctl", "disable", "--now", SERVICE}), {}, context.temp_allocator)
 	}
 	if os.exists(UNIT_PATH) {
 		if err := os.remove(UNIT_PATH); err != nil && err != .Not_Exist {

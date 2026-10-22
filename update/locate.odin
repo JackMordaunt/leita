@@ -3,6 +3,8 @@ package update
 import "core:os"
 import "core:strings"
 
+import "../kstat"
+
 // LINK_LIMIT bounds how many symlinks resolve_exe follows. A loop, or a
 // chain longer than this, is a link and not a file to replace.
 LINK_LIMIT :: 40
@@ -46,7 +48,7 @@ resolve_exe :: proc(exe: string, allocator := context.temp_allocator) -> (real: 
 				return cleaned, .None, true
 			}
 		}
-		fi, err := os.lstat(cur, allocator)
+		fi, err := kstat.lstat(cur, allocator)
 		if err != nil {
 			if err == .Not_Exist {
 				return cur, .None, true

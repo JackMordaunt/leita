@@ -213,6 +213,15 @@ run :: proc(cfg: Config) -> (problem: string) {
 		0,
 	)
 	if errno := linux.Errno(-int(fan)); int(fan) < 0 {
+		// ENOSYS: no fanotify (before Linux 2.6.37). EINVAL: a flag above is unknown to
+		// this kernel, FAN_REPORT_FID being Linux 5.1 and FAN_REPORT_NAME 5.9.
+		if errno == .ENOSYS || errno == .EINVAL {
+			return fmt.aprintf(
+				"fanotify_init: %v (this kernel cannot report which folder changed, which needs Linux 5.9; nothing is recorded)",
+				errno,
+				allocator = said,
+			)
+		}
 		return fmt.aprintf("fanotify_init: %v (it needs root)", errno, allocator = said)
 	}
 	r.fan = linux.Fd(fan)

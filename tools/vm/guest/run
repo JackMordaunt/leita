@@ -1,0 +1,152 @@
+#!/bin/sh
+# Runs inside the guest, started by guest/init with the tools disk at /mnt/t:
+# leita, probe, maybe walk-test, and env (EXPECT=fallback|nofallback). Prints
+# RESULT PASS|FAIL|INFO lines, each with what it saw.
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin
+t=/mnt/t
+. $t/env
+leita=/tmp/leita
+cp $t/leita $leita && chmod +x $leita
+res() { printf 'RESULT %s %s: %s\n' "$1" "$2" "$3"; }
+rel=$(uname -r)
+res INFO kernel "$(uname -a)"
+res INFO glibc "$(ldd --version 2>&1 | sed -n 1p)"
+res INFO binary "$($leita --version 2>&1 | head -n 1) expect=$EXPECT"
+
+# The fixture: known sizes, one file under three names, a nested directory, a
+# one-byte file, and an empty one.
+fx=/var/tmp/fixture
+rm -rf $fx; mkdir -p $fx/a/b/c $fx/a/empty
+dd if=/dev/zero of=$fx/a/f1 bs=1000 count=300 2>/dev/null
+dd if=/dev/zero of=$fx/a/b/f2 bs=1000 count=500 2>/dev/null
+dd if=/dev/zero of=$fx/a/b/c/f3 bs=1000 count=70 2>/dev/null
+ln $fx/a/f1 $fx/a/b/c/f1-hard1; ln $fx/a/f1 $fx/a/f1-hard2
+printf x > $fx/a/one
+: > $fx/a/zero
+sync
+want() { echo $(( $(stat -c %b "$1") * $(stat -c %B "$1") )); }
+w1=$(want $fx/a/f1); w2=$(want $fx/a/b/f2); w3=$(want $fx/a/b/c/f3)
+res INFO fixture "f1 $w1, f2 $w2, f3 $w3 allocated bytes; f1 has $(stat -c %h $fx/a/f1) names"
+
+home=/var/tmp/home; mkdir -p $home
+export HOME=$home XDG_DATA_HOME=$home/d XDG_STATE_HOME=$home/s XDG_CONFIG_HOME=$home/c
+$leita --no-history --top 50 --report - --format json $fx >/tmp/scan.json 2>/tmp/scan.err
+rc=$?
+res INFO scan-exit "rc=$rc"
+res INFO scan-stderr "$(tr '\n' '|' </tmp/scan.err)"
+res INFO scan-totals "$(grep '"totals"' /tmp/scan.json)"
+
+# A file of several names is listed under whichever name the walk met first.
+size_of() { grep -E "\"path\": \"($1)\"" /tmp/scan.json | grep -v '"kind": "folder"' | sed -n 's/.*"bytes": \([0-9]*\),.*/\1/p' | head -n 1; }
+if [ "$EXPECT" = nofallback ]; then
+	# The binary without the fallback: on a kernel with no statx every entry is
+	# Unknown, left out, and the scan is empty. That is the failure the fallback ends.
+	f=$(size_of "$fx/a/f1|$fx/a/f1-hard2|$fx/a/b/c/f1-hard1")
+	if [ -z "$f" ] || [ "$f" = 0 ]; then
+		res PASS old-failure-reproduced "no size for f1 (got '${f:-none}'), totals above; rc=$rc"
+	else
+		res FAIL old-failure-reproduced "f1 had $f bytes: this kernel has statx, or the binary has the fallback"
+	fi
+else
+	[ "$rc" = 0 ] && res PASS scan-completes "rc=0" || res FAIL scan-completes "rc=$rc"
+	check_size() { # LABEL WANT PATH...
+		label=$1 wantb=$2; shift 2
+		alt=$(for x in "$@"; do printf '%s|' "$fx/$x"; done)
+		got=$(size_of "${alt%|}")
+		[ "$got" = "$wantb" ] && res PASS "size $label" "$got bytes, as stat says" || res FAIL "size $label" "got '${got:-none}', stat says $wantb"
+	}
+	check_size f1 "$w1" a/f1 a/f1-hard2 a/b/c/f1-hard1
+	check_size b/f2 "$w2" a/b/f2
+	check_size b/c/f3 "$w3" a/b/c/f3
+	zero=$(grep '"path": "' /tmp/scan.json | grep -v '"kind": "folder"' | grep '"bytes": 0,' | head -n 3)
+	[ -z "$zero" ] && res PASS no-zero-byte-files "none of the files in the report is 0 bytes" || res FAIL no-zero-byte-files "$zero"
+	files=$(grep '"totals"' /tmp/scan.json | sed -n 's/.*"files": \([0-9]*\).*/\1/p')
+	res INFO files-counted "$files files in totals; the fixture has 6 non-empty names of 4 inodes and one empty file"
+	case "${rel%%.*}.$(echo $rel | cut -d. -f2)" in
+	[0-3].*|4.[0-9]|4.10) note='no statx' ;;
+	*) note='no mount ids' ;;
+	esac
+	grep -q "$note" /tmp/scan.err && res PASS gap-note "stderr says: $(grep "$note" /tmp/scan.err | head -n 1)" || res FAIL gap-note "stderr lacks '$note': $(tr '\n' '|' </tmp/scan.err)"
+	# A bind mount of the tree is the double count the mount-id note warns of.
+	mkdir -p /var/tmp/bindtree /var/tmp/bindtree/m
+	if mount --bind $fx /var/tmp/bindtree/m 2>/dev/null; then
+		$leita --no-history --top 50 --report - --format json /var/tmp/bindtree >/tmp/bind.json 2>/tmp/bind.err
+		res INFO bind-mount "rc=$? totals $(grep '"totals"' /tmp/bind.json); stderr $(tr '\n' '|' </tmp/bind.err)"
+		umount /var/tmp/bindtree/m
+	else
+		res INFO bind-mount "cannot mount --bind here"
+	fi
+	# The journal: this kernel cannot report FID, so the recorder must say that.
+	timeout 10 $leita journal run >/tmp/j.out 2>&1
+	jrc=$?
+	res INFO journal-exit "rc=$jrc output: $(tr '\n' '|' </tmp/j.out)"
+	if grep -q 'which needs Linux 5.9' /tmp/j.out; then
+		res PASS journal-kernel-too-old "$(grep 'which needs Linux 5.9' /tmp/j.out | head -n 1)"
+	else
+		res FAIL journal-kernel-too-old "output lacked the kernel-too-old message"
+	fi
+	grep -qi 'needs root\|permission' /tmp/j.out && res FAIL journal-not-root-message "said root or permission: $(head -n 1 /tmp/j.out)" || res PASS journal-not-root-message "did not blame root"
+fi
+
+# The other commands a scan and a report reach, with history on: the earlier scan
+# of the place, the folder times of an incremental read, each report format, the
+# licence, history, and the journal's status. Each is run as the user would; one
+# that fails on a kernel the plain scan handles is a call the fallback missed.
+if [ "$EXPECT" != nofallback ]; then
+	cmd() { # NAME ARGS...
+		name=$1; shift
+		"$leita" "$@" >/tmp/c.out 2>/tmp/c.err
+		crc=$?
+		detail="rc=$crc; read: $(grep -m1 '^read ' /tmp/c.out | cut -c1-120); stderr: $(grep -v '^note: this kernel' /tmp/c.err | head -n 3 | tr '\n' '|')"
+		if [ "$crc" = 0 ] && ! grep -q '^error' /tmp/c.err && ! grep -q 'could not be read' /tmp/c.err; then
+			res PASS "cmd $name" "$detail"
+		else
+			res FAIL "cmd $name" "$detail"
+		fi
+	}
+	cmd scan-first "$fx"
+	touch $fx/a/b/c/touched; echo more >> $fx/a/b/c/touched; sync
+	cmd scan-second-incremental "$fx"
+	if grep -q '^read .*updated' /tmp/c.out; then
+		res PASS incremental-read "the second scan read only what changed: $(grep -m1 '^read ' /tmp/c.out | cut -c1-120)"
+	else
+		res FAIL incremental-read "the second scan did not update the first: $(grep -m1 '^read ' /tmp/c.out | cut -c1-120)"
+	fi
+	# What an incremental read reports must be what a whole read does: a changed
+	# folder it did not see would show here as a figure that is too old.
+	$leita --report /tmp/inc.json "$fx" >/dev/null 2>&1
+	echo more >> $fx/a/b/c/touched; dd if=/dev/zero of=$fx/a/grown bs=1000 count=40 2>/dev/null; sync
+	$leita --report /tmp/inc.json "$fx" >/dev/null 2>&1
+	$leita --whole --report /tmp/whole.json "$fx" >/dev/null 2>&1
+	inc=$(grep '"totals"' /tmp/inc.json); whole=$(grep '"totals"' /tmp/whole.json)
+	[ -n "$inc" ] && [ "$inc" = "$whole" ] && res PASS incremental-matches-whole "$inc" || res FAIL incremental-matches-whole "incremental: $inc; whole: $whole"
+	cmd scan-whole --whole "$fx"
+	cmd report-csv --report /tmp/r.csv "$fx"
+	cmd report-json --report /tmp/r.json "$fx"
+	cmd report-html --report /tmp/r.html "$fx"
+	cmd report-pdf --report /tmp/r.pdf "$fx"
+	cmd history history
+	cmd history-place history "$fx"
+	cmd licence licence
+	cmd journal-status journal status
+	for f in r.csv r.json r.html r.pdf; do
+		[ -s /tmp/$f ] && res PASS "report-file $f" "$(wc -c </tmp/$f) bytes" || res FAIL "report-file $f" "missing or empty"
+	done
+fi
+
+# The probe and the walk's own tests, on this kernel.
+if [ "$EXPECT" != nofallback ]; then
+	wt=
+	[ -f $t/walk-test ] && { cp $t/walk-test /tmp/walk-test; chmod +x /tmp/walk-test; wt=/tmp/walk-test; }
+	sh $t/probe $leita $wt 2>&1 | sed 's/^/probe: /'
+	if [ -n "$wt" ]; then
+		(cd /var/tmp && LEITA_MOUNT_TEST=1 /tmp/walk-test >/tmp/wt.out 2>&1)
+		wrc=$?
+		# The first two distinct errors of each failing test, not every repeat.
+		res INFO walk-test-failures "$(grep -h 'ERROR' /tmp/wt.out | sed -E 's/^.*\] \[([^]]*)\(\)\] (.*)$/\1 \2/' | awk '{split($1, a, ":"); if (seen[a[3]]++ < 2) print}' | cut -c1-200 | tr '\n' '|')"
+		res INFO walk-test-skips "$(grep -h 'skipped' /tmp/wt.out | sed -E 's/^.*\] //' | cut -c1-140 | sort | uniq -c | tr '\n' '|')"
+		res INFO walk-test-summary "$(grep -h 'tests in' /tmp/wt.out | tr '\n' ' ')"
+		res INFO walk-test-mount-id "$(grep -h "kernel's statx mask" /tmp/wt.out | cut -c1-300 | head -n 1)"
+		[ "$wrc" = 0 ] && res PASS walk-test "rc=0" || res FAIL walk-test "rc=$wrc"
+	fi
+fi

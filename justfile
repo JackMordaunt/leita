@@ -156,6 +156,78 @@ cli mode="debug": sqlite
     mkdir -p build/{{mode}}
     {{odin}} build cmd/cli $opt {{flags}} {{curl_open}} -out:build/{{mode}}/{{bin}}{{exe}}
 
+# The staged jm of cli-baseline and baseline-test, its SQLite and zstd built with zig cc.
+[private]
+[linux]
+_baseline-stage arch floor:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v "${ZIG:-zig}" >/dev/null || { echo "baseline: zig is missing; install it or set ZIG=<path>" >&2; exit 1; }
+    stage=build/baseline/{{arch}}
+    zcc="{{root}}/tools/linux-baseline/zcc"
+    export LEITA_BASELINE_ARCH={{arch}} LEITA_GLIBC_FLOOR={{floor}}
+    # The archives record the floor they were compiled for; another floor starts over.
+    [ "$(cat "$stage/floor" 2>/dev/null)" = "{{floor}}" ] || rm -rf "$stage"
+    if [ ! -d "$stage/jm" ]; then
+        if [ "{{jm}}" = "{{root}}/jm" ] && [ ! -e jm/.git ]; then git submodule update --init jm; fi
+        mkdir -p "$stage/jm"
+        git -C "{{jm}}" ls-files -z | (cd "{{jm}}" && xargs -0 cp --parents --reflink=auto -t "{{root}}/$stage/jm")
+        # jm's recipes ask git whether this is a worktree; a repository of its own says no.
+        git -C "$stage/jm" init -q
+    fi
+    (cd "$stage/jm" && CC="$zcc" just sqlite && CC="$zcc" just zstd)
+    echo "{{floor}}" > "$stage/floor"
+
+# The command line for any Linux, release optimised, linked against an old glibc
+# on plain x86-64 or ARMv8-A -> build/baseline/<arch>/leita: just cli-baseline
+# [amd64|arm64] [floor]. The ordinary build binds to the building host's glibc,
+# which is why a release built on Ubuntu 24.04 asks for GLIBC_2.38 (fmod) and
+# does not start on 22.04, and Odin's default amd64 target is x86-64-v2, which a
+# CPU without SSE4.2 or POPCNT faults on. This build compiles jm's SQLite and
+# zstd, and links the program, with tools/linux-baseline/zcc, zig cc pinned to
+# the floor (2.26 unless given) and to the baseline instruction set; it needs zig
+# (0.17.0 was used, ZIG=<path> names another) and takes both arches from an amd64
+# host. The libraries are built in a copy of jm under build/baseline/<arch>, so
+# neither the host's nor the other arch's archives are touched. The command line
+# alone: the window's AccessKit, SDL3 and Blend2D are a higher floor (just gui).
+# tools/linux-baseline/check reads the result back.
+#
+# Build the command line at a glibc floor: just cli-baseline [arch] [floor]
+[linux]
+cli-baseline arch="amd64" floor="2.26": (_baseline-stage arch floor)
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "{{arch}}" in
+    amd64) target=linux_amd64; march="-microarch:x86-64" ;;
+    arm64) target=linux_arm64; march="" ;;
+    *) echo "cli-baseline: the arch is amd64 or arm64, not {{arch}}" >&2; exit 1 ;;
+    esac
+    stage=build/baseline/{{arch}}
+    export LEITA_BASELINE_ARCH={{arch}} LEITA_GLIBC_FLOOR={{floor}} ODIN_CLANG_PATH="{{root}}/tools/linux-baseline/zcc"
+    {{odin}} build cmd/cli -target:$target $march -o:speed \
+        -define:LEITA_LICENCE_KEY="$(just --justfile "{{justfile()}}" release-key)" \
+        -define:LEITA_UPDATE_KEY="$(just --justfile "{{justfile()}}" update-key)" \
+        $(echo "{{flags}}" | sed "s|-collection:jm={{jm}}|-collection:jm={{root}}/$stage/jm|") {{curl_open}} -out:"$stage/{{bin}}"
+
+# The walk's tests built the way cli-baseline builds the command line, to run on an
+# old glibc: hard links, the mount boundary, cancellation. Without ASan, which
+# zig cc does not carry -> build/baseline/<arch>/walk-test: just baseline-test
+# [amd64|arm64] [floor]. The mount tests run with LEITA_MOUNT_TEST=1 where the
+# process may mount; tools/linux-baseline/probe runs this and the command line.
+[linux]
+baseline-test arch="amd64" floor="2.26": (_baseline-stage arch floor)
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "{{arch}}" in
+    amd64) target=linux_amd64; march="-microarch:x86-64" ;;
+    arm64) target=linux_arm64; march="" ;;
+    *) echo "baseline-test: the arch is amd64 or arm64, not {{arch}}" >&2; exit 1 ;;
+    esac
+    stage=build/baseline/{{arch}}
+    export LEITA_BASELINE_ARCH={{arch}} LEITA_GLIBC_FLOOR={{floor}} ODIN_CLANG_PATH="{{root}}/tools/linux-baseline/zcc"
+    {{odin}} build walk -build-mode:test -target:$target $march -o:none \
+        $(echo "{{flags}}" | sed "s|-collection:jm={{jm}}|-collection:jm={{root}}/$stage/jm|") -out:"$stage/walk-test"
+
 # The window, debug with AddressSanitizer or release optimised.
 #
 # Build the window -> build/<mode>/app/Leita: just gui [release]

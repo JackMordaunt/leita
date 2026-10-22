@@ -111,6 +111,9 @@ Tree :: struct {
 	// by reflinks or snapshots once for every file. Set by a walk that could not read
 	// the extents themselves, which takes root.
 	logical:    b32,
+	// What the kernel the walk ran on could not give (Gap), as bits, added by the
+	// walk that met the lack.
+	gap_bits:   u32,
 	// Directories a reader could not read whole (Node_Flag.Unread), and whether
 	// any of them refused for want of permission rather than for another reason.
 	// Added by a walk once it has finished.
@@ -423,6 +426,39 @@ taken_restated :: proc(t: ^Tree) -> bool {
 // Say that some btrfs sizes in the tree are logical, not what the files occupy.
 mark_logical :: proc(t: ^Tree) {
 	sync.atomic_store(&t.logical, true)
+}
+
+/*
+A capability the running kernel lacks, which leaves the tree accurate but short of
+something it would otherwise say. Sizes and the files themselves are never what is
+missing; see each case.
+*/
+Gap :: enum u8 {
+	// No statx (before Linux 4.11): sizes come from fstatat, so they are the same, but
+	// the mount-root flag and mount ids are not, which is Mount_Id.
+	Statx,
+	// No mount id or mount-root flag (statx before Linux 5.8, or none): a bind mount of
+	// a tree the walk reads elsewhere is walked as a directory, so it may be counted
+	// twice.
+	Mount_Id,
+}
+
+Gaps :: bit_set[Gap; u8]
+
+// Say that the kernel lacks `gap`.
+mark_gap :: proc(t: ^Tree, gap: Gap) {
+	sync.atomic_or(&t.gap_bits, u32(1) << u32(gap))
+}
+
+// What the kernel the walk ran on could not give.
+gaps :: proc(t: ^Tree) -> (g: Gaps) {
+	bits := sync.atomic_load(&t.gap_bits)
+	for gap in Gap {
+		if bits & (u32(1) << u32(gap)) != 0 {
+			g += {gap}
+		}
+	}
+	return g
 }
 
 // Count `count` more directories the reader could not read whole, `denied` if

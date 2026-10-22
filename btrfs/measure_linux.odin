@@ -5,6 +5,8 @@ import "core:mem"
 import "core:strings"
 import "core:sys/linux"
 
+import "../kstat"
+
 /*
 Measure every regular file under path, a file or a directory, into u, as compsize
 does without -x (do_recursive_search in compsize.c, kilobyte/compsize at d79eacf, opens each entry O_NOFOLLOW and
@@ -56,7 +58,7 @@ Measure :: struct {
 measure_fd :: proc(m: ^Measure, fd: linux.Fd) -> Error {
 	defer linux.close(fd)
 	st: linux.Statx
-	if linux.statx(fd, "", {.EMPTY_PATH}, {.TYPE, .INO, .BLOCKS}, &st) != .NONE {
+	if kstat.statx(fd, "", {.EMPTY_PATH}, {.TYPE, .INO, .BLOCKS}, &st) != .NONE {
 		return .Io
 	}
 	if linux.S_ISREG(st.mode) {
