@@ -515,12 +515,28 @@ sdl3-static: floor-jm
     just fetch build/src/sdl3 https://github.com/libsdl-org/SDL "$rev"
     echo "cmake sdl3 (static) -> ui/shell/lib/libSDL3.a"
     mkdir -p ui/shell/lib build
+    # CMake finds a Debian system's libraries (/usr/lib/<triplet>) by asking the C
+    # compiler for its multiarch triplet, and zig answers none: X11 and OpenGL were
+    # then "not found" and SDL was built with no X11 video driver, a window that
+    # starts on no X server. The triplet is given.
+    arch_flag=""
+    if [ -n "{{floor}}" ]; then arch_flag="-DCMAKE_LIBRARY_ARCHITECTURE={{floor_arch}}-linux-gnu"; fi
     cmake --fresh -S build/src/sdl3 -B build/sdl3-static -DCMAKE_BUILD_TYPE=Release \
         -DSDL_SHARED=OFF -DSDL_STATIC=ON -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF \
-        -DCMAKE_POSITION_INDEPENDENT_CODE=ON > build/sdl3-static.log 2>&1 \
+        -DCMAKE_POSITION_INDEPENDENT_CODE=ON $arch_flag > build/sdl3-static.log 2>&1 \
         || { tail -n 30 build/sdl3-static.log >&2; exit 1; }
     cmake --build build/sdl3-static --parallel >> build/sdl3-static.log 2>&1 \
         || { tail -n 30 build/sdl3-static.log >&2; exit 1; }
+    # A window needs a video driver for the display it is shown on: X11 (also
+    # Xwayland, Xvfb) and Wayland. Without one it says "No available video device".
+    symbols=$(nm build/sdl3-static/libSDL3.a 2>/dev/null)
+    for driver in X11 Wayland; do
+        if ! grep -q "${driver}_CreateDevice" <<<"$symbols"; then
+            echo "sdl3-static: SDL was built without its $driver video driver; see build/sdl3-static.log" >&2
+            grep -iE "$driver|Could NOT" build/sdl3-static.log >&2 || true
+            exit 1
+        fi
+    done
     cp build/sdl3-static/libSDL3.a build/sdl3-static/sdl3.pc ui/shell/lib/
 
 # The window with its view hot-reloaded. The host (cmd/gui-host) owns the window and
