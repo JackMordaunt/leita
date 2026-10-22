@@ -1,0 +1,143 @@
+# The Linux ABI harness. It checks that the versioned GLIBC symbols a shipped
+# executable needs stay at or under the floor declared in
+# tools/abi-gate/floors.conf, per kind (cli, gui) and architecture, runs the
+# artifacts on old userspace, and runs the whole test suite on native arm64.
+#
+# This is not the release gate yet. release.yml neither calls it nor reads
+# the floors: the artifacts it builds today need glibc 2.38 (cli) and 2.39
+# (gui). When the lowered artifacts exist, the floors are set from what they
+# measure, "-" becomes a version, and the release job runs
+#   tools/abi-gate/abi_gate.py --require-floor
+# on every shipped executable.
+#
+# Triggers: a push that touches the gate or this file runs the fixture tests
+# and the native arm64 suite. A manual run with a release run's id as run-id
+# also scans that run's dist-linux-* artifacts in each old userspace below;
+# enforce makes an undeclared floor a failure too.
+name: abi
+
+on:
+  push:
+    paths:
+      - tools/abi-gate/**
+      - .github/workflows/abi.yml
+  workflow_dispatch:
+    inputs:
+      run-id:
+        description: "release.yml run whose dist-linux-amd64 and dist-linux-arm64 artifacts to scan"
+        required: false
+        default: ""
+      enforce:
+        description: "fail when a floor is undeclared in floors.conf"
+        type: boolean
+        default: false
+
+concurrency:
+  group: abi-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # A binary needing a newer glibc than its floor must fail, whatever the
+  # host's glibc: the fixtures link against a stub libc.
+  gate-test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: install the arm64 cross compiler
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu
+      - name: fixture tests
+        run: python3 -I -m unittest discover -v -s tools/abi-gate -p 'test_*.py'
+
+  # Each lowered artifact, unpacked and run through the dynamic loader of an
+  # old userspace: ldd resolves every versioned symbol, so a missing
+  # GLIBC_x.y shows as "version ... not found". The gate then lists and
+  # checks the symbols against the declared floor.
+  scan:
+    if: inputs.run-id != ''
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+        image:
+          - ubuntu:22.04
+          - debian:12
+          # glibc 2.28, the userspace a CLI floor of 2.28 has to run on.
+          - quay.io/pypa/manylinux_2_28
+        include:
+          - arch: amd64
+            os: ubuntu-24.04
+          - arch: arm64
+            os: ubuntu-24.04-arm
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: fetch and unpack the artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run-id }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          command -v zstd >/dev/null || sudo apt-get install -y --no-install-recommends zstd
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" -n "dist-linux-$ARCH" -D fetched
+          mkdir scan
+          for t in fetched/*-linux-"$ARCH".tar.zst; do tar --zstd -xf "$t" -C scan; done
+          find scan -type f \( -name leita -o -name Leita \) -print
+      - name: scan on ${{ matrix.image }}
+        env:
+          IMAGE: ${{ matrix.image }}
+          ARCH: ${{ matrix.arch }}
+          ENFORCE: ${{ inputs.enforce && '--require-floor' || '' }}
+        run: |
+          docker run --rm --platform "linux/$ARCH" -v "$PWD:/w:ro" -e ARCH -e ENFORCE "$IMAGE" bash -euc '
+            if command -v apt-get >/dev/null; then
+              apt-get update -qq && apt-get install -y -qq --no-install-recommends binutils python3 >/dev/null
+            else
+              dnf install -y -q binutils python3 >/dev/null
+            fi
+            ldd --version | head -1
+            status=0
+            for f in $(find /w/scan -type f \( -name leita -o -name Leita \)); do
+              case $f in */app/Leita) kind=gui ;; *) kind=cli ;; esac
+              echo "== $f ($kind)"
+              out=$(ldd "$f" 2>&1) || true
+              echo "$out"
+              if echo "$out" | grep -E "version .GLIBC[A-Z_]*[0-9.]*. not found"; then
+                echo "::error::$f needs a newer glibc than $(ldd --version | head -1)"
+                status=1
+              fi
+              python3 -I /w/tools/abi-gate/abi_gate.py --kind "$kind" --arch "$ARCH" $ENFORCE "$f" || status=1
+            done
+            exit $status'
+
+  # The same steps as test.yml, on native arm64, which test.yml does not run.
+  arm64:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          submodules: true
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: check
+        run: just check
+      - name: test
+        timeout-minutes: 20
+        run: just test
+      - name: btrfs-test
+        timeout-minutes: 10
+        run: just btrfs-test --sudo
+      - name: gui-test
+        timeout-minutes: 20
+        run: just gui-test
