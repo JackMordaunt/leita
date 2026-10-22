@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# Boot a distribution's own cloud image, kernel and all, and run the command line
+# in it: tools/vm/run-cloud centos7 LEITA [WALK-TEST]
+# tools/vm/run unpacks its Debian guests with debugfs, which reads ext filesystems,
+# and this image's root is XFS; this one boots the image as shipped under KVM, throwaway (snapshot),
+# and cloud-init runs tools/vm/guest/run from a second disk, fed by a one-shot
+# HTTP server on 127.0.0.1 through qemu's user network (nocloud-net). The serial
+# console is the output, ending in RESULT lines; the exit status is 1 if a check
+# failed, 2 if the guest did not finish. Needs curl, qemu, mke2fs, python3,
+# sha256sum. LEITA_VM_DIR names the download directory, LEITA_VM_MEM the guest's MB.
+#   centos7  CentOS 7.9 (2211 cloud image), Linux 3.10.0-1160, glibc 2.17
+set -euo pipefail
+here=$(cd "$(dirname "$0")" && pwd)
+dir=${LEITA_VM_DIR:-$HOME/.cache/leita-vm}
+guest=${1:?usage: run-cloud centos7 LEITA [WALK-TEST]}
+leita=${2:?usage: run-cloud centos7 LEITA [WALK-TEST]}
+walk_test=${3:-}
+case $guest in
+centos7)
+	base=https://cloud.centos.org/centos/7/images
+	img=CentOS-7-x86_64-GenericCloud-2211.qcow2 ;;
+*) echo "run-cloud: unknown guest $guest" >&2; exit 2 ;;
+esac
+mkdir -p "$dir/dl"
+if [ ! -f "$dir/dl/$img" ]; then
+	curl -fL --max-time 1800 -o "$dir/dl/$img.part" "$base/$img"
+	want=$(curl -fs "$base/sha256sum.txt" | awk -v f="$img" '$2 == f {print $1}')
+	got=$(sha256sum "$dir/dl/$img.part" | awk '{print $1}')
+	[ -n "$want" ] && [ "$want" = "$got" ] || { echo "run-cloud: $img does not match its checksum" >&2; exit 1; }
+	mv "$dir/dl/$img.part" "$dir/dl/$img"
+fi
+work=$(mktemp -d)
+trap 'kill ${http:-0} 2>/dev/null || true; rm -rf "$work"' EXIT
+mkdir "$work/t" "$work/seed"
+cp "$leita" "$work/t/leita"
+[ -z "$walk_test" ] || cp "$walk_test" "$work/t/walk-test"
+cp "$here/guest/run" "$work/t/guest.sh"
+cp "$here/../linux-baseline/probe" "$work/t/probe"
+echo "EXPECT=fallback" > "$work/t/env"
+mke2fs -q -t ext2 -d "$work/t" "$work/tools.img" 96M
+printf 'instance-id: leita-%s\nlocal-hostname: leita\n' "$guest" > "$work/seed/meta-data"
+cat > "$work/seed/user-data" <<'YAML'
+#cloud-config
+runcmd:
+  - [ sh, -c, "mkdir -p /mnt/t && mount -o ro /dev/vdb /mnt/t && sh /mnt/t/guest.sh > /dev/ttyS0 2>&1; echo LEITA-VM-DONE > /dev/ttyS0; sync; poweroff -f" ]
+YAML
+port=$((20000 + RANDOM % 20000))
+python3 -I -m http.server "$port" --bind 127.0.0.1 --directory "$work/seed" >/dev/null 2>&1 &
+http=$!
+timeout "${LEITA_VM_TIMEOUT:-600}" qemu-system-x86_64 -enable-kvm -cpu host -smp 2 -m "${LEITA_VM_MEM:-1024}" \
+	-nographic -no-reboot -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
+	-smbios "type=1,serial=ds=nocloud-net;s=http://10.0.2.2:$port/" \
+	-drive "file=$dir/dl/$img,format=qcow2,if=virtio,snapshot=on" \
+	-drive "file=$work/tools.img,format=raw,if=virtio,readonly=on" </dev/null | tr -d '\r' | tee "$work/out"
+grep -q '^LEITA-VM-DONE' "$work/out" || { echo "run-cloud: the guest did not finish" >&2; exit 2; }
+! grep -q '^RESULT FAIL' "$work/out"

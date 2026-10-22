@@ -722,9 +722,21 @@ clean:
 # administrator rights or developer mode. An installed copy is replaced in place;
 # otherwise ~/.local/bin, ~/bin, GOBIN, GOPATH/bin, /usr/local/bin, else the first
 # writable PATH entry.
-install: (cli "release")
+install:
     #!/usr/bin/env bash
     set -euo pipefail
+    # A release build refuses an empty key set, so a local install without the
+    # production keys takes the test keys: it accepts only test licences and
+    # checks updates against the test key. Never publish such a build.
+    if [ -z "${LEITA_LICENCE_KEY:-}" ]; then
+        echo "install: LEITA_LICENCE_KEY is unset; building with the TEST licence key, so only test licences are accepted. Set it for a build you will give to anyone." >&2
+        export LEITA_LICENCE_KEY="$(just --justfile "{{justfile()}}" --evaluate test_licence_key)"
+    fi
+    if [ -z "${LEITA_UPDATE_KEY:-}" ]; then
+        echo "install: LEITA_UPDATE_KEY is unset; building with the TEST update key, so updates from the real release channel will fail verification." >&2
+        export LEITA_UPDATE_KEY="$(just --justfile "{{justfile()}}" --evaluate test_update_key)"
+    fi
+    just --justfile "{{justfile()}}" cli release
     dest=""
     if existing=$(command -v {{bin}} 2>/dev/null) && [[ -w ${existing%/*} ]]; then
         dest=${existing%/*}
