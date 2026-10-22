@@ -84,7 +84,9 @@ runs:
         dir="$RUNNER_TEMP/just-$ver"
         mkdir -p "$dir"
         curl -sSfL --retry 5 --retry-all-errors --max-time 120 -o "$dir/just.$ext" "https://github.com/casey/just/releases/download/$ver/just-$ver-$target.$ext"
-        echo "$sum  $dir/just.$ext" | sha256sum -c
+        # macOS has shasum, not GNU sha256sum.
+        got=$( (sha256sum "$dir/just.$ext" 2>/dev/null || shasum -a 256 "$dir/just.$ext") | cut -d' ' -f1)
+        [ "$got" = "$sum" ] || { echo "::error::just $ver $target is $got, not the pinned $sum"; exit 1; }
         if [ "$ext" = zip ]; then
           powershell -NoProfile -Command "Expand-Archive -Force -Path '$(cygpath -w "$dir/just.zip")' -DestinationPath '$(cygpath -w "$dir")'"
         else
