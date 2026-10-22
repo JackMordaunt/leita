@@ -1,0 +1,29 @@
+#!/bin/sh
+# Read a baseline build back: tools/linux-baseline/check BINARY [FLOOR]
+#
+# Fails when the program asks for a GLIBC_ version above FLOOR (2.26 unless
+# given), for a library other than glibc's own, or for libcurl, which jm opens
+# when a request needs it and never links. Prints what it found, so a lower floor
+# than the one built for shows. It reads the file and runs nothing: whether the
+# program starts is tools/linux-baseline/probe's.
+set -eu
+bin=${1:?usage: check BINARY [FLOOR]}
+[ -f "$bin" ] || { echo "check: $bin is not a file" >&2; exit 1; }
+floor=${2:-2.26}
+needed=$(readelf -d "$bin" | sed -n 's/.*Shared library: \[\(.*\)\]/\1/p')
+highest=$(readelf --dyn-syms -W "$bin" | grep -o 'GLIBC_[0-9][0-9.]*' | sed 's/GLIBC_//' | sort -Vu | tail -n 1)
+echo "needs: $(echo "$needed" | tr '\n' ' ')"
+echo "highest GLIBC symbol version: ${highest:-none}; floor: $floor"
+status=0
+for lib in $needed; do
+	case $lib in
+	libc.so.* | libm.so.* | libpthread.so.* | libdl.so.* | ld-linux*.so.* | librt.so.*) ;;
+	*) echo "check: $lib is not glibc's" >&2; status=1 ;;
+	esac
+done
+if [ -n "$highest" ] && [ "$(printf '%s\n%s\n' "$highest" "$floor" | sort -V | tail -n 1)" != "$floor" ]; then
+	echo "check: GLIBC_$highest is above the floor $floor:" >&2
+	readelf --dyn-syms -W "$bin" | grep "GLIBC_$highest" >&2
+	status=1
+fi
+exit $status

@@ -1,0 +1,28 @@
+#!/bin/sh
+# Assert what tools/linux-baseline/zcc is for, on this machine: an fmod call
+# compiled and linked with it asks for GLIBC_2.2.5 and passes check at floor
+# 2.26, and runs. When the host cc binds fmod higher (glibc 2.38 and newer), that
+# is shown beside it and must fail check at the same floor.
+set -eu
+here=$(cd "$(dirname "$0")" && pwd)
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+cat > "$work/f.c" <<'C'
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+int main(int argc, char **argv) { printf("%g\n", fmod(strtod(argv[1], 0), 3.0)); return 0; }
+C
+for arch in amd64 arm64; do
+	LEITA_BASELINE_ARCH=$arch "$here/zcc" -O2 -o "$work/f-$arch" "$work/f.c" -lm
+	"$here/check" "$work/f-$arch" 2.26 >/dev/null
+	readelf --dyn-syms -W "$work/f-$arch" | grep -q 'fmod@GLIBC_2.2.5\|fmod@GLIBC_2.17' || { echo "selftest: $arch fmod is not bound to an old version" >&2; exit 1; }
+	echo "selftest: $arch fmod -> $(readelf --dyn-syms -W "$work/f-$arch" | grep -o 'fmod@[A-Z_0-9.]*')"
+done
+[ "$(uname -m)" != x86_64 ] || [ "$("$work/f-amd64" 10)" = 1 ] || { echo "selftest: the amd64 program ran wrong" >&2; exit 1; }
+cc -O2 -o "$work/f-host" "$work/f.c" -lm
+if readelf --dyn-syms -W "$work/f-host" | grep -q 'fmod@GLIBC_2.38'; then
+	if "$here/check" "$work/f-host" 2.26 >/dev/null 2>&1; then echo "selftest: the host cc binding fmod@GLIBC_2.38 passed check" >&2; exit 1; fi
+	echo "selftest: host cc binds fmod@GLIBC_2.38, and check refuses it"
+fi
+echo "selftest: ok"
