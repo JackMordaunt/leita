@@ -1,0 +1,31 @@
+#!/bin/sh
+# zig cc fixed at one glibc and one instruction set, for just cli-baseline: the
+# C compiler of jm's SQLite and zstd, and the linker Odin hands its objects to
+# (ODIN_CLANG_PATH). A glibc symbol's version is chosen where a call is compiled
+# and where it is linked, so the host's newer glibc must be out of both: the same
+# fmod call binds to GLIBC_2.2.5 here and to GLIBC_2.38 under a 2.38 or newer
+# host cc. tools/linux-baseline/selftest asserts it.
+#
+#   LEITA_BASELINE_ARCH   amd64 (default) or arm64
+#   LEITA_GLIBC_FLOOR     the glibc to link against, 2.26 unless set
+#   ZIG                   the zig to use, zig on PATH unless set
+#
+# -mcpu=baseline is plain x86-64 (no SSE4, no POPCNT) or plain ARMv8-A. Odin
+# dev-2026-09 defaults amd64 to x86-64-v2: a default build of the command line
+# raised SIGILL under qemu-x86_64 -cpu qemu64 (2026-10-22), the baseline one ran.
+case "${LEITA_BASELINE_ARCH:-amd64}" in
+amd64) triple=x86_64 ;;
+arm64) triple=aarch64 ;;
+*) echo "zcc: LEITA_BASELINE_ARCH is amd64 or arm64" >&2; exit 1 ;;
+esac
+# Odin (dev-2026-09) names an archive -l:/absolute/path, or -l:"/absolute/path"
+# quoted, and zig cc 0.17.0 stops with "cannot use absolute path as a system
+# library"; the plain path is accepted.
+for a; do
+	shift
+	case $a in
+	-l:/* | -l:\"/*) a=${a#-l:}; a=${a#\"}; a=${a%\"} ;;
+	esac
+	set -- "$@" "$a"
+done
+exec "${ZIG:-zig}" cc -target "$triple-linux-gnu.${LEITA_GLIBC_FLOOR:-2.26}" -mcpu=baseline "$@"
