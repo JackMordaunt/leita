@@ -28,7 +28,13 @@ def ver(text):
 
 
 def readelf(*args):
-    r = subprocess.run(["readelf", "-W", *args], capture_output=True, text=True)
+    # Python 3.6 is the python3 of manylinux_2_28, which has no capture_output.
+    r = subprocess.run(
+        ["readelf", "-W", *args],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        universal_newlines=True,
+    )
     if r.returncode != 0:
         raise OSError(r.stderr.strip() or "readelf failed")
     return r.stdout
