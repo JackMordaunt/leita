@@ -2,7 +2,9 @@
 package walk
 
 import "core:fmt"
+import "core:log"
 import "core:os"
+import "core:strings"
 import "core:sync"
 import "core:sys/linux"
 import "core:testing"
@@ -208,6 +210,55 @@ test_a_walk_without_statx_sizes_every_file :: proc(t: ^testing.T) {
 	testing.expect_value(t, count, 0)
 	testing.expect_value(t, scan.gaps(&old), scan.Gaps{.Statx, .Mount_Id})
 	testing.expect(t, .Statx not_in scan.gaps(&normal), "a kernel with statx was said to lack it")
+}
+
+/*
+A kernel that has statx but gives no mount id (Linux 4.11 to 5.7; Debian 10's 4.19
+answered so in tools/vm) answers it with
+.MNT_ID left out of the mask, and the walk says so: the Mount_Id gap, and not the
+Statx one. The test asks the kernel it runs on and expects the tree to say what the
+kernel said, so it checks the 5.8 and later answer here and the earlier one on an
+old-kernel guest (tools/vm/run).
+*/
+@(test)
+test_the_walk_reports_a_mount_id_gap_as_the_kernel_answers :: proc(t: ^testing.T) {
+	sync.guard(&flag_turn)
+	root, ok := fixture(t, "walk_no_mount_id", 100_000)
+	if !ok {
+		return
+	}
+	defer os.remove_all(root)
+
+	was := sync.atomic_exchange(&statx_missing, false)
+	defer sync.atomic_store(&statx_missing, was)
+
+	st: linux.Statx
+	croot := strings.clone_to_cstring(root, context.temp_allocator)
+	errno := linux.statx(linux.AT_FDCWD, croot, {}, {.MNT_ID}, &st)
+	if errno == .ENOSYS {
+		// No statx at all: test_a_walk_without_statx_sizes_every_file is this kernel's.
+		return
+	}
+	testing.expect_value(t, errno, linux.Errno.NONE)
+	has_mount_id := .MNT_ID in st.mask
+
+	tree: scan.Tree
+	testing.expect_value(t, scan.tree_init(&tree, 1), scan.Error.None)
+	defer scan.tree_destroy(&tree)
+	testing.expect_value(t, read(root, &tree, Config{}), Error.None)
+
+	log.infof("the kernel's statx mask has MNT_ID: %v; the walk's gaps: %v", has_mount_id, scan.gaps(&tree))
+	testing.expect(t, .Statx not_in scan.gaps(&tree), "a kernel with statx was said to lack it")
+	testing.expectf(
+		t,
+		(.Mount_Id in scan.gaps(&tree)) == !has_mount_id,
+		"the kernel's mask has the mount id: %v; the tree's gaps are %v",
+		has_mount_id,
+		scan.gaps(&tree),
+	)
+	count, _ := scan.unread(&tree)
+	testing.expect_value(t, count, 0)
+	testing.expect(t, tree.bytes_done >= 100_000, "the walk did not size the file")
 }
 
 // Under the fallback a directory that lists but refuses each entry is still not read
