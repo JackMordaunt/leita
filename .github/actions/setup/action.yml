@@ -64,9 +64,33 @@ runs:
         release: ""
         llvm-version: ${{ inputs.odin-llvm }}
         build-type: release
-    - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b # v3.1.0
-      with:
-        just-version: "1.58.0"
+    # just 1.58.0 by its release asset and SHA-256, not by extractions/setup-just,
+    # which looks the version up through the releases API and failed on the macOS
+    # and Windows runners with "no release for just matching version specifier"
+    # while the release was there.
+    - name: just 1.58.0
+      shell: bash
+      run: |
+        set -euo pipefail
+        ver=1.58.0
+        case "$RUNNER_OS-$RUNNER_ARCH" in
+          Linux-X64) target=x86_64-unknown-linux-musl ext=tar.gz sum=4a5cc2f53e6f0f8c59092a6cc38291eb729d46a7dd95d3ae582008881b84931d ;;
+          Linux-ARM64) target=aarch64-unknown-linux-musl ext=tar.gz sum=748237128c4c40cbdabc65e841d05ceba13cc23a91eaba395495894c1d9764df ;;
+          macOS-ARM64) target=aarch64-apple-darwin ext=tar.gz sum=50ae3e996c974a0bf32ea7d10f495070df33f1b43e0616b2769e3d4821ed8f48 ;;
+          macOS-X64) target=x86_64-apple-darwin ext=tar.gz sum=9a09cfef66aaa79da58203970103a0684307716caaabd3e9844cacc4dc0f4023 ;;
+          Windows-X64) target=x86_64-pc-windows-msvc ext=zip sum=759f16fb7aa17c5c8b9594b6d4a8c1a6630dfd042cf2b3ff84841454d3d188dc ;;
+          *) echo "::error::no just is pinned for $RUNNER_OS-$RUNNER_ARCH"; exit 1 ;;
+        esac
+        dir="$RUNNER_TEMP/just-$ver"
+        mkdir -p "$dir"
+        curl -sSfL --retry 5 --retry-all-errors --max-time 120 -o "$dir/just.$ext" "https://github.com/casey/just/releases/download/$ver/just-$ver-$target.$ext"
+        echo "$sum  $dir/just.$ext" | sha256sum -c
+        if [ "$ext" = zip ]; then
+          powershell -NoProfile -Command "Expand-Archive -Force -Path '$(cygpath -w "$dir/just.zip")' -DestinationPath '$(cygpath -w "$dir")'"
+        else
+          tar -xzf "$dir/just.$ext" -C "$dir" just
+        fi
+        if [ "$RUNNER_OS" = Windows ]; then echo "$(cygpath -w "$dir")" >> "$GITHUB_PATH"; else echo "$dir" >> "$GITHUB_PATH"; fi
 
     # report/pdf sets text in the first of a list of system fonts, and in
     # the Liberation Sans it carries where none is there; Ubuntu ships none
