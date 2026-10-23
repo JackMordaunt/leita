@@ -429,16 +429,24 @@ fuzz suite="" seed="1" duration="2m" *extra: sqlite
     ASAN_OPTIONS="${ASAN_OPTIONS:-detect_leaks=0}" {{just_executable()}} --justfile {{justfile()}} _in-namespace build/debug/leita-fuzz{{exe}} {{suite}} -seed={{seed}} {{ if duration == "0" { "" } else { "-for=" + duration } }} -iters=64 {{extra}}
 
 # Run a command in a user and mount namespace of its own, where this host gives
-# one, so that it can mount without root; as it is where it does not. Linux only.
+# one, so that it can mount without root; as it is where it does not.
+[linux]
 [private]
 _in-namespace +command:
     #!/usr/bin/env bash
     set -euo pipefail
-    if [ "{{os()}}" = linux ] && unshare --user --map-root-user --mount true 2>/dev/null; then
+    if unshare --user --map-root-user --mount true 2>/dev/null; then
         exec unshare --user --map-root-user --mount {{command}}
     fi
-    if [ "{{os()}}" = linux ]; then echo "no user namespace here: running without one, so nothing can be mounted" >&2; fi
+    echo "no user namespace here: running without one, so nothing can be mounted" >&2
     exec {{command}}
+
+# Mounts are Linux's: elsewhere the command runs as it is.
+[macos]
+[windows]
+[private]
+_in-namespace +command:
+    {{command}}
 
 # The btrfs and walk tests on a btrfs image made, mounted and filled for them,
 # against a total worked out from the image; skipped where nothing can mount one.
