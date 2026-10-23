@@ -1730,9 +1730,11 @@ reclaim_offers_only_what_rebuilds_and_deletes_what_is_chosen :: proc(t: ^testing
 	press_and_hand_on(&r)
 	testing.expect(t, settle(&r, "135.2 kB in 1 folder chosen"))
 	confirm(t, &r, "Clean up", "Delete")
+	// The first delete left the same notice up, so it cannot say this one
+	// finished. The target leaving the list can; then the disk is checked.
+	testing.expect(t, settle(&r, RUST_TARGET, present = false), "target leaves the list")
 	testing.expect(t, settle(&r, "Deleted 1 folder. How much disk space that frees is unknown."))
 	testing.expect(t, !os.exists(fmt.tprintf("%s/rust/target", root)))
-	testing.expect(t, settle(&r, RUST_TARGET, present = false), "target leaves the list")
 	testing.expect(t, !ui.probe_tagged(&r.p, WEB_NODE_MODULES), "dependencies stay absent")
 	when ODIN_OS == .Windows {
 		// Check project candidates separately from the system Recycle Bin.
