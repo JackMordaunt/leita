@@ -6,7 +6,14 @@ Package walk_fuzz runs the walk over filesystems made from a spec.
 
 A case draws a tree spec (spec.odin) from its bytes: nested directories, a table
 of file kinds, a mount tree. The model (model.odin) says what a scan of it must
-report, from the spec alone.
+report. The scan property builds it under a temp directory (materialise_*.odin),
+mounts and all, walks it from the root and from each tmpfs in it, and compares
+the file, directory, symlink, mount and extra-name counts with the model and the
+bytes allocated with statx of the real files.
+
+Mounts need a user and mount namespace of the process's own, so `just fuzz`
+enters one before it starts this program. Where a mount cannot be made the scan
+property passes and `skip_reason` says why, for the driver to print.
 
 A failing case is shrunk as a spec, in the property: the failure's detail is the
 smaller tree, a few lines, and the same bytes draw the same failure again. Byte
@@ -18,7 +25,7 @@ import harness "jm:fuzz"
 
 Case :: struct {}
 
-properties := []harness.Property(Case){{"model", check_model}}
+properties := []harness.Property(Case){{"model", check_model}, {"scan", check_scan}}
 
 CORPUS :: "walk/fuzz/corpus"
 

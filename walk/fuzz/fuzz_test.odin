@@ -1,5 +1,7 @@
 package walk_fuzz
 
+import "core:log"
+import "core:os"
 import "core:testing"
 
 import harness "jm:fuzz"
@@ -14,14 +16,23 @@ properties_hold :: proc(t: ^testing.T) {
 			testing.expectf(t, false, "%s failed at case %d seed %d: %s", f.property, f.iteration, f.seed, f.detail)
 		}
 	}
+	if why := skip_reason(); why != "" {
+		// A host with no namespace cannot run the scan property, which is not a
+		// failure unless the run says it must (as walk's mount tests do).
+		if os.get_env("LEITA_MOUNT_TEST", context.temp_allocator) != "" {
+			testing.fail_now(t, "LEITA_MOUNT_TEST is set, but no tree could be built")
+		}
+		log.warnf("the scan property did not build a tree: %s; just test runs this in a namespace", why)
+	}
 }
 
 @(test)
 suite_is_complete :: proc(t: ^testing.T) {
 	s := suite()
 	testing.expect_value(t, s.name, "tree")
-	testing.expect_value(t, len(s.properties), 1)
+	testing.expect_value(t, len(s.properties), 2)
 	testing.expect(t, s.properties[0].check == check_model, "model runs check_model")
+	testing.expect(t, s.properties[1].check == check_scan, "scan runs check_scan")
 }
 
 @(test)
