@@ -406,7 +406,7 @@ test: sqlite
     # walk/fuzz builds trees with mounts, so its replay runs in a namespace where
     # one can be had, and says so where it cannot.
     {{odin}} build walk/fuzz -build-mode:test -debug {{san}} {{flags}} {{curl_open}} -out:build/test/fuzz-walk{{exe}}
-    {{just_executable()}} --justfile {{justfile()}} _in-namespace build/test/fuzz-walk{{exe}}
+    tools/in-namespace build/test/fuzz-walk{{exe}}
 
 # Fuzz suites under ASan, the one entry point for local runs and CI.
 #   just fuzz                    every suite, seed 1, 64 cases, 2m each
@@ -426,27 +426,7 @@ fuzz suite="" seed="1" duration="2m" *extra: sqlite
     # LeakSanitizer reports two allocations the Odin runtime makes at start-up (args,
     # 670 bytes), on some runs and not others, whatever the suite; the debug
     # allocator reports a leak of the suite's own. ASAN_OPTIONS from the caller wins.
-    ASAN_OPTIONS="${ASAN_OPTIONS:-detect_leaks=0}" {{just_executable()}} --justfile {{justfile()}} _in-namespace build/debug/leita-fuzz{{exe}} {{suite}} -seed={{seed}} {{ if duration == "0" { "" } else { "-for=" + duration } }} -iters=64 {{extra}}
-
-# Run a command in a user and mount namespace of its own, where this host gives
-# one, so that it can mount without root; as it is where it does not.
-[linux]
-[private]
-_in-namespace +command:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if unshare --user --map-root-user --mount true 2>/dev/null; then
-        exec unshare --user --map-root-user --mount {{command}}
-    fi
-    echo "no user namespace here: running without one, so nothing can be mounted" >&2
-    exec {{command}}
-
-# Mounts are Linux's: elsewhere the command runs as it is.
-[macos]
-[windows]
-[private]
-_in-namespace +command:
-    {{command}}
+    ASAN_OPTIONS="${ASAN_OPTIONS:-detect_leaks=0}" tools/in-namespace build/debug/leita-fuzz{{exe}} {{suite}} -seed={{seed}} {{ if duration == "0" { "" } else { "-for=" + duration } }} -iters=64 {{extra}}
 
 # The btrfs and walk tests on a btrfs image made, mounted and filled for them,
 # against a total worked out from the image; skipped where nothing can mount one.
