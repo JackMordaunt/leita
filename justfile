@@ -10,7 +10,8 @@
 #                             home directory by default
 #   just test                 run every imported package's tests under ASan -> build/test/
 #   just fuzz [suite] [seed] [duration] [flags]
-#                             leita-fuzz under ASan, here and in CI
+#                             leita-fuzz under ASan, here and in CI; its tree suite builds
+#                             filesystems with mounts and scans them
 #   just btrfs-test [--sudo]  the btrfs and walk tests on a throw-away btrfs image,
 #                             as root too with --sudo where sudo asks no password
 #   just mount-test [--sudo]  the delete test that mounts, in a namespace of its own
@@ -402,20 +403,30 @@ test: sqlite
     {{odin}} test scan/fuzz -debug {{san}} {{flags}} {{curl_open}} -out:build/test/fuzz-scan{{exe}}
     {{odin}} test ntfs/fuzz -debug {{san}} {{flags}} {{curl_open}} -out:build/test/fuzz-ntfs{{exe}}
     {{odin}} test search/fuzz -debug {{san}} {{flags}} {{curl_open}} -out:build/test/fuzz-search{{exe}}
+    # walk/fuzz builds trees with mounts, so its replay runs in a namespace where
+    # one can be had, and says so where it cannot.
+    {{odin}} build walk/fuzz -build-mode:test -debug {{san}} {{flags}} {{curl_open}} -out:build/test/fuzz-walk{{exe}}
+    tools/in-namespace build/test/fuzz-walk{{exe}}
 
-# Parser properties under ASan, the one entry point for local runs and CI.
+# Fuzz suites under ASan, the one entry point for local runs and CI.
 #   just fuzz                    every suite, seed 1, 64 cases, 2m each
 #   just fuzz ntfs 7 30s         one suite, seed 7, stop after 30s
+#   just fuzz tree 1 0 -iters=8  the filesystem suite, 8 cases, no time limit
 #   just fuzz scan 0             seed 0 takes the clock; the seed is printed
 #   just fuzz btrfs 1 0 -isolate a child process per case, no time limit
 # Flags after the duration go to leita-fuzz and win over the 64 cases. A
 # failure prints the seed, the saved case, and the just command that runs it
-# again. The corpus beside each suite is replayed first. No device and no
-# root filesystem: the inputs are the committed seeds and bytes drawn.
+# again. The corpus beside each suite is replayed first. The tree suite builds
+# directories and mounts under the temp directory, in a user and mount namespace
+# this recipe enters where it can (no root needed); where it cannot, that suite
+# runs what needs no mount and says what it left out.
 fuzz suite="" seed="1" duration="2m" *extra: sqlite
     mkdir -p build/debug
     {{odin}} build tools/leita-fuzz -debug {{san}} {{flags}} {{curl_open}} -out:build/debug/leita-fuzz{{exe}}
-    build/debug/leita-fuzz{{exe}} {{suite}} -seed={{seed}} {{ if duration == "0" { "" } else { "-for=" + duration } }} -iters=64 {{extra}}
+    # LeakSanitizer reports two allocations the Odin runtime makes at start-up (args,
+    # 670 bytes), on some runs and not others, whatever the suite; the debug
+    # allocator reports a leak of the suite's own. ASAN_OPTIONS from the caller wins.
+    ASAN_OPTIONS="${ASAN_OPTIONS:-detect_leaks=0}" tools/in-namespace build/debug/leita-fuzz{{exe}} {{suite}} -seed={{seed}} {{ if duration == "0" { "" } else { "-for=" + duration } }} -iters=64 {{extra}}
 
 # The btrfs and walk tests on a btrfs image made, mounted and filled for them,
 # against a total worked out from the image; skipped where nothing can mount one.

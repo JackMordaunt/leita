@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Run a command in a user and mount namespace of its own, so that it can mount
+# without root, where the host gives one; as it is where it does not (macOS,
+# Windows, a Linux that forbids it, said on stderr).
+#
+#   tools/in-namespace build/debug/leita-fuzz tree
+set -euo pipefail
+if [ "$(uname -s)" = Linux ]; then
+    if unshare --user --map-root-user --mount true 2>/dev/null; then
+        exec unshare --user --map-root-user --mount "$@"
+    fi
+    echo "in-namespace: no user namespace here: running without one, so nothing can be mounted" >&2
+fi
+exec "$@"

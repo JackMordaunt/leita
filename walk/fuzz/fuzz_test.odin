@@ -2,6 +2,7 @@ package walk_fuzz
 
 import "core:log"
 import "core:os"
+import "core:strings"
 import "core:testing"
 
 import harness "jm:fuzz"
@@ -139,4 +140,38 @@ minimise_drops_what_is_not_needed :: proc(t: ^testing.T) {
 	testing.expectf(t, len(small.nodes) == 3, "left %d nodes:\n%s", len(small.nodes), render(small))
 	_, ok := valid(small)
 	testing.expect(t, ok)
+}
+
+@(test)
+regressions_still_pass :: proc(t: ^testing.T) {
+	context.allocator = context.temp_allocator
+	before := count_cases(CORPUS)
+	report := run({seed = 1, iterations = 1, corpus_dir = CORPUS})
+	testing.expect(t, before >= 1, "this suite has regressions committed")
+	// A scan case is replayed even where no tree can be built; it then passes
+	// at once, so every case is counted either way.
+	testing.expect_value(t, report.replayed, before)
+	for f in report.failures {
+		testing.expectf(t, false, "%s regressed: %s", f.property, f.detail)
+	}
+}
+
+@(private = "file")
+count_cases :: proc(dir: string) -> int {
+	handle, err := os.open(dir)
+	if err != nil {
+		return 0
+	}
+	defer os.close(handle)
+	entries, rerr := os.read_directory(handle, -1, context.temp_allocator)
+	if rerr != nil {
+		return 0
+	}
+	n := 0
+	for e in entries {
+		if strings.has_suffix(e.name, ".case") {
+			n += 1
+		}
+	}
+	return n
 }
