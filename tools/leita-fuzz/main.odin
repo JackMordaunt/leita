@@ -2,9 +2,11 @@
 leita-fuzz runs a leita fuzz suite for a fixed budget and reports what did
 not hold.
 
-	leita-fuzz search -seed=1 -iters=64 -for=2m
+	just fuzz search 1 2m
 
-The exit status is 0 when every property held and 1 when one did not. With a
+just fuzz builds this program and runs it, locally and in CI. The seed is
+printed before the first case, and a failure prints the command that runs
+it again. The exit status is 0 when every property held and 1 when one did not. With a
 corpus directory set, the case about to run is written first, so a crash
 leaves the input that caused it. -isolate runs each case in a child process.
 */
@@ -83,6 +85,12 @@ main :: proc() {
 	if opts.duration > 0 && opts.iterations == 0 {
 		opts.iterations = max(int)
 	}
+	if opts.seed == 0 {
+		// The clock, taken here so the seed is known before the run, and a
+		// run that is killed still told us which one it was.
+		opts.seed = u64(time.now()._nsec) | 1
+	}
+	fmt.eprintfln("leita-fuzz: seed %d", opts.seed)
 
 	failed := false
 	for r in pick(wanted[:]) {
@@ -111,7 +119,10 @@ main :: proc() {
 		)
 		for f in report.failures {
 			fmt.eprintfln("  %s/%s [%v]: %s", r.name, f.property, f.outcome, f.detail)
-			fmt.eprintfln("    replay with: leita-fuzz %s -seed=%d", r.name, report.seed)
+			fmt.eprintfln("    replay with: %s", replay_command(r.name, report.seed, f.iteration, opts.isolate))
+			if f.saved != "" {
+				fmt.eprintfln("    shrunk case saved: %s (replayed first on every run)", f.saved)
+			}
 		}
 		if len(report.failures) > 0 {
 			failed = true
@@ -120,6 +131,20 @@ main :: proc() {
 	if failed {
 		os.exit(1)
 	}
+}
+
+// replay_command is the just command that reaches a failure again: the
+// seed fixes every case in order, so the cases up to and including the
+// failing one, with no wall clock to cut the run short.
+@(private)
+replay_command :: proc(suite: string, seed: u64, iteration: int, isolate: bool) -> string {
+	return fmt.tprintf(
+		"just fuzz %s %d 0 -iters=%d%s",
+		suite,
+		seed,
+		iteration + 1,
+		" -isolate" if isolate else "",
+	)
 }
 
 @(private)
@@ -181,7 +206,9 @@ note :: proc(format: string, args: ..any) {
 	fmt.eprintln()
 }
 
-USAGE :: `usage: leita-fuzz [suite...] [-seed=N] [-iters=N] [-for=2m] [-entropy=N]
+USAGE :: `usage: just fuzz [suite] [seed] [duration] [flags...]
+       (seed 0 takes the clock, duration 0 sets no limit)
+       leita-fuzz [suite...] [-seed=N] [-iters=N] [-for=2m] [-entropy=N]
                [-shrink=N] [-no-shrink] [-corpus=DIR] [-no-corpus]
                [-isolate] [-stop] [-quiet]
 

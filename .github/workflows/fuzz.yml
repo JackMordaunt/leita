@@ -31,6 +31,17 @@ jobs:
           submodules: true
           persist-credentials: false
       - uses: ./.github/actions/setup
+      # The same command as a local run: just fuzz [suite] [seed] [duration].
+      # It prints the seed first and, on a failure, the command that replays it.
       - name: fuzz
         timeout-minutes: 10
-        run: just fuzz "-seed=1 -iters=64 -for=2m"
+        run: just fuzz
+      # A failing case is saved beside its suite. The runner is thrown away,
+      # so keep the cases for a person to commit.
+      - name: keep failing cases
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: fuzz-cases
+          path: "*/fuzz/corpus/*.case"
+          if-no-files-found: ignore
