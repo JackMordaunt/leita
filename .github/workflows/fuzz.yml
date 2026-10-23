@@ -31,11 +31,25 @@ jobs:
           submodules: true
           persist-credentials: false
       - uses: ./.github/actions/setup
+      # The tree suite builds mounts in a user namespace. Ubuntu 24.04 refuses
+      # one to a process without an AppArmor profile; where the sysctl is not
+      # there or cannot be set, the suite says it skipped its mounts.
+      - name: allow user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
       # The same command as a local run: just fuzz [suite] [seed] [duration].
       # It prints the seed first and, on a failure, the command that replays it.
       - name: fuzz
         timeout-minutes: 10
         run: just fuzz
+      # The push-time seed set for the filesystem suite: seed 1 ran above with
+      # every suite; these are four more, a fixed 128 cases each, so a run is
+      # the same every time and stays under a minute.
+      - name: fuzz tree seeds
+        timeout-minutes: 10
+        run: |
+          for seed in 2 3 4 5; do
+            just fuzz tree "$seed" 0 -iters=128
+          done
       # A failing case is saved beside its suite. The runner is thrown away,
       # so keep the cases for a person to commit.
       - name: keep failing cases

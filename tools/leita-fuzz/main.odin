@@ -25,19 +25,35 @@ import history_fuzz "../../history/fuzz"
 import ntfs_fuzz "../../ntfs/fuzz"
 import scan_fuzz "../../scan/fuzz"
 import search_fuzz "../../search/fuzz"
+import walk_fuzz "../../walk/fuzz"
 
 Runner :: struct {
 	name:   string,
 	corpus: string,
 	run:    proc(opts: harness.Opts, allocator := context.allocator) -> harness.Report,
+	// A suite whose cases touch the machine runs each in a child process, so
+	// that a crash or a hang is a result and the case after it starts clean.
+	isolate: bool,
+	// Why part of the suite will not run on this host, "" if all of it will.
+	skip_reason: proc() -> string,
+	// How long a child may take, 0 for the harness's own limit.
+	limit:   time.Duration,
 }
 
 runners := []Runner {
-	{"btrfs", btrfs_fuzz.CORPUS, btrfs_fuzz.run},
-	{"history", history_fuzz.CORPUS, history_fuzz.run},
-	{"ntfs", ntfs_fuzz.CORPUS, ntfs_fuzz.run},
-	{"scan", scan_fuzz.CORPUS, scan_fuzz.run},
-	{"search", search_fuzz.CORPUS, search_fuzz.run},
+	{name = "btrfs", corpus = btrfs_fuzz.CORPUS, run = btrfs_fuzz.run},
+	{name = "history", corpus = history_fuzz.CORPUS, run = history_fuzz.run},
+	{name = "ntfs", corpus = ntfs_fuzz.CORPUS, run = ntfs_fuzz.run},
+	{name = "scan", corpus = scan_fuzz.CORPUS, run = scan_fuzz.run},
+	{name = "search", corpus = search_fuzz.CORPUS, run = search_fuzz.run},
+	{
+		name = "tree",
+		corpus = walk_fuzz.CORPUS,
+		run = walk_fuzz.run,
+		isolate = true,
+		skip_reason = walk_fuzz.skip_reason,
+		limit = walk_fuzz.CASE_TIMEOUT_SECONDS * time.Second,
+	},
 }
 
 main :: proc() {
@@ -106,6 +122,17 @@ main :: proc() {
 			suite_opts.corpus_dir = string(dir)
 		case:
 			suite_opts.corpus_dir = r.corpus
+		}
+		if r.isolate {
+			suite_opts.isolate = true
+		}
+		if r.limit > 0 {
+			suite_opts.case_timeout = r.limit
+		}
+		if r.skip_reason != nil {
+			if why := r.skip_reason(); why != "" {
+				fmt.eprintfln("%s: skipped what needs a mount: %s", r.name, why)
+			}
 		}
 		report := r.run(suite_opts)
 		fmt.printfln(
@@ -212,6 +239,7 @@ USAGE :: `usage: just fuzz [suite] [seed] [duration] [flags...]
                [-shrink=N] [-no-shrink] [-corpus=DIR] [-no-corpus]
                [-isolate] [-stop] [-quiet]
 
-suites: btrfs, history, ntfs, scan, search. With none named, every suite runs.
+suites: btrfs, history, ntfs, scan, search, tree. With none named, every suite runs.
 Each suite keeps its regressions beside its source and replays them first.
--corpus=DIR uses DIR/<suite> instead. -isolate runs each case in a child.`
+-corpus=DIR uses DIR/<suite> instead. -isolate runs each case in a child; tree
+always does, and needs a mount namespace, which just fuzz enters.`
