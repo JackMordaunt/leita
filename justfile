@@ -423,7 +423,10 @@ test: sqlite
 fuzz suite="" seed="1" duration="2m" *extra: sqlite
     mkdir -p build/debug
     {{odin}} build tools/leita-fuzz -debug {{san}} {{flags}} {{curl_open}} -out:build/debug/leita-fuzz{{exe}}
-    {{just_executable()}} --justfile {{justfile()}} _in-namespace build/debug/leita-fuzz{{exe}} {{suite}} -seed={{seed}} {{ if duration == "0" { "" } else { "-for=" + duration } }} -iters=64 {{extra}}
+    # LeakSanitizer reports two allocations the Odin runtime makes at start-up (args,
+    # 670 bytes), on some runs and not others, whatever the suite; the debug
+    # allocator reports a leak of the suite's own. ASAN_OPTIONS from the caller wins.
+    ASAN_OPTIONS="${ASAN_OPTIONS:-detect_leaks=0}" {{just_executable()}} --justfile {{justfile()}} _in-namespace build/debug/leita-fuzz{{exe}} {{suite}} -seed={{seed}} {{ if duration == "0" { "" } else { "-for=" + duration } }} -iters=64 {{extra}}
 
 # Run a command in a user and mount namespace of its own, where this host gives
 # one, so that it can mount without root; as it is where it does not. Linux only.
