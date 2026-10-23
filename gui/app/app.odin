@@ -217,6 +217,11 @@ Desk :: struct {
 	// notice was closed, owned. The counts are how many automatic and manual
 	// checks this window started.
 	update_time:         ^Update_Time,
+	// Set, a scan walks the directories instead of reading the volume's master
+	// file table. Timed in CI, each such scan of a four-file folder took 5 to 30 s on
+	// the hosted Windows runner (runs 40020856828 to 40020975869), against the
+	// tests' 30 s settle.
+	walk_only:           bool,
 	update_opened_set:   bool,
 	update_opened_mono:  i64,
 	update_startup_done: bool,
@@ -302,6 +307,7 @@ init :: proc(
 	update_key: []byte = nil,
 	update_exe := "",
 	update_time: ^Update_Time = nil,
+	walk_only := false,
 	allocator := context.allocator,
 ) {
 	ui.inbox_init(&h.inbox, allocator)
@@ -330,6 +336,7 @@ init :: proc(
 	}
 	h.desk.update_exe = update_exe
 	h.desk.update_time = update_time
+	h.desk.walk_only = walk_only
 	msg.init(h.desk.words, .English)
 	history_open(&h.desk, kept)
 	settings_open(&h.desk, licence.path_beside(kept, context.temp_allocator, settings.FILE))
@@ -749,6 +756,9 @@ scan_begin :: proc(d: ^Desk, path: string, cut := false) {
 	if err != nil {
 		s.problem = strings.clone(say(d, .Cannot_Scan, path, fmt.tprint(err)))
 		return
+	}
+	if d.walk_only && choice.engine == .Mft {
+		choice.engine = .Walk
 	}
 	s.resolved = true
 	s.fill.target = target

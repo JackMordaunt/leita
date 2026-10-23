@@ -79,6 +79,7 @@ rig_open :: proc(
 	update_key: []byte = nil,
 	update_exe := "",
 	update_time: ^Update_Time = nil,
+	mft := false,
 ) {
 	if !made_up {
 		env_share()
@@ -102,6 +103,7 @@ rig_open :: proc(
 		update_key = update_key,
 		update_exe = update_exe,
 		update_time = update_time,
+		walk_only = !mft,
 	)
 	r.data = data_host(&r.h)
 	view.model_init(&r.m, path)
@@ -1313,6 +1315,36 @@ hovering_a_contents_row_lights_its_arc_and_its_box :: proc(t: ^testing.T) {
 	testing.expect(t, ui.probe_tagged(&r.p, said), "hovering the row lights notes.txt's box")
 }
 
+/*
+Every other rig walks its folder (Desk.walk_only), since each MFT read took 5 to
+30 s on the hosted Windows runner and four rigs ran side by side against settle's
+30 s (CI runs 39998911426, 40024945150, 40024978574). This is the one window scan
+left on that reader. A run that is not elevated cannot open the volume and walks
+it, so there the engine is not asserted.
+*/
+@(test)
+a_windows_scan_reaches_done_on_the_reader_the_volume_allows :: proc(t: ^testing.T) {
+	when ODIN_OS == .Windows {
+		root := fixture(t, "icicle")
+		defer os.remove_all(root)
+		r: Rig
+		rig_open(&r, root, mft = true)
+		defer rig_close(&r)
+		testing.expect(t, settle(&r, "Done"))
+		s := r.h.desk.scan
+		if !testing.expect(t, s != nil) {
+			return
+		}
+		// Not elevated, the volume cannot be opened and the folder is walked.
+		if s.slow {
+			testing.expect_value(t, s.engine, scan.Engine.Walk)
+		} else {
+			testing.expect_value(t, s.engine, scan.Engine.Mft)
+		}
+		testing.expect(t, settle(&r, "274.4 kB in 2 items"))
+	}
+}
+
 @(test)
 the_icicle_opens_a_bar_and_its_top_goes_up :: proc(t: ^testing.T) {
 	root := fixture(t, "icicle")
@@ -1855,8 +1887,7 @@ reclaim_does_not_count_a_partial_delete_as_deleted :: proc(t: ^testing.T) {
 	// Root, or Windows, whose read-only attribute on a folder guards nothing in it,
 	// can still delete from it, so nothing would be left over.
 	if os.make_directory(fmt.tprintf("%s/probe", web)) == nil {
-		//review:ignore skips-in-normal-conditions root and Windows can still create inside a read-only directory, so this fixture cannot show a partial delete there
-		log.warn("skipped: a read-only folder does not stop a delete here")
+				log.warn("skipped: a read-only folder does not stop a delete here")
 		return
 	}
 	confirm(t, &r, "Clean up", "Delete")
