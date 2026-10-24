@@ -188,7 +188,17 @@ read_whole :: proc(fx: ^Fixture, start: int, w: ^Scan_Result, allocator: runtime
 // read_update reads the directory of node `start` again from the tree `base`,
 // which was read before and has not changed, as the probe-based update does.
 @(private)
-read_update :: proc(fx: ^Fixture, start: int, base: ^scan.Tree, w: ^Scan_Result, allocator: runtime.Allocator) -> (class, what: string) {
+read_update :: proc(
+	fx: ^Fixture,
+	start: int,
+	base: ^scan.Tree,
+	w: ^Scan_Result,
+	allocator: runtime.Allocator,
+	since := i64(0),
+	restat := false,
+) -> (
+	class, what: string,
+) {
 	if scan.tree_init(&w.tree, 1) != .None {
 		return "walk", "no tree"
 	}
@@ -199,7 +209,12 @@ read_update :: proc(fx: ^Fixture, start: int, base: ^scan.Tree, w: ^Scan_Result,
 	u := walk.Update {
 		base  = base,
 		probe = true,
-		since = time.now()._nsec,
+		since = since if since != 0 else time.now()._nsec,
+	}
+	if restat {
+		// A file written in place moves only its own time, not its directory's
+		// (update.odin, Update): ask each file of a byte or more its size again.
+		u.restat, u.slices = 1, 0
 	}
 	err := walk.update(fx.paths[start], &u, &w.tree, walk.Config{})
 	if restore != nil {

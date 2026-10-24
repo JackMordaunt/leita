@@ -3,6 +3,7 @@ Package walk_fuzz runs the walk over filesystems made from a spec.
 
 	model  the model agrees with itself and the shrinker keeps a spec valid; no disk
 	scan   the walk of a built spec finds what the model says, again, and updated
+	churn  the walk of a tree a thread is changing finds only what could have been (churn.odin)
 
 A case draws a tree spec (spec.odin) from its bytes: nested directories, a table
 of file kinds, a mount tree. The model (model.odin) says what a scan of it must
@@ -25,7 +26,7 @@ import harness "jm:fuzz"
 
 Case :: struct {}
 
-properties := []harness.Property(Case){{"model", check_model}, {"scan", check_scan}}
+properties := []harness.Property(Case){{"model", check_model}, {"scan", check_scan}, {"churn", check_churn}}
 
 CORPUS :: "walk/fuzz/corpus"
 

@@ -1,5 +1,6 @@
 package walk_fuzz
 
+import "core:fmt"
 import "core:log"
 import "core:os"
 import "core:strings"
@@ -28,13 +29,30 @@ properties_hold :: proc(t: ^testing.T) {
 	}
 }
 
+// cannot_mount says a test that builds a tree has nothing to run on: a host with
+// no namespace is not a failure, unless the run says mounts must work, as walk's
+// own mount tests do.
+@(private = "file")
+cannot_mount :: proc(t: ^testing.T) -> bool {
+	why := skip_reason()
+	if why == "" {
+		return false
+	}
+	if os.get_env("LEITA_MOUNT_TEST", context.temp_allocator) != "" {
+		testing.fail_now(t, "LEITA_MOUNT_TEST is set, but no tree could be built")
+	}
+	log.warnf("skipped: %s; just test runs this in a namespace", why)
+	return true
+}
+
 @(test)
 suite_is_complete :: proc(t: ^testing.T) {
 	s := suite()
 	testing.expect_value(t, s.name, "tree")
-	testing.expect_value(t, len(s.properties), 2)
+	testing.expect_value(t, len(s.properties), 3)
 	testing.expect(t, s.properties[0].check == check_model, "model runs check_model")
 	testing.expect(t, s.properties[1].check == check_scan, "scan runs check_scan")
+	testing.expect(t, s.properties[2].check == check_churn, "churn runs check_churn")
 }
 
 @(test)
@@ -252,7 +270,7 @@ model_stops_at_a_bind_inside_another :: proc(t: ^testing.T) {
 @(test)
 walk_reads_a_bind_of_an_unreadable_tree :: proc(t: ^testing.T) {
 	context.allocator = context.temp_allocator
-	if skip_reason() != "" {
+	if cannot_mount(t) {
 		return
 	}
 	spec := Spec {
@@ -291,6 +309,71 @@ draws_hidden_binds :: proc(t: ^testing.T) {
 		}
 	}
 	testing.expect(t, hidden_binds > 0, "no bind of a directory below an unreadable one was drawn in 600 specs")
+}
+
+// The mutator and the scan must overlap, or the churn property only ever checks
+// a tree before or after: a script that adds files one at a time to a directory
+// is met part way by some scan.
+@(test)
+scans_meet_the_tree_part_way :: proc(t: ^testing.T) {
+	context.allocator = context.temp_allocator
+	if cannot_mount(t) {
+		return
+	}
+	spec := Spec {
+		nodes = []Node{{id = 0, parent = NONE, kind = .Dir, target = NONE}, {id = 1, parent = 0, name = "d1", kind = .Dir, target = NONE}},
+	}
+	ops := make([]Op, MAX_OPS)
+	for &op, i in ops {
+		op = Op {
+			kind   = .Create,
+			id     = i + 2,
+			parent = i % 2,
+			name   = fmt.tprintf("n%d", i),
+			size   = 1,
+		}
+	}
+	met := 0
+	for _ in 0 ..< 40 {
+		class, what := run_churn(spec, ops, midway = &met)
+		testing.expectf(t, class == "", "%s: %s", class, what)
+		if met > 0 {
+			return
+		}
+	}
+	testing.expect(t, false, "no scan in 40 runs met the tree part way through the ops")
+}
+
+// A rename moves a file between two directories: a scan may meet it at both ends,
+// and with one name the walk cannot tell it is the same file, so that is two
+// files. The bounds allow it; a count past them is a failure.
+@(test)
+bounds_allow_a_file_met_twice :: proc(t: ^testing.T) {
+	context.allocator = context.temp_allocator
+	spec := Spec {
+		nodes = []Node {
+			{id = 0, parent = NONE, kind = .Dir, target = NONE},
+			{id = 1, parent = 0, name = "d1", kind = .Dir, target = NONE},
+			{id = 2, parent = 0, name = "f2", kind = .File, size = 4096, target = NONE},
+		},
+	}
+	ops := []Op{{kind = .Rename, id = 2, parent = 1, name = "r2"}}
+	_, ok := replay(spec, ops)
+	testing.expect(t, ok)
+	limits := bounds(spec, ops, false)
+	testing.expect_value(t, limits.names, [2]int{0, 2})
+	testing.expect_value(t, limits.files, [2]int{0, 2})
+	// Twice, and charged twice.
+	both := Tally{files = 2, dirs = 2}
+	testing.expect_value(t, bounds_fault(limits, both, 8192, 0), "")
+	// Three is more than there ever were; so is a bind where there was none.
+	testing.expect(t, bounds_fault(limits, Tally{files = 3, dirs = 2}, 0, 0) != "")
+	testing.expect(t, bounds_fault(limits, Tally{files = 1, dirs = 3}, 0, 0) != "")
+	// A file that was there throughout cannot be missing.
+	still := []Op{{kind = .Create, id = 3, parent = 0, name = "f3", size = 1}}
+	kept := bounds(spec, still, false)
+	testing.expect(t, bounds_fault(kept, Tally{dirs = 2}, 0, 4096) != "")
+	testing.expect_value(t, bounds_fault(kept, Tally{files = 1, dirs = 2}, 4096, 4096), "")
 }
 
 // Shrinking a spec stops at the smallest that still fails, and keeps it valid.

@@ -3,9 +3,12 @@ package walk_fuzz
 import "base:intrinsics"
 import "base:runtime"
 import "core:fmt"
+import "core:mem"
 import "core:os"
 import "core:strings"
 import "core:sys/linux"
+import "core:thread"
+import "core:time"
 
 /*
 The Linux materialiser builds a spec under a temp directory. A tmpfs mount and a
@@ -341,4 +344,143 @@ sizes_match :: proc(spec: Spec, fx: ^Fixture, allocator := context.temp_allocato
 		}
 	}
 	return ""
+}
+
+/*
+The mutator is a thread that does a script of ops (mutate.odin) to the real files
+while the caller scans. It waits to be released, so the caller can start a scan
+at the same moment, and sleeps a little between ops so that a scan of a small tree
+is still under way for several of them. It keeps its own map of paths, as the
+caller reads the fixture's, and hands it over when it is joined.
+*/
+Churn :: struct {
+	ops:       []Op,
+	paths:     map[int]string, // the mutator's own, allocated from `allocator`
+	go:        u32,
+	done:      u32,
+	err:       string, // allocated from `allocator`
+	worker:    ^thread.Thread,
+	allocator: runtime.Allocator, // the mutator's memory, which outlives the thread's own context
+}
+
+// PAUSE is how long the mutator rests between ops.
+PAUSE :: 20 * time.Microsecond
+
+// start_churn starts the mutator for a built fixture. It does nothing until
+// `release_churn`.
+start_churn :: proc(fx: ^Fixture, ops: []Op, allocator: runtime.Allocator) -> ^Churn {
+	c := new(Churn, allocator)
+	c.ops = ops
+	c.allocator = allocator
+	c.paths = make(map[int]string, allocator)
+	for id, p in fx.paths {
+		c.paths[id] = strings.clone(p, allocator)
+	}
+
+
+	c.worker = thread.create_and_start_with_data(c, proc(data: rawptr) {
+		c := (^Churn)(data)
+		for intrinsics.atomic_load(&c.go) == 0 {
+			thread.yield()
+		}
+		for op in c.ops {
+			if why := do_op(c, op); why != "" {
+				c.err = why
+				break
+			}
+			time.sleep(PAUSE)
+		}
+		intrinsics.atomic_store(&c.done, 1)
+	})
+	return c
+}
+
+release_churn :: proc(c: ^Churn) {
+	intrinsics.atomic_store(&c.go, 1)
+}
+
+// churn_finished says whether the mutator has done its last op.
+churn_finished :: proc(c: ^Churn) -> bool {
+	return intrinsics.atomic_load(&c.done) == 1
+}
+
+// finish_churn waits for the mutator, puts the paths it left into the fixture,
+// and says what it could not do, "" if nothing.
+finish_churn :: proc(fx: ^Fixture, c: ^Churn, allocator: runtime.Allocator) -> string {
+	release_churn(c)
+	thread.join(c.worker)
+	thread.destroy(c.worker)
+	for id, p in c.paths {
+		fx.paths[id] = strings.clone(p, fx.allocator)
+		delete(p, c.allocator)
+	}
+	delete(c.paths)
+	err := strings.clone(c.err, allocator)
+	delete(c.err, c.allocator)
+	free(c, c.allocator)
+	return err
+}
+
+@(private)
+do_op :: proc(m: ^Churn, op: Op) -> string {
+	heap := m.allocator
+	switch op.kind {
+	case .Create:
+		path := fmt.aprintf("%s/%s", m.paths[op.parent], op.name, allocator = heap)
+		m.paths[op.id] = path
+		// A path and a message, within what a path may be.
+		space: [16384]u8
+		scratch: mem.Arena
+		mem.arena_init(&scratch, space[:])
+		if why := make_file(path, op.size, .File, mem.arena_allocator(&scratch)); why != "" {
+			return strings.clone(why, heap)
+		}
+	case .Delete:
+		path := m.paths[op.id]
+		cpath := named(m, path)
+		defer delete(cpath, m.allocator)
+		if e := linux.unlink(cpath); e != .NONE {
+			return format_reason(heap, "unlink %s: %v", path, e)
+		}
+	case .Rename:
+		from := m.paths[op.id]
+		to := fmt.aprintf("%s/%s", m.paths[op.parent], op.name, allocator = heap)
+		cfrom, cto := named(m, from), named(m, to)
+		defer delete(cfrom, m.allocator)
+		defer delete(cto, m.allocator)
+		if e := linux.rename(cfrom, cto); e != .NONE {
+			why := format_reason(heap, "rename %s to %s: %v", from, to, e)
+			delete(to, heap)
+			return why
+		}
+		delete(from, heap)
+		m.paths[op.id] = to
+	case .Grow:
+		path := m.paths[op.id]
+		cpath := named(m, path)
+		defer delete(cpath, m.allocator)
+		fd, e := linux.open(cpath, {.WRONLY, .APPEND})
+		if e != .NONE {
+			return format_reason(heap, "open %s: %v", path, e)
+		}
+		defer linux.close(fd)
+		chunk: [4096]u8
+		for &x, i in chunk {
+			x = u8('z' - i % 26)
+		}
+		for left := op.size; left > 0; {
+			n, we := linux.write(fd, chunk[:min(u64(len(chunk)), left)])
+			if we != .NONE {
+				return format_reason(heap, "append to %s: %v", path, we)
+			}
+			left -= u64(n)
+		}
+	}
+	return ""
+}
+
+// named is a path as C wants it, in the mutator's memory; the caller frees it.
+@(private)
+named :: proc(m: ^Churn, path: string) -> cstring {
+	return c(path, m.allocator)
 }
