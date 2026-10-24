@@ -29,6 +29,9 @@
 #   just gui-test             run the window's tests, the host's on a real directory
 #   just package              Linux: the release as an AppImage, a .deb and an .rpm
 #                             -> build/package/
+#   just journeys             the built command line driven end to end on the made-up disk
+#                             (LEITA_SYNTHETIC), as a person would: scan, limits, reports,
+#                             history, monitoring, licence -> build/test/journeys
 #   just lifecycle            native lifecycle evidence, then the release gate
 #
 # The debug allocator, flow, sqlite3, stream and ui come from the jm collection, pinned as
@@ -630,6 +633,13 @@ schedule-evidence:
     {{odin}} test gui/app -debug {{san}} {{flags}} {{curl_open}} {{sdl3_link}} -define:ODIN_TEST_NAMES=leita_app.automatic_checks_once_at_startup_and_once_a_day,leita_app.automatic_checks_reach_the_release_through_the_host -out:build/test/app/schedule-evidence{{exe}}
 
 # Run the window's suites under ASan
+# The command line as a process, on the made-up disk, in a home of its own per
+# journey; journeys/harness_test.odin says how. The binary is the debug build, or
+# LEITA_BIN.
+journeys: cli
+    mkdir -p build/test
+    {{odin}} test journeys -debug {{san}} {{flags}} -out:build/test/journeys{{exe}}
+
 gui-test: deps
     mkdir -p build/test/app
     {{odin}} test cmd/gui -debug {{san}} {{flags}} {{curl_open}} {{sdl3_link}} -out:build/test/app/{{gui}}-main{{exe}}
