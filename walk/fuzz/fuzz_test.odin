@@ -297,7 +297,12 @@ model_counts_a_known_tree :: proc(t: ^testing.T) {
 	_, ok := valid(spec)
 	testing.expect(t, ok)
 	whole, _ := expected(spec, 0, false)
-	testing.expect_value(t, whole, Tally{files = 1, extras = 1, dirs = 2, symlinks = 1, mounts = 2, apparent = 4096})
+	when JUNCTION_BINDS {
+		// The bind b7 is a junction, a link.
+		testing.expect_value(t, whole, Tally{files = 1, extras = 1, dirs = 2, symlinks = 2, mounts = 1, apparent = 4096})
+	} else {
+		testing.expect_value(t, whole, Tally{files = 1, extras = 1, dirs = 2, symlinks = 1, mounts = 2, apparent = 4096})
+	}
 	inner, _ := expected(spec, 4, false)
 	testing.expect_value(t, inner, Tally{files = 1, dirs = 1, apparent = 1})
 	testing.expect_value(t, expected_flat(spec, 0, false), whole)
@@ -323,13 +328,20 @@ model_walks_a_bind_of_an_unreadable_tree :: proc(t: ^testing.T) {
 	}
 	_, ok := valid(spec)
 	testing.expect(t, ok)
-	// Denied: b5 shows d2 and its file, and the tmpfs in d2 is an empty directory in it.
 	closed, _ := expected(spec, 0, true)
-	testing.expect_value(t, closed, Tally{files = 1, dirs = 4, mounts = 1, unread = 1, apparent = 4096})
-	testing.expect_value(t, expected_flat(spec, 0, true), closed)
-	// Allowed: d2 is read where it lies, and both binds are mounts of it.
 	open, _ := expected(spec, 0, false)
-	testing.expect_value(t, open, Tally{files = 1, dirs = 3, mounts = 3, apparent = 4096})
+	when JUNCTION_BINDS {
+		// Both binds are junctions, links that are not followed, so d2 is
+		// counted only where it lies, when it can be read.
+		testing.expect_value(t, closed, Tally{dirs = 2, symlinks = 2, unread = 1})
+		testing.expect_value(t, open, Tally{files = 1, dirs = 3, symlinks = 2, mounts = 1, apparent = 4096})
+	} else {
+		// Denied: b5 shows d2 and its file, and the tmpfs in d2 is an empty directory in it.
+		testing.expect_value(t, closed, Tally{files = 1, dirs = 4, mounts = 1, unread = 1, apparent = 4096})
+		// Allowed: d2 is read where it lies, and both binds are mounts of it.
+		testing.expect_value(t, open, Tally{files = 1, dirs = 3, mounts = 3, apparent = 4096})
+	}
+	testing.expect_value(t, expected_flat(spec, 0, true), closed)
 	testing.expect_value(t, expected_flat(spec, 0, false), open)
 }
 
@@ -349,8 +361,13 @@ model_stops_at_a_bind_inside_another :: proc(t: ^testing.T) {
 		},
 	}
 	got, _ := expected(spec, 0, true)
-	// b5 is walked, with d3 in it; b4, of d3, is a mount.
-	testing.expect_value(t, got, Tally{dirs = 4, mounts = 1, unread = 1})
+	when JUNCTION_BINDS {
+		// Two junctions, neither followed.
+		testing.expect_value(t, got, Tally{dirs = 2, symlinks = 2, unread = 1})
+	} else {
+		// b5 is walked, with d3 in it; b4, of d3, is a mount.
+		testing.expect_value(t, got, Tally{dirs = 4, mounts = 1, unread = 1})
+	}
 	testing.expect_value(t, expected_flat(spec, 0, true), got)
 }
 

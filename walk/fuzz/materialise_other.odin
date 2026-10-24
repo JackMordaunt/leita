@@ -1,10 +1,11 @@
 #+build !linux
 #+build !darwin
+#+build !windows
 package walk_fuzz
 
-// probe says why no tree can be made here. Mounts are Linux's and macOS's.
+// probe says why no tree can be made here. Mounts are Linux's, macOS's and Windows'.
 probe :: proc(allocator := context.temp_allocator) -> (reason: string) {
-	return "the materialiser makes mounts, which only Linux and macOS do here"
+	return "the materialiser makes mounts, which only Linux, macOS and Windows do here"
 }
 
 fit :: proc(spec: Spec, allocator := context.temp_allocator) -> Spec {

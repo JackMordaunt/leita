@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# Run a command on Windows with NTFS volumes made for it: the partitions of one
+# expandable VHDX under the temp directory, each formatted NTFS with short (8.3)
+# names on and mounted in a folder there, the folders named in LEITA_FUZZ_NTFS
+# (';' between them). The walk fuzz suite builds each case on the first and
+# mounts the others inside it (walk/fuzz/materialise_windows.odin). The disk is
+# detached and removed when the command ends.
+#
+# diskpart needs an administrator. Without one the command runs without volumes,
+# and says so on stderr, as tools/in-namespace does without a namespace.
+#
+#   tools/ntfs-volumes build/debug/leita-fuzz.exe tree
+set -euo pipefail
+
+# One for the cases and one for each tmpfs a spec may mount: a spec draws at most
+# a few, so eight is more than the push-time seeds use.
+count=9
+
+if ! net session >/dev/null 2>&1; then
+    echo "ntfs-volumes: not an administrator: running without NTFS volumes, so nothing can be mounted" >&2
+    exec "$@"
+fi
+
+dir=$(mktemp -d "${TMPDIR:-/tmp}/leita-fuzz-ntfs.XXXXXX")
+wdir=$(cygpath -w "$dir")
+vhd="$wdir\\pool.vhdx"
+
+# diskpart reads a script; Git Bash would rewrite /s as a path without the
+# exclusion.
+diskpart_run() {
+    MSYS2_ARG_CONV_EXCL='*' diskpart /s "$(cygpath -w "$1")"
+}
+
+{
+    printf '%s\n' "create vdisk file=\"$vhd\" maximum=$((256 + 64 * count)) type=expandable"
+    printf '%s\n' "select vdisk file=\"$vhd\""
+    printf '%s\n' "attach vdisk"
+    printf '%s\n' "convert gpt"
+    for i in $(seq 0 $((count - 1))); do
+        mkdir -p "$dir/v$i"
+        size=64
+        [ "$i" = 0 ] && size=192
+        printf '%s\n' "create partition primary size=$size"
+        printf '%s\n' "format fs=ntfs unit=4096 quick label=leitafuzz$i"
+        printf '%s\n' "assign mount=\"$wdir\\v$i\""
+    done
+} >"$dir/make.txt"
+{
+    printf '%s\n' "select vdisk file=\"$vhd\""
+    printf '%s\n' "detach vdisk"
+} >"$dir/detach.txt"
+
+cleanup() {
+    diskpart_run "$dir/detach.txt" >/dev/null 2>&1 || true
+    rm -rf "$dir" 2>/dev/null || true
+}
+trap cleanup EXIT
+
+started=$(date +%s)
+if ! diskpart_run "$dir/make.txt" >"$dir/make.log" 2>&1; then
+    cat "$dir/make.log" >&2
+    echo "ntfs-volumes: diskpart could not make the volumes" >&2
+    exit 1
+fi
+
+folders=()
+for i in $(seq 0 $((count - 1))); do
+    folder="$wdir\\v$i"
+    # Short names are made per volume, and a volume formatted since Windows 8
+    # makes none. fsutil names a volume by its GUID path.
+    guid=$(MSYS2_ARG_CONV_EXCL='*' mountvol "$folder\\" /L | tr -d '\r[:space:]')
+    if ! MSYS2_ARG_CONV_EXCL='*' fsutil 8dot3name set "$guid" 0 >/dev/null 2>&1 &&
+        ! MSYS2_ARG_CONV_EXCL='*' fsutil 8dot3name set "$folder\\" 0 >/dev/null 2>&1; then
+        echo "ntfs-volumes: short names stay off on $folder" >&2
+    fi
+    folders+=("$folder")
+done
+echo "ntfs-volumes: $count NTFS volumes in $wdir in $(($(date +%s) - started))s" >&2
+
+LEITA_FUZZ_NTFS=$(IFS=';'; echo "${folders[*]}")
+export LEITA_FUZZ_NTFS
+# Not exec: the disk is detached once the command is done.
+"$@"

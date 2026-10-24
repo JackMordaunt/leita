@@ -1,10 +1,17 @@
 #!/usr/bin/env bash
 # Run a command in a user and mount namespace of its own, so that it can mount
-# without root, where the host gives one; as it is where it does not (macOS,
-# Windows, a Linux that forbids it, said on stderr).
+# without root, where the host gives one; as it is where it does not (macOS, a
+# Linux that forbids it, said on stderr). On Windows, with NTFS volumes made for
+# it instead (tools/ntfs-volumes).
 #
 #   tools/in-namespace build/debug/leita-fuzz tree
 set -euo pipefail
+case "$(uname -s)" in
+MINGW* | MSYS* | CYGWIN*)
+    # Windows has no namespace to enter: NTFS volumes are made instead.
+    exec "$(dirname "$0")/ntfs-volumes" "$@"
+    ;;
+esac
 if [ "$(uname -s)" = Linux ]; then
     if unshare --user --map-root-user --mount true 2>/dev/null; then
         exec unshare --user --map-root-user --mount "$@"

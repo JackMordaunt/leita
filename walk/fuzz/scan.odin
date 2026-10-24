@@ -141,6 +141,12 @@ scan_from :: proc(spec: Spec, fx: ^Fixture, start: int, allocator: runtime.Alloc
 			)
 		}
 	}
+
+	// Another reader of the same tree, where the host has one: the walk agrees
+	// with the model, so a disagreement is the other reader's.
+	if class, what = second_reader(spec, fx, start, allocator); class != "" {
+		return class, format_reason(allocator, "%s: %s", at, what)
+	}
 	if class, what = read_whole(fx, start, &second, allocator); class != "" {
 		return class, format_reason(allocator, "%s, again: %s", at, what)
 	}
@@ -163,8 +169,8 @@ scan_from :: proc(spec: Spec, fx: ^Fixture, start: int, allocator: runtime.Alloc
 	}
 	// Following links reads a tree again by each name that leads to it, and a
 	// loop of links must end: the scan comes back, with at least the directories
-	// and no fewer files than the scan that does not follow. Only Linux's walk
-	// ends a loop (walk.Config.follow), so elsewhere a tree with a link to a
+	// and no fewer files than the scan that does not follow. Linux's and Windows'
+	// walks end a loop (walk.Config.follow), so elsewhere a tree with a link to a
 	// directory is not followed: on macOS one hung the walk past the 30 s a case
 	// may take (CI run 40116061136, after "update done").
 	if !FOLLOW_ENDS_LOOPS && links_to_a_directory(spec) {
@@ -190,7 +196,7 @@ scan_from :: proc(spec: Spec, fx: ^Fixture, start: int, allocator: runtime.Alloc
 
 // FOLLOW_ENDS_LOOPS says whether the walk stops at a followed link that leads
 // back to a directory above it.
-FOLLOW_ENDS_LOOPS :: ODIN_OS == .Linux
+FOLLOW_ENDS_LOOPS :: ODIN_OS == .Linux || ODIN_OS == .Windows
 
 // links_to_a_directory says whether a symbolic link leads to a directory, which
 // may lead back to it.
@@ -311,13 +317,21 @@ add_up :: proc(w: ^Scan_Result) {
 	defer survey.rollup_destroy(&roll)
 	survey.rollup_advance(&roll, &w.tree)
 	w.disk = survey.total(&roll, u32(w.tree.root))
+
+	// What the volume came with is not the spec's, and tally_of leaves it out.
+	for i in 0 ..< scan.slots(&w.tree) {
+		n := scan.node(&w.tree, i)
+		if .Used in scan.node_flags(n) && n.parent == w.tree.root && from_volume(&w.tree, i) {
+			w.disk -= survey.total(&roll, i)
+		}
+	}
 }
 
 // tally_of is what the tree says it found.
 tally_of :: proc(t: ^scan.Tree) -> (out: Tally) {
 	for i in 0 ..< scan.slots(t) {
 		flags := scan.node_flags(scan.node(t, i))
-		if .Used not_in flags {
+		if .Used not_in flags || from_volume(t, i) {
 			continue
 		}
 		switch {

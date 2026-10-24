@@ -23,7 +23,15 @@ mounts inside it empty directories (a bind made without --rbind shows none of
 them). Of several binds of that tree, or of trees one inside another, only the
 one with the shortest way in, and of those the earliest made, is walked and
 the others are mounts (`hidden_peer`).
+
+On Windows a bind is made as a junction (materialise_windows.odin), and the walk
+records a junction as a link it does not follow, so there a bind counts as a
+symlink and the rule above never applies. A tmpfs is an NTFS volume mounted in
+the directory, which is a mount there as here.
 */
+
+// JUNCTION_BINDS says whether a bind is made as a junction, which the walk counts as a link.
+JUNCTION_BINDS :: ODIN_OS == .Windows
 
 // Tally is what a scan finds.
 Tally :: struct {
@@ -81,6 +89,8 @@ read :: proc(spec: Spec, start, dir: int, denies, view: bool, t: ^Tally, reps: ^
 			t.symlinks += 1
 		case .Mount:
 			switch {
+			case JUNCTION_BINDS && n.mount == .Bind:
+				t.symlinks += 1
 			case view:
 				t.dirs += 1
 			case walks_bind(spec, n, start, denies):
@@ -171,6 +181,8 @@ count_below :: proc(spec: Spec, start, place: int, denies, view: bool, t: ^Tally
 			t.symlinks += 1
 		case .Mount:
 			switch {
+			case JUNCTION_BINDS && n.mount == .Bind:
+				t.symlinks += 1
 			case view:
 				t.dirs += 1
 			case !walks_bind(spec, n, start, denies):
@@ -210,7 +222,7 @@ mount by its device), and no other bind shows its tree in a place the scan can
 open (`hidden_peer`).
 */
 walks_bind :: proc(spec: Spec, b: Node, start: int, denies: bool) -> bool {
-	if !hidden(spec, b, denies) || domain(spec, b.target) != domain(spec, b.parent) {
+	if JUNCTION_BINDS || !hidden(spec, b, denies) || domain(spec, b.target) != domain(spec, b.parent) {
 		return false
 	}
 	return !hidden_peer(spec, b, start, denies)

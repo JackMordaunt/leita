@@ -1,5 +1,5 @@
-# Bounded fuzz on Linux and macOS. test.yml is the correctness matrix and is
-# left alone; this workflow is the only fuzz job. The budget is a fixed seed, a
+# Bounded fuzz on Linux, macOS and Windows. test.yml is the correctness matrix
+# and is left alone; this workflow is the only fuzz job. The budget is a fixed seed, a
 # fixed case count and a wall clock, so a run is deterministic and cannot
 # grow. Suites replay the corpus committed beside them. A crash leaves a
 # breadcrumb there for the next run; committing that case is a person's job.
@@ -65,5 +65,38 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: fuzz-cases-${{ matrix.os }}
+          path: "*/fuzz/corpus/*.case"
+          if-no-files-found: ignore
+
+  # The same recipe on Windows, where tools/in-namespace hands the run to
+  # tools/ntfs-volumes: the runner is an administrator, so the tree suite builds
+  # on NTFS volumes of a VHDX, with junctions and mount points, and compares
+  # the MFT reader with the walk. ASan is off on Windows, as in test.yml.
+  fuzz-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          submodules: true
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: fuzz
+        timeout-minutes: 10
+        run: SAN='' just fuzz
+      - name: fuzz tree seeds
+        timeout-minutes: 15
+        run: |
+          for seed in 2 3 4 5; do
+            SAN='' just fuzz tree "$seed" 0 -iters=128
+          done
+      - name: keep failing cases
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: fuzz-cases-windows
           path: "*/fuzz/corpus/*.case"
           if-no-files-found: ignore
