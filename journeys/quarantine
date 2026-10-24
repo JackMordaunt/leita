@@ -1,0 +1,7 @@
+# Journeys held out of the gate, one package.name per line, each with a comment
+# naming the card that will bring it back. tools/journeys/run runs a held
+# journey after the others, alone; its failure is printed, never retried, and
+# does not fail the run. Nothing else skips or retries a journey.
+#
+# For example:
+# journeys_gui.a_search_finds_a_file_by_name_and_says_where_it_is  # card 0: why
