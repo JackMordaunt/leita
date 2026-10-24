@@ -893,7 +893,11 @@ frees_is_null_when_unknown_and_zero_when_exact :: proc(t: ^testing.T) {
 	// film.mkv is node 5. Another link keeps the data: exact 0, not its charge.
 	testing.expect(
 		t,
-		scan.account_set(&tree, 5, scan.Account{links = 2, logical = FIVE_GIB, known = {.Links, .Logical}}),
+		scan.account_set(
+			&tree,
+			5,
+			scan.Account{links = 2, logical = FIVE_GIB, known = {.Links, .Logical}},
+		),
 	)
 	// proj is node 1, a directory. A second link makes that node Exact 0, while
 	// the row's bytes are the children's charged total. frees stays null.
@@ -906,10 +910,21 @@ frees_is_null_when_unknown_and_zero_when_exact :: proc(t: ^testing.T) {
 		scan.account_set(
 			&tree,
 			4,
-			scan.Account{logical = 100, allocated = 80, links = 1, known = {.Logical, .Allocated, .Links}},
+			scan.Account {
+				logical = 100,
+				allocated = 80,
+				links = 1,
+				known = {.Logical, .Allocated, .Links},
+			},
 		),
 	)
-	testing.expect(t, scan.note_retention(&tree, {snapshots = .Present, purgeable = 4096, purgeable_known = true}))
+	testing.expect(
+		t,
+		scan.note_retention(
+			&tree,
+			{snapshots = .Present, purgeable = 4096, purgeable_known = true},
+		),
+	)
 
 	r := build(&tree, &roll, {engine = .Walk}, {top = 5})
 	defer destroy(&r)
@@ -965,4 +980,16 @@ frees_is_null_when_unknown_and_zero_when_exact :: proc(t: ^testing.T) {
 	testing.expect(t, saw0 && saw_null)
 	text := strings.to_string(sb)
 	testing.expect(t, !strings.contains(text, fmt.tprintf("\"frees\": %d", FIVE_GIB)))
+}
+
+
+// Run as anyone but root, the report lists every candidate find made; the system's
+// permission checks decide what Clean may delete (offered).
+@(test)
+a_report_not_run_as_root_lists_every_candidate :: proc(t: ^testing.T) {
+	found := []reclaim.Candidate {
+		{node = 1, path = "/home/ann/a/node_modules", bytes = 10, category = .Dependencies},
+		{node = 2, path = "/home/bob/b/node_modules", bytes = 20, category = .Dependencies},
+	}
+	testing.expect_value(t, len(offered(found, {"/home/ann", "1000"}, 1000)), 2)
 }

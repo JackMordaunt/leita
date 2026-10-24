@@ -4,6 +4,8 @@ package reclaim
 import "core:strings"
 import "core:sys/posix"
 
+import "../home"
+
 // host_confine is where path leads on this machine, in the temp allocator.
 // Each component is resolved on its own, and ".." is applied only after a
 // directory that was entered. One realpath of the whole text is not proof:
@@ -156,4 +158,28 @@ finish_lexical :: proc(dir: string, parts: []string) -> (string, bool) {
 		}
 	}
 	return cur, true
+}
+
+/*
+refused_as_root is whether Reclaim, acting as user id euid, must leave the
+directory at path alone: as root, one that is not under the home of who, the
+person sudo ran it for, or not theirs (root_may_delete), or whose owner cannot be
+read. Run as anyone else, it is left to the system's permission checks. The
+window and the report ask this alike, so both list what Clean may delete.
+*/
+refused_as_root :: proc(
+	path: string,
+	who: home.User,
+	euid: u32,
+	allocator := context.temp_allocator,
+) -> bool {
+	if euid != 0 {
+		return false
+	}
+	st: posix.stat_t
+	cpath := strings.clone_to_cstring(path, allocator)
+	if posix.lstat(cpath, &st) != .OK {
+		return true
+	}
+	return !root_may_delete(path, u32(st.st_uid), who, euid)
 }

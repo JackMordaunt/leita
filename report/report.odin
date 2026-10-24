@@ -163,10 +163,10 @@ path under the top, names joined by "/", "" for the top, as the window keeps
 them (history).
 */
 Options :: struct {
-	top:         int,
-	reclaim:     bool,
-	user:        home.User,
-	previous:    Maybe(Snapshot),
+	top:          int,
+	reclaim:      bool,
+	user:         home.User,
+	previous:     Maybe(Snapshot),
 	licensee:     string, // whose licence leita runs under, "" for none
 	free_export:  bool, // current-scan CSV or JSON with no licence and no earlier scan
 	earlier_kept: bool, // an earlier scan was kept and is not in previous
@@ -478,6 +478,31 @@ keep_largest :: proc(top: []Contender, count: ^int, cand: Contender) {
 	}
 }
 
+/*
+offered is found less what Reclaim, acting as user id euid, would not delete: run
+as root it leaves out what is not under the home of who, the person sudo ran it
+for, or not theirs (reclaim.refused_as_root), as the window does, so the report
+lists no other user's candidate. found is not changed.
+*/
+@(private)
+offered :: proc(
+	found: []reclaim.Candidate,
+	who: home.User,
+	euid: u32,
+	allocator := context.temp_allocator,
+) -> []reclaim.Candidate {
+	if euid != 0 {
+		return found
+	}
+	kept := make([dynamic]reclaim.Candidate, allocator)
+	for c in found {
+		if !reclaim.refused_as_root(c.path, who, euid, allocator) {
+			append(&kept, c)
+		}
+	}
+	return kept[:]
+}
+
 // candidates is what Reclaim finds under top, grouped as the window groups it.
 @(private)
 candidates :: proc(
@@ -525,6 +550,9 @@ candidates :: proc(
 	// The made-up disk is a Mac's.
 	platform := reclaim.Platform.Darwin if engine == .Synthetic else reclaim.HOST
 	found := reclaim.find(src, top, top_path, who, context.temp_allocator, platform)
+	if engine != .Synthetic {
+		found = offered(found, who, home.effective_uid())
+	}
 	// By category, and within one largest first as find left them.
 	slice.stable_sort_by(found, proc(a, b: reclaim.Candidate) -> bool {
 		return a.category < b.category

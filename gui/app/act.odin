@@ -356,16 +356,15 @@ alone: it is not under the home of who, the person sudo ran it for, or not their
 (reclaim.root_may_delete). One whose owner cannot be read is left alone too. Run
 as anyone else, it is left to the system's permission checks.
 */
-refused_as_root :: proc(path: string, who: home.User) -> bool {
+refused_as_root :: proc(
+	path: string,
+	who: home.User,
+	allocator := context.temp_allocator,
+) -> bool {
 	when ODIN_OS == .Windows {
 		return false
 	} else {
-		euid := home.effective_uid()
-		if euid != 0 {
-			return false
-		}
-		owner, ok := files.owner(path)
-		return !ok || !reclaim.root_may_delete(path, owner, who, euid)
+		return reclaim.refused_as_root(path, who, home.effective_uid(), allocator)
 	}
 }
 

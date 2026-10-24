@@ -32,11 +32,7 @@ sid :: proc(allocator := context.allocator) -> string {
 	// TOKEN_USER starts with a pointer. make([]byte) asks for alignment 1, and
 	// this arena only pads to the alignment it was asked for, so a USERPROFILE
 	// already stored here can leave the buffer off a pointer.
-	buf, aerr := mem.alloc_bytes(
-		int(needed),
-		align_of(win32.TOKEN_USER),
-		context.temp_allocator,
-	)
+	buf, aerr := mem.alloc_bytes(int(needed), align_of(win32.TOKEN_USER), context.temp_allocator)
 	if aerr != .None || len(buf) < int(needed) {
 		return ""
 	}
@@ -59,4 +55,9 @@ sid :: proc(allocator := context.allocator) -> string {
 user_destroy :: proc(u: ^User, allocator := context.allocator) {
 	delete(u.dir, allocator)
 	delete(u.uid, allocator)
+}
+
+// effective_uid is never 0 on Windows, which has no root to act as.
+effective_uid :: proc() -> u32 {
+	return max(u32)
 }
