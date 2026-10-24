@@ -983,6 +983,9 @@ largest :: proc(gtx: ^ui.Ctx, m: ^Model) {
 					if ui.widget_state(gtx, name.id).hovered {
 						m.row_hover_next = hover_of(f.node, f.within)
 					}
+					// The path starts under the icon, where the name's button
+					// starts its contents, not at the button's edge.
+					ui.inset(gtx, {left = tok.CONTROL_SMALL_PADDING_INLINE_CONDENSED})
 					if ui.row(gtx, gap = 8, align = .Center) {
 						ui.flexible(gtx, 1)
 						{
