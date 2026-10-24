@@ -26,7 +26,8 @@ png :: proc(h: ^render.Headless, path: string, movie: ^Movie = nil) -> bool {
 	image: bl.ImageCore
 	bl.image_init(&image)
 	defer bl.image_destroy(&image)
-	if bl.image_create(&image, 2560, 1640, .PRGB32) != 0 {return false}
+	w, ht := i32(h.p.size.x * 2), i32(h.p.size.y * 2)
+	if bl.image_create(&image, w, ht, .PRGB32) != 0 {return false}
 	render.render(&h.r, frame, &image, h.clear)
 	if movie != nil {movie_overlay(movie, &image)}
 	return(
@@ -117,6 +118,18 @@ main :: proc() {
 	)
 	defer render.headless_destroy(&h)
 	h.p.density = 2
+	// CAPTURE_SIZE=WxH lays the window out at another size, for a look at how
+	// it holds up narrower or shorter than the website's 1280x820.
+	size_text: [32]byte
+	size, size_err := os.lookup_env(size_text[:], "CAPTURE_SIZE")
+	if size_err == .Buffer_Full {fail("CAPTURE_SIZE is too long")}
+	if size_err == nil && size != "" {
+		w_text, _, h_text := strings.partition(size, "x")
+		w, w_ok := strconv.parse_f32(w_text)
+		ht, h_ok := strconv.parse_f32(h_text)
+		if !w_ok || !h_ok || w < 1 || ht < 1 {fail("CAPTURE_SIZE is WxH")}
+		h.p.size = {w, ht}
+	}
 	movie: Movie
 	movie_init(&movie)
 	defer movie_destroy(&movie)
