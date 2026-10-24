@@ -133,6 +133,13 @@ open :: proc(st: ^Store, path: string) -> sqlite3.Error {
 			_ = os.make_directory_all(dir)
 		}
 		prune_baselines(path, time.now())
+
+		// SQLite takes a file of one byte for an empty database and writes a
+		// new one over it. A file that holds anything and does not begin with
+		// SQLite's header is not a store, so it is refused and left as it was.
+		if !empty_or_sqlite(path) {
+			return sqlite3.Fault{code = .Not_A_Db, text = "file is not a database"}
+		}
 	}
 	// The window and the command line may both write at once: one waits for the
 	// other's write, a short transaction, rather than failing at once.
@@ -151,6 +158,24 @@ open :: proc(st: ^Store, path: string) -> sqlite3.Error {
 	}
 	st.db = db
 	return nil
+}
+
+// SQLITE_HEADER is the first 16 bytes of every SQLite database file.
+SQLITE_HEADER :: "SQLite format 3\x00"
+
+// empty_or_sqlite is true when path is missing, is empty, or begins with
+// SQLite's header: the files sqlite3.open may create or write to.
+@(private)
+empty_or_sqlite :: proc(path: string) -> bool {
+	f, err := os.open(path)
+	if err != nil {
+		return true
+	}
+	defer os.close(f)
+
+	head: [len(SQLITE_HEADER)]byte
+	n, _ := os.read_full(f, head[:])
+	return n == 0 || (n == len(head) && string(head[:]) == SQLITE_HEADER)
 }
 
 // ADDED_COLUMNS is each column added to snapshot since the store was first made,
