@@ -286,3 +286,19 @@ places_and_buttons_hold_still_through_every_state_of_the_switch :: proc(t: ^test
 	testing.expect(t, ui.probe_tagged(p, stopped), "the stopped recorder is said")
 	still(t, p, places, alerts, dialog)
 }
+
+// Webhooks names the product as the other dialogs do, and its heading sits
+// close over what it explains rather than a section's gap away.
+@(test)
+webhooks_explanation_names_leita_under_its_heading :: proc(t: ^testing.T) {
+	s: Monitor_Rig
+	monitor_open(&s)
+	defer monitor_close(&s)
+
+	p := &s.h.p
+	heading, has_heading := last_tag(p, "Webhooks")
+	explained, has_explained := last_tag(p, "Leita sends each new alert")
+	testing.expect(t, has_heading && has_explained, "the heading and its explanation")
+	testing.expect(t, below(heading, explained), "the explanation is under the heading")
+	testing.expect(t, explained.y - (heading.y + heading.h) <= 4.5, "and close under it")
+}
