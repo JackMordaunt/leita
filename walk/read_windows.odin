@@ -6,6 +6,8 @@ import "core:strings"
 import win "core:sys/windows"
 import "core:unicode/utf16"
 
+import "../kstat"
+
 foreign import ntdll "system:ntdll.lib"
 
 /*
@@ -126,7 +128,7 @@ list_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 		at := 0
 		for {
 			l := entry_at(buf[:], at, s.volumes[vol].listing)
-			if !is_dot(l.name) {
+			if !kstat.is_dot(l.name) {
 				e, described := describe(dir, l, s.volumes[vol], s)
 				if !described {
 					w.err = .Out_Of_Memory
@@ -214,31 +216,20 @@ entry_at :: proc(buf: []u64, at: int, listing: Listing) -> (l: Dir_Entry) {
 			)[:info.file_name_length / 2],
 		}
 	case .Full:
-		info := (^File_Full_Dir_Info)(raw)
+		info := (^kstat.File_Full_Dir_Info)(raw)
 		l = {
 			next       = info.next_entry_offset,
 			attributes = info.file_attributes,
 			tag        = info.ea_size,
 			allocated  = info.allocation_size,
 			length     = info.end_of_file,
-			name       = ([^]u16)(raw[FULL_DIR_NAME_OFFSET:])[:info.file_name_length / 2],
+			name       = ([^]u16)(raw[kstat.FULL_DIR_NAME_OFFSET:])[:info.file_name_length / 2],
 		}
 	}
 	if l.attributes & win.FILE_ATTRIBUTE_REPARSE_POINT == 0 {
 		l.tag = 0
 	}
 	return l
-}
-
-@(private = "file")
-is_dot :: proc(name: []u16) -> bool {
-	switch len(name) {
-	case 1:
-		return name[0] == '.'
-	case 2:
-		return name[0] == '.' && name[1] == '.'
-	}
-	return false
 }
 
 /*
@@ -266,7 +257,7 @@ Not ok only when the name would not fit in memory.
 describe :: proc(dir: win.HANDLE, l: Dir_Entry, vol: Volume, s: ^Scratch) -> (e: Entry, ok: bool) {
 	e.name = narrow(l.name, &s.name) or_return
 	directory := l.attributes & win.FILE_ATTRIBUTE_DIRECTORY != 0
-	if l.tag & IO_REPARSE_TAG_NAME_SURROGATE != 0 {
+	if l.tag & kstat.IO_REPARSE_TAG_NAME_SURROGATE != 0 {
 		if directory && l.tag == win.IO_REPARSE_TAG_MOUNT_POINT && is_volume_mount(dir, l.name) {
 			e.directory = true
 			e.mount = true
@@ -373,7 +364,7 @@ costs nothing worth counting.
 */
 @(private = "file")
 is_volume_mount :: proc(dir: win.HANDLE, name: []u16) -> bool {
-	f, opened := open_relative(dir, name, FILE_DIRECTORY_FILE)
+	f, opened := open_relative(dir, name, kstat.FILE_DIRECTORY_FILE)
 	if !opened {
 		return false
 	}
@@ -440,7 +431,7 @@ open_relative :: proc(dir: win.HANDLE, name: []u16, options: u32) -> (f: win.HAN
 		0,
 		win.FILE_SHARE_READ | win.FILE_SHARE_WRITE | win.FILE_SHARE_DELETE,
 		FILE_OPEN,
-		options | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
+		options | kstat.FILE_OPEN_REPARSE_POINT | kstat.FILE_SYNCHRONOUS_IO_NONALERT,
 		nil,
 		0,
 	)
@@ -689,27 +680,6 @@ File_Id_Extd_Dir_Info :: struct {
 }
 #assert(size_of(File_Id_Extd_Dir_Info) == 88)
 
-// FILE_FULL_DIR_INFO from <winbase.h>. Its name starts at byte 68, before the
-// padding that rounds the struct up to its alignment.
-@(private = "file")
-File_Full_Dir_Info :: struct {
-	next_entry_offset: u32,
-	file_index:        u32,
-	creation_time:     i64,
-	last_access_time:  i64,
-	last_write_time:   i64,
-	change_time:       i64,
-	end_of_file:       i64,
-	allocation_size:   i64,
-	file_attributes:   u32,
-	file_name_length:  u32,
-	ea_size:           u32,
-}
-
-@(private = "file")
-FULL_DIR_NAME_OFFSET :: 68
-#assert(offset_of(File_Full_Dir_Info, ea_size) + size_of(u32) == FULL_DIR_NAME_OFFSET)
-
 // FILE_COMPRESSION_INFORMATION from <ntifs.h>.
 @(private = "file")
 File_Compression_Information :: struct {
@@ -756,19 +726,11 @@ Fs_Information_Class :: enum i32 {
 @(private = "file")
 ERROR_INVALID_LEVEL :: 124
 @(private = "file")
-IO_REPARSE_TAG_NAME_SURROGATE :: 0x20000000
-@(private = "file")
 FILE_SUPPORTS_HARD_LINKS :: 0x00400000
 @(private = "file")
 FILE_OPEN :: 1
 @(private = "file")
-FILE_DIRECTORY_FILE :: 0x00000001
-@(private = "file")
-FILE_SYNCHRONOUS_IO_NONALERT :: 0x00000020
-@(private = "file")
 FILE_NON_DIRECTORY_FILE :: 0x00000040
-@(private = "file")
-FILE_OPEN_REPARSE_POINT :: 0x00200000
 
 // Not in core:sys/windows. NtQueryInformationByName is documented as available from
 // Windows 10 1703.

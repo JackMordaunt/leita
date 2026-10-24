@@ -1,4 +1,4 @@
-#+build darwin
+#+build windows, darwin
 package leita_files
 
 import "core:fmt"
@@ -98,6 +98,22 @@ native_a_rename_through_a_linked_ancestor_leaves_the_target :: proc(t: ^testing.
 	}
 }
 
+// A rename in a folder reached without a link still goes, by either separator.
+@(test)
+native_a_rename_without_a_link_goes :: proc(t: ^testing.T) {
+	root := native_root(t, "rename_plain")
+	defer os.remove_all(root)
+
+	put(t, at(root, "item"), "x")
+	to, err := rename(strings.concatenate({root, "/item"}, context.temp_allocator), "moved", context.temp_allocator)
+	testing.expect_value(t, err, Error.None)
+	testing.expect(t, to != "" && os.exists(at(root, "moved")), "renamed on disk")
+	testing.expect(t, !os.exists(at(root, "item")), "the old name is gone")
+	put(t, at(root, "taken"), "y")
+	_, taken := rename(at(root, "moved"), "taken", context.temp_allocator)
+	testing.expect_value(t, taken, Error.Exists)
+}
+
 @(test)
 native_a_trash_through_a_linked_ancestor_leaves_the_target :: proc(t: ^testing.T) {
 	for kind in KINDS {
@@ -114,9 +130,14 @@ native_a_trash_through_a_linked_ancestor_leaves_the_target :: proc(t: ^testing.T
 	}
 }
 
-// A link given to trash itself is what goes, not what it points at.
+// A link given to trash itself is what goes, not what it points at. Not on Windows,
+// where it would leave the link in the Recycle Bin that
+// the_recycle_bin_is_sized_per_volume_and_empty_refuses_a_non_bin expects empty.
 @(test)
 native_trashing_a_link_leaves_its_target :: proc(t: ^testing.T) {
+	when ODIN_OS == .Windows {
+		return
+	}
 	for kind in KINDS {
 		root, linked := decoy_fixture(t, "trash_link", kind)
 		defer os.remove_all(root)

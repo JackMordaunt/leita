@@ -2,22 +2,88 @@
 package leita_files
 
 import "core:os"
+import "core:path/filepath"
 import "core:strings"
 import win32 "core:sys/windows"
+
+import "../../kstat"
 
 SEPARATOR  :: `\`
 SEPARATORS :: `\/`
 
-// rename_noreplace renames from to to, failing with Exists rather than replacing
-// whatever is at to: MoveFileExW without MOVEFILE_REPLACE_EXISTING never replaces,
-// and without MOVEFILE_COPY_ALLOWED never copies between volumes.
+/*
+rename_noreplace renames from to to, failing with Exists rather than replacing
+whatever is at to, and never copying between volumes. Each folder is opened
+without passing through a symbolic link or a junction (open_directory), the entry
+is opened as itself relative to its folder, and the rename names its new folder by
+handle, so a link in either path is Not_Directory and a folder swapped for one
+cannot redirect it.
+*/
 rename_noreplace :: proc(from, to: string) -> Error {
-	f := win32.utf8_to_wstring(from, context.temp_allocator)
-	t := win32.utf8_to_wstring(to, context.temp_allocator)
-	if !win32.MoveFileExW(f, t, 0) {
-		return win32_error(win32.GetLastError())
+	from_dir, from_name := filepath.split(from)
+	to_dir, to_name := filepath.split(to)
+	from_buf, to_buf: [256]u16
+	from_wide, from_fits := wide_name(from_name, &from_buf)
+	to_wide, to_fits := wide_name(to_name, &to_buf)
+	if !plain_name(from_name) || !plain_name(to_name) || !from_fits || !to_fits {
+		return .Bad_Name
+	}
+
+	from_handle, ferr := open_directory(from_dir)
+	if ferr != .None {
+		return ferr
+	}
+	defer win32.CloseHandle(from_handle)
+
+	to_handle, terr := open_directory(to_dir)
+	if terr != .None {
+		return terr
+	}
+	defer win32.CloseHandle(to_handle)
+
+	access :: win32.DELETE | win32.FILE_READ_ATTRIBUTES | win32.SYNCHRONIZE
+	entry, status := open_at(from_handle, from_wide, access, 0)
+	if status < 0 {
+		return status_error(status)
+	}
+	defer win32.CloseHandle(entry)
+
+	// FILE_RENAME_INFO: the flags, the folder's handle, the name's length in bytes,
+	// then the name, read up to that length.
+	buf: [(RENAME_NAME_OFFSET + 256 * size_of(u16) + 7) / 8]u64
+	info := (^File_Rename_Info)(&buf)
+	info.root = to_handle
+	info.length = u32(len(to_wide) * size_of(u16))
+	copy(([^]u16)(&([^]u8)(&buf)[RENAME_NAME_OFFSET])[:len(to_wide)], to_wide)
+	size := u32(RENAME_NAME_OFFSET + (len(to_wide) + 1) * size_of(u16))
+
+	// NtSetInformationFile, since SetFileInformationByHandle resolves a bare name
+	// against the working directory's volume rather than the root handle (seen as
+	// ERROR_NOT_SAME_DEVICE on a runner whose temp directory is on another drive).
+	iosb: win32.IO_STATUS_BLOCK
+	status = kstat.NtSetInformationFile(entry, &iosb, info, size, .FileRenameInformation)
+	if status < 0 {
+		return status_error(status)
 	}
 	return .None
+}
+
+// FILE_RENAME_INFO from <winbase.h>, up to the name: flags 0 does not replace.
+@(private = "file")
+File_Rename_Info :: struct {
+	flags:  u32,
+	root:   win32.HANDLE,
+	length: u32,
+}
+
+@(private = "file")
+RENAME_NAME_OFFSET :: 20
+#assert(offset_of(File_Rename_Info, length) + size_of(u32) == RENAME_NAME_OFFSET)
+
+// plain_name is whether name names an entry in a folder, not the folder itself.
+@(private = "file")
+plain_name :: proc(name: string) -> bool {
+	return name != "" && name != "." && name != ".." && !strings.contains_any(name, SEPARATORS)
 }
 
 /*
@@ -28,11 +94,27 @@ asking again. FOF_WANTNUKEWARNING partly overrides that (Microsoft's SHFILEOPSTR
 documentation, fFlags), so a delete that would destroy rather than recycle still
 warns and can be cancelled. FOF_NO_UI is not used because it would also swallow
 that warning. A refusal, a failure or a path still in place is Not_Recycled.
+
+The folder holding path is first opened without passing through a symbolic link or
+a junction (open_directory), so a path reaching the entry through one is refused as
+Not_Directory. The shell takes a path, not a handle, so a folder swapped for a link
+after that check and before the recycle is not caught.
 */
 trash :: proc(path: string) -> Error {
 	if !present(path) {
 		return .Missing
 	}
+	dir, name := filepath.split(path)
+	if !plain_name(name) {
+		return .Not_Directory
+	}
+
+	parent, perr := open_directory(dir)
+	if perr != .None {
+		return perr
+	}
+	win32.CloseHandle(parent)
+
 	wide := win32.utf8_to_utf16(path, context.temp_allocator)
 	from := make([]u16, len(wide) + 2, context.temp_allocator) // the list ends in two NULs
 	copy(from, wide)
@@ -86,7 +168,7 @@ reveal :: proc(path: string) {
 	run({"explorer.exe", strings.concatenate({"/select,", path}, context.temp_allocator)})
 }
 
-@(private = "file")
+@(private)
 win32_error :: proc(code: win32.DWORD) -> Error {
 	switch code {
 	case win32.ERROR_ALREADY_EXISTS, win32.ERROR_FILE_EXISTS:
