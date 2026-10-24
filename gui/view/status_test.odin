@@ -65,7 +65,12 @@ the_chart_holds_still_as_the_status_changes :: proc(t: ^testing.T) {
 	updated.state = .Done
 	updated.kept, updated.updated, updated.reread, updated.since = true, true, 3, 1_700_000_000
 	deliver(&s, updated)
-	testing.expect(t, ui.probe_tagged(p, "· read again where changed"), "how the scan read is on the counters line")
+	testing.expect(t, ui.probe_tagged(p, "\u00A0· read again where changed"), "how the scan read is on the counters line")
+	// It follows the counters as one more of them, with no wider gap.
+	counted, _ := last_tag(p, "10 items")
+	read, _ := last_tag(p, "\u00A0· read again")
+	testing.expect(t, counted.w > 0 && read.w > 0, "both are drawn")
+	testing.expect_value(t, read.x, counted.x + counted.w)
 	testing.expect_value(t, ui.probe_bounds(p, "Sunburst"), was)
 
 	refused := scanning
@@ -80,7 +85,7 @@ the_chart_holds_still_as_the_status_changes :: proc(t: ^testing.T) {
 	deliver(&s, both)
 	testing.expect(t, ui.probe_tagged(p, "2 folders could not be read."), "the most pressing message shows")
 	testing.expect(t, ui.probe_tagged(p, "+2 more"), "the rest are counted")
-	testing.expect(t, ui.probe_tagged(p, "· read whole"), "a whole read is on the counters line")
+	testing.expect(t, ui.probe_tagged(p, "\u00A0· read whole"), "a whole read is on the counters line")
 	testing.expect_value(t, ui.probe_bounds(p, "Sunburst"), was)
 
 	deliver(&s, scanning)

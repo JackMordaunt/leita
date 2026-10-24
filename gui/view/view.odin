@@ -623,6 +623,10 @@ state_line :: proc(gtx: ^ui.Ctx, prog: ^query.Progress_Result) {
 		primer.label(gtx, tr(.Failed), .Danger)
 	case .Idle:
 	}
+	// The counters and how the place was read, with no gap between them: the
+	// fragment starts with the " · " that joins the counters, its space a
+	// no-break one, since a line's leading plain space is not drawn.
+	ui.row(gtx, align = .Center)
 	primer.text(gtx, counters(gtx, prog), color = primer.color(.Fg_Color_Muted))
 	if tip := retention_tip(gtx, prog); tip != "" {
 		primer.tooltip(gtx, tip, ui.last_widget(gtx))
@@ -634,7 +638,7 @@ state_line :: proc(gtx: ^ui.Ctx, prog: ^query.Progress_Result) {
 	ui.stack(gtx)
 	primer.text(
 		gtx,
-		strings.concatenate({"· ", short}, gtx.allocator),
+		strings.concatenate({"\u00A0· ", short}, gtx.allocator),
 		white_space = .Nowrap,
 		color = primer.color(.Fg_Color_Muted),
 	)
