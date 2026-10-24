@@ -86,6 +86,13 @@ clean_up_confirmation_lists_the_paths_and_deletes_them :: proc(t: ^testing.T) {
 	testing.expect(t, r.m.clean_open, "the confirmation opens")
 	testing.expect(t, ui.probe_tagged(p, "/top/g1/project0/node_modules"), "the first path")
 	testing.expect(t, ui.probe_tagged(p, "/top/g1/project1/node_modules"), "the second path")
+	// Each stands on a line of its own under the warning, not drawn over it.
+	body, has_body := last_tag(p, "How much disk space")
+	first, has_first := last_tag(p, "/top/g1/project0/node_modules")
+	second, has_second := last_tag(p, "/top/g1/project1/node_modules")
+	testing.expect(t, has_body && has_first && has_second, "the warning and both paths")
+	testing.expect(t, below(body, first), "the first path is under the warning")
+	testing.expect(t, below(first, second), "the second path is under the first")
 
 	testing.expect(t, ui.probe_click_top(p, "Delete"), "the dialog's Delete")
 	clean, sent_clean := sent(p, command.Clean).?
@@ -107,6 +114,11 @@ clean_up_confirmation_counts_what_it_does_not_list :: proc(t: ^testing.T) {
 	testing.expect(t, ui.probe_click(p, "Clean up"))
 	ui.probe_advance(p, 10, 1.0 / 60)
 	testing.expect(t, ui.probe_tagged(p, "and 5 more folders"), "the rest are counted")
+	// The list scrolls; the buttons stay in the window.
+	for name in ([2]string{"Delete", "Cancel"}) {
+		b := ui.probe_bounds(p, name)
+		testing.expectf(t, b.h > 0 && b.y + b.h <= p.size.y, "%s is in the window: %v", name, b)
+	}
 	testing.expect(t, ui.probe_click_top(p, "Delete"))
 	clean, _ := sent(p, command.Clean).?
 	testing.expect_value(t, clean.count, CLEAN_LISTED + 5) // all are deleted, not only the listed
