@@ -42,10 +42,6 @@ CORPUS :: "history/fuzz/corpus"
 // up to twice that, so the cap is twice the store and a little over.
 INPUT_CAP :: 64 * 1024
 
-// SQLITE_HEADER is the prefix this suite allows open to rewrite, and an empty
-// file is classified with it. Any other bytes must come back unchanged.
-SQLITE_HEADER :: "SQLite format 3\x00"
-
 suite :: proc() -> harness.Suite(Case) {
 	return {name = "history", setup = setup, teardown = teardown, properties = properties}
 }
@@ -256,9 +252,12 @@ fresh_baseline :: proc() -> []byte {
 	return read_file(path)
 }
 
+// header_is_sqlite is true for the prefix this suite allows open to rewrite.
+// An empty file is allowed too; any other bytes must come back unchanged.
 @(private)
 header_is_sqlite :: proc(b: []byte) -> bool {
-	return len(b) >= len(SQLITE_HEADER) && string(b[:len(SQLITE_HEADER)]) == SQLITE_HEADER
+	h := history.SQLITE_HEADER
+	return len(b) >= len(h) && string(b[:len(h)]) == h
 }
 
 @(private)

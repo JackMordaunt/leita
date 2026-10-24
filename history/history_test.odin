@@ -198,6 +198,29 @@ test_a_baseline_lives_beside_the_store :: proc(t: ^testing.T) {
 	testing.expect_value(t, baseline_path("", "/home/me", context.temp_allocator), "")
 }
 
+// A file of one byte that is not SQLite's is refused and left as it was. SQLite
+// itself takes it for an empty database and writes a new one over it; the
+// history fuzz suite's store property found this.
+@(test)
+a_one_byte_file_is_refused_not_rewritten :: proc(t: ^testing.T) {
+	dir, dir_err := os.make_directory_temp("", "leita-onebyte-*", context.temp_allocator)
+	testing.expect(t, dir_err == nil, "no temp directory")
+	defer os.remove_all(dir)
+
+	store := filepath.join({dir, "history.db"}, context.temp_allocator) or_else ""
+	testing.expect(t, os.write_entire_file(store, []u8{'e'}) == nil)
+	st: Store
+	err := open(&st, store)
+	if err == nil {
+		close(&st)
+	}
+	fault, _ := err.(sqlite3.Fault)
+	testing.expect_value(t, fault.code, sqlite3.Code.Not_A_Db)
+	after, read_err := os.read_entire_file(store, context.temp_allocator)
+	testing.expect(t, read_err == nil)
+	testing.expect_value(t, string(after), "e")
+}
+
 // Opening the store deletes the baselines beside it no scan has rewritten in
 // BASELINE_KEPT, a stopped save's temporary file among them, and keeps the rest.
 @(test)
