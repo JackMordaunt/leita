@@ -292,3 +292,31 @@ old_baselines_are_pruned_and_recent_ones_kept :: proc(t: ^testing.T) {
 	testing.expect(t, !os.exists(old), "an old baseline was kept")
 	testing.expect(t, os.exists(recent), "a recent baseline was deleted")
 }
+
+// A temporary file a stopped baseline save left is deleted once it is older than
+// STAGE_KEPT, not kept as long as a baseline; one a save may still be writing stays.
+@(test)
+a_stopped_saves_temporary_file_is_pruned_within_the_hour :: proc(t: ^testing.T) {
+	base, base_err := os.temp_directory(context.temp_allocator)
+	testing.expect(t, base_err == nil, "no temp directory")
+	root := fmt.tprintf("%s/leita_history_stage_%d", base, os.get_pid())
+	os.remove_all(root)
+	baselines := fmt.tprintf("%s/baselines", root)
+	testing.expect(t, os.make_directory_all(baselines) == nil || os.exists(baselines), "could not make the folder")
+	defer os.remove_all(root)
+
+	stopped := fmt.tprintf("%s/0123456789abcdef.tree.41-1.new", baselines)
+	writing := fmt.tprintf("%s/0123456789abcdef.tree.42-1.new", baselines)
+	kept := fmt.tprintf("%s/0123456789abcdef.tree", baselines)
+	for path in ([]string{stopped, writing, kept}) {
+		testing.expect(t, os.write_entire_file(path, []byte{'x'}) == nil, "could not write a file")
+	}
+	ago := time.time_add(time.now(), -2 * STAGE_KEPT)
+	testing.expect(t, os.change_times(stopped, ago, ago) == nil, "could not age the stopped save's file")
+	testing.expect(t, os.change_times(kept, ago, ago) == nil, "could not age the baseline")
+
+	prune_baselines(fmt.tprintf("%s/store.db", root), time.now())
+	testing.expect(t, !os.exists(stopped), "a stopped save's temporary file was kept")
+	testing.expect(t, os.exists(writing), "a save's fresh temporary file was deleted")
+	testing.expect(t, os.exists(kept), "a baseline younger than BASELINE_KEPT was deleted")
+}

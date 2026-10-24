@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:hash"
 import "core:os"
 import "core:path/filepath"
+import "core:strings"
 import "core:time"
 
 import "../kstat"
@@ -36,9 +37,20 @@ directory's of 2.57 million entries was 99 MB (README, 2026-10-13).
 BASELINE_KEPT :: 30 * 24 * time.Hour
 
 /*
+STAGE_KEPT is how long a temporary file a baseline save wrote is kept: one older was
+left by a save that was stopped, killed or out of space before its rename, and each
+is as large as the baseline. A save writes its file in one go, 125 ms for 2.1 million
+nodes (survey.baseline_save). Should a save be suspended for longer between its write
+and its rename, its file pruned, the rename fails and the baseline is not kept: the
+next scan of the place reads it whole, as it does after any save that failed.
+*/
+STAGE_KEPT :: time.Hour
+
+/*
 prune_baselines deletes each file in the baselines folder beside the store at store
-last written more than BASELINE_KEPT before now, temporary files a stopped save left
-among them. A file that cannot be read or deleted is left for the next prune.
+last written more than BASELINE_KEPT before now, and each temporary file a stopped
+save left among them (".new") last written more than STAGE_KEPT before. A file that
+cannot be read or deleted is left for the next prune.
 */
 prune_baselines :: proc(store: string, now: time.Time) {
 	dir, join_err := filepath.join({filepath.dir(store), "baselines"}, context.temp_allocator)
@@ -50,7 +62,11 @@ prune_baselines :: proc(store: string, now: time.Time) {
 		return
 	}
 	for f in files {
-		if f.type == .Regular && time.diff(f.modification_time, now) > BASELINE_KEPT {
+		if f.type != .Regular {
+			continue
+		}
+		kept := STAGE_KEPT if strings.has_suffix(f.name, ".new") else BASELINE_KEPT
+		if time.diff(f.modification_time, now) > kept {
 			_ = os.remove(f.fullpath)
 		}
 	}
