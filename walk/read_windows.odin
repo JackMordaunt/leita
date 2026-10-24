@@ -92,6 +92,19 @@ list_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 		}
 	}
 
+	// Following links, the directories on the way down are kept, as on Linux
+	// (follow_link in mounts_linux.odin), and a directory already among them is
+	// a loop of links: the link that led here stays the link it is, unread.
+	below: ^Ancestor
+	if w.follow {
+		if id, found := directory_id(dir); found {
+			if on_path(d.ancestors, id) {
+				return 0, 0, true
+			}
+			below = push(w, id, d.ancestors, ancestry(w)) or_return
+		}
+	}
+
 	vol, vol_ok := volume_of(dir, s)
 	if !vol_ok {
 		w.err = .Out_Of_Memory
@@ -144,7 +157,9 @@ list_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 						w.err = .Out_Of_Memory
 						return nodes, bytes, false
 					}
-					append(&w.found, pending_dir(index, child, l, own if known else nil))
+					pending := pending_dir(index, child, l, own if known else nil)
+					pending.ancestors = below
+					append(&w.found, pending)
 				}
 				nodes += 1
 				bytes += charged
@@ -634,22 +649,28 @@ met, and the buffers a path or a name is converted in.
 */
 @(private)
 Scratch :: struct {
-	volumes: [dynamic]Volume,
-	wide:    [dynamic]u16,
-	full:    [dynamic]u16,
-	root:    [dynamic]u8,
-	name:    [dynamic]u8,
+	volumes:  [dynamic]Volume,
+	wide:     [dynamic]u16,
+	full:     [dynamic]u16,
+	root:     [dynamic]u8,
+	name:     [dynamic]u8,
+	// The chains of directories a walk that follows links keeps (Ancestor),
+	// which a directory queued by this worker may be read with by another.
+	ancestry: mem.Dynamic_Arena,
 }
 
 @(private)
-scratch_make :: proc(allocator: mem.Allocator) -> Scratch {
-	return {
-		volumes = make([dynamic]Volume, allocator),
-		wide = make([dynamic]u16, allocator),
-		full = make([dynamic]u16, allocator),
-		root = make([dynamic]u8, allocator),
-		name = make([dynamic]u8, allocator),
-	}
+scratch_make :: proc(allocator := context.allocator) -> Scratch {
+	s: Scratch
+	s.volumes = make([dynamic]Volume, allocator)
+	s.wide = make([dynamic]u16, allocator)
+	s.full = make([dynamic]u16, allocator)
+	s.root = make([dynamic]u8, allocator)
+	s.name = make([dynamic]u8, allocator)
+	// Takes no memory until the first Ancestor, which only a walk that follows
+	// links makes.
+	mem.dynamic_arena_init(&s.ancestry, allocator, allocator)
+	return s
 }
 
 @(private)
@@ -659,6 +680,18 @@ scratch_destroy :: proc(s: ^Scratch) {
 	delete(s.full)
 	delete(s.root)
 	delete(s.name)
+	mem.dynamic_arena_destroy(&s.ancestry)
+}
+
+// The volume and file id of an open directory, as FileIdInfo gives them.
+@(private = "file")
+directory_id :: proc(dir: win.HANDLE) -> (id: File_Id, ok: bool) {
+	info: win.FILE_ID_INFO
+	if !win.GetFileInformationByHandleEx(dir, .FileIdInfo, &info, size_of(info)) {
+		return {}, false
+	}
+	raw := transmute([2]u64)info.FileId
+	return {device = u64(info.VolumeSerialNumber), inode = raw[0], upper = raw[1]}, true
 }
 
 // FILE_ID_EXTD_DIR_INFO from <winbase.h>, up to the name that follows it.

@@ -2,7 +2,6 @@
 package walk
 
 import "base:runtime"
-import "core:mem"
 import "core:sys/linux"
 import "core:sys/posix"
 
@@ -60,7 +59,7 @@ enter :: proc(
 	if !mounted && !w.follow {
 		return false, path, true
 	}
-	below = push(w, id, path) or_return
+	below = push(w, id, path, ancestry(w)) or_return
 	return false, below, true
 }
 
@@ -103,7 +102,7 @@ follow_link :: proc(
 	if on_path(above, id) {
 		return false, nil, true
 	}
-	below = push(w, id, above) or_return
+	below = push(w, id, above, ancestry(w)) or_return
 	return true, below, true
 }
 
@@ -137,7 +136,7 @@ climb :: proc(w: ^Worker, dir: linux.Fd) -> (path: ^Ancestor, ok: bool) {
 		if path != nil && id == last {
 			break
 		}
-		end^ = push(w, id, nil) or_return
+		end^ = push(w, id, nil, ancestry(w)) or_return
 		end = &end^.up
 		last = id
 		up, errno := linux.openat(at, "..", {.PATH, .DIRECTORY, .CLOEXEC})
@@ -192,26 +191,3 @@ walked_elsewhere :: proc(w: ^Worker, st: linux.Statx) -> bool {
 @(private)
 CLIMB_LIMIT :: len(Path) / 2
 
-// Whether `id` is one of the directories on `path`.
-@(private)
-on_path :: proc(path: ^Ancestor, id: File_Id) -> bool {
-	for a := path; a != nil; a = a.up {
-		if a.id == id {
-			return true
-		}
-	}
-	return false
-}
-
-// A chain that is `up` with `id` below it, made in this worker's arena (Scratch).
-@(private)
-push :: proc(w: ^Worker, id: File_Id, up: ^Ancestor) -> (a: ^Ancestor, ok: bool) {
-	err: mem.Allocator_Error
-	a, err = new(Ancestor, mem.dynamic_arena_allocator(&w.scratch.ancestry))
-	if err != nil {
-		w.err = .Out_Of_Memory
-		return nil, false
-	}
-	a^ = {id, up}
-	return a, true
-}

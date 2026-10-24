@@ -243,6 +243,36 @@ test_a_junction_is_followed_when_asked :: proc(t: ^testing.T) {
 }
 
 /*
+Following links, a junction back to a directory above it is a loop, and is left
+the link it is: a and b, each with a junction to the other, are read once each
+by name and once through the junction from the other, and no deeper. Before
+this the walk went down a/to_b/to_a/... until the path passed what Windows
+accepts, doubling at every level (card 671's fuzz harness, which timed out).
+*/
+@(test)
+test_a_loop_of_junctions_ends_when_followed :: proc(t: ^testing.T) {
+	root := fresh_root(t, "junction_loop")
+	defer remove_tree(root)
+
+	a, b := join_path(root, "a"), join_path(root, "b")
+	make_dir(t, a)
+	make_dir(t, b)
+	write_file(t, join_path(a, "in_a.txt"), 10)
+	if !make_junction(t, join_path(a, "to_b"), fmt.tprintf(`\??\%s`, b)) ||
+	   !make_junction(t, join_path(b, "to_a"), fmt.tprintf(`\??\%s`, a)) ||
+	   !make_junction(t, join_path(a, "to_self"), fmt.tprintf(`\??\%s`, a)) {
+		return
+	}
+
+	tree := walk_tree(t, root, Config{follow = true})
+	defer scan.tree_destroy(&tree)
+
+	// a by name, and through b/to_a; a/to_b/to_a leads back into a, a loop.
+	_, in_a := named_in(&tree, "in_a.txt")
+	testing.expect_value(t, in_a, 2)
+}
+
+/*
 A path past 260 characters and names outside ASCII are read like any other. The
 deepest file sits under five directories of 60 characters each, beyond the limit
 before the temp directory is even counted.
