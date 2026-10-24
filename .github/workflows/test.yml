@@ -77,13 +77,27 @@ jobs:
           if [ "${{ runner.os }}" = Windows ]; then export SAN=; fi
           just test
       # The built command line driven as a process on the made-up disk
-      # (journeys/), on every OS. Windows runs without AddressSanitizer, as
-      # the tests do.
+      # (journeys/), then the window on the same disk (journeys/gui), on
+      # every OS. Windows runs without AddressSanitizer, as the tests do.
+      # Each journey has a budget of its own (journeys/harness_test.odin,
+      # journeys/gui/harness_test.odin); this timeout is the backstop. What
+      # journeys/quarantine holds runs apart and does not gate.
       - name: journeys
         timeout-minutes: 20
         run: |
           if [ "${{ runner.os }}" = Windows ]; then export SAN=; fi
-          just journeys
+          mkdir -p build/journeys/artifacts
+          just journeys 2>&1 | tee build/journeys/artifacts/journeys.log
+      # Each window journey's PNGs and accessibility trees, and the log, kept
+      # whether or not the journeys passed.
+      - name: journey evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: journeys-${{ matrix.os }}
+          path: build/journeys/artifacts
+          if-no-files-found: warn
+          retention-days: 14
       # The btrfs and walk tests again on a btrfs image, mounted with the
       # runner's passwordless sudo and run both as the runner and as root,
       # since only root may read a file's extents. tools/btrfs-fixture says
