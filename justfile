@@ -420,25 +420,41 @@ test: sqlite
     tools/in-namespace build/test/fuzz-walk{{exe}}
 
 # Fuzz suites under ASan, the one entry point for local runs and CI.
-#   just fuzz                    every suite, seed 1, 64 cases, 2m each
-#   just fuzz ntfs 7 30s         one suite, seed 7, stop after 30s
+#   just fuzz                    every suite, seed 1, 64 cases, 2m each at most
+#   just fuzz ntfs 7 30s         one suite, seed 7, as many cases as fit in 30s
+#   just fuzz tree 2,3,4,5 0 -iters=128  four seeds in turn, 128 cases each
 #   just fuzz tree 1 0 -iters=8  the filesystem suite, 8 cases, no time limit
 #   just fuzz scan 0             seed 0 takes the clock; the seed is printed
 #   just fuzz btrfs 1 0 -isolate a child process per case, no time limit
-# Flags after the duration go to leita-fuzz and win over the 64 cases. A
-# failure prints the seed, the saved case, and the just command that runs it
-# again. The corpus beside each suite is replayed first. The tree suite builds
+# With no duration a suite stops at 64 cases or 2m, the push-time budget; a
+# duration given is the budget, and 0 sets no clock, 64 cases. Flags after the
+# duration go to leita-fuzz and win. Seeds may be a comma list, run one after
+# another; the recipe fails if any seed did. A failure prints the seed, the
+# shrunk case saved beside its suite (the regression corpus, replayed first on
+# every run), and the just command that runs it again. The tree suite builds
 # directories and mounts under the temp directory: on Linux in a user and mount
 # namespace this recipe enters where it can, on macOS on APFS disk images that
-# hdiutil attaches, neither needing root; where it cannot, that suite runs what
-# needs no mount and says what it left out.
-fuzz suite="" seed="1" duration="2m" *extra: sqlite
+# hdiutil attaches, on Windows on NTFS volumes of a VHDX; where it cannot, that
+# suite runs what needs no mount and says what it left out.
+fuzz suite="" seed="1" duration="" *extra: sqlite
+    #!/usr/bin/env bash
+    set -euo pipefail
     mkdir -p build/debug
     {{odin}} build tools/leita-fuzz -debug {{san}} {{flags}} {{curl_open}} -out:build/debug/leita-fuzz{{exe}}
+    case '{{duration}}' in
+    '') budget=(-for=2m -iters=64) ;;
+    0) budget=(-iters=64) ;;
+    *) budget=(-for='{{duration}}' -iters=0) ;;
+    esac
     # LeakSanitizer reports two allocations the Odin runtime makes at start-up (args,
     # 670 bytes), on some runs and not others, whatever the suite; the debug
     # allocator reports a leak of the suite's own. ASAN_OPTIONS from the caller wins.
-    ASAN_OPTIONS="${ASAN_OPTIONS:-detect_leaks=0}" tools/in-namespace build/debug/leita-fuzz{{exe}} {{suite}} -seed={{seed}} {{ if duration == "0" { "" } else { "-for=" + duration } }} -iters=64 {{extra}}
+    export ASAN_OPTIONS="${ASAN_OPTIONS:-detect_leaks=0}"
+    failed=0
+    for seed in $(echo '{{seed}}' | tr , ' '); do
+        tools/in-namespace build/debug/leita-fuzz{{exe}} {{suite}} -seed="$seed" "${budget[@]}" {{extra}} || failed=1
+    done
+    exit "$failed"
 
 # The btrfs and walk tests on a btrfs image made, mounted and filled for them,
 # against a total worked out from the image; skipped where nothing can mount one.
