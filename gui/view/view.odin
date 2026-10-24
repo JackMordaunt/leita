@@ -61,6 +61,9 @@ fonts :: proc(allocator := context.allocator) -> []ops.Font_Ref {
 			}
 		}
 	}
+	// Fewer script faces than SCRIPT_FONTS may be found; the slice is deleted at
+	// its length, so it is given the length it is allocated with.
+	shrink(&out)
 	return out[:]
 }
 
