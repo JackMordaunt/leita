@@ -208,6 +208,9 @@ search_results :: proc(gtx: ^ui.Ctx, m: ^Model, term: string) {
 		}
 	}
 	if r == nil {
+		// Within the gutter the switch above keeps.
+		ui.inset(gtx, {right = PAD})
+		ui.column(gtx, gap = 8, align = .Fill)
 		for i in 0 ..< 6 {
 			primer.skeleton_box(gtx, height = ROW_HEIGHT - 8, delay = .Short, key = u64(i + 1))
 		}
