@@ -19,9 +19,9 @@ reader can build in order. Ids and names are fixed when the node is drawn and
 survive shrinking: the f7 of a minimal spec is the f7 of the case that failed.
 
 New kinds of input plug in here: a kind of node is a Kind and the one place
-that makes its name, so a generator of strange names (card 670 step 3) changes
-`name_of` and a mutator changes nodes after a spec is built, and neither
-touches the model's rules or the shrinker.
+that makes its plain name is `name_of`. Strange names, sizes and link storms are
+made over a drawn tree by `make_strange` (strange.odin), which touches neither
+the model's rules for a drawn tree nor the shrinker.
 */
 
 // Kind is what a node is. The order is the draw order: a zero byte gives the
@@ -35,6 +35,9 @@ Kind :: enum u8 {
 	Dangling, // a symbolic link to nothing
 	Unreadable, // a directory with mode 0 holding whatever its children say
 	Mount, // a mount point, of `mount` kind
+	// Last, so the draw table above keeps its meaning for the cases saved in the
+	// corpus: it is made from a File by `make_strange`, not drawn.
+	Scatter, // a regular file of `size` bytes apparent, written in pieces with holes between: many extents
 }
 
 // Mount_Kind is what is mounted on a Mount node.
@@ -71,8 +74,23 @@ KINDS := []Kind{.File, .Dir, .Sparse, .Link, .Symlink, .Dangling, .Unreadable, .
 
 MOUNT_KINDS := []Mount_Kind{.Tmpfs, .Bind}
 
-// MAX_NODES is how many nodes besides the root a drawn spec may hold.
+// BOUNDARY_SIZES are sizes a written file is made at for `make_strange`: either side of
+// a block, of two, of a page of the walk's buffers, and one past a mebibyte.
+BOUNDARY_SIZES := []u64{4095, 4096, 4097, 8191, 8193, 65535, 65537, 1 << 20 + 1}
+
+// SPARSE_EDGES are the apparent sizes of a hole around where a 32-bit count
+// wraps, and a terabyte.
+SPARSE_EDGES := []u64{1, 4097, 1 << 31 - 1, 1 << 32, 1 << 32 + 1, 1 << 40}
+
+// SCATTER_SIZES are the apparent sizes of a file written in pieces.
+SCATTER_SIZES := []u64{4097, 65537, 1 << 20, 1 << 24}
+
+// MAX_NODES is how many nodes besides the root the plain draw makes; `make_strange`
+// adds at most 12 links on top.
 MAX_NODES :: 24
+
+// NAME_MAX is the longest name in bytes (limits.h NAME_MAX; ext4 and tmpfs take it).
+NAME_MAX :: 255
 
 // draw makes a spec from the bytes src gives. Zero bytes give a root alone;
 // every choice is ordered simplest first, so a zero byte stays the simplest tree.
@@ -111,7 +129,7 @@ draw :: proc(src: ^harness.Source, allocator := context.allocator) -> Spec {
 		case .Symlink:
 			n.target = harness.choice(src, ids(spec))
 		case .Dangling:
-		case .Dir, .Unreadable:
+		case .Dir, .Unreadable, .Scatter:
 		case .Mount:
 			n.mount = harness.choice(src, MOUNT_KINDS)
 			if n.mount == .Bind {
@@ -121,6 +139,8 @@ draw :: proc(src: ^harness.Source, allocator := context.allocator) -> Spec {
 		n.name = name_of(n, allocator)
 		append(&nodes, n)
 	}
+
+	make_strange(&nodes, src, allocator)
 	return {nodes[:]}
 }
 
@@ -145,6 +165,8 @@ name_of :: proc(n: Node, allocator := context.allocator) -> string {
 		prefix = "u"
 	case .Mount:
 		prefix = "t" if n.mount == .Tmpfs else "b"
+	case .Scatter:
+		prefix = "e"
 	}
 	return fmt.aprintf("%s%d", prefix, n.id, allocator = allocator)
 }
@@ -156,7 +178,7 @@ can_hold :: proc(n: Node) -> bool {
 
 // is_file says whether a node is a regular file's own name, not a link.
 is_file :: proc(n: Node) -> bool {
-	return n.kind == .File || n.kind == .Sparse
+	return n.kind == .File || n.kind == .Sparse || n.kind == .Scatter
 }
 
 find :: proc(spec: Spec, id: int) -> (node: Node, ok: bool) {
@@ -300,6 +322,11 @@ valid :: proc(spec: Spec, allocator := context.temp_allocator) -> (why: string, 
 			names[key] = true
 		}
 		seen[n.id] = true
+		if i > 0 {
+			if reason := name_fault(n.name); reason != "" {
+				return format_reason(allocator, "%q: %s", n.name, reason), false
+			}
+		}
 		switch n.kind {
 		case .Link:
 			t, found := find(spec, n.target)
@@ -319,7 +346,7 @@ valid :: proc(spec: Spec, allocator := context.temp_allocator) -> (why: string, 
 					return format_reason(allocator, "%s: binds %d, which is not a directory the scan can read", n.name, n.target), false
 				}
 			}
-		case .File, .Dir, .Sparse, .Dangling, .Unreadable:
+		case .File, .Dir, .Sparse, .Dangling, .Unreadable, .Scatter:
 		}
 	}
 	return "", true
@@ -332,14 +359,24 @@ render :: proc(spec: Spec, allocator := context.temp_allocator) -> string {
 	return strings.to_string(b)
 }
 
+// quoted is a name quoted, and cut short in the middle when it is long: the
+// rendering of a 255-byte name is not worth the lines.
+@(private)
+quoted :: proc(name: string, allocator := context.temp_allocator) -> string {
+	if len(name) <= 48 {
+		return fmt.aprintf("%q", name, allocator = allocator)
+	}
+	return fmt.aprintf("%q...%q (%d bytes)", name[:24], name[len(name) - 8:], len(name), allocator = allocator)
+}
+
 // target_name is how the rendering names a node another refers to: its path
 // below the root, "/" for the root.
 @(private)
 target_name :: proc(spec: Spec, id: int, allocator := context.temp_allocator) -> string {
 	if id == 0 {
-		return "/"
+		return "\"/\""
 	}
-	return path_of(spec, id, allocator)
+	return quoted(path_of(spec, id, allocator), allocator)
 }
 
 @(private)
@@ -351,10 +388,12 @@ render_dir :: proc(b: ^strings.Builder, spec: Spec, id, depth: int, allocator: r
 	if id == 0 {
 		strings.write_string(b, "/ dir\n")
 	} else {
-		fmt.sbprintf(b, "%s ", n.name)
+		fmt.sbprintf(b, "%s ", quoted(n.name, allocator))
 		switch n.kind {
 		case .File:
 			fmt.sbprintf(b, "file %d bytes", n.size)
+		case .Scatter:
+			fmt.sbprintf(b, "file %d bytes apparent, written in pieces", n.size)
 		case .Sparse:
 			fmt.sbprintf(b, "sparse file %d bytes apparent", n.size)
 		case .Dir:
@@ -408,6 +447,14 @@ shrink_steps :: proc(spec: Spec, allocator := context.temp_allocator) -> []Spec 
 		nodes[i].parent = up.parent
 		append(&out, Spec{nodes})
 	}
+	// A name that is only a name goes back to the plain one.
+	for n, i in spec.nodes[1:] {
+		if plain := name_of(n, allocator); plain != n.name {
+			nodes := copy_nodes(spec, allocator)
+			nodes[i + 1].name = plain
+			append(&out, Spec{nodes})
+		}
+	}
 	for n, i in spec.nodes {
 		switch n.kind {
 		case .Mount:
@@ -416,7 +463,7 @@ shrink_steps :: proc(spec: Spec, allocator := context.temp_allocator) -> []Spec 
 			append(&out, change(spec, i, {kind = .Dir}, allocator))
 		case .Unreadable:
 			append(&out, change(spec, i, {kind = .Dir}, allocator))
-		case .Sparse:
+		case .Sparse, .Scatter:
 			append(&out, change(spec, i, {kind = .File, size = 0}, allocator))
 		case .Link, .Symlink, .Dangling:
 			append(&out, change(spec, i, {kind = .File, size = 0}, allocator))
@@ -433,6 +480,14 @@ shrink_steps :: proc(spec: Spec, allocator := context.temp_allocator) -> []Spec 
 			for size in SPARSE_SIZES {
 				if size < n.size {
 					append(&out, change(spec, i, {kind = .Sparse, size = size}, allocator))
+					break
+				}
+			}
+		}
+		if n.kind == .Scatter {
+			for size in SCATTER_SIZES {
+				if size < n.size {
+					append(&out, change(spec, i, {kind = .Scatter, size = size}, allocator))
 					break
 				}
 			}

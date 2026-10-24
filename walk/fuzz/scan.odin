@@ -131,6 +131,24 @@ scan_from :: proc(spec: Spec, fx: ^Fixture, start: int, allocator: runtime.Alloc
 			third.tally,
 		)
 	}
+	// Following links reads a tree again by each name that leads to it, and a
+	// loop of links must end: the scan comes back, with at least the directories
+	// and no fewer files than the scan that does not follow.
+	followed: Scan_Result
+	defer scan.tree_destroy(&followed.tree)
+
+	if class, what = read_whole(fx, start, &followed, allocator, follow = true); class != "" {
+		return class, format_reason(allocator, "%s, following links: %s", at, what)
+	}
+	if followed.tally.dirs < want.dirs || followed.tally.files < want.files {
+		return "follow", format_reason(
+			allocator,
+			"%s: following links finds fewer than not following: %v then %v",
+			at,
+			first.tally,
+			followed.tally,
+		)
+	}
 	return "", ""
 }
 
@@ -148,7 +166,7 @@ same :: proc(a, b: ^Scan_Result, allocator: runtime.Allocator) -> bool {
 
 // read_whole scans the directory of node `start` once.
 @(private)
-read_whole :: proc(fx: ^Fixture, start: int, w: ^Scan_Result, allocator: runtime.Allocator) -> (class, what: string) {
+read_whole :: proc(fx: ^Fixture, start: int, w: ^Scan_Result, allocator: runtime.Allocator, follow := false) -> (class, what: string) {
 	if scan.tree_init(&w.tree, 1) != .None {
 		return "walk", "no tree"
 	}
@@ -156,7 +174,7 @@ read_whole :: proc(fx: ^Fixture, start: int, w: ^Scan_Result, allocator: runtime
 	if fx.denies {
 		restore, _ = deny(fx)
 	}
-	err := walk.read(fx.paths[start], &w.tree, walk.Config{})
+	err := walk.read(fx.paths[start], &w.tree, walk.Config{follow = follow})
 	if restore != nil {
 		restore()
 	}

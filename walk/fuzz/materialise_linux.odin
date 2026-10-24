@@ -116,8 +116,8 @@ make_node :: proc(spec: Spec, fx: ^Fixture, n: Node, allocator: runtime.Allocato
 	switch n.kind {
 	case .Dir, .Unreadable:
 		errno, what = linux.mkdir(cpath, {.IRUSR, .IWUSR, .IXUSR}), "mkdir"
-	case .File, .Sparse:
-		return make_file(path, n.size, n.kind == .Sparse, allocator)
+	case .File, .Sparse, .Scatter:
+		return make_file(path, n.size, n.kind, allocator)
 	case .Link:
 		errno, what = linux.link(c(fx.paths[n.target], allocator), cpath), "link"
 	case .Symlink:
@@ -164,13 +164,35 @@ lock :: proc(fx: ^Fixture, id: int, allocator: runtime.Allocator) -> string {
 }
 
 @(private)
-make_file :: proc(path: string, size: u64, sparse: bool, allocator: runtime.Allocator) -> string {
+make_file :: proc(path: string, size: u64, kind: Kind, allocator: runtime.Allocator) -> string {
 	fd, e := linux.open(c(path, allocator), {.WRONLY, .CREAT, .EXCL}, {.IRUSR, .IWUSR})
 	if e != .NONE {
 		return format_reason(allocator, "create %s: %v", path, e)
 	}
 	defer linux.close(fd)
-	if sparse {
+	if kind == .Scatter {
+		// Four pieces of data, a block each, with holes between them and the last
+		// at the end, so the file is made of separate runs of blocks.
+		if te := linux.ftruncate(fd, i64(size)); te != .NONE {
+			return format_reason(allocator, "truncate %s: %v", path, te)
+		}
+		block: [4096]u8
+		for &x, i in block {
+			x = u8('A' + i % 26)
+		}
+		for k in u64(0) ..< 4 {
+			at := (size * k / 4) &~ 4095
+			if k == 3 {
+				at = (size - 1) &~ 4095
+			}
+			piece := block[:min(u64(len(block)), size - at)]
+			if _, we := linux.pwrite(fd, piece, i64(at)); we != .NONE {
+				return format_reason(allocator, "write %s: %v", path, we)
+			}
+		}
+		return ""
+	}
+	if kind == .Sparse {
 		// The size is a hole, and one byte at the start is data.
 		if te := linux.ftruncate(fd, i64(size)); te != .NONE {
 			return format_reason(allocator, "truncate %s: %v", path, te)

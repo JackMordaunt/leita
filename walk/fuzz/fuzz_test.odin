@@ -4,6 +4,7 @@ import "core:log"
 import "core:os"
 import "core:strings"
 import "core:testing"
+import "core:unicode/utf8"
 
 import harness "jm:fuzz"
 
@@ -85,6 +86,89 @@ draws_nested_mounts_and_links :: proc(t: ^testing.T) {
 	testing.expect(t, nested > 0, "no tmpfs inside a tmpfs was drawn")
 	testing.expect(t, linked > 0, "no hard link was drawn")
 	testing.expect(t, binds > 0, "no bind was drawn")
+}
+
+// The strange inputs of card 670 step 3 must be drawn, or the property never sees
+// them, and every spec they make must be one the materialiser can build.
+@(test)
+draws_strange_inputs :: proc(t: ^testing.T) {
+	context.allocator = context.temp_allocator
+	seen: map[string]int
+	for seed in 1 ..= 600 {
+		raw := make([]byte, 256)
+		state := u64(seed) * 2654435761
+		for &b in raw {
+			state = state * 6364136223846793005 + 1442695040888963407
+			b = byte(state >> 33)
+		}
+		src := harness.source(raw)
+		spec := draw(&src)
+		if why, ok := valid(spec); !ok {
+			testing.expectf(t, false, "seed %d draws an invalid spec: %s", seed, why)
+		}
+		storm := make(map[int]int)
+		for n in spec.nodes[1:] {
+			switch {
+			case len(n.name) >= 100:
+				seen["long name"] += 1
+			case strings.contains(n.name, "\n"):
+				seen["newline"] += 1
+			case strings.has_prefix(n.name, "."):
+				seen["leading dot"] += 1
+			case strings.has_suffix(n.name, " "):
+				seen["trailing space"] += 1
+			case !utf8.valid_string(n.name):
+				seen["invalid utf-8"] += 1
+			case strings.contains(n.name, "e\u0301"):
+				seen["decomposed twin"] += 1
+			case strings.contains(n.name, "é"):
+				seen["composed"] += 1
+			}
+			if n.kind == .Scatter {
+				seen["written in pieces"] += 1
+			}
+			if n.kind == .Link {
+				storm[n.target] += 1
+			}
+			if n.kind == .Symlink && n.target != NONE {
+				if target, _ := find(spec, n.target); can_hold(target) && target.id == n.parent {
+					seen["symlink to its own directory"] += 1
+				}
+			}
+			if n.kind == .Sparse && n.size >= 1 << 32 {
+				seen["sparse beyond 4 GiB"] += 1
+			}
+		}
+		for _, count in storm {
+			if count >= 4 {
+				seen["hard link storm"] += 1
+			}
+		}
+		// A twin differs from its sibling by case only.
+		for n, i in spec.nodes[1:] {
+			if before := sibling_before(spec.nodes, i + 1); before > 0 {
+				if swap_case(spec.nodes[before].name, context.temp_allocator) == n.name {
+					seen["case twin"] += 1
+				}
+			}
+		}
+	}
+	for what in ([]string {
+			"long name",
+			"newline",
+			"leading dot",
+			"trailing space",
+			"invalid utf-8",
+			"decomposed twin",
+			"composed",
+			"written in pieces",
+			"symlink to its own directory",
+			"sparse beyond 4 GiB",
+			"hard link storm",
+			"case twin",
+		}) {
+		testing.expectf(t, seen[what] > 0, "no %s was drawn in 600 specs", what)
+	}
 }
 
 // The model's numbers for one tree worked out by hand: the root holds a file, a

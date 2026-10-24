@@ -44,7 +44,7 @@ read :: proc(spec: Spec, dir: int, denies: bool, t: ^Tally, reps: ^[dynamic]int,
 	for id in children(spec, dir) {
 		n, _ := find(spec, id)
 		switch n.kind {
-		case .File, .Sparse, .Link:
+		case .File, .Sparse, .Scatter, .Link:
 			group := n.target if n.kind == .Link else n.id
 			if seen[group] {
 				t.extras += 1
@@ -131,7 +131,7 @@ expected_flat :: proc(spec: Spec, start: int, denies: bool, allocator := context
 			t.symlinks += 1
 		case .Mount:
 			t.mounts += 1
-		case .File, .Sparse:
+		case .File, .Sparse, .Scatter:
 			seen[n.id] += 1
 		case .Link:
 			seen[n.target] += 1
