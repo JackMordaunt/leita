@@ -19,6 +19,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:testing"
+import "core:time"
 
 // Home is one person's machine for a journey: a folder the process runs as the
 // owner of.
@@ -41,9 +42,16 @@ binary :: proc() -> string {
 	return "build/debug/leita" + (".exe" when ODIN_OS == .Windows else "")
 }
 
+// BUDGET is the time a journey may take before the runner fails it by name,
+// so one that hangs does not hold the run until the job's timeout. The whole
+// package, its journeys side by side, took 4m24s under AddressSanitizer on the
+// hosted Linux runner (test run 40104162883); one journey gets less than that.
+BUDGET :: 5 * time.Minute
+
 // home makes a fresh Home named for the journey, and removes any left by an
-// earlier run of it.
+// earlier run of it. The journey's BUDGET starts here.
 home :: proc(t: ^testing.T, name: string) -> Home {
+	testing.set_fail_timeout(t, BUDGET)
 	tmp, _ := os.temp_directory(context.temp_allocator)
 	dir := fmt.tprintf("%s/leita_journey_%s_%d", tmp, name, os.get_pid())
 	os.remove_all(dir)

@@ -652,12 +652,13 @@ schedule-evidence:
 # Then the window's journeys (journeys/gui): the view in a probe over the real host
 # on the made-up disk, checked on what a screen reader is told. Each keeps a PNG
 # and the accessibility tree of its steps in LEITA_JOURNEY_ARTIFACTS, by default
-# build/journeys/artifacts.
+# build/journeys/artifacts. tools/journeys/run keeps what journeys/quarantine
+# holds out of the gate.
 journeys: deps
     mkdir -p build/journeys build/test
     {{odin}} build cmd/cli -debug {{san}} {{odin_target}} {{flags}} {{curl_open}} -define:LEITA_LICENCE_KEY={{test_licence_key}} -define:LEITA_UPDATE_KEY={{journey_update_key}} -define:LEITA_RELEASED=2026-10-24T00:00:00Z -out:build/journeys/{{bin}}{{exe}}
-    LEITA_BIN="{{justfile_directory()}}/build/journeys/{{bin}}{{exe}}" LEITA_TEST_LICENCE='{{test_licence}}' {{odin}} test journeys -debug {{san}} {{flags}} -out:build/test/journeys{{exe}}
-    LEITA_JOURNEY_ARTIFACTS="${LEITA_JOURNEY_ARTIFACTS:-{{root}}/build/journeys/artifacts}" {{odin}} test journeys/gui -debug {{san}} {{flags}} {{curl_open}} -out:build/test/journeys-gui{{exe}}
+    ODIN="{{odin}}" LEITA_BIN="{{justfile_directory()}}/build/journeys/{{bin}}{{exe}}" LEITA_TEST_LICENCE='{{test_licence}}' tools/journeys/run journeys build/test/journeys{{exe}} -debug {{san}} {{flags}}
+    ODIN="{{odin}}" LEITA_JOURNEY_ARTIFACTS="${LEITA_JOURNEY_ARTIFACTS:-{{root}}/build/journeys/artifacts}" tools/journeys/run journeys/gui build/test/journeys-gui{{exe}} -debug {{san}} {{flags}} {{curl_open}}
 
 gui-test: deps
     mkdir -p build/test/app

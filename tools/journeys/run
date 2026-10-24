@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Run one package of journeys with odin test, keeping those journeys/quarantine
+# holds out of the gate: the rest run first and their result is the exit code;
+# then each held one runs on its own, and a failure is printed (as a GitHub
+# warning on a runner) and never retried, and does not fail the run.
+#
+#   tools/journeys/run journeys/gui build/test/journeys-gui -debug ...
+#
+# The package's name is read from its first file; each @(test) proc's name
+# follows the attribute's line, as odinfmt writes it.
+set -euo pipefail
+dir=$1
+out=$2
+shift 2
+odin=${ODIN:-odin}
+root=$(cd "$(dirname "$0")/../.." && pwd)
+
+package=$(sed -n 's/^package \([A-Za-z0-9_]*\).*/\1/p' "$dir"/*_test.odin | head -n 1)
+names=$(sed -n '/^@(test)/{n;s/^\([A-Za-z0-9_]*\) ::.*/\1/p;}' "$dir"/*_test.odin | sed "s/^/$package./")
+quarantine=$(sed -e 's/#.*//' -e 's/[[:space:]]//g' "$root/journeys/quarantine" | grep -v '^$' || true)
+held=
+if [ -n "$quarantine" ]; then
+    held=$(printf '%s\n' "$names" | grep -xF -f <(printf '%s\n' "$quarantine") || true)
+fi
+
+if [ -z "$held" ]; then
+    echo "journeys: $package: none quarantined"
+    "$odin" test "$dir" "$@" -out:"$out"
+    exit 0
+fi
+
+gated=$(printf '%s\n' "$names" | grep -vxF -f <(printf '%s\n' "$held") | paste -sd, -)
+echo "journeys: $package: quarantined, run apart: $(printf '%s\n' "$held" | paste -sd' ' -)"
+status=0
+if [ -n "$gated" ]; then
+    "$odin" test "$dir" "$@" -define:ODIN_TEST_NAMES="$gated" -out:"$out" || status=$?
+fi
+for name in $held; do
+    if ! "$odin" test "$dir" "$@" -define:ODIN_TEST_NAMES="$name" -out:"$out-held"; then
+        echo "journeys: quarantined $name failed (not retried, not gating)"
+        if [ -n "${GITHUB_ACTIONS:-}" ]; then
+            echo "::warning title=quarantined journey failed::$name"
+        fi
+    fi
+done
+exit "$status"
