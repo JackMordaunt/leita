@@ -76,6 +76,12 @@ jobs:
         run: |
           if [ "${{ runner.os }}" = Windows ]; then export SAN=; fi
           just test
+      # The built command line driven as a process on the made-up disk
+      # (journeys/). Linux first; macOS and Windows join once it is stable here.
+      - name: journeys (linux)
+        if: runner.os == 'Linux'
+        timeout-minutes: 15
+        run: just journeys
       # The btrfs and walk tests again on a btrfs image, mounted with the
       # runner's passwordless sudo and run both as the runner and as root,
       # since only root may read a file's extents. tools/btrfs-fixture says
