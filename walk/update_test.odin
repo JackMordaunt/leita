@@ -435,6 +435,42 @@ test_a_relisted_link_is_charged_once :: proc(t: ^testing.T) {
 	testing.expect_value(t, total(&got), total(&base))
 }
 
+// A hard-linked file whose charged name is renamed after the base is charged once by
+// the update, under one of the names it now has, not left on the old name and missed.
+@(test)
+test_a_renamed_payer_is_charged_once :: proc(t: ^testing.T) {
+	root := place(t, "renamed_payer")
+	defer os.remove_all(root)
+
+	testing.expect(
+		t,
+		os.link(fmt.tprintf("%s/sub/b.txt", root), fmt.tprintf("%s/still/b2.txt", root)) == nil,
+		"could not link",
+	)
+	base := read_tree(t, root)
+	defer scan.tree_destroy(&base)
+
+	testing.expect_value(t, len(base.linked), 1)
+	if len(base.linked) != 1 {
+		return
+	}
+	paid := scan.node(&base, base.linked[0].node)
+	from := fmt.tprintf("%s/%s/%s", root, scan.name_of(&base, paid.parent), scan.name_of(&base, base.linked[0].node))
+	testing.expect(t, os.rename(from, fmt.tprintf("%s.moved", from)) == nil, "could not rename")
+
+	u := Update {
+		base = &base,
+	}
+	defer delete(u.marks)
+
+	got: scan.Tree
+	testing.expect_value(t, scan.tree_init(&got, 1), scan.Error.None)
+	defer scan.tree_destroy(&got)
+
+	testing.expect_value(t, update(root, &u, &got), Error.None)
+	testing.expect_value(t, charged_total(&got), charged_total(&base))
+}
+
 // What a tree charges in all, as its nodes say.
 @(private = "file")
 charged_total :: proc(tree: ^scan.Tree) -> (sum: u64) {

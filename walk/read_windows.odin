@@ -694,6 +694,51 @@ directory_id :: proc(dir: win.HANDLE) -> (id: File_Id, ok: bool) {
 	return {device = u64(info.VolumeSerialNumber), inode = raw[0], upper = raw[1]}, true
 }
 
+/*
+Whether `path` still names the file `id`, a file with more than one name an update's
+base charged under that path. Gone is a name that no longer opens, or opens another
+file; anything else, such as a refusal, is believed still there. Without asking, a
+renamed payer kept the file charged to a name no longer on disk, and its new name was
+an extra: the update charged the file nothing, where a walk charged it once.
+
+The device is the 32-bit serial `describe` gives the id, the low half of FileIdInfo's.
+*/
+@(private)
+still_names :: proc(path: string, id: File_Id) -> bool {
+	buf: [dynamic]u16
+	buf.allocator = context.temp_allocator
+	wide, ok := widen(path, &buf)
+	if !ok {
+		return true
+	}
+
+	f := win.CreateFileW(
+		wide,
+		win.FILE_READ_ATTRIBUTES,
+		win.FILE_SHARE_READ | win.FILE_SHARE_WRITE | win.FILE_SHARE_DELETE,
+		nil,
+		win.OPEN_EXISTING,
+		win.FILE_FLAG_BACKUP_SEMANTICS | win.FILE_FLAG_OPEN_REPARSE_POINT,
+		nil,
+	)
+	if f == win.INVALID_HANDLE_VALUE {
+		switch win.GetLastError() {
+		case win.ERROR_FILE_NOT_FOUND, win.ERROR_PATH_NOT_FOUND:
+			return false
+		}
+		return true
+	}
+	defer win.CloseHandle(f)
+
+	info: win.FILE_ID_INFO
+	if !win.GetFileInformationByHandleEx(f, .FileIdInfo, &info, size_of(info)) {
+		return true
+	}
+
+	raw := transmute([2]u64)info.FileId
+	return u64(u32(info.VolumeSerialNumber)) == id.device && raw[0] == id.inode && raw[1] == id.upper
+}
+
 // FILE_ID_EXTD_DIR_INFO from <winbase.h>, up to the name that follows it.
 @(private = "file")
 File_Id_Extd_Dir_Info :: struct {

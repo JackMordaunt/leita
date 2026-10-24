@@ -20,8 +20,11 @@ changed_since :: proc(path: string, since: i64) -> bool {
 RESTATS :: false
 
 // Whether `path` still names the file `id`. Not asked here: a name the base charged
-// a file under is believed still there, as the base's own choice would be.
-@(private)
-still_names :: proc(path: string, id: File_Id) -> bool {
-	return true
+// a file under is believed still there, as the base's own choice would be. Windows
+// asks (read_windows.odin).
+when ODIN_OS != .Windows {
+	@(private)
+	still_names :: proc(path: string, id: File_Id) -> bool {
+		return true
+	}
 }
