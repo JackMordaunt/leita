@@ -117,7 +117,15 @@ run :: proc(t: ^testing.T, h: Home, day: int, args: ..string, extra: []string = 
 	append(&env, fmt.tprintf("XDG_STATE_HOME=%s/state", h.dir))
 	append(&env, fmt.tprintf("XDG_CACHE_HOME=%s/cache", h.dir))
 	append(&env, fmt.tprintf("APPDATA=%s/data", h.dir), fmt.tprintf("LOCALAPPDATA=%s/data", h.dir))
-	append(&env, "LEITA_COLOR=never")
+	// Plain, unless the journey asks for colour itself; never two settings of
+	// one name, since which of them a process reads is not defined.
+	coloured := false
+	for kv in extra {
+		coloured ||= strings.has_prefix(kv, "LEITA_COLOR=")
+	}
+	if !coloured {
+		append(&env, "LEITA_COLOR=never")
+	}
 	if day >= 0 {
 		append(&env, fmt.tprintf("LEITA_SYNTHETIC=%d", day))
 	}
