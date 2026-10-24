@@ -865,3 +865,125 @@ a_home_under_a_system_directory_is_the_users :: proc(t: ^testing.T) {
 	defer candidates_destroy(as_root)
 	testing.expect_value(t, len(as_root), 0)
 }
+
+
+// A program installed for one user keeps its node_modules beside its package.json
+// as a system one does, though it lies under the user's home: neither
+// %LOCALAPPDATA%\Programs nor an editor's extensions are Reclaim's, from above or
+// from inside, while the user's own projects beside them are.
+@(test)
+a_users_installed_programs_are_not_offered :: proc(t: ^testing.T) {
+	was := strings.clone(
+		os.get_env("LOCALAPPDATA", context.temp_allocator),
+		context.temp_allocator,
+	)
+	defer if was != "" {
+		os.set_env("LOCALAPPDATA", was)
+	} else {
+		os.unset_env("LOCALAPPDATA")
+	}
+
+	testing.expect(t, os.set_env("LOCALAPPDATA", `D:\Data\Local`) == nil)
+
+	tree: Fake
+	defer fake_destroy(&tree)
+
+	root := fake_add(&tree, 0, `C:\`, true)
+	make_output(
+		&tree,
+		root,
+		"Users/ann/AppData/Local/Programs/Discord/app",
+		"package.json",
+		"node_modules",
+	)
+	make_output(
+		&tree,
+		root,
+		"Users/ann/.vscode/extensions/ms.tool-1.0",
+		"package.json",
+		"node_modules",
+	)
+	make_output(
+		&tree,
+		root,
+		"Users/ann/.vscode-server/extensions/ms.tool-1.0",
+		"package.json",
+		"node_modules",
+	)
+	make_output(&tree, root, "Users/ann/AppData/Local/Other/app", "package.json", "node_modules")
+	make_output(&tree, root, "Users/ann/src/web", "package.json", "node_modules")
+	disk: Fake
+	defer fake_destroy(&disk)
+
+	data := fake_add(&disk, 0, `D:\`, true)
+	make_output(&disk, data, "Data/Local/Programs/Tool/app", "package.json", "node_modules")
+	make_output(&disk, data, "Data/Local/Other/app", "package.json", "node_modules")
+	ann := home.User{`C:\Users\ann`, ""}
+	want := []string {
+		`C:\Users\ann\AppData\Local\Other\app\node_modules`,
+		`C:\Users\ann\src\web\node_modules`,
+	}
+	found := find(fake_source(&tree), root, `C:\`, ann, platform = .Windows)
+	defer candidates_destroy(found)
+
+	got := found_paths(found)
+	testing.expectf(t, slice.equal(got, want), "found\n%v\nwant\n%v", got, want)
+
+	// A relocated LOCALAPPDATA is denied as well.
+	moved := find(fake_source(&disk), data, `D:\`, ann, platform = .Windows)
+	defer candidates_destroy(moved)
+
+	want = []string{`D:\Data\Local\Other\app\node_modules`}
+	got = found_paths(moved)
+	testing.expectf(t, slice.equal(got, want), "found\n%v\nwant\n%v", got, want)
+
+	// From inside a program folder, nothing.
+	app := fake_path(&tree, root, "Users/ann/AppData/Local/Programs/Discord/app")
+	inside := find(
+		fake_source(&tree),
+		app,
+		`C:\Users\ann\AppData\Local\Programs\Discord\app`,
+		ann,
+		platform = .Windows,
+	)
+	defer candidates_destroy(inside)
+
+	testing.expect_value(t, len(inside), 0)
+
+	// The same on a Unix and a Mac; ~/Applications is a Mac's alone.
+	unix: Fake
+	defer fake_destroy(&unix)
+
+	top := fake_add(&unix, 0, "/", true)
+	make_output(
+		&unix,
+		top,
+		"home/ann/.vscode/extensions/ms.tool-1.0",
+		"package.json",
+		"node_modules",
+	)
+	make_output(&unix, top, "home/ann/.cursor/extensions/x-1", "package.json", "node_modules")
+	make_output(&unix, top, "home/ann/Applications/App/app", "package.json", "node_modules")
+	make_output(&unix, top, "home/ann/src/web", "package.json", "node_modules")
+	for platform in ([?]Platform{.Unix, .Darwin}) {
+		here := find(fake_source(&unix), top, "/", ANN, platform = platform)
+		defer candidates_destroy(here)
+
+		want_here := []string {
+			"/home/ann/Applications/App/app/node_modules",
+			"/home/ann/src/web/node_modules",
+		}
+		if platform == .Darwin {
+			want_here = want_here[1:]
+		}
+		g := found_paths(here)
+		testing.expectf(
+			t,
+			slice.equal(g, want_here),
+			"%v found\n%v\nwant\n%v",
+			platform,
+			g,
+			want_here,
+		)
+	}
+}

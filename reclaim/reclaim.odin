@@ -25,7 +25,8 @@ Library under a Linux home is someone's own folder.
 
 A match is not looked inside: what it holds goes with it. Nothing inside a .git
 directory, and nothing under a directory of the system or its programs, is ever a
-candidate. Which directories those are, what separates a path's names and whether
+candidate. Nor is anything under the programs a user installed for themself
+(USER_PROGRAMS), though that lies in their home. Which directories those are, what separates a path's names and whether
 case counts are the scan's platform's.
 
 The package knows the scan only through a Source, so it is tested over trees
@@ -346,6 +347,30 @@ WINDOWS_SYSTEM_ENV := [?]string {
 	"ProgramData",
 }
 
+/*
+USER_PROGRAMS are the folders under home where a program is installed for one
+user, relative to it, and where the platform is one of on. Nothing under is ever a
+candidate: a program installed there may ship a package.json with a node_modules
+that no project's package manager makes again, which the rule for them would
+offer, as it would under Program Files. Home is the user's own, so these are not
+in the system lists, which the user's own outranks. %LOCALAPPDATA%\Programs is the
+per-user program folder on Windows; the others hold editor extensions and a Mac's
+per-user applications. Card 566 found them offered; no installed program was at
+hand to observe, so a test holds the layout.
+*/
+@(rodata)
+USER_PROGRAMS := [?]struct {
+	path: string,
+	on:   bit_set[Platform],
+} {
+	{`AppData/Local/Programs`, {.Windows}},
+	{"Applications", {.Darwin}},
+	{".vscode/extensions", {.Unix, .Darwin, .Windows}},
+	{".vscode-insiders/extensions", {.Unix, .Darwin, .Windows}},
+	{".vscode-server/extensions", {.Unix, .Darwin, .Windows}},
+	{".cursor/extensions", {.Unix, .Darwin, .Windows}},
+}
+
 // Source is the scan as the finder sees it.
 Source :: struct {
 	data:      rawptr,
@@ -374,6 +399,7 @@ Finder :: struct {
 	platform:  Platform,
 	system:    []string,
 	own:       []string, // the user's own, which outrank system (own_dirs)
+	programs:  []string, // the user's installed programs, never looked in (user_programs)
 	path:      strings.Builder,
 	held:      [dynamic]u32, // what a directory a rule names holds, as rule_for reads it
 	found:     [dynamic]Candidate,
@@ -406,9 +432,11 @@ find :: proc(
 		allocator = allocator,
 	}
 	f.own = own_dirs(f.home, platform, context.temp_allocator)
+	f.programs = user_programs(f.home, platform, context.temp_allocator)
 	// The path is kept without a trailing separator, so the root is "" (or C:).
 	strings.write_string(&f.path, strings.trim_right(top_path, separators(platform)))
-	if at := strings.to_string(f.path); !under_system(&f, at) || leads_to_own(&f, at) {
+	if at := strings.to_string(f.path);
+	   !under_programs(&f, at) && (!under_system(&f, at) || leads_to_own(&f, at)) {
 		visit(&f, top)
 	}
 	// Largest first, as the person deciding reads them.
@@ -504,6 +532,8 @@ visit :: proc(f: ^Finder, dir: u32) {
 		path := strings.to_string(f.path)
 		system := under_system(f, path)
 		switch {
+		case under_programs(f, path):
+		// A user's installed program, neither a candidate nor looked in.
 		case system && !leads_to_own(f, path):
 		// Neither a candidate nor looked in.
 		case system:
@@ -813,7 +843,13 @@ volume_trash :: proc(f: ^Finder, path: string) -> bool {
 	if f.platform == .Windows {
 		return is_recycle_bin(path, f.uid)
 	}
-	if !strings.has_prefix(path, VOLUMES) {
+	return is_volume_trash(path, f.uid)
+}
+
+// is_volume_trash is whether path is /Volumes/<volume>/.Trashes/<uid>.
+@(private)
+is_volume_trash :: proc(path, uid: string) -> bool {
+	if uid == "" || !strings.has_prefix(path, VOLUMES) {
 		return false
 	}
 	rest := path[len(VOLUMES):]
