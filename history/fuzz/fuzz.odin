@@ -38,8 +38,9 @@ properties := []harness.Property(Case) {
 CORPUS :: "history/fuzz/corpus"
 
 // INPUT_CAP is as long a file as a case may hand the readers. One snapshot
-// store is 24576 bytes of sqlite pages, and damage adds at most 128 bytes.
-INPUT_CAP :: 32 * 1024
+// store is 24576 bytes of sqlite pages. A splice of the store with itself is
+// up to twice that, so the cap is twice the store and a little over.
+INPUT_CAP :: 64 * 1024
 
 // SQLITE_HEADER is the prefix this suite allows open to rewrite, and an empty
 // file is classified with it. Any other bytes must come back unchanged.
