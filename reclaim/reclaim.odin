@@ -459,7 +459,9 @@ root_may_delete is whether Reclaim, acting as user id euid, may delete the
 directory at path, whose owner is owner, for user. As root it may delete anything
 the system holds, another user's work among it (sudo leita on /home would offer
 and delete /home/bob/proj/node_modules), so it keeps to what user could delete
-themself: a directory under their home that is theirs. On this machine the
+themself: a directory under their home that is theirs, or their Trash on another
+volume, /Volumes/<volume>/.Trashes/<uid>, which is outside it and which the finder
+offers (volume_trash). On this machine the
 original path is resolved one component at a time, before ".." is collapsed. A
 symlink is followed, and a ".." after one is the parent of where it led, which
 the symlink test records. A ".." after a component that is not a directory is
@@ -496,15 +498,33 @@ root_may_delete :: proc(
 	if platform != HOST {
 		cleaned := lexical_clean(path, platform, context.temp_allocator)
 		rel, inside := within(cleaned, home_dir, platform)
-		return inside && rel != ""
+		return (inside && rel != "") || is_volume_trash(cleaned, user.uid)
 	}
 	judged := host_confine(path)
 	base := host_confine(home_dir)
-	if !judged.known || !base.known {
+	if !judged.known {
+		return false
+	}
+	// The user's Trash on another volume is theirs though it is not under their
+	// home. Where the path leads must be that folder still: a link in /Volumes to
+	// somewhere else, or one at .Trashes/<uid>, does not pass. The startup disk's
+	// entry in /Volumes links to /, where its Trash is /.Trashes/<uid>.
+	if is_volume_trash(judged.path, user.uid) || is_startup_trash(judged.path, user.uid) {
+		return true
+	}
+	if !base.known {
 		return false
 	}
 	rel, inside := within(judged.path, base.path, platform)
 	return inside && rel != ""
+}
+
+// is_startup_trash is whether path is /.Trashes/<uid>, the Trash of the startup
+// disk, which /Volumes names by a link to /.
+@(private)
+is_startup_trash :: proc(path, uid: string) -> bool {
+	TRASHES :: "/.Trashes/"
+	return uid != "" && strings.has_prefix(path, TRASHES) && path[len(TRASHES):] == uid
 }
 
 /*
@@ -859,7 +879,7 @@ is_volume_trash :: proc(path, uid: string) -> bool {
 	}
 	TRASHES :: ".Trashes/"
 	rest = rest[slash + 1:]
-	return strings.has_prefix(rest, TRASHES) && rest[len(TRASHES):] == f.uid
+	return strings.has_prefix(rest, TRASHES) && rest[len(TRASHES):] == uid
 }
 
 // under_home is path relative to home, if it lies under it.
@@ -884,6 +904,44 @@ under_system :: proc(f: ^Finder, path: string) -> bool {
 		}
 	}
 	return false
+}
+
+// under_programs is whether path is one of the user's program folders or under one.
+@(private)
+under_programs :: proc(f: ^Finder, path: string) -> bool {
+	for dir in f.programs {
+		if _, ok := within(path, dir, f.platform); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// user_programs are the folders of USER_PROGRAMS on platform under home, in
+// allocator, and on Windows the Programs folder of %LOCALAPPDATA% wherever that is.
+@(private)
+user_programs :: proc(
+	home: string,
+	platform: Platform,
+	allocator := context.allocator,
+) -> []string {
+	dirs := make([dynamic]string, allocator)
+	if home != "" {
+		sep := string([]byte{separator(platform)})
+		for p in USER_PROGRAMS {
+			if platform in p.on {
+				rel, _ := strings.replace_all(p.path, "/", sep, allocator)
+				append(&dirs, strings.concatenate({home, sep, rel}, allocator))
+			}
+		}
+	}
+	if platform == .Windows {
+		local := strings.trim_right(os.get_env("LOCALAPPDATA", allocator), separators(platform))
+		if local != "" {
+			append(&dirs, strings.concatenate({local, `\Programs`}, allocator))
+		}
+	}
+	return dirs[:]
 }
 
 // leads_to_own is whether one of the user's own directories lies under path.

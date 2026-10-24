@@ -987,3 +987,70 @@ a_users_installed_programs_are_not_offered :: proc(t: ^testing.T) {
 		)
 	}
 }
+
+// As root, the invoking user's Trash on another volume is theirs to empty though
+// it is not under their home; another uid's, a path out of it by dot-dot and a
+// volume's other folders are not.
+@(test)
+root_may_empty_the_invokers_trash_on_a_volume :: proc(t: ^testing.T) {
+	ann := home.User{"/Users/ann", "501"}
+	mine := "/Volumes/Backup/.Trashes/501"
+	testing.expect(t, root_may_delete(mine, 501, ann, 0, .Darwin), "her Trash, a Mac's text")
+	testing.expect(t, !root_may_delete(mine, 0, ann, 0, .Darwin), "root's folder where hers is")
+	testing.expect(
+		t,
+		!root_may_delete("/Volumes/Backup/.Trashes/502", 502, ann, 0, .Darwin),
+		"another user's Trash",
+	)
+	testing.expect(
+		t,
+		!root_may_delete("/Volumes/Backup/.Trashes/501/../502", 502, ann, 0, .Darwin),
+		"another's, by a dot-dot",
+	)
+	testing.expect(
+		t,
+		!root_may_delete("/Volumes/Backup/Photos/501", 501, ann, 0, .Darwin),
+		"a folder of her id that is not a Trash",
+	)
+	testing.expect(
+		t,
+		!root_may_delete("/Volumes/Backup/.Trashes/501/../../Photos", 501, ann, 0, .Darwin),
+		"out of the Trash by dot-dot",
+	)
+	// On this host the path is resolved, and what it resolves to is judged. Root
+	// is not a Windows account, and a Mac's paths are not that host's.
+	when ODIN_OS != .Windows {
+		testing.expect(t, root_may_delete(mine, 501, ann, 0, HOST), "her Trash, on this host")
+		testing.expect(
+			t,
+			!root_may_delete("/Volumes/Backup/.Trashes/501/../../Photos", 501, ann, 0, HOST),
+			"out of the Trash by dot-dot, on this host",
+		)
+		testing.expect(
+			t,
+			!root_may_delete("/Volumes/Backup/.Trashes/501/../502", 502, ann, 0, HOST),
+			"another's, by a dot-dot, on this host",
+		)
+		testing.expect(
+			t,
+			root_may_delete("/.Trashes/501", 501, ann, 0, HOST),
+			"the startup disk's, which /Volumes links to /",
+		)
+		testing.expect(
+			t,
+			!root_may_delete("/.Trashes/502", 502, ann, 0, HOST),
+			"another's on the startup disk",
+		)
+	}
+	testing.expect(t, !root_may_delete("/Volumes/.Trashes/501", 501, ann, 0, .Darwin), "no volume")
+	testing.expect(
+		t,
+		!root_may_delete(mine, 501, home.User{"/Users/ann", ""}, 0, .Darwin),
+		"no id",
+	)
+	testing.expect(
+		t,
+		root_may_delete(mine, 501, ann, 501, .Darwin),
+		"not root: the system decides",
+	)
+}
