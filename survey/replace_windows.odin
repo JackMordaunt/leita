@@ -4,6 +4,8 @@ package survey
 import "core:os"
 import win "core:sys/windows"
 
+import "../faults"
+
 /*
 Rename `from` over `to`, whatever else has `to` open. MoveFileExW, which os.rename
 calls, refuses to replace a file another handle holds, and the handle it renames
@@ -15,6 +17,9 @@ or before 10 1809, gets os.rename.
 */
 @(private)
 replace :: proc(from, to: string) -> bool {
+	if faults.check(.Rename, from) != .None {
+		return false
+	}
 	ok, tried := replace_posix(from, to)
 	if !tried {
 		return os.rename(from, to) == nil

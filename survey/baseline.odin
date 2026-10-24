@@ -6,6 +6,7 @@ import "core:os"
 import "core:sync"
 
 import "../changes"
+import "../faults"
 import "../scan"
 
 /*
@@ -160,12 +161,12 @@ baseline_save :: proc(path, place: string, t: ^scan.Tree, cursor: changes.Cursor
 	if dir, _ := os.split_path(path); dir != "" {
 		_ = os.make_directory_all(dir)
 	}
-	if os.write_entire_file(temporary, out) != nil {
-		os.remove(temporary)
+	if faults.write_entire_file(temporary, out) != nil {
+		faults.remove(temporary)
 		return false
 	}
 	if !replace(temporary, path) {
-		os.remove(temporary)
+		faults.remove(temporary)
 		return false
 	}
 	return true

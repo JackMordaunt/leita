@@ -27,6 +27,7 @@ import "core:strconv"
 import "core:strings"
 import "core:time"
 
+import "../faults"
 import "../kstat"
 import "../version"
 
@@ -746,7 +747,7 @@ write_stamp :: proc(path, text: string) -> bool {
 	if dir := filepath.dir(path); !os.exists(dir) {
 		os.make_directory_all(dir)
 	}
-	return os.write_entire_file(path, text) == nil
+	return faults.write_entire_file(path, transmute([]byte)text) == nil
 }
 
 // read is the text of the file at path, in the temp allocator.
@@ -814,7 +815,7 @@ replace_file :: proc(
 	if serr != nil {
 		return false
 	}
-	f, err := os.open(
+	f, err := faults.open(
 		stage,
 		os.O_WRONLY | os.O_CREATE | os.O_TRUNC,
 		os.Permissions_Read_All + {.Write_User},
@@ -824,29 +825,29 @@ replace_file :: proc(
 	}
 	wrote := 0
 	for wrote < len(data) {
-		n, werr := os.write(f, data[wrote:])
+		n, werr := faults.write(f, data[wrote:])
 		if werr != nil || n < 1 {
 			os.close(f)
-			os.remove(stage)
+			faults.remove(stage)
 			return false
 		}
 		wrote += n
 	}
-	if os.sync(f) != nil {
+	if faults.sync(f) != nil {
 		os.close(f)
-		os.remove(stage)
+		faults.remove(stage)
 		return false
 	}
 	if os.close(f) != nil {
-		os.remove(stage)
+		faults.remove(stage)
 		return false
 	}
 	if ok && os.chmod(stage, mode) != nil {
-		os.remove(stage)
+		faults.remove(stage)
 		return false
 	}
-	if os.rename(stage, path) != nil {
-		os.remove(stage)
+	if faults.rename(stage, path) != nil {
+		faults.remove(stage)
 		return false
 	}
 	return true
@@ -892,7 +893,7 @@ forget :: proc(path: string) -> (was: bool, err: Error) {
 		return false, .None
 	}
 	was = os.exists(path)
-	if was && os.remove(path) != nil {
+	if was && faults.remove(path) != nil {
 		return true, .Unwritable
 	}
 	if forget_receipt(path) != .None {
@@ -1010,7 +1011,7 @@ forget_receipt :: proc(licence_path: string) -> Error {
 	if path == "" || !os.exists(path) {
 		return .None
 	}
-	if os.remove(path) != nil {
+	if faults.remove(path) != nil {
 		return .Unwritable
 	}
 	return .None

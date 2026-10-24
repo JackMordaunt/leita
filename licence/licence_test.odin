@@ -11,6 +11,8 @@ import "core:strings"
 import "core:testing"
 import "core:time"
 
+import "../faults"
+
 // Signer is a key pair made for a test, standing in for Librium's.
 Signer :: struct {
 	priv: ed25519.Private_Key,
@@ -780,4 +782,84 @@ a_kept_file_gives_its_mode_and_a_missing_one_gives_none :: proc(t: ^testing.T) {
 	}
 	_, absent := prior_mode(fmt.tprintf("%s/absent", dir))
 	testing.expect(t, !absent, "a missing file had a mode")
+}
+
+// Each way the disk can refuse a step of a save: the line kept before is what the
+// file holds after, byte for byte, the save says it failed, and no staging file is
+// left once the step after it could clean up.
+@(test)
+a_disk_fault_in_a_save_keeps_the_line_before :: proc(t: ^testing.T) {
+	s := signer()
+	dir, derr := os.make_directory_temp("", "leita-licence-faults-*", context.temp_allocator)
+	testing.expect(t, derr == nil)
+	defer os.remove_all(dir)
+
+	path, _ := filepath.join({dir, "licence"}, context.temp_allocator)
+	stage := fmt.tprintf("%s.new", path)
+	testing.expect_value(t, save(path, mint(&s, TERMS)), Error.None)
+	before, _ := os.read_entire_file(path, context.temp_allocator)
+	next := mint(&s, other_terms(t))
+	defer faults.disarm()
+
+	for op in ([]faults.Op{.Open, .Write, .Sync, .Rename}) {
+		for fault in faults.Fault {
+			if fault == .None || fault == .Kill || (fault == .Short && op != .Write) {
+				continue
+			}
+			faults.arm({op = op, fault = fault, nth = 1})
+			testing.expectf(
+				t,
+				save(path, next) == .Unwritable,
+				"%v on %v: the save said it held",
+				fault,
+				op,
+			)
+			testing.expectf(t, faults.hits() == 1, "%v on %v was never met", fault, op)
+			after, _ := os.read_entire_file(path, context.temp_allocator)
+			testing.expectf(
+				t,
+				string(after) == string(before),
+				"%v on %v changed the line kept",
+				fault,
+				op,
+			)
+			testing.expectf(t, !os.exists(stage), "%v on %v left %s", fault, op, stage)
+		}
+	}
+
+	// The staging file cannot be removed after the rename failed: it is left, and
+	// the next save writes over it rather than failing on it.
+	faults.arm({op = .Rename, fault = .IO, nth = 1}, {op = .Remove, fault = .IO, nth = 1})
+	testing.expect_value(t, save(path, next), Error.Unwritable)
+	testing.expect(t, os.exists(stage), "the stage was removed")
+	faults.disarm()
+	testing.expect_value(t, save(path, next), Error.None)
+	got, _ := os.read_entire_file(path, context.temp_allocator)
+	testing.expect_value(t, strings.trim_space(string(got)), next)
+	testing.expect(t, !os.exists(stage), "the stage outlived a save that held")
+}
+
+// A licence that cannot be forgotten is still the one in use, and says so.
+@(test)
+a_disk_fault_in_forget_keeps_the_line :: proc(t: ^testing.T) {
+	s := signer()
+	dir, derr := os.make_directory_temp("", "leita-licence-faults-*", context.temp_allocator)
+	testing.expect(t, derr == nil)
+	defer os.remove_all(dir)
+
+	path, _ := filepath.join({dir, "licence"}, context.temp_allocator)
+	text := mint(&s, TERMS)
+	testing.expect_value(t, save(path, text), Error.None)
+	defer faults.disarm()
+
+	for fault in ([]faults.Fault{.No_Space, .IO, .Read_Only, .Denied}) {
+		faults.arm({op = .Remove, fault = fault, nth = 1})
+		was, err := forget(path)
+		testing.expect(t, was)
+		testing.expect_value(t, err, Error.Unwritable)
+		l, from, lerr := in_use(path, "", s.pub[:])
+		testing.expect_value(t, from, Source.Kept)
+		testing.expect_value(t, lerr, Error.None)
+		testing.expect(t, l.order != "", "the line kept no longer reads")
+	}
 }
