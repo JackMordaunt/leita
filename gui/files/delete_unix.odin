@@ -7,6 +7,8 @@ import "core:path/filepath"
 import "core:strings"
 import "core:sys/posix"
 
+import "../../faults"
+
 /*
 Look is what the system says of an entry, not following a link: what it is, where
 it lives, and what deleting it gives back.
@@ -233,7 +235,7 @@ remove_dir :: proc(
 		case e.directory:
 			f, gave := remove_dir(fd, entry, e, b)
 			failed, freed = failed + f, freed + gave
-		case posix.unlinkat(fd, entry, {}) == .OK:
+		case unlink_at(fd, entry, {}):
 			freed += held_alone(e)
 		case posix.errno() != .ENOENT:
 			failed += 1
@@ -243,10 +245,21 @@ remove_dir :: proc(
 		// Kept because it holds what is counted already.
 		return
 	}
-	if posix.unlinkat(parent, name, {.REMOVEDIR}) != .OK && posix.errno() != .ENOENT {
+	if !unlink_at(parent, name, {.REMOVEDIR}) && posix.errno() != .ENOENT {
 		failed = 1
 	}
 	return
+}
+
+// unlink_at is posix.unlinkat of name in dir, through the faults seam, and whether
+// it held; errno says why not. A fault is an I/O error, so the entry is left.
+@(private)
+unlink_at :: proc(dir: posix.FD, name: cstring, flags: posix.AT_Flags) -> bool {
+	if faults.check(.Remove, string(name)) != .None {
+		posix.set_errno(.EIO)
+		return false
+	}
+	return posix.unlinkat(dir, name, flags) == .OK
 }
 
 // list is the names in the directory fd, but . and .., read whole before any is

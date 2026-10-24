@@ -47,10 +47,16 @@ start :: proc(t: ^testing.T, c: Case, dir: string, at := 0) -> (child: os.Proces
 	testing.expectf(t, aerr == nil, "cannot find this binary: %v", aerr)
 	base, _ := os.environ(context.temp_allocator)
 	env := make([dynamic]string, 0, len(base) + 4, context.temp_allocator)
-	append(&env, ..base)
+	for v in base {
+		// The child's own are set below, so each is in its environment once.
+		if !strings.has_prefix(v, "XDG_DATA_HOME=") && !strings.has_prefix(v, "LEITA_DURABILITY_") {
+			append(&env, v)
+		}
+	}
 	append(&env, fmt.tprintf("%s=%v", ENV_CASE, c))
 	append(&env, fmt.tprintf("%s=%s", ENV_DIR, dir))
 	append(&env, fmt.tprintf("%s=%d", ENV_AT, at))
+	append(&env, fmt.tprintf("XDG_DATA_HOME=%s", in_dir(dir, DATA)))
 	// A child killed or sent on its way leaks what it held, by design.
 	append(&env, "ASAN_OPTIONS=detect_leaks=0")
 
@@ -218,6 +224,77 @@ a_baseline_save_killed_anywhere_keeps_a_whole_baseline :: proc(t: ^testing.T) {
 	}
 	points := each_point(t, .Baseline_Save, setup, check)
 	testing.expectf(t, points >= 3, "a baseline save made %d calls, not its open, write and rename", points)
+}
+
+// SELECTED is each file setup_selection makes under the selection.
+SELECTED :: [?]string{"a", "b", "sub/c", "sub/deeper/d"}
+
+// setup_selection makes a selection to delete or trash, and a file beside it.
+@(private = "file")
+setup_selection :: proc(t: ^testing.T, dir: string) {
+	selection := in_dir(dir, SELECTION)
+	testing.expect(t, os.make_directory_all(in_dir(selection, "sub/deeper")) == nil)
+
+	for name in SELECTED {
+		testing.expect(t, os.write_entire_file(in_dir(selection, name), name) == nil)
+	}
+
+	testing.expect(t, os.write_entire_file(in_dir(dir, OUTSIDE), OUTSIDE) == nil)
+}
+
+// every file left of the selection at selection is whole, and the file beside it
+// is there.
+@(private = "file")
+expect_whole :: proc(t: ^testing.T, dir, selection: string, at: int) -> (left: int) {
+	for name in SELECTED {
+		got, err := os.read_entire_file(in_dir(selection, name), context.temp_allocator)
+		if err == nil {
+			left += 1
+			testing.expectf(t, string(got) == name, "killed at %d: %s holds %q", at, name, got)
+		}
+	}
+
+	beside, _ := os.read_entire_file(in_dir(dir, OUTSIDE), context.temp_allocator)
+	testing.expectf(t, string(beside) == OUTSIDE, "killed at %d: the file beside the selection went", at)
+	return
+}
+
+// A delete killed at any point deletes nothing outside its selection, and leaves
+// what it had not reached whole.
+@(test)
+a_delete_killed_anywhere_touches_nothing_outside_the_selection :: proc(t: ^testing.T) {
+	when ODIN_OS != .Linux && ODIN_OS != .Darwin {
+		// The Windows delete makes its own calls, not through the seam.
+		return
+	}
+	check :: proc(t: ^testing.T, dir: string, at: int) {
+		left := expect_whole(t, dir, in_dir(dir, SELECTION), at)
+		testing.expectf(t, at > 0 || (left == 0 && !os.exists(in_dir(dir, SELECTION))), "the delete did not hold")
+	}
+	points := each_point(t, .Delete_Tree, setup_selection, check)
+	testing.expectf(t, points == len(SELECTED) + 3, "a delete made %d unlinks, not one for each file and folder", points)
+}
+
+// A move to the Trash killed at any point leaves the selection where it was or in
+// the Trash, whole, and one there has its info file, so it can be put back.
+@(test)
+a_trash_killed_anywhere_keeps_the_selection_whole :: proc(t: ^testing.T) {
+	when ODIN_OS != .Linux {
+		// macOS and Windows move to the Trash through the system, not the seam.
+		return
+	}
+	check :: proc(t: ^testing.T, dir: string, at: int) {
+		trashed := in_dir(dir, DATA + "/Trash/files/" + SELECTION)
+		here := expect_whole(t, dir, in_dir(dir, SELECTION), at)
+		there := expect_whole(t, dir, trashed, at)
+		testing.expectf(t, here + there == len(SELECTED), "killed at %d: %d here and %d in the Trash", at, here, there)
+		if there > 0 {
+			info := in_dir(dir, DATA + "/Trash/info/" + SELECTION + ".trashinfo")
+			testing.expectf(t, os.exists(info), "killed at %d: the Trash cannot put it back", at)
+		}
+		testing.expectf(t, at > 0 || there == len(SELECTED), "the trash did not hold")
+	}
+	each_point(t, .Trash, setup_selection, check)
 }
 
 REPORT_BEFORE :: "the report kept before"

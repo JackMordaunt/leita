@@ -20,10 +20,12 @@ import "core:os"
 import "core:path/filepath"
 import "core:slice"
 import "core:strconv"
+import "core:strings"
 
 import "jm:sqlite3"
 
 import "../faults"
+import "../gui/files"
 import "../history"
 import "../licence"
 import "../report"
@@ -48,6 +50,9 @@ NEXT_LICENCE :: "next-licence" // the line a licence case saves
 TREE :: "tree" // the place a baseline case reads
 BASELINE :: "baseline"
 REPORT :: "report.json"
+SELECTION :: "selection" // the tree a delete case deletes, or a trash case trashes
+OUTSIDE :: "outside" // a file beside it, which neither may touch
+DATA :: "data" // XDG_DATA_HOME, so the Trash a trash case moves to is in its directory
 SETTINGS :: settings.FILE
 HISTORY :: "history.db"
 
@@ -61,6 +66,8 @@ Case :: enum {
 	Report_Save,
 	Settings_Set,
 	History_Keep,
+	Delete_Tree,
+	Trash,
 }
 
 // EXIT_FAILED and EXIT_BROKEN are a child's exits when its case did not hold, and
@@ -143,6 +150,18 @@ run :: proc(c: Case, dir: string, allocator := context.temp_allocator) -> string
 		r := sample_report()
 		if e, _ := report.save(in_dir(dir, REPORT), &r, .Json); e != .None {
 			return report.ERROR_TEXT[e]
+		}
+	case .Delete_Tree:
+		if _, _, e := files.delete_tree(in_dir(dir, SELECTION)); e != .None {
+			return files.describe(e)
+		}
+	case .Trash:
+		// Never a person's own Trash.
+		if !strings.has_prefix(os.get_env("XDG_DATA_HOME", allocator), dir) {
+			return "the Trash is not in the case's directory"
+		}
+		if e := files.trash(in_dir(dir, SELECTION)); e != .None {
+			return files.describe(e)
 		}
 	case .Settings_Set:
 		st: settings.Store

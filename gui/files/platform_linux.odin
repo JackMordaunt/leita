@@ -12,6 +12,7 @@ import "core:sys/linux"
 import "core:sys/posix"
 import "core:time"
 
+import "../../faults"
 import "../../scan"
 
 SEPARATOR  :: "/"
@@ -140,7 +141,16 @@ without following a link (open_directory, make_directory). A symbolic link in th
 source path, or standing in for files or info, is Not_Directory.
 */
 trash :: proc(path: string) -> Error {
+	return trash_into(path, "")
+}
+
+// trash_into is trash, into the Trash folder at root, the home Trash for "", its
+// paths made in allocator.
+@(private)
+trash_into :: proc(path, root: string, allocator := context.temp_allocator) -> Error {
+	context.temp_allocator = allocator
 	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	root := root if root != "" else trash_root()
 	base := filepath.base(path)
 	if base == "" || base == "." || base == ".." || strings.contains_rune(base, '/') {
 		return .Not_Directory
@@ -151,7 +161,6 @@ trash :: proc(path: string) -> Error {
 	}
 	defer posix.close(src)
 
-	root := trash_root()
 	files_dir, _ := filepath.join({root, "files"}, context.temp_allocator)
 	info_dir, _ := filepath.join({root, "info"}, context.temp_allocator)
 	files, ferr := make_directory(files_dir)
@@ -170,6 +179,9 @@ trash :: proc(path: string) -> Error {
 		name := base if n == 1 else fmt.tprintf("%s.%d", base, n)
 		info_name := strings.concatenate({name, ".trashinfo"}, context.temp_allocator)
 		cname := strings.clone_to_cstring(info_name, context.temp_allocator)
+		if faults.check(.Open, info_name) != .None {
+			return .Other
+		}
 		ifd, ierr := create_new_at(info, cname)
 		if ifd == -1 {
 			if ierr == .EEXIST {
@@ -190,13 +202,16 @@ trash :: proc(path: string) -> Error {
 			mi,
 			s,
 		)
-		wrote := write_all(ifd, transmute([]byte)body)
+		wrote := faults.check(.Write, info_name) == .None && write_all(ifd, transmute([]byte)body)
 		posix.close(ifd)
 		if !wrote {
 			_ = posix.unlinkat(info, cname, {})
 			return .Other
 		}
-		moved := rename_at(src, base, files, name)
+		moved := Error.Other
+		if faults.check(.Rename, path) == .None {
+			moved = rename_at(src, base, files, name)
+		}
 		if moved == .None {
 			return .None
 		}
