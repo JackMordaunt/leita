@@ -187,6 +187,9 @@ remove_dir :: proc(
 	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
 	OWNER :: posix.S_IRWXU
 	changed := false
+	if before_enter != nil {
+		before_enter(string(name))
+	}
 	fd, open_err := open_dir_at(parent, name)
 	if fd == -1 && open_err == .EACCES && at.mode & OWNER != OWNER {
 		// Its owner cannot list it. chmod by name follows a link, so a directory

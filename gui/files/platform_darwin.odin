@@ -5,6 +5,7 @@ import "base:intrinsics"
 
 import "core:c"
 import "core:os"
+import "core:path/filepath"
 import "core:strings"
 import NS "core:sys/darwin/Foundation"
 import "core:sys/posix"
@@ -19,7 +20,7 @@ RENAME_EXCL :: 0x00000004
 
 @(private = "file", default_calling_convention = "c")
 foreign libc {
-	renamex_np :: proc(from, to: cstring, flags: c.uint) -> c.int ---
+	renameatx_np :: proc(from_dir: posix.FD, from: cstring, to_dir: posix.FD, to: cstring, flags: c.uint) -> c.int ---
 }
 
 @(private = "file", objc_class = "NSFileManager")
@@ -49,16 +50,45 @@ open_dir_at :: proc(parent: posix.FD, name: cstring, follow := false) -> (fd: po
 	return
 }
 
-// rename_noreplace renames from to to, failing with Exists rather than replacing
-// whatever is at to: renamex_np(2)'s RENAME_EXCL makes the check and the rename one
-// step, so nothing can slip in between.
+/*
+rename_noreplace renames from to to, failing with Exists rather than replacing
+whatever is at to. Each folder is opened without following a link (open_directory),
+and renameatx_np(2)'s RENAME_EXCL does the check and the rename as one step inside
+those descriptors. A symbolic link in either folder's path is Not_Directory.
+*/
 rename_noreplace :: proc(from, to: string) -> Error {
-	f := strings.clone_to_cstring(from, context.temp_allocator)
-	t := strings.clone_to_cstring(to, context.temp_allocator)
-	if renamex_np(f, t, RENAME_EXCL) != 0 {
+	from_dir, from_name := filepath.split(from)
+	to_dir, to_name := filepath.split(to)
+	// A name is at most NAME_MAX, 255 bytes, so each buffer holds one and its NUL.
+	f, t: [256]u8
+	if !plain_name(from_name) || !plain_name(to_name) || len(from_name) >= len(f) || len(to_name) >= len(t) {
+		return .Bad_Name
+	}
+	copy(f[:], from_name)
+	copy(t[:], to_name)
+
+	from_fd, ferr := open_directory(from_dir)
+	if ferr != .None {
+		return ferr
+	}
+	defer posix.close(from_fd)
+
+	to_fd, terr := open_directory(to_dir)
+	if terr != .None {
+		return terr
+	}
+	defer posix.close(to_fd)
+
+	if renameatx_np(from_fd, cstring(&f[0]), to_fd, cstring(&t[0]), RENAME_EXCL) != 0 {
 		return errno_error(posix.errno())
 	}
 	return .None
+}
+
+// plain_name is whether name names an entry in a folder, not the folder itself.
+@(private = "file")
+plain_name :: proc(name: string) -> bool {
+	return name != "" && name != "." && name != ".." && !strings.contains_rune(name, '/')
 }
 
 // trash moves path to the Trash through NSFileManager, as the Finder does.
@@ -67,10 +97,27 @@ trash :: proc(path: string) -> Error {
 	return err
 }
 
-// trash_to is trash, saying where in the Trash the entry went, which need not be
-// under its old name.
+/*
+trash_to is trash, saying where in the Trash the entry went, which need not be
+under its old name.
+
+The folder holding path is first opened without following a link (open_directory),
+so a path reaching the entry through a symbolic link is refused as Not_Directory.
+NSFileManager takes a path, not a descriptor, so a folder swapped for a link after
+that check and before the move is not caught.
+*/
 @(private)
 trash_to :: proc(path: string, allocator := context.allocator) -> (to: string, err: Error) {
+	dir, name := filepath.split(path)
+	if !plain_name(name) {
+		return "", .Not_Directory
+	}
+	parent, perr := open_directory(dir)
+	if perr != .None {
+		return "", perr
+	}
+	posix.close(parent)
+
 	NS.scoped_autoreleasepool()
 	str := NS.String.alloc()->initWithOdinString(path)
 	defer str->release()

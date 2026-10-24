@@ -163,6 +163,11 @@ is_device_name :: proc(name: string) -> bool {
 	return false
 }
 
+// Called with a directory's name as delete_tree is about to enter it, so a test
+// can change the tree between the look and the open. Nil outside tests.
+@(private)
+before_enter: proc(name: string)
+
 /*
 delete_tree deletes the directory at path and everything in it, for good. It says
 how many entries it could not delete, not counting a folder kept only because it

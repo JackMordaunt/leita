@@ -10,7 +10,7 @@ import "core:testing"
 // it at once: the test leaves the user's Trash as it found it.
 @(test)
 trash_moves_an_entry_into_the_finders_trash :: proc(t: ^testing.T) {
-	base, _ := os.temp_directory(context.temp_allocator)
+	base := temp_root()
 	path := strings.concatenate(
 		{base, fmt.tprintf("/leita_files_trash_%d.txt", os.get_pid())},
 		context.temp_allocator,
@@ -31,7 +31,7 @@ trash_moves_an_entry_into_the_finders_trash :: proc(t: ^testing.T) {
 
 @(test)
 rename_noreplace_refuses_a_name_already_taken :: proc(t: ^testing.T) {
-	base, _ := os.temp_directory(context.temp_allocator)
+	base := temp_root()
 	from := strings.concatenate(
 		{base, fmt.tprintf("/leita_files_from_%d.txt", os.get_pid())},
 		context.temp_allocator,
