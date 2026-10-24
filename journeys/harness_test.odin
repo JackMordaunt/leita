@@ -56,9 +56,25 @@ leave :: proc(h: Home) {
 	os.remove_all(h.dir)
 }
 
-// data is the folder the run keeps its history, settings and trial in.
+// data is the folder the run keeps its history, settings and trial in: leita's
+// folder under the data folder of the platform, which run points at the Home.
 data :: proc(h: Home) -> string {
-	return fmt.tprintf("%s/data/leita", h.dir)
+	when ODIN_OS == .Darwin {
+		return fmt.tprintf("%s/Library/Application Support/leita", h.dir)
+	} else {
+		return fmt.tprintf("%s/data/leita", h.dir)
+	}
+}
+
+// slashes is path with its separators as slashes. A scan of the made-up disk on
+// Windows joins what it finds under /Users/alex with backslashes.
+slashes :: proc(path: string) -> string {
+	when ODIN_OS == .Windows {
+		slashed, _ := strings.replace_all(path, "\\", "/", context.temp_allocator)
+		return slashed
+	} else {
+		return path
+	}
 }
 
 // run is leita args in h. A day of 0 or more scans the made-up disk of that

@@ -21,7 +21,12 @@ a_first_scan_names_the_biggest_files_and_folders :: proc(t: ^testing.T) {
 	biggest := line_after(r.out, "largest files")
 	testing.expectf(t, strings.contains(biggest, "Docker.raw"), "the biggest file is %q", biggest)
 	folder := line_after(r.out, "largest directories")
-	testing.expectf(t, strings.has_suffix(folder, "/Users"), "the biggest folder is %q", folder)
+	testing.expectf(
+		t,
+		strings.has_suffix(slashes(folder), "/Users"),
+		"the biggest folder is %q",
+		folder,
+	)
 	testing.expect(
 		t,
 		!strings.contains(r.out, "\x1b["),

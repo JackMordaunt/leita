@@ -37,7 +37,12 @@ a_scan_is_written_up_in_every_format :: proc(t: ^testing.T) {
 	if len(files) > 0 {
 		first, _ := files[0].(json.Object)
 		path, _ := first["path"].(json.String)
-		testing.expectf(t, strings.has_suffix(path, "/Docker.raw"), "the largest file is %q", path)
+		testing.expectf(
+			t,
+			strings.has_suffix(slashes(path), "/Docker.raw"),
+			"the largest file is %q",
+			path,
+		)
 	}
 
 	// CSV: a header, then the total.
