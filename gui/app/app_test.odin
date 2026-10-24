@@ -79,7 +79,6 @@ rig_open :: proc(
 	update_key: []byte = nil,
 	update_exe := "",
 	update_time: ^Update_Time = nil,
-	mft := false,
 ) {
 	if !made_up {
 		env_share()
@@ -103,7 +102,6 @@ rig_open :: proc(
 		update_key = update_key,
 		update_exe = update_exe,
 		update_time = update_time,
-		walk_only = !mft,
 	)
 	r.data = data_host(&r.h)
 	view.model_init(&r.m, path)
@@ -1316,31 +1314,25 @@ hovering_a_contents_row_lights_its_arc_and_its_box :: proc(t: ^testing.T) {
 }
 
 /*
-Every other rig walks its folder (Desk.walk_only), since each MFT read took 5 to
-30 s on the hosted Windows runner and four rigs ran side by side against settle's
-30 s (CI runs 39998911426, 40024945150, 40024978574). This is the one window scan
-left on that reader. A run that is not elevated cannot open the volume and walks
-it, so there the engine is not asserted.
+A window scan of a small folder walks it, elevated or not: from an elevated prompt
+the folder is probed and found small, rather than read from the volume's MFT, which
+took 5 to 30 s a scan on the hosted Windows runner against settle's 30 s (CI runs
+39998911426, 40024945150, 40024978574). Not elevated, the volume cannot be opened.
 */
 @(test)
-a_windows_scan_reaches_done_on_the_reader_the_volume_allows :: proc(t: ^testing.T) {
+a_windows_scan_of_a_small_folder_walks_it :: proc(t: ^testing.T) {
 	when ODIN_OS == .Windows {
 		root := fixture(t, "icicle")
 		defer os.remove_all(root)
 		r: Rig
-		rig_open(&r, root, mft = true)
+		rig_open(&r, root)
 		defer rig_close(&r)
 		testing.expect(t, settle(&r, "Done"))
 		s := r.h.desk.scan
 		if !testing.expect(t, s != nil) {
 			return
 		}
-		// Not elevated, the volume cannot be opened and the folder is walked.
-		if s.slow {
-			testing.expect_value(t, s.engine, scan.Engine.Walk)
-		} else {
-			testing.expect_value(t, s.engine, scan.Engine.Mft)
-		}
+		testing.expect_value(t, s.engine, scan.Engine.Walk)
 		testing.expect(t, settle(&r, "274.4 kB in 2 items"))
 	}
 }
