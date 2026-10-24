@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Copy the fuzz cases a run saved and git does not yet track, the shrunk
+# failures, into DIR at their paths, for CI to keep: tools/new-fuzz-cases DIR
+set -euo pipefail
+out=${1:?usage: tools/new-fuzz-cases DIR}
+git ls-files --others --exclude-standard -- '*/fuzz/corpus/*.case' |
+    while IFS= read -r f; do
+        mkdir -p "$out/$(dirname "$f")"
+        cp "$f" "$out/$f"
+        echo "new case: $f"
+    done
