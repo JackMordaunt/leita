@@ -187,3 +187,20 @@ text :: proc(o: json.Object, key: string) -> string {
 	s, _ := o[key].(json.String)
 	return s
 }
+
+// licence_line is the licence the journeys' binary is built to take: the test
+// licence, which just journeys passes in.
+licence_line :: proc() -> string {
+	return os.get_env("LEITA_TEST_LICENCE", context.temp_allocator)
+}
+
+// end_evaluation dates the first use of h's run far in the past, so the 30-day
+// Pro evaluation has ended there.
+end_evaluation :: proc(t: ^testing.T, h: Home) {
+	testing.expect(t, os.make_directory_all(data(h)) == nil, "could not make the data folder")
+	testing.expect(
+		t,
+		os.write_entire_file(fmt.tprintf("%s/first-use", data(h)), "1000000000\n") == nil,
+		"could not age the trial",
+	)
+}

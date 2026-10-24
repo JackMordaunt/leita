@@ -153,6 +153,10 @@ test_licence     := "leita.eyJ2IjoxLCJpZCI6InRlc3QiLCJlbWFpbCI6InRlc3RAbGVpdGEuZ
 # value. It is not a production signature and it is not the licence test key.
 test_update_key := "31bb08cd168ed6d55390ee4380eacb18f5d83961c54403a538649f7aedfd1ff8"
 
+# The public half of the seed the journeys sign their own releases with (journeys/update_test.odin);
+# the seed is in the open, so nothing it signs is a release.
+journey_update_key := "79b5562e8fe654f94078b112e8a98ba7901f853ae695bed7e0e3910bad049664"
+
 # `just` alone lists the recipes.
 default:
     @just --list --unsorted
@@ -636,9 +640,16 @@ schedule-evidence:
 # The command line as a process, on the made-up disk, in a home of its own per
 # journey; journeys/harness_test.odin says how. The binary is the debug build, or
 # LEITA_BIN.
-journeys: cli
-    mkdir -p build/test
-    {{odin}} test journeys -debug {{san}} {{flags}} -out:build/test/journeys{{exe}}
+#
+# The journeys' binary is the debug build with two keys compiled in, so a journey can
+# add the test licence and check a release it signed itself: the licence test key
+# and journey_update_key, the public half of the seed journeys/update_test.odin
+# signs with, and a release stamp for the licence to be measured against. Neither key is a
+# release's.
+journeys: sqlite
+    mkdir -p build/journeys build/test
+    {{odin}} build cmd/cli -debug {{san}} {{odin_target}} {{flags}} {{curl_open}} -define:LEITA_LICENCE_KEY={{test_licence_key}} -define:LEITA_UPDATE_KEY={{journey_update_key}} -define:LEITA_RELEASED=2026-10-24T00:00:00Z -out:build/journeys/{{bin}}{{exe}}
+    LEITA_BIN="{{justfile_directory()}}/build/journeys/{{bin}}{{exe}}" LEITA_TEST_LICENCE='{{test_licence}}' {{odin}} test journeys -debug {{san}} {{flags}} -out:build/test/journeys{{exe}}
 
 gui-test: deps
     mkdir -p build/test/app
