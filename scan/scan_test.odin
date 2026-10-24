@@ -37,9 +37,10 @@ test_choose_walks_a_directory_within_an_ntfs_volume_without_a_record :: proc(t: 
 }
 
 @(test)
-test_choose_reads_a_directory_with_a_record_from_the_mft :: proc(t: ^testing.T) {
-	// resolve found root's file reference number, so the MFT reader can root the
-	// tree at it directly, keeping only what is under it, rather than walking.
+test_choose_sizes_a_directory_with_a_record_before_the_mft :: proc(t: ^testing.T) {
+	// resolve found root's file reference number, so the MFT reader could root the
+	// tree at it, but it reads the whole volume's table to do so: what the subtree
+	// holds decides which reader is faster.
 	sub := Target {
 		fs     = .Ntfs,
 		volume = `\\.\C:`,
@@ -47,12 +48,45 @@ test_choose_reads_a_directory_with_a_record_from_the_mft :: proc(t: ^testing.T) 
 		root   = `Users\ann\src`,
 		record = 123,
 	}
-	testing.expect_value(t, choose(sub, readable = true).engine, Engine.Mft)
+	Case :: struct {
+		name: string,
+		size: Size,
+		want: Choice,
+	}
+	cases := []Case {
+		{"nothing known: walk, probing", {}, {engine = .Walk, probe = true}},
+		{"a probe that finished walks", {probe = .Within}, {engine = .Walk}},
+		{"a probe past its budget reads the MFT", {probe = .Over}, {engine = .Mft}},
+		{"a small prior walks", {prior = 10}, {engine = .Walk}},
+		{"a prior at the most walks", {prior = WALK_MOST}, {engine = .Walk}},
+		{"a prior past the most reads the MFT", {prior = WALK_MOST + 1}, {engine = .Mft}},
+		{"an empty prior walks", {prior = 0}, {engine = .Walk}},
+		// The probe measured the subtree now; the prior is the last time it was kept.
+		{"a probe outranks a large prior", {prior = 10 * WALK_MOST, probe = .Within}, {engine = .Walk}},
+		{"a probe outranks a small prior", {prior = 1, probe = .Over}, {engine = .Mft}},
+	}
+	for c in cases {
+		testing.expectf(t, choose(sub, true, c.size) == c.want, "%s: %v, want %v", c.name, choose(sub, true, c.size), c.want)
+	}
 
-	// The volume itself did not open: elevation would help, a record notwithstanding.
-	fallback := choose(sub, readable = false)
-	testing.expect_value(t, fallback.engine, Engine.Walk)
-	testing.expect(t, fallback.permission_would_help)
+	// The whole volume is the MFT's own cost: it is read from the MFT whatever is
+	// known of its size, and never probed.
+	whole := sub
+	whole.root, whole.record = "", nil
+	for c in cases {
+		testing.expectf(t, choose(whole, true, c.size) == Choice{engine = .Mft}, "whole volume, %s", c.name)
+	}
+
+	// The volume itself did not open: elevation would help, a record and a size
+	// notwithstanding.
+	for c in cases {
+		testing.expectf(
+			t,
+			choose(sub, false, c.size) == Choice{engine = .Walk, permission_would_help = true},
+			"not readable, %s",
+			c.name,
+		)
+	}
 }
 
 @(test)

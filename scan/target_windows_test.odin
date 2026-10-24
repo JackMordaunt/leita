@@ -97,3 +97,30 @@ short_of :: proc(path: string) -> string {
 	s, err := win.wstring_to_utf8(win.wstring(&buf[0]), int(n), context.temp_allocator)
 	return s if err == nil else path
 }
+
+/*
+The volume the temp folder is on goes to the MFT reader straight away, unprobed,
+while a folder on it waits on its size: from an elevated prompt, as the hosted
+runner is. Not elevated, both walk, and nothing is asserted beyond that.
+*/
+@(test)
+a_whole_volume_reads_from_the_mft_and_a_folder_is_sized :: proc(t: ^testing.T) {
+	dir, err := os.temp_directory(context.temp_allocator)
+	testing.expect(t, err == nil, "no temp directory")
+	volume, whole, verr := resolve(dir[:2])
+	testing.expect_value(t, verr, Error.None)
+	defer target_destroy(&volume)
+
+	folder, sub, ferr := resolve(dir)
+	testing.expect_value(t, ferr, Error.None)
+	defer target_destroy(&folder)
+
+	if volume.fs != .Ntfs || whole.permission_would_help {
+		testing.expect_value(t, whole.engine, Engine.Walk)
+		testing.expect_value(t, sub.engine, Engine.Walk)
+		testing.expect(t, !sub.probe, "a folder that cannot be read from the MFT is probed")
+		return
+	}
+	testing.expect_value(t, whole, Choice{engine = .Mft})
+	testing.expect_value(t, sub, Choice{engine = .Walk, probe = true})
+}

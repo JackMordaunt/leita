@@ -380,6 +380,7 @@ scan_and_say :: proc(opt: Options, kept := "", licensee := "", locked := false) 
 	f := survey.Fill {
 		target = target,
 		engine = engine.engine,
+		probe  = engine.probe,
 		opts   = opts,
 		wcfg   = wcfg,
 		tree   = &t,
@@ -406,7 +407,7 @@ scan_and_say :: proc(opt: Options, kept := "", licensee := "", locked := false) 
 	elapsed := time.tick_since(start)
 
 	if !quiet {
-		if engine.engine == .Mft {
+		if f.engine == .Mft {
 			print_native(&f.table, elapsed)
 		}
 		fmt.println()
@@ -445,7 +446,7 @@ scan_and_say :: proc(opt: Options, kept := "", licensee := "", locked := false) 
 	if sp, ok := space.?; ok {
 		disk = {sp.total, sp.free}
 	}
-	k := keep_scan(kept, &t, &roll, engine.engine, disk)
+	k := keep_scan(kept, &t, &roll, f.engine, disk)
 	say_kept(k, survey.total(&roll, t.root) if t.root < roll.seen else 0, quiet, !locked)
 
 	thresholds_set := opt.warn_used > 0 || opt.fail_used > 0 || min_free > 0
@@ -470,7 +471,7 @@ scan_and_say :: proc(opt: Options, kept := "", licensee := "", locked := false) 
 
 	facts := report.Facts {
 		target   = target,
-		engine   = engine.engine,
+		engine   = f.engine,
 		started  = started,
 		duration = elapsed,
 		space    = space,

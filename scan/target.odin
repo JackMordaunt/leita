@@ -3,6 +3,7 @@ package scan
 import "core:mem"
 import "core:os"
 import "core:strings"
+import "core:time"
 
 /*
 What the user asked to scan, resolved once so no backend has to re-derive it.
@@ -126,7 +127,50 @@ Choice :: struct {
 	// The MFT reader is far faster but needs to open the volume raw. When this is
 	// set, Walk is what will run unless the caller obtains that and asks again.
 	permission_would_help: bool,
+	// Which of a walk and the MFT reader is faster turns on how big the subtree is,
+	// which nothing has said yet. Set, engine is Walk, and the reader walks no more
+	// than the probe budget before asking again with what that found (Size).
+	probe:                 bool,
 }
+
+/*
+What is known of a subtree's size, which decides whether walking it beats reading
+the volume's whole master file table. The MFT reader's cost is the volume's, whatever
+the subtree holds: 5 to 30 s for a folder of four files on the hosted Windows runner
+(CI runs 40020856828 to 40020975869), so a small folder walks.
+*/
+Size :: struct {
+	prior: Maybe(u64), // entries the place held when it was last kept whole
+	probe: Probe,
+}
+
+Probe :: enum {
+	Unrun,
+	Within, // a walk finished inside the budget
+	Over, // a walk ran past it and was called off
+}
+
+/*
+The most entries a walk is expected to beat the MFT reader on, which is also the
+probe's budget in entries, and the probe's budget in time. A probe that runs out
+wastes no more than either, so a subtree too big to walk costs at most that on top
+of the MFT read it then gets; one that finishes is walked again from a warm cache.
+
+On the hosted Windows runner's SSD (CI run 40111446955, 2026-10-24) a warm walk
+took 1 ms for 10 entries, 10 ms for 1,000, 74 ms for 10,000, 0.74 s for 100,000,
+2.3 s for 300,000 and 7.9 s for 1,000,000, about 7.5 us an entry. Reading the
+same folders from the MFT took 3.2 to 3.5 s up to 10,000 entries, 3.9 s at
+100,000, 5.5 s at 300,000 and 12.6 s at 1,000,000, as each folder grew the
+volume; the whole volume, 1.35 million records, took 3.4 s. So a folder walked
+faster at every size measured, and only the whole volume, which a walk would take
+some 10 s over, is the MFT's. The most is set where a walk costs what the whole
+volume's MFT read does: 300,000 entries, 2.3 s. The time budget is what guards a
+disk that walks slower than this one, a spinning one most of all, whose seeks a
+walk pays for and the MFT's sequential read does not: unmeasured, as no such
+disk was at hand.
+*/
+WALK_MOST :: 300_000
+PROBE_TIME :: 2500 * time.Millisecond
 
 /*
 Pick a reader for a target.
@@ -143,17 +187,32 @@ answer rather than the whole volume's. Rooting alone was not enough: the rest of
 volume stayed in the tree beside the root, and the window's search found 965,681
 hits in a temp folder of four files (CI run 39074211450). Finding `record` needs no
 elevation: file_record in target_windows.odin asks GetFileInformationByHandle on a
-handle to the subtree itself, not the raw volume. So a subtree with one goes to the
-MFT reader exactly as the whole volume does. Without one, resolve either found no record
-or never tried, so a subtree is walked instead.
+handle to the subtree itself, not the raw volume. Without one, resolve either found no
+record or never tried, so a subtree is walked.
+
+With a record, the subtree's size decides. The MFT reader reads the whole volume's
+table whatever the subtree holds, so a small one walks faster. `size` says what is
+known: a probe's outcome first, as it measured this subtree now, then the entries the
+place held when it was last kept. With neither, the choice is a walk that probes,
+and the reader asks again with what the probe found. The whole volume needs no size:
+it is the MFT's own cost, so it reads from the MFT straight away.
 */
-@(private)
-choose :: proc(t: Target, readable: bool) -> Choice {
+choose :: proc(t: Target, readable: bool, size := Size{}) -> Choice {
 	if t.fs == .Ntfs && t.root != "" && t.mount != "" {
-		if readable && t.record != nil {
-			return {engine = .Mft}
+		if !readable || t.record == nil {
+			return {engine = .Walk, permission_would_help = !readable}
 		}
-		return {engine = .Walk, permission_would_help = !readable}
+		switch size.probe {
+		case .Within:
+			return {engine = .Walk}
+		case .Over:
+			return {engine = .Mft}
+		case .Unrun:
+		}
+		if prior, known := size.prior.?; known {
+			return {engine = .Walk if prior <= WALK_MOST else .Mft}
+		}
+		return {engine = .Walk, probe = true}
 	}
 	if t.fs == .Ntfs {
 		if readable {

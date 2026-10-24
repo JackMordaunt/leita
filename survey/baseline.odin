@@ -172,6 +172,44 @@ baseline_save :: proc(path, place: string, t: ^scan.Tree, cursor: changes.Cursor
 }
 
 /*
+How many entries the baseline at `path` kept of `place`, read from its head alone,
+so a place read whole can be sized without loading the tree; nil when there is no
+baseline of this version and place. The count is of nodes kept, the entries a walk
+of the place would find.
+*/
+baseline_entries :: proc(path, place: string, allocator := context.temp_allocator) -> Maybe(u64) {
+	if path == "" {
+		return nil
+	}
+	f, open_err := os.open(path)
+	if open_err != nil {
+		return nil
+	}
+	defer os.close(f)
+
+	head := make([]u8, len(BASELINE_MAGIC) + CURSOR_SIZE + 4 + len(place) + 4, allocator)
+	defer delete(head, allocator)
+
+	if n, _ := os.read_full(f, head); n < len(head) {
+		return nil
+	}
+
+	r := Reader{head, 0, true}
+	if string(take(&r, len(BASELINE_MAGIC))) != BASELINE_MAGIC {
+		return nil
+	}
+	take(&r, CURSOR_SIZE)
+	if string(take(&r, int(take_u32(&r)))) != place {
+		return nil
+	}
+	count := take_u32(&r)
+	if !r.ok {
+		return nil
+	}
+	return u64(count)
+}
+
+/*
 Read the baseline at `path` into `t`, which must be fresh, with the cursor kept with
 it. Not ok, with why, when there is none, it is of another place, or it cannot be
 read whole: any of which means the place is read whole.

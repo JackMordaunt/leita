@@ -79,6 +79,7 @@ survey_place :: proc(path, kept: string) -> (s: ^Place_Scan, problem: string) {
 	s.grown = true
 	s.roll.linked = true
 	s.fill.engine = choice.engine
+	s.fill.probe = choice.probe
 	s.fill.opts = ntfs.Read_Options{}
 	s.fill.tree = &s.tree
 	s.fill.baseline = history.baseline_path(
@@ -87,6 +88,7 @@ survey_place :: proc(path, kept: string) -> (s: ^Place_Scan, problem: string) {
 		context.temp_allocator,
 	)
 	survey.fill_run(&s.fill)
+	s.engine = s.fill.engine
 	s.updated = s.fill.how == .Updated
 	s.why = s.fill.why
 	s.duration = time.tick_since(start)

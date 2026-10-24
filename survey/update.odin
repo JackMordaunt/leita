@@ -107,13 +107,7 @@ fill_from_baseline :: proc(f: ^Fill) {
 	f.how = .Full
 	f.why = why
 	now, have := changes.now(place)
-	switch f.engine {
-	case .Mft:
-		fill_mft(f)
-	case .Walk:
-		fill_walk(f)
-	case .Synthetic, .None:
-	}
+	fill_whole(f, baseline_entries(f.baseline, place))
 	if !have {
 		f.why = "the system cannot say what changes in this place"
 		return

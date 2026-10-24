@@ -29,6 +29,11 @@ Fill :: struct {
 	// What to read, and how.
 	target:    scan.Target,
 	engine:    scan.Engine,
+	// The choice's probe (scan.Choice): walk within the probe's budget first, and
+	// read from the MFT past it. engine says which ran once fill_run returns, and
+	// escalated is set as soon as the MFT is what will.
+	probe:     bool,
+	escalated: b32,
 	opts:      ntfs.Read_Options,
 	wcfg:      walk.Config,
 	// Whether anything is reading the tree while it fills. A reader that has to fold
@@ -72,6 +77,33 @@ fill_run :: proc(f: ^Fill) {
 		fill_from_baseline(f)
 		return
 	}
+	fill_whole(f, nil)
+}
+
+/*
+Read the place whole, with the reader chosen. A choice that waits on the place's
+size is settled first: by `prior`, the entries it held when last kept, when there is
+one, and otherwise by a probe.
+*/
+@(private)
+fill_whole :: proc(f: ^Fill, prior: Maybe(u64)) {
+	if f.probe {
+		f.probe = false
+		// Only an NTFS subtree that opened raw waits on its size.
+		size := scan.Size {
+			prior = prior,
+		}
+		c := scan.choose(f.target, true, size)
+		if c.probe {
+			size.probe = probe(f)
+			c = scan.choose(f.target, true, size)
+		}
+		f.engine = c.engine
+		if f.engine == .Mft {
+			sync.atomic_store(&f.escalated, true)
+		}
+	}
+
 	switch f.engine {
 	case .Mft:
 		fill_mft(f)
@@ -81,6 +113,71 @@ fill_run :: proc(f: ^Fill) {
 		fill_synthetic(f)
 	case .None:
 	}
+}
+
+/*
+Walk the place into a tree of its own, and call the walk off once it reads more than
+scan.WALK_MOST entries or takes longer than scan.PROBE_TIME. A place it reads whole
+inside that is walked again into f.tree, from a warm cache: what the probe read is
+thrown away rather than copied, since a watcher may already hold f.tree, and the
+budget caps what that costs. A place cancelled while probed is let through as Within,
+and the walk that follows stops straight away.
+*/
+@(private)
+probe :: proc(f: ^Fill, allocator := context.allocator) -> scan.Probe {
+	p := Probe_Walk {
+		fill = f,
+		root = scan.location(f.target, allocator),
+	}
+	defer delete(p.root, allocator)
+
+	if scan.tree_init(&p.tree, walk.width(f.wcfg)) != nil {
+		return .Over
+	}
+	defer scan.tree_destroy(&p.tree)
+
+	start := time.tick_now()
+	walker := thread.create_and_start_with_poly_data(&p, probe_walk, init_context = context)
+	if walker == nil {
+		return .Over
+	}
+	defer thread.destroy(walker)
+
+	over := false
+	for !sync.sema_wait_with_timeout(&p.done, PROBE_POLL) {
+		if scan.cancelled(f.tree) {
+			scan.cancel(&p.tree)
+		}
+		if !over &&
+		   (sync.atomic_load(&p.tree.nodes_done) > scan.WALK_MOST ||
+				   time.tick_since(start) > scan.PROBE_TIME) {
+			over = true
+			scan.cancel(&p.tree)
+		}
+	}
+	thread.join(walker)
+	return .Over if over else .Within
+}
+
+// How often a probe looks at its walk, which is as late as a walk past the budget
+// is called off.
+@(private)
+PROBE_POLL :: 5 * time.Millisecond
+
+@(private)
+Probe_Walk :: struct {
+	fill: ^Fill,
+	root: string,
+	tree: scan.Tree,
+	done: sync.Sema,
+}
+
+@(private)
+probe_walk :: proc(p: ^Probe_Walk) {
+	cfg := p.fill.wcfg
+	cfg.fold = false
+	_ = walk.read(p.root, &p.tree, cfg)
+	sync.sema_post(&p.done)
 }
 
 // What went wrong, in words, or "" if nothing did. The MFT's failures get their
