@@ -514,13 +514,16 @@ machine before they add one.
 */
 @(private)
 webhooks :: proc(gtx: ^ui.Ctx, m: ^Model, r: ^query.Monitor_Result, locked: bool) {
-	primer.heading(gtx, tr(.Webhooks), level = 2, variant = .Small)
-	primer.text(
-		gtx,
-		trf(gtx, .Webhooks_Explain, version.NAME),
-		.Small,
-		color = primer.color(.Fg_Color_Muted),
-	)
+	// The heading close over what it explains, as Scheduled scans is.
+	if ui.column(gtx, gap = 4, align = .Fill) {
+		primer.heading(gtx, tr(.Webhooks), level = 2, variant = .Small)
+		primer.text(
+			gtx,
+			trf(gtx, .Webhooks_Explain, version.PRODUCT),
+			.Small,
+			color = primer.color(.Fg_Color_Muted),
+		)
+	}
 	if len(r.webhooks) == 0 {
 		primer.text(gtx, tr(.Webhooks_None), color = primer.color(.Fg_Color_Muted))
 	}
