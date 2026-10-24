@@ -189,6 +189,22 @@ draws_strange_inputs :: proc(t: ^testing.T) {
 	}
 }
 
+// The strange inputs are drawn from the bytes a plain tree leaves, so the case saved
+// for card 668 still draws the tmpfs in a tmpfs it was saved for.
+@(test)
+the_668_case_still_nests_a_tmpfs :: proc(t: ^testing.T) {
+	context.allocator = context.temp_allocator
+	raw, err := os.read_entire_file_from_path(CORPUS + "/scan-b25c4320bb13c07d.case", context.temp_allocator)
+	testing.expect_value(t, err, nil)
+	src := harness.source(raw)
+	spec := draw(&src)
+	nested := false
+	for n in spec.nodes {
+		nested ||= n.kind == .Mount && n.mount == .Tmpfs && domain(spec, n.parent) != 0
+	}
+	testing.expectf(t, nested, "the case no longer draws a tmpfs inside a tmpfs:\n%s", render(spec))
+}
+
 // The model's numbers for one tree worked out by hand: the root holds a file, a
 // link to it, a directory with a tmpfs holding another file, and a symlink.
 @(test)
