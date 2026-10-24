@@ -44,6 +44,35 @@ settings_frame :: proc(gtx: ^ui.Ctx, user: rawptr) {
 	about_dialog(gtx, &c.m)
 }
 
+// Rescan's shortcut is written in words off macOS: Linux's default face has no
+// glyph for the Ctrl key cap the hint would draw.
+@(test)
+rescan_says_its_shortcut_in_letters_the_font_has :: proc(t: ^testing.T) {
+	c: Settings_Case
+	c.prog = {generation = 1, state = .Done, target = "/data"}
+	defer model_destroy(&c.m)
+	fonts := []ops.Font_Ref {
+		{0, ui.default_font(), 400},
+		{1, ui.default_font(), 500},
+		{2, ui.default_font(), 600},
+		{3, ui.default_font(), 400},
+	}
+	h: render.Headless
+	render.headless_init(&h, settings_frame, &c, {800, 600}, fonts)
+	defer render.headless_destroy(&h)
+	p := &h.p
+	testing.expect(t, ui.probe_click(p, "Settings"))
+	ui.probe_advance(p, 10, 1.0 / 60)
+	said := ui.probe_semantics(p, context.temp_allocator)
+	when ODIN_OS == .Darwin {
+		testing.expect(t, strings.contains(said, "Command"), said)
+		testing.expect(t, !strings.contains(said, "Ctrl+R"), said)
+	} else {
+		testing.expect(t, strings.contains(said, "Ctrl+R"), said)
+		testing.expect(t, !strings.contains(said, "⌃"), said)
+	}
+}
+
 // sent is the last Command of type T the last frame sent, if it sent one.
 @(private)
 sent :: proc(p: ^ui.Probe, $T: typeid) -> (got: Maybe(T)) {

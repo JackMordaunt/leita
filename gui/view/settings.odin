@@ -94,7 +94,13 @@ settings_menu :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result) {
 			ui.command(gtx, command.Command(command.Stop{}))
 		}
 	case can_rescan(prog):
-		if primer.action_menu_item(&menu, tr(.Rescan), leading = .Sync, hint = "Mod+R") {
+		if primer.action_menu_item(
+			&menu,
+			tr(.Rescan),
+			leading = .Sync,
+			trailing_text = RESCAN_TEXT,
+			hint = RESCAN_HINT,
+		) {
 			rescan(gtx, prog)
 		}
 	}
@@ -122,6 +128,15 @@ settings_menu :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result) {
 	}
 	language_menu(gtx, &menu, m)
 }
+
+// RESCAN_HINT and RESCAN_TEXT are Rescan's shortcut in the menu: key caps on
+// macOS, the words elsewhere. jm's condensed hint writes Ctrl as U+2303 on every
+// system (key_label, jm/ui/primer/actions.odin). Liberation Sans, the Linux
+// default face (jm/ui/font.odin), has no U+2303 in its cmap, checked with
+// fontTools on 2026-10-24, so the menu drew a blank box; Windows menus spell
+// the key out too.
+RESCAN_HINT :: "Mod+R" when ODIN_OS == .Darwin else ""
+RESCAN_TEXT :: "" when ODIN_OS == .Darwin else "Ctrl+R"
 
 // Settings_Dialog is the dialog a choice in the settings menu opens once the menu
 // has given focus back to the gear.
