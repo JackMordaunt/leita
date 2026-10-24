@@ -50,6 +50,14 @@ a_limit_crossed_is_an_exit_code :: proc(t: ^testing.T) {
 	}
 	for c in cases {
 		r := run(t, h, 0, "--no-history", c.flag, c.value, "/Users/alex")
-		testing.expectf(t, r.code == c.code, "%s %s exited %d, want %d", c.flag, c.value, r.code, c.code)
+		testing.expectf(
+			t,
+			r.code == c.code,
+			"%s %s exited %d, want %d",
+			c.flag,
+			c.value,
+			r.code,
+			c.code,
+		)
 	}
 }

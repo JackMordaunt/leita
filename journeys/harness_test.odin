@@ -14,6 +14,7 @@ grown, so two scans of different days are a change to compare.
 */
 package journeys
 
+import "core:encoding/json"
 import "core:fmt"
 import "core:os"
 import "core:strings"
@@ -69,9 +70,18 @@ run :: proc(t: ^testing.T, h: Home, day: int, args: ..string, extra: []string = 
 	for kv in parent {
 		key, _, _ := strings.partition(kv, "=")
 		switch key {
-		case "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "LEITA_SYNTHETIC", "LEITA_LICENCE",
-		     "LEITA_RELEASE_BASE", "LEITA_COLOR", "XDG_DATA_HOME", "XDG_CONFIG_HOME",
-		     "XDG_STATE_HOME", "XDG_CACHE_HOME":
+		case "HOME",
+		     "USERPROFILE",
+		     "APPDATA",
+		     "LOCALAPPDATA",
+		     "LEITA_SYNTHETIC",
+		     "LEITA_LICENCE",
+		     "LEITA_RELEASE_BASE",
+		     "LEITA_COLOR",
+		     "XDG_DATA_HOME",
+		     "XDG_CONFIG_HOME",
+		     "XDG_STATE_HOME",
+		     "XDG_CACHE_HOME":
 			continue
 		}
 		append(&env, kv)
@@ -130,4 +140,50 @@ line_after :: proc(text, heading: string) -> string {
 		}
 	}
 	return ""
+}
+
+// report parses a JSON report the run wrote, to its top object.
+report :: proc(t: ^testing.T, text: string) -> json.Object {
+	value, err := json.parse(
+		transmute([]byte)text,
+		parse_integers = true,
+		allocator = context.temp_allocator,
+	)
+	if !testing.expectf(t, err == .None, "the report is not JSON (%v): %.200s", err, text) {
+		return nil
+	}
+	root, ok := value.(json.Object)
+	testing.expect(t, ok, "the report is not an object")
+	return root
+}
+
+// member is the object under key of o, empty when there is none.
+member :: proc(o: json.Object, key: string) -> json.Object {
+	value, _ := o[key].(json.Object)
+	return value
+}
+
+// whole is the integer under key of o, -1 when it is not one.
+whole :: proc(o: json.Object, key: string) -> i64 {
+	if n, ok := o[key].(json.Integer); ok {
+		return n
+	}
+	return -1
+}
+
+// read_file is the text of the file at path, empty when it is not there.
+read_file :: proc(path: string) -> string {
+	bytes, err := os.read_entire_file(path, context.temp_allocator)
+	return err == nil ? string(bytes) : ""
+}
+
+// file_in is the path of name in h's folder.
+file_in :: proc(h: Home, name: string) -> string {
+	return fmt.tprintf("%s/%s", h.dir, name)
+}
+
+// text is the string under key of o, empty when it is not one.
+text :: proc(o: json.Object, key: string) -> string {
+	s, _ := o[key].(json.String)
+	return s
 }
