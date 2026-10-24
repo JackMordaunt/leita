@@ -5,10 +5,10 @@ import "core:testing"
 
 import "jm:ui"
 
-// Each dialog of the settings menu opens with the keyboard in it, says what it
-// is for, and closes on Escape with the focus given back. About says the build
-// and the evaluation's days; the licence dialog offers Buy; the language chosen
-// is the window's at once.
+// Story: a keyboard user goes through the settings menu. Each dialog opens with
+// the keyboard in it, says what it is for, and closes on Escape with the focus
+// given back to the menu. About says the build, the licence dialog the
+// evaluation's days; the language chosen is the window's at once.
 @(test)
 every_dialog_opens_says_what_it_is_and_closes :: proc(t: ^testing.T) {
 	budget(t, 120)

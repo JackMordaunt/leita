@@ -1,12 +1,17 @@
 /*
-Package journeys_gui walks the window the way a person does, on the made-up disk:
-the real host, desk and reader on their own threads, and the real view in a
-probe in place of a window. What a journey checks is what a screen reader is
+Package journeys_gui holds the window's user stories: each test is one story a
+person comes to Leita with, walked end to end the way they would, on the made-up
+disk, in each Scenario it names (SCENARIOS: the theme, a small window). Card 748
+adds its stories here, in this form.
+
+A story runs the real host, desk and reader on their own threads, and the real
+view in a probe in place of a window. What it checks is what a screen reader is
 told (ui.probe_semantics, the tree AccessKit hands the platform): labels, the
-sizes said, which item is selected. Pixels are only kept, never compared.
+sizes said, which item is selected, where the keyboard is. Pixels are never
+compared: a PNG of each step is kept only for a person to look at.
 
 just journeys runs these after the command line's. LEITA_JOURNEY_ARTIFACTS names
-a folder each journey keeps its evidence in, a PNG and the accessibility tree of
+a folder each story keeps its evidence in, a PNG and the accessibility tree of
 every step it names; unset, nothing is kept.
 
 The made-up disk is the oracle: the same entries and sizes each run of a day
@@ -73,13 +78,38 @@ folder :: proc(name: string) -> string {
 	return dir
 }
 
+// Scenario is how a story's window is set up: its name, as the story's
+// evidence is named, its size, and its theme.
+Scenario :: struct {
+	name: string,
+	size: ops.Size,
+	dark: bool,
+}
+
+// LIGHT is the window as it opens (gui/main.odin), the scenario a story that
+// names none runs in.
+LIGHT :: Scenario{"light", {1280, 820}, false}
+
+// SCENARIOS are the setups every story that loops over them runs in: the
+// window as it opens, dark, and small, at its minimum size (gui/main.odin).
+SCENARIOS := [?]Scenario{LIGHT, {"dark", {1280, 820}, true}, {"small", {640, 420}, false}}
+
 /*
 open starts the application on path, scanning the made-up disk of day, keeping
 its history, settings and licence in dir ("" for a folder of its own, removed
-by close). Two windows given one dir are two runs on one machine.
+by close), set up as scenario says. Two windows given one dir are two runs on
+one machine.
 */
-open :: proc(w: ^Window, t: ^testing.T, name: string, day: int, dir := "", path := HOME) {
-	w.name = name
+open :: proc(
+	w: ^Window,
+	t: ^testing.T,
+	name: string,
+	day: int,
+	dir := "",
+	path := HOME,
+	scenario := LIGHT,
+) {
+	w.name = name if scenario.name == LIGHT.name else fmt.tprintf("%s-%s", name, scenario.name)
 	w.dir = dir if dir != "" else folder(name)
 	app.init(
 		&w.h,
@@ -91,13 +121,14 @@ open :: proc(w: ^Window, t: ^testing.T, name: string, day: int, dir := "", path 
 	)
 	w.data = app.data_host(&w.h)
 	view.model_init(&w.m, path)
+	w.m.dark = scenario.dark
 	w.faces = view.fonts()
 	w.backs = view.fallbacks(w.faces)
 	render.headless_init(
 		&w.hl,
 		view.view,
 		&w.m,
-		{1280, 820},
+		scenario.size,
 		w.faces,
 		fallbacks = w.backs,
 		data = &w.data,

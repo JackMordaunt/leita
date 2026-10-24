@@ -6,15 +6,24 @@ import "core:testing"
 
 import "jm:ui"
 
-
-// The first thing a person does: open Leita and read what fills the disk. Each
-// chart says the same top layer, with the made-up disk's exact sizes, and so do
-// the Contents and the Largest files beside it.
+/*
+Story: a person whose disk is filling opens Leita and reads what fills it. Each
+chart says the same top layer, with the made-up disk's exact sizes, and so do
+the Contents and the Largest files beside it; coloured by type, each entry says
+its kind. In every scenario: light, dark, and the smallest window.
+*/
+//review:ignore test-no-assertion read_what_fills_the_disk asserts, once per scenario
 @(test)
 a_scan_is_said_the_same_in_every_chart :: proc(t: ^testing.T) {
-	budget(t, 120)
+	budget(t, 240)
+	for scenario in SCENARIOS {
+		read_what_fills_the_disk(t, scenario)
+	}
+}
+
+read_what_fills_the_disk :: proc(t: ^testing.T, scenario: Scenario) {
 	w: Window
-	open(&w, t, "charts", 0)
+	open(&w, t, "charts", 0, scenario = scenario)
 	defer close(&w)
 
 	testing.expect(t, settle(&w, "Done"), "the scan of the made-up disk finished")
@@ -73,8 +82,9 @@ a_scan_is_said_the_same_in_every_chart :: proc(t: ^testing.T) {
 	keep(&w, "by-type")
 }
 
-// A screen reader opens a folder of the chart with its expand action, and a
-// click on a Contents row opens it in the window; Back goes up again.
+// Story: a person goes into a folder. A screen reader opens one of the chart
+// with its expand action, a click on a Contents row opens it in the window, and
+// Back goes up again.
 @(test)
 a_folder_opens_for_a_reader_and_for_a_click :: proc(t: ^testing.T) {
 	budget(t, 120)
@@ -124,8 +134,9 @@ a_folder_opens_for_a_reader_and_for_a_click :: proc(t: ^testing.T) {
 	)
 }
 
-// A right click offers Rename and Trash; a made-up disk's files are not on
-// disk, so either is refused, and the window says why.
+// Story: a person tidies a folder by hand. A right click offers Rename and
+// Trash; a made-up disk's files are not on disk, so either is refused, and the
+// window says why.
 @(test)
 a_made_up_file_is_not_renamed_or_trashed :: proc(t: ^testing.T) {
 	budget(t, 120)

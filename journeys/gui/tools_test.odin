@@ -8,8 +8,9 @@ import "core:testing"
 
 import "jm:ui"
 
-// A person searches for a file by name, reads where it is and how big, and
-// opens it; a made-up disk's file is not there to open, and the window says so.
+// Story: a person searches for a file by name, reads where it is and how big,
+// and opens it; a made-up disk's file is not there to open, and the window
+// says so.
 @(test)
 a_search_finds_a_file_by_name_and_says_where_it_is :: proc(t: ^testing.T) {
 	budget(t, 120)
@@ -42,8 +43,9 @@ a_search_finds_a_file_by_name_and_says_where_it_is :: proc(t: ^testing.T) {
 	)
 }
 
-// Reclaim offers what a project's tools make again, sized, chosen by age; a
-// person unchooses one, and the clean up is refused on a made-up disk.
+// Story: a developer frees space. Reclaim offers what a project's tools make
+// again, sized, chosen by age; they unchoose one, and the clean up is refused
+// on a made-up disk.
 @(test)
 reclaim_offers_what_rebuilds_and_cleans_only_a_real_disk :: proc(t: ^testing.T) {
 	budget(t, 120)
@@ -104,8 +106,8 @@ reclaim_offers_what_rebuilds_and_cleans_only_a_real_disk :: proc(t: ^testing.T) 
 	)
 }
 
-// Two days apart the same place is opened again, and the window says what grew
-// since the scan before, from the history it kept.
+// Story: a person comes back days later. The same place is opened again, and
+// the window says what grew since the scan before, from the history it kept.
 @(test)
 a_second_day_is_compared_with_the_first :: proc(t: ^testing.T) {
 	budget(t, 180)
@@ -158,8 +160,9 @@ a_second_day_is_compared_with_the_first :: proc(t: ^testing.T) {
 	keep(&w, "second")
 }
 
-// The settings menu's Export writes the scan up where the person chooses, and
-// the report holds the made-up disk's exact totals.
+// Story: a technician hands over a report. The settings menu's Export writes
+// the scan up where they choose, and the report holds the made-up disk's
+// exact totals.
 @(test)
 a_report_is_exported_where_chosen :: proc(t: ^testing.T) {
 	budget(t, 120)
