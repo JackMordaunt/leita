@@ -855,6 +855,9 @@ listing :: proc(gtx: ^ui.Ctx, m: ^Model) {
 		query.Listing_Result,
 	)
 	if r == nil {
+		// Within the gutter the rows will keep.
+		ui.inset(gtx, {right = PAD})
+		ui.column(gtx, gap = 8, align = .Fill)
 		for i in 0 ..< 6 {
 			primer.skeleton_box(gtx, height = 28, delay = .Short, key = u64(i + 1))
 		}
