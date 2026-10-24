@@ -698,6 +698,22 @@ journeys: deps
     ODIN="{{odin}}" LEITA_BIN="{{justfile_directory()}}/build/journeys/{{bin}}{{exe}}" LEITA_TEST_LICENCE='{{test_licence}}' tools/journeys/run journeys build/test/journeys{{exe}} -debug {{san}} {{flags}}
     ODIN="{{odin}}" LEITA_JOURNEY_ARTIFACTS="${LEITA_JOURNEY_ARTIFACTS:-{{root}}/build/journeys/artifacts}" tools/journeys/run journeys/gui build/test/journeys-gui{{exe}} -debug {{san}} {{flags}} {{curl_open}}
 
+# The window as the operating system drives it, kept small: tools/journeys/window.py
+# starts the debug window on the made-up disk, finds it, gives it the keyboard,
+# presses the search shortcut and types through the window system (xdotool on an
+# Xvfb display on Linux, SendInput on Windows, System Events on macOS) and closes
+# it as a person does; journeys/window replays what the window recorded and checks
+# the accessibility tree. Evidence -> build/journeys/window.
+window-journey: (gui "debug")
+    #!/usr/bin/env bash
+    set -euo pipefail
+    out="{{root}}/build/journeys/window"
+    py=$(command -v python3 || command -v python)
+    run=("$py" tools/journeys/window.py "build/debug/app/{{gui}}{{exe}}" "$out")
+    if [ "{{os()}}" = linux ]; then run=(xvfb-run -a -s "-screen 0 1600x1000x24" "${run[@]}"); fi
+    "${run[@]}"
+    LEITA_WINDOW_RECORDING="$out/session.rec" {{odin}} test journeys/window -debug {{san}} {{flags}} -out:build/test/journeys-window{{exe}}
+
 gui-test: deps
     mkdir -p build/test/app
     {{odin}} test cmd/gui -debug {{san}} {{flags}} {{curl_open}} {{sdl3_link}} -out:build/test/app/{{gui}}-main{{exe}}
