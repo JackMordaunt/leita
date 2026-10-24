@@ -8,6 +8,7 @@ import "jm:ui"
 import "jm:ui/design"
 import "jm:ui/ops"
 import "jm:ui/primer"
+import tok "jm:ui/primer/tokens"
 
 import "../msg"
 import "../query"
@@ -95,6 +96,18 @@ colour_switch :: proc(gtx: ^ui.Ctx, m: ^Model, compact := false) {
 			m.colour = Colouring(at)
 		}
 	}
+}
+
+// tree_label is a box's name on one line within room: cut with an ellipsis when
+// it is wider, so a cut name reads as cut rather than as a shorter name.
+tree_label :: proc(
+	gtx: ^ui.Ctx,
+	name: string,
+	st: tok.Type_Style,
+	font: ops.Font_Id,
+	room: f32,
+) -> ui.Paragraph {
+	return design.layout_style(gtx, name, st, font, width = max(room, 1), max_lines = 1)
 }
 
 // TREE_HEADER is a directory's name strip, TREE_PAD the inset its contents keep
@@ -426,7 +439,7 @@ blocks :: proc(
 		ops.fill(gtx.scene, b.rect, fill)
 		ops.stroke(gtx.scene, b.rect, bg, {width = 1})
 		if labelled {
-			para := design.layout_style(gtx, name, small, font)
+			para := tree_label(gtx, name, small, font, b.rect.w - 4 - TREE_PAD)
 			ops.clip_push(gtx.scene, ops.Rect{b.rect.x, b.rect.y, b.rect.w - TREE_PAD, b.rect.h})
 			design.draw_paragraph(
 				gtx,
