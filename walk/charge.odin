@@ -86,9 +86,10 @@ not invent an allocation from the reported size. A resident rewrite changes
 the charge to the length and leaves Allocated unset. Neither case is Exact.
 */
 windows_account :: proc(o: Windows_Figures) -> (charge: u64, a: scan.Account) {
+	occupied := occupied_size(o)
 	reported := o.reported_allocation
 	if o.compressed_or_sparse && o.occupied_known {
-		reported = o.occupied
+		reported = occupied
 	}
 	charge = windows_charge(o.logical, reported, o.cluster, o.ntfs)
 
@@ -97,7 +98,7 @@ windows_account :: proc(o: Windows_Figures) -> (charge: u64, a: scan.Account) {
 	if o.compressed_or_sparse {
 		if o.occupied_known {
 			allocated_known = true
-			allocated = o.occupied
+			allocated = occupied
 		}
 	} else if !(o.ntfs && o.cluster > 0 && o.reported_allocation % o.cluster != 0) {
 		allocated_known = true
@@ -112,4 +113,22 @@ windows_account :: proc(o: Windows_Figures) -> (charge: u64, a: scan.Account) {
 		links_known = o.links_known,
 	})
 	return
+}
+
+/*
+What a compressed or sparse file occupies. The occupied query stops at the file's
+length: NTFS gives a sparse file its clusters a compression unit at a time, 64 KiB
+on a 4 KiB volume, so a file of 4096 bytes with data in it holds 16 clusters
+(FSCTL_GET_RETRIEVAL_POINTERS maps all 16, as walk/fuzz finds on a hosted Windows
+runner), yet the query says 4096. An occupied size that reaches the length is that
+cut, and the reported allocation, a whole number of clusters above it, is what NTFS
+holds; below the length the query was not cut.
+*/
+@(private = "file")
+occupied_size :: proc(o: Windows_Figures) -> u64 {
+	whole := o.cluster > 0 && o.reported_allocation % o.cluster == 0
+	if o.ntfs && whole && o.occupied >= o.logical && o.reported_allocation > o.occupied {
+		return o.reported_allocation
+	}
+	return o.occupied
 }

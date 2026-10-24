@@ -57,6 +57,24 @@ test_windows_account_keeps_length_allocation_and_charge_apart :: proc(t: ^testin
 	testing.expect_value(t, sparse.logical, u64(1 << 20))
 	testing.expect(t, .Exclusive not_in sparse.known && .Reclaim not_in sparse.known)
 
+	// The occupied query stops at the length, 4096, where NTFS holds a whole
+	// compression unit, 64 KiB, which the reported allocation says.
+	unit: scan.Account
+	charge, unit = windows_account({
+		logical = 4096,
+		reported_allocation = 65536,
+		occupied = 4096,
+		occupied_known = true,
+		compressed_or_sparse = true,
+		cluster = 4096,
+		ntfs = true,
+		links = 1,
+		links_known = true,
+	})
+	testing.expect_value(t, charge, u64(65536))
+	testing.expect_value(t, unit.allocated, u64(65536))
+	testing.expect_value(t, unit.logical, u64(4096))
+
 	// Occupied query failed. The reported size is not stored as Allocated.
 	missed: scan.Account
 	charge, missed = windows_account({
