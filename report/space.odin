@@ -14,8 +14,7 @@ mounted on. The command line's scan and the monitor's ask it the same way.
 space_of :: proc(f: ^survey.Fill) -> Maybe(Space) {
 	#partial switch f.engine {
 	case .Synthetic:
-		cfg, _ := synth.from_env()
-		total, free := synth.space(cfg.day)
+		total, free := synth.space(f.target.day)
 		return Space{total, free}
 	case .Mft:
 		if space, ok := mft_space(&f.table).?; ok {

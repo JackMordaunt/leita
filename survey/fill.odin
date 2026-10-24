@@ -294,10 +294,10 @@ fill_walk :: proc(f: ^Fill) {
 	f.walk_err = walk.read(root, f.tree, cfg)
 }
 
-// Make the disk up, at the pace of a walk, for the day scan.SYNTHETIC_ENV names.
+// Make the disk up, at the pace of a walk, for the day the target was resolved with.
 @(private)
 fill_synthetic :: proc(f: ^Fill) {
-	cfg, _ := synth.from_env()
+	cfg := synth.config(f.target.day)
 	root := scan.location(f.target, context.allocator)
 	defer delete(root)
 	f.synth_err = synth.read(root, f.tree, cfg)

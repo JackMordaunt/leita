@@ -18,6 +18,7 @@ import "../human"
 import "../kstat"
 import "../licence"
 import "../monitor"
+import "../scan"
 import "../schedule"
 import "../settings"
 import "../term"
@@ -86,6 +87,7 @@ Monitor_Context :: struct {
 	// poster's own.
 	post:     webhook.Poster,
 	posted:   rawptr,
+	made_up:  Maybe(int), // the made-up disk's day to scan in place of each place, nil for real ones
 }
 
 // LOCKED says why a Pro command was refused. Listing, turning monitoring off
@@ -120,6 +122,7 @@ monitor_dispatch :: proc(c: Monitor_Context, args: []string, w: io.Writer) -> in
 				desktop = c.desktop,
 				post = c.post,
 				posted = c.posted,
+				made_up = c.made_up,
 			},
 			w,
 		)
@@ -591,6 +594,7 @@ monitor_run_command_line :: proc(args: []string) -> int {
 		notify   = monitor_show,
 		desktop  = alert.SYSTEM,
 		post     = webhook.post,
+		made_up  = scan.synthetic_day(),
 	}
 	return monitor_dispatch(c, args, os.to_writer(os.stdout))
 }

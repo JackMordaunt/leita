@@ -81,6 +81,7 @@ Options :: struct {
 	// and the poster's own.
 	post:    webhook.Poster,
 	posted:  rawptr,
+	made_up: Maybe(int), // the made-up disk's day to scan in place of each place, nil for real ones
 }
 
 // EXIT_FAILED is what a run exits with when a place could not be scanned or
@@ -233,7 +234,7 @@ scan_one :: proc(
 ) {
 	r.place = watch.place
 	r.started = time.to_unix_seconds(opt.now)
-	s, problem := survey_place(watch.place, opt.paths.history)
+	s, problem := survey_place(watch.place, opt.paths.history, opt.made_up)
 	if s == nil {
 		r.problem = problem
 		return

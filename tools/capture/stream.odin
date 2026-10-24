@@ -54,8 +54,9 @@ capture_view :: proc(gtx: ^ui.Ctx, user: rawptr) {
 
 // The preflight measures the same walk's virtual cost, without opening any file.
 stream_prepare :: proc() {
-	cfg, on := synth.from_env()
+	day, on := scan.synthetic_day().?
 	if !on {fail("-stream requires LEITA_SYNTHETIC")}
+	cfg := synth.config(day)
 	tree: scan.Tree
 	if scan.tree_init(&tree) != nil {fail("stream preflight allocation failed")}
 	defer scan.tree_destroy(&tree)

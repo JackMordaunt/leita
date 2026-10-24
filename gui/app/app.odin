@@ -147,6 +147,7 @@ Desk :: struct {
 	wake:                proc(),
 	generation:          u32,
 	scan:                ^Scan,
+	made_up:             Maybe(int), // the made-up disk's day to scan in place of any path, nil for real ones
 	live:                map[ui.Need_Key]Query,
 	notice:              query.Notice, // its text owned
 	words:               ^msg.Strings, // what the host says, in the window's language (words.odin)
@@ -285,7 +286,9 @@ activate_url, "" for LEITA_ACTIVATE_URL or else ACTIVATE_URL. Monitoring is
 handed to scheduler running monitor_argv, nil for the system's scheduler running
 this binary (monitor.odin). update_key is 32 bytes of a fixture's Ed25519
 public key; nil uses the key the build was given. update_exe is that fixture's
-executable; "" is this process. allocator builds the desk.
+executable; "" is this process. made_up is the day of a made-up disk to scan in
+place of every path, as scan.synthetic_day read it at startup, nil for real
+scans. allocator builds the desk.
 */
 init :: proc(
 	h: ^Host,
@@ -302,6 +305,7 @@ init :: proc(
 	update_key: []byte = nil,
 	update_exe := "",
 	update_time: ^Update_Time = nil,
+	made_up: Maybe(int) = nil,
 	allocator := context.allocator,
 ) {
 	ui.inbox_init(&h.inbox, allocator)
@@ -309,6 +313,7 @@ init :: proc(
 	h.desk = {
 		inbox         = &h.inbox,
 		wake          = wake,
+		made_up       = made_up,
 		live          = make(map[ui.Need_Key]Query, allocator),
 		words         = new(msg.Strings, allocator),
 		reports       = strings.clone(reports, allocator) if reports != "" else files.reports_folder(allocator),
@@ -745,7 +750,7 @@ scan_begin :: proc(d: ^Desk, path: string, cut := false) {
 		return
 	}
 
-	target, choice, err := scan.resolve(path)
+	target, choice, err := scan.resolve(path, made_up = d.made_up)
 	if err != nil {
 		s.problem = strings.clone(say(d, .Cannot_Scan, path, fmt.tprint(err)))
 		return
@@ -801,8 +806,7 @@ measure :: proc(s: ^Scan) {
 		return
 	}
 	if s.engine == .Synthetic {
-		cfg, _ := synth.from_env()
-		s.disk_total, s.disk_free = synth.space(cfg.day)
+		s.disk_total, s.disk_free = synth.space(s.fill.target.day)
 		return
 	}
 	where_ := scan.location(s.fill.target, context.temp_allocator)

@@ -53,7 +53,6 @@ import "../view"
 
 @(private = "file")
 Rig :: struct {
-	shared:   bool, // holds scan_env shared, as every rig does but the one that set it
 	own_data: string, // the data folder rig_open made for a test that gave none
 	h:        Host,
 	m:        view.Model,
@@ -73,17 +72,13 @@ rig_open :: proc(
 	licence_key: []byte = nil,
 	activate_url := "",
 	release_base := "",
-	made_up := false,
+	made_up: Maybe(int) = nil,
 	scheduler: ^schedule.Host = nil,
 	monitor_argv: []string = nil,
 	update_key: []byte = nil,
 	update_exe := "",
 	update_time: ^Update_Time = nil,
 ) {
-	if !made_up {
-		env_share()
-		r.shared = true
-	}
 	keep := kept
 	if keep == "" {
 		r.own_data = rig_data()
@@ -102,6 +97,7 @@ rig_open :: proc(
 		update_key = update_key,
 		update_exe = update_exe,
 		update_time = update_time,
+		made_up = made_up,
 	)
 	r.data = data_host(&r.h)
 	view.model_init(&r.m, path)
@@ -147,9 +143,6 @@ rig_close :: proc(r: ^Rig) {
 	ui.subscriptions_destroy(&r.needs)
 	view.model_destroy(&r.m)
 	stop(&r.h)
-	if r.shared {
-		env_unshare()
-	}
 	if r.own_data != "" {
 		os.remove_all(r.own_data)
 		delete(r.own_data, runtime.heap_allocator())
@@ -179,35 +172,6 @@ rig_data :: proc() -> string {
 	os.remove_all(dir)
 	_ = os.make_directory(dir)
 	return dir
-}
-
-/*
-scan_env is held shared by every test whose host scans a real directory, and
-held alone by one that points scan.SYNTHETIC_ENV at a made-up disk: the variable
-is the process's, and a host resolves its target on a thread of its own, so a
-real scan started while it is set would read the made-up disk. A test thread
-holds it shared once, however many hosts it opens.
-*/
-@(private)
-scan_env: sync.RW_Mutex
-
-@(private, thread_local)
-env_shares: int
-
-@(private)
-env_share :: proc() {
-	if env_shares == 0 {
-		sync.rw_mutex_shared_lock(&scan_env)
-	}
-	env_shares += 1
-}
-
-@(private)
-env_unshare :: proc() {
-	env_shares -= 1
-	if env_shares == 0 {
-		sync.rw_mutex_shared_unlock(&scan_env)
-	}
 }
 
 // hand_on does what the frame loop does after a frame: the need diff and the
@@ -3518,12 +3482,8 @@ settings_hold :: proc(kept, key, value: string) -> bool {
 // ranked, and answered again, complete, once the scan is done.
 @(test)
 a_search_typed_during_a_scan_refines_until_it_is_done :: proc(t: ^testing.T) {
-	sync.rw_mutex_lock(&scan_env)
-	defer sync.rw_mutex_unlock(&scan_env)
-	testing.expect(t, os.set_env(scan.SYNTHETIC_ENV, "12") == nil)
-	defer os.unset_env(scan.SYNTHETIC_ENV)
 	r: Rig
-	rig_open(&r, "/", made_up = true)
+	rig_open(&r, "/", made_up = 12)
 	defer rig_close(&r)
 
 	testing.expect(t, open_settings(&r))

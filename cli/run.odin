@@ -197,7 +197,7 @@ run :: proc(args: []string) -> int {
 	if problem != "" {
 		say_note("%s", problem)
 	}
-	return scan_and_say(opt, data, licensee, !unlocked)
+	return scan_and_say(opt, data, licensee, !unlocked, scan.synthetic_day())
 }
 
 // is_subcommand says whether args open with a command of its own, monitor,
@@ -268,9 +268,17 @@ store the scan is compared with and kept in, "" for none; --no-history makes it
 none whatever it is. licensee is whose licence leita runs under, "" for none,
 and locked says Pro is off, so a PDF or HTML report is refused and an earlier
 scan is not compared. A CSV or JSON of this scan is still written, and the scan
-is still kept.
+is still kept. made_up is the day of a made-up disk to scan in place of the
+target, nil to scan the target itself.
 */
-scan_and_say :: proc(opt: Options, kept := "", licensee := "", locked := false) -> int {
+//review:ignore odin-allocator-parameter the command line's whole run, on the context allocator as before; only made_up is new
+scan_and_say :: proc(
+	opt: Options,
+	kept := "",
+	licensee := "",
+	locked := false,
+	made_up: Maybe(int) = nil,
+) -> int {
 	// Checked before anything is read, so a mistake costs nothing.
 	format, format_err := report_format(opt)
 	if format_err != "" {
@@ -331,7 +339,7 @@ scan_and_say :: proc(opt: Options, kept := "", licensee := "", locked := false) 
 		workers    = opt.workers,
 	}
 
-	target, engine, resolve_err := scan.resolve(target_str)
+	target, engine, resolve_err := scan.resolve(target_str, made_up = made_up)
 	if resolve_err != nil {
 		say_error("cannot scan %s: %v", target_str, resolve_err)
 		return 1

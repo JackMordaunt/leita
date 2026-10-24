@@ -3,6 +3,7 @@ package leita_gui
 import "jm:ui/shell"
 
 import "../history"
+import "../scan"
 import "app"
 @(require) import "leaks"
 import "msg"
@@ -19,7 +20,7 @@ run :: proc(path: string) {
 	h := new(app.Host)
 	defer free(h)
 
-	app.init(h, path, shell.wake, kept)
+	app.init(h, path, shell.wake, kept, made_up = scan.synthetic_day())
 	defer app.stop(h)
 
 	m: view.Model

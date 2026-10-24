@@ -2,6 +2,7 @@ package scan
 
 import "core:mem"
 import "core:os"
+import "core:strconv"
 import "core:strings"
 import "core:time"
 
@@ -25,6 +26,7 @@ Target :: struct {
 	fs:        Filesystem,
 	media:     Media,
 	image:     bool, // a file holding a volume rather than a mounted one
+	day:       int, // the made-up disk's day, read only by the synthetic engine
 	allocator: mem.Allocator,
 }
 
@@ -58,26 +60,47 @@ top :: proc(t: Target) -> string {
 SYNTHETIC_ENV :: "LEITA_SYNTHETIC"
 
 /*
-The made-up target in place of input, when SYNTHETIC_ENV asks for one. It is
-named and shaped as input would be, on a flash disk, so the window and the
-command line show it as they would the real one; resolve asks this first.
+synthetic_day is the day SYNTHETIC_ENV names, or nil when it is unset or empty; a
+value that is not a whole number is day 0. The command line and the window read
+it once, at startup, and hand it to resolve. The variable is the whole process's,
+so reading it on each resolve let a test that set it turn a concurrent test's real
+scan into the made-up disk (card 81).
 */
+synthetic_day :: proc() -> Maybe(int) {
+	buf: [64]byte // a day is a few digits
+	value, err := os.lookup_env(buf[:], SYNTHETIC_ENV)
+	if err == .Buffer_Full {
+		return 0 // set, and too long to be a whole number of days
+	}
+	if err != nil || value == "" {
+		return nil
+	}
+	day, _ := strconv.parse_int(value)
+	return max(day, 0)
+}
+
+/*
+The made-up target in place of input, when made_up names a day. It is named and
+shaped as input would be, on a flash disk, so the window and the command line
+show it as they would the real one; resolve asks this first.
+*/
+@(private)
 synthetic :: proc(
 	input: string,
+	made_up: Maybe(int),
 	allocator := context.allocator,
 ) -> (
 	t: Target,
 	c: Choice,
 	ok: bool,
 ) {
-	if os.get_env(SYNTHETIC_ENV, context.temp_allocator) == "" {
-		return {}, {}, false
-	}
+	day := made_up.? or_return
 	t.allocator = allocator
 	t.input = strings.clone(input, allocator)
 	t.mount = strings.clone(input, allocator)
 	t.fs = .Other
 	t.media = .Solid
+	t.day = day
 	return t, {engine = .Synthetic}, true
 }
 

@@ -48,15 +48,23 @@ Place_Scan :: struct {
 survey_place scans path to the end at the gentle pace, from its baseline beside
 the history store at kept when it has one, keeping the result there, and returns
 what it found, or nil and why not, in the temp allocator. The caller frees what it
-found with place_scan_destroy.
+found with place_scan_destroy. made_up is the day of a made-up disk to scan in
+place of path, nil to scan path itself.
 */
-survey_place :: proc(path, kept: string) -> (s: ^Place_Scan, problem: string) {
+//review:ignore odin-allocator-parameter a place's scan lives on the context allocator as before, freed by place_scan_destroy; only made_up is new
+survey_place :: proc(
+	path, kept: string,
+	made_up: Maybe(int) = nil,
+) -> (
+	s: ^Place_Scan,
+	problem: string,
+) {
 	s = new(Place_Scan)
 	s.path = strings.clone(path)
 	s.started = time.now()
 	start := time.tick_now()
 
-	target, choice, err := scan.resolve(path)
+	target, choice, err := scan.resolve(path, made_up = made_up)
 	if err != nil {
 		place_scan_destroy(s)
 		return nil, fmt.tprintf("cannot scan %s: %v", path, err)

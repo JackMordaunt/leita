@@ -10,15 +10,14 @@ a change to show. Every directory's contents follow from a seed made of its
 parent's and its own name, so what one directory holds does not depend on how
 many entries came before it: a day that adds a file adds only that file.
 
-It is chosen by scan.SYNTHETIC_ENV, which names the day. Nothing it names is on
+It is chosen by scan.SYNTHETIC_ENV, which names the day, read once by the
+command line and the window and resolved onto the target. Nothing it names is on
 disk, so whatever acts on the disk must refuse a synthetic scan's paths.
 */
 package synth
 
 import "core:fmt"
 import "core:math"
-import "core:os"
-import "core:strconv"
 import "core:strings"
 import "core:time"
 
@@ -45,8 +44,12 @@ Clock :: struct {
 }
 
 // Set before starting readers, and leave unchanged until they have stopped.
-// Capture tools use this to pace from_env readers by their rendered timeline.
+// Capture tools use this to pace config readers by their rendered timeline.
 clock_override: Clock
+
+// Set before starting readers, as clock_override is: the capture tool sets it
+// from LEITA_SYNTHETIC_COMPARE_BASELINE at startup, for its Compare baseline.
+compare_baseline_override: bool
 
 Error :: enum {
 	None,
@@ -54,25 +57,16 @@ Error :: enum {
 	Cancelled,
 }
 
-// from_env is the configuration scan.SYNTHETIC_ENV asks for, and whether it asks
-// for one at all. A value that is not a whole number is day 0.
-from_env :: proc() -> (cfg: Config, on: bool) {
-	value := os.get_env(scan.SYNTHETIC_ENV, context.temp_allocator)
-	if value == "" {
-		return {}, false
-	}
-	day, _ := strconv.parse_int(value)
+// config is how a fill reads the made-up disk of day, as scan.resolve gave it on
+// the target: at the pace of a walk, by clock_override when one is set, and as
+// the larger baseline when compare_baseline_override is.
+config :: proc(day: int) -> Config {
 	return {
-			day = max(day, 0),
-			pace = true,
-			clock = clock_override,
-			compare_baseline = os.get_env(
-				"LEITA_SYNTHETIC_COMPARE_BASELINE",
-				context.temp_allocator,
-			) ==
-			"1",
-		},
-		true
+		day = max(day, 0),
+		pace = true,
+		clock = clock_override,
+		compare_baseline = compare_baseline_override,
+	}
 }
 
 // space is the size of the made-up disk and what is free on it on day.

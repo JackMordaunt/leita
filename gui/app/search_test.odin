@@ -110,8 +110,6 @@ search_fixture :: proc(t: ^testing.T, name: string) -> string {
 a_search_answers_ranked_hits_with_what_matched :: proc(t: ^testing.T) {
 	root := search_fixture(t, "ranked")
 	defer os.remove_all(root)
-	env_share()
-	defer env_unshare()
 	h: Host
 	init(&h, root, thumbs = fmt.tprintf("%s-thumbs", root))
 	defer stop(&h)
@@ -180,8 +178,6 @@ a_thumbnail_is_made_once_and_kept :: proc(t: ^testing.T) {
 	testing.expect(t, bl.image_write_to_file(&img, cpath, nil) == 0)
 	bl.image_destroy(&img)
 
-	env_share()
-	defer env_unshare()
 	h: Host
 	init(&h, root, thumbs = thumbs)
 	defer stop(&h)

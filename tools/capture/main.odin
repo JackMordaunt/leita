@@ -11,6 +11,8 @@ import bl "jm:ui/blend2d"
 
 import "../../gui/app"
 import "../../gui/view"
+import "../../scan"
+import "../../synth"
 import "jm:ui"
 import "jm:ui/ops"
 import "jm:ui/render"
@@ -80,6 +82,8 @@ main :: proc() {
 	if args[3] != "light" && args[3] != "dark" {fail("theme must be light or dark")}
 	// The caller must create a dedicated directory. Never discover personal paths.
 	if !os.exists(args[2]) {fail("create the isolated data directory first")}
+	compare: [8]byte // only "1" asks; anything longer is not it
+	synth.compare_baseline_override = os.get_env(compare[:], "LEITA_SYNTHETIC_COMPARE_BASELINE") == "1"
 	for arg in args {
 		if arg == "-stream" {stream_prepare()}
 	}
@@ -90,6 +94,7 @@ main :: proc() {
 		kept = fmt.tprintf("%s/history.db", args[2]),
 		reports = args[2],
 		thumbs = args[2],
+		made_up = scan.synthetic_day(),
 	)
 	defer app.stop(&host)
 	model: view.Model

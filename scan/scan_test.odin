@@ -159,6 +159,23 @@ test_resolve_rejects_what_is_not_there :: proc(t: ^testing.T) {
 	testing.expect_value(t, err, Error.Target_Not_Found)
 }
 
+// A made-up day resolves any input, there or not, to the made-up disk of that
+// day, named as the input; without one the same input is looked for.
+@(test)
+a_made_up_day_resolves_to_the_made_up_disk :: proc(t: ^testing.T) {
+	missing := `Q:\no\such\path` when ODIN_OS == .Windows else "/no/such/path"
+	made, choice, err := resolve(missing, made_up = 7)
+	testing.expect_value(t, err, Error.None)
+	defer target_destroy(&made)
+
+	testing.expect_value(t, choice.engine, Engine.Synthetic)
+	testing.expect_value(t, made.day, 7)
+	testing.expect_value(t, made.mount, missing)
+
+	_, _, real_err := resolve(missing)
+	testing.expect_value(t, real_err, Error.Target_Not_Found)
+}
+
 @(test)
 the_space_of_a_mounted_directory_is_its_filesystems :: proc(t: ^testing.T) {
 	dir, err := os.temp_directory(context.temp_allocator)

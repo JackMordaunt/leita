@@ -23,16 +23,20 @@ than failing inside a backend, because this is the layer that knows why.
 The reader comes back with the target. Choosing one needs to know whether the volume
 opens, which is found out here, so leaving the caller to ask separately would only
 mean opening it twice.
+
+made_up, a day, resolves to the made-up disk of that day in place of input: the
+caller passes what synthetic_day read at its startup, nothing to scan what is real.
 */
 resolve :: proc(
 	input: string,
 	allocator := context.allocator,
+	made_up: Maybe(int) = nil,
 ) -> (
 	t: Target,
 	c: Choice,
 	err: Error,
 ) {
-	if made, choice, ok := synthetic(input, allocator); ok {
+	if made, choice, ok := synthetic(input, made_up, allocator); ok {
 		return made, choice, .None
 	}
 	t.allocator = allocator
