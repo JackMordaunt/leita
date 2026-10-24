@@ -606,7 +606,8 @@ report_format :: proc(opt: Options) -> (report.Format, string) {
 }
 
 // Write the report to path, or standard output for "-". A report that could
-// not be written whole is not left behind half written.
+// not be written whole is not left behind half written, and the file path held
+// before is kept (report.save).
 write_report :: proc(
 	r: ^report.Report,
 	path: string,
@@ -620,18 +621,12 @@ write_report :: proc(
 		}
 		return 0
 	}
-	file, open_err := os.open(path, {.Write, .Create, .Trunc}, os.Permissions_Default_File)
+	err, open_err := report.save(path, r, format, paper)
 	if open_err != nil {
 		say_error("cannot write %s: %v", path, open_err)
 		return 1
 	}
-	w := os.to_writer(file)
-	err := report.export(w, r, format, paper)
-	if close_err := os.close(file); close_err != nil && err == nil {
-		err = .Write_Failed
-	}
 	if err != nil {
-		os.remove(path)
 		say_error("%s: %s", report.ERROR_TEXT[err], path)
 		return 1
 	}

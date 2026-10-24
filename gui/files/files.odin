@@ -280,21 +280,7 @@ create_new :: proc(
 	return "", nil, .Exists
 }
 
-/*
-create_at opens the file at path to write, making it or emptying what was there:
-for a path the person chose in a save dialog, which asks them before it names a
-file that exists (ui.pick_save says which backend asks how).
-*/
-create_at :: proc(path: string) -> (file: ^os.File, err: Error) {
-	f, open_err := os.open(path, {.Write, .Create, .Trunc}, os.Permissions_Default_File)
-	if open_err != nil {
-		return nil, open_error(open_err)
-	}
-	return f, .None
-}
-
 // open_error is the Error an open of a file to write failed with.
-@(private)
 open_error :: proc(err: os.Error) -> Error {
 	switch {
 	case err == os.General_Error.Exist:

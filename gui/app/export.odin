@@ -12,13 +12,14 @@ import "../command"
 import "../files"
 
 /*
-Export: a report of the finished scan, written by report.export as the command
+Export: a report of the finished scan, written by report.save as the command
 line writes one, to the path the person chose in the window's save dialog. It
 runs on the desk thread, which owns the tree, so the window goes on drawing while
 it is written; the desk answers again once the file is closed, with a notice
 saying where it went or why it could not.
 
-A file already at the chosen path is replaced: the platform's save dialog asks
+A file already at the chosen path is replaced, once the new report is written
+whole, so a save that fails keeps it: the platform's save dialog asks
 the person before it names one (ui.pick_save says which backend asks how). Without a path, as when no dialog could open, the
 report goes to a file of its own in the reports folder (files.reports_folder, or
 the one init was given), named for the target and the minute, and never replaces
@@ -88,30 +89,33 @@ export :: proc(d: ^Desk, c: command.Export) {
 
 	format := FORMATS[c.format]
 	path: string
-	f: ^os.File
-	err: files.Error
 	if chosen != "" {
 		path = strings.clone(chosen)
-		if f, err = files.create_at(path); err != .None {
-			tell(d, true, .Save_Failed_To, path, say(d, FILE_ERRORS[err]))
-			delete(path)
-			return
-		}
 	} else {
+		// The name is claimed, empty, so no other save takes it; report.save
+		// then writes the report beside it and renames it over.
 		stem := files.report_stem(r.target, time.now())
+		f: ^os.File
+		err: files.Error
 		path, f, err = files.create_new(folder, stem, command.EXTENSIONS[c.format])
 		if err != .None {
 			tell(d, true, .Save_Failed_In, folder, say(d, FILE_ERRORS[err]))
 			return
 		}
+		os.close(f)
 	}
 	defer delete(path)
-	written := report.export(os.to_writer(f), &r, format, report.paper_of_locale())
-	if close_err := os.close(f); close_err != nil && written == .None {
-		written = .Write_Failed
+	// A failed save keeps the file a chosen path held before, and gives back
+	// a name it claimed.
+	written, open_err := report.save(path, &r, format, report.paper_of_locale())
+	if written != .None && chosen == "" {
+		os.remove(path)
+	}
+	if open_err != nil && chosen != "" {
+		tell(d, true, .Save_Failed_To, path, say(d, FILE_ERRORS[files.open_error(open_err)]))
+		return
 	}
 	if written != .None {
-		os.remove(path)
 		tell(d, true, .Save_Failed, say(d, REPORT_ERRORS[written]))
 		return
 	}

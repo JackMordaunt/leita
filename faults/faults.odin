@@ -15,6 +15,7 @@ can run an operation once to learn how many it makes and then fault each in turn
 */
 package leita_faults
 
+import "core:io"
 import "core:os"
 import "core:strings"
 
@@ -225,4 +226,38 @@ write_entire_file :: proc(
 		err = cerr
 	}
 	return err
+}
+
+// to_writer is os.to_writer, its writes made through write.
+to_writer :: proc(f: ^os.File) -> io.Writer {
+	return io.Stream{procedure = stream, data = f}
+}
+
+@(private)
+stream :: proc(
+	data: rawptr,
+	mode: io.Stream_Mode,
+	p: []byte,
+	offset: i64,
+	whence: io.Seek_From,
+) -> (
+	n: i64,
+	err: io.Error,
+) {
+	#partial switch mode {
+	case .Write:
+		// As os.to_writer's does, a write goes on until all of p is written or
+		// one fails.
+		for int(n) < len(p) {
+			wrote, werr := write((^os.File)(data), p[n:])
+			n += i64(wrote)
+			if werr != nil {
+				return n, .Unknown
+			}
+		}
+		return n, .None
+	case .Query:
+		return io.query_utility({.Write, .Query})
+	}
+	return 0, .Unsupported
 }
