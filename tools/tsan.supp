@@ -1,0 +1,13 @@
+# ThreadSanitizer suppressions for just soak thread. Each entry says why the
+# report is not a bug here; a real race is fixed, not listed.
+
+# The live scan's snapshot is a seqlock (cli/snapshot.odin): the reader copies
+# the data while the builder may be writing it, then throws the copy away if
+# the sequence number moved. The copy is a race by design.
+race:leita_cli::current
+race:leita_cli::publish
+
+# jm's loopback stop wrote its stopping flag plainly while handlers load it
+# atomically. Fixed in jm 1d0ae5a (store it atomically); drop this entry once
+# the submodule carries that commit.
+race:loopback::stop

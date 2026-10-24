@@ -12,6 +12,9 @@
 #   just fuzz [suite] [seed] [duration] [flags]
 #                             leita-fuzz under ASan, here and in CI; its tree suite builds
 #                             filesystems with mounts and scans them
+#   just soak thread|address [duration] [seed] [rounds] [gui]
+#                             the suite and every fuzz suite under TSan, or the fuzz
+#                             suites under ASan and the debug allocator, for long
 #   just btrfs-test [--sudo]  the btrfs and walk tests on a throw-away btrfs image,
 #                             as root too with --sudo where sudo asks no password
 #   just mount-test [--sudo]  the delete test that mounts, in a namespace of its own
@@ -435,6 +438,39 @@ fuzz suite="" seed="1" duration="2m" *extra: sqlite
     # 670 bytes), on some runs and not others, whatever the suite; the debug
     # allocator reports a leak of the suite's own. ASAN_OPTIONS from the caller wins.
     ASAN_OPTIONS="${ASAN_OPTIONS:-detect_leaks=0}" tools/in-namespace build/debug/leita-fuzz{{exe}} {{suite}} -seed={{seed}} {{ if duration == "0" { "" } else { "-for=" + duration } }} -iters=64 {{extra}}
+
+# The soak: a longer, harder run than a push gets, by hand or from soak.yml.
+#   just soak thread 20m 1 3     ThreadSanitizer: just test and just gui-test three
+#                                times, then every fuzz suite for 20m at seeds 1 to 3
+#   just soak address 30m 7 2    AddressSanitizer (SAN, so SAN= turns it off) and the
+#                                debug allocator: every fuzz suite for 30m at seeds 7, 8
+#   just soak thread 5m 1 1 no   the same without the window's tests, which need deps
+# TSan and ASan cannot share a binary, so a run takes one. Under TSan the tests run
+# on one thread: on Linux Odin maps arena memory with system calls TSan does not
+# see, so two tests that reuse an address on two threads read as a race. A
+# test's own threads are still watched. tools/tsan.supp lists the reports that
+# are not bugs, each with its reason; TSan fails the binary on any other.
+soak sanitizer="address" duration="10m" seed="1" rounds="2" gui="gui": sqlite
+    #!/usr/bin/env bash
+    set -euo pipefail
+    j() { just --justfile "{{justfile()}}" "$@"; }
+    case "{{sanitizer}}" in
+    thread)
+        export SAN="-sanitize:thread -define:ODIN_TEST_THREADS=1"
+        export TSAN_OPTIONS="suppressions={{root}}/tools/tsan.supp ${TSAN_OPTIONS:-}"
+        for round in $(seq 1 {{rounds}}); do
+            echo "soak: thread round $round of {{rounds}}"
+            j test
+            if [ "{{gui}}" = gui ]; then j gui-test; fi
+        done
+        ;;
+    address) ;;
+    *) echo "soak: the sanitizer is thread or address, not {{sanitizer}}" >&2; exit 1 ;;
+    esac
+    for s in $(seq {{seed}} $(( {{seed}} + {{rounds}} - 1 ))); do
+        echo "soak: {{sanitizer}} fuzz, seed $s, {{duration}} a suite"
+        j fuzz "" "$s" "{{duration}}" -iters=1000000000
+    done
 
 # The btrfs and walk tests on a btrfs image made, mounted and filled for them,
 # against a total worked out from the image; skipped where nothing can mount one.
