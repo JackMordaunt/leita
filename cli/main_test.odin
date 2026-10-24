@@ -275,14 +275,12 @@ A full LEITA_SYNTHETIC scan (--warn-used, --fail-used and --min-free read the
 volume's space synth.space makes up) is deliberately not exercised here as an
 automated test: a manual run (card 40's log has the session, including the
 built binary's command and output, and the reproduction below) took on the
-order of 10s to scan the made-up disk to completion, and running that
-concurrently with this suite's many real, fast Walk-engine scans reliably
-reproduced, against scan.Tree on the committed main and unrelated to this
-change, two concurrently live Tree instances' largest_files/largest_directories
-bleeding into each other, one scan's paths turning up prefixed by the other's.
-The cause within scan.Tree is not confirmed, only the symptom and that it
-predates this change; filed separately (sb comment on card 40). Until that is
-run down, it is not safe to add a slow synthetic scan to this parallel suite.
+order of 10s to scan the made-up disk to completion. Running it beside this
+suite's real scans once mixed the two, one scan's paths prefixed by the other's;
+that was LEITA_SYNTHETIC being read from the process's environment on every
+resolve, so a real scan resolved while it was set read the made-up disk (card 81).
+The day is now passed to scan.resolve, and survey's
+a_made_up_scan_and_a_real_one_do_not_mix runs the two side by side.
 
 The pipeline from --warn-used/--fail-used/--min-free down to the exit code and
 the JSON "thresholds" member was checked by hand against the built binary
