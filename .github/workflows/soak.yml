@@ -1,0 +1,108 @@
+# The soak: just soak on runners, for longer than a push gets. Run it from the
+# Actions tab (workflow_dispatch, with a budget), or push a branch named
+# ci/<anything>soak<anything>, which takes the defaults below. test.yml and
+# fuzz.yml stay the push-time gates; this one is for hunting.
+#
+#   thread   ThreadSanitizer over just test and just gui-test, rounds times, then
+#            every fuzz suite for duration at rounds seeds, on Linux and macOS
+#   address  AddressSanitizer and the debug allocator over every fuzz suite for
+#            duration at rounds seeds, on Linux, macOS and Windows
+#
+# TSan and ASan cannot share a binary, hence two jobs. A failing fuzz case is
+# saved beside its suite and kept as an artifact for a person to commit.
+name: soak
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: "How long each fuzz suite runs at each seed, as just fuzz takes it"
+        default: "10m"
+      seed:
+        description: "The first seed; rounds seeds run from here"
+        default: "1"
+      rounds:
+        description: "How many times the tests run, and how many seeds the fuzzers take"
+        default: "3"
+  push:
+    branches: ["ci/*soak*"]
+
+concurrency:
+  group: soak-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  DURATION: ${{ inputs.duration || '5m' }}
+  SEED: ${{ inputs.seed || '1' }}
+  ROUNDS: ${{ inputs.rounds || '2' }}
+
+jobs:
+  thread:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 330
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          submodules: true
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      # As fuzz.yml: the tree suite builds mounts in a user namespace.
+      - name: allow user namespaces
+        if: runner.os == 'Linux'
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+      - name: soak thread
+        run: just soak thread "$DURATION" "$SEED" "$ROUNDS"
+      - name: keep failing cases
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: soak-thread-cases-${{ matrix.os }}
+          path: "*/fuzz/corpus/*.case"
+          if-no-files-found: ignore
+
+  address:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 330
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          submodules: true
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: allow user namespaces
+        if: runner.os == 'Linux'
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+      # test.yml and fuzz.yml run Windows without ASan. Here it is tried
+      # first, and the debug allocator alone runs after it either way, so a
+      # Windows ASan that does not build or run still leaves a soak behind.
+      - name: soak address
+        id: asan
+        continue-on-error: ${{ runner.os == 'Windows' }}
+        run: just soak address "$DURATION" "$SEED" "$ROUNDS"
+      - name: soak debug allocator alone (windows)
+        if: runner.os == 'Windows'
+        run: SAN='' just soak address "$DURATION" "$SEED" "$ROUNDS"
+      - name: keep failing cases
+        if: failure() || steps.asan.outcome == 'failure'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: soak-address-cases-${{ matrix.os }}
+          path: "*/fuzz/corpus/*.case"
+          if-no-files-found: ignore
