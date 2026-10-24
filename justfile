@@ -410,6 +410,9 @@ test: sqlite
     {{odin}} test scan/fuzz -debug {{san}} {{flags}} {{curl_open}} -out:build/test/fuzz-scan{{exe}}
     {{odin}} test ntfs/fuzz -debug {{san}} {{flags}} {{curl_open}} -out:build/test/fuzz-ntfs{{exe}}
     {{odin}} test search/fuzz -debug {{san}} {{flags}} {{curl_open}} -out:build/test/fuzz-search{{exe}}
+    # Kills each durable write part way, in a child of the test binary
+    # (durability/child.odin).
+    {{odin}} test durability -debug {{san}} {{flags}} -out:build/test/durability{{exe}}
     # walk/fuzz builds trees with mounts, so its replay runs in a namespace where
     # one can be had, and says so where it cannot.
     {{odin}} build walk/fuzz -build-mode:test -debug {{san}} {{flags}} {{curl_open}} -out:build/test/fuzz-walk{{exe}}
