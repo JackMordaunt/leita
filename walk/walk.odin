@@ -143,8 +143,9 @@ claim_root :: proc(root: string, t: ^scan.Tree) -> (first: u32, ok: bool) {
 	n := scan.node(t, first)
 	n.parent = first // a root holds itself
 	n.name = scan.intern(&w, root)
-	n.flags = {.Used, .Settled, .Directory}
 	t.root = first
+	// A watcher may be reading the tree already, so the flags go last.
+	scan.node_publish(n, {.Used, .Settled, .Directory})
 	return first, true
 }
 
