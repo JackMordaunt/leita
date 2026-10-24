@@ -68,6 +68,10 @@ make_strange :: proc(nodes: ^[dynamic]Node, src: ^harness.Source, allocator: run
 		if gate == 1 || gate == 3 {
 			nodes[i].name = strange_name(nodes[:], i, harness.choice(src, NAME_STYLES), allocator)
 		}
+		if nodes[i].kind == .Mount && nodes[i].mount == .Bind && harness.integer_in(src, 0, 2) == 1 {
+			// Of any directory, one below an unreadable directory included.
+			nodes[i].target = harness.choice(src, all_dirs(Spec{nodes[:]}))
+		}
 	}
 
 	storm := harness.integer_in(src, 0, 6)

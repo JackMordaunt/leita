@@ -218,16 +218,26 @@ linkable_files :: proc(spec: Spec, in_domain: int, allocator := context.temp_all
 	return out[:]
 }
 
-// plain_dirs are the directories a bind may show: the root and every Dir that
-// no unreadable directory lies above. The walk treats a bind of a directory it
-// cannot read as the only way to that tree and walks it (walk's
-// test_a_bind_of_a_walked_tree_is_counted_once, and fuzz found it: a bind of
-// u1/d7 with u1 unreadable counted as a directory), a rule the model does
-// not have yet, so no spec draws one (card 670 step 3 adds it).
+// plain_dirs are the directories a bind is drawn of: the root and every Dir that
+// no unreadable directory lies above. A bind of one below an unreadable
+// directory is made by `make_strange` (the walk treats it differently, and the
+// model says how, in walks_bind), so a corpus case saved before it draws the
+// same binds it always did.
 plain_dirs :: proc(spec: Spec, allocator := context.temp_allocator) -> []int {
 	out := make([dynamic]int, allocator)
 	for n in spec.nodes {
 		if n.kind == .Dir && !under_unreadable(spec, n.id) {
+			append(&out, n.id)
+		}
+	}
+	return out[:]
+}
+
+// all_dirs are every directory a bind may show.
+all_dirs :: proc(spec: Spec, allocator := context.temp_allocator) -> []int {
+	out := make([dynamic]int, allocator)
+	for n in spec.nodes {
+		if n.kind == .Dir {
 			append(&out, n.id)
 		}
 	}
@@ -342,8 +352,8 @@ valid :: proc(spec: Spec, allocator := context.temp_allocator) -> (why: string, 
 			}
 		case .Mount:
 			if n.mount == .Bind {
-				if t, found := find(spec, n.target); !found || t.kind != .Dir || under_unreadable(spec, t.id) {
-					return format_reason(allocator, "%s: binds %d, which is not a directory the scan can read", n.name, n.target), false
+				if t, found := find(spec, n.target); !found || t.kind != .Dir {
+					return format_reason(allocator, "%s: binds %d, which is not a directory", n.name, n.target), false
 				}
 			}
 		case .File, .Dir, .Sparse, .Dangling, .Unreadable, .Scatter:

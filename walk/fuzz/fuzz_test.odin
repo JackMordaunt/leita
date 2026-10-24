@@ -197,6 +197,102 @@ model_counts_a_known_tree :: proc(t: ^testing.T) {
 	testing.expect_value(t, expected_flat(spec, 0, false), whole)
 }
 
+// A bind of a directory below an unreadable one is the only place the scan can
+// count that tree, so the walk reads it as a directory, and of two binds of it the
+// first made; with the unreadable directory open, both are mounts (card 670
+// step 3: the model did not know, and fuzz found it).
+@(test)
+model_walks_a_bind_of_an_unreadable_tree :: proc(t: ^testing.T) {
+	context.allocator = context.temp_allocator
+	spec := Spec {
+		nodes = []Node {
+			{id = 0, parent = NONE, kind = .Dir, target = NONE},
+			{id = 1, parent = 0, name = "u1", kind = .Unreadable, target = NONE},
+			{id = 2, parent = 1, name = "d2", kind = .Dir, target = NONE},
+			{id = 3, parent = 2, name = "f3", kind = .File, size = 4096, target = NONE},
+			{id = 4, parent = 2, name = "t4", kind = .Mount, mount = .Tmpfs, target = NONE},
+			{id = 5, parent = 0, name = "b5", kind = .Mount, mount = .Bind, target = 2},
+			{id = 6, parent = 0, name = "b6", kind = .Mount, mount = .Bind, target = 2},
+		},
+	}
+	_, ok := valid(spec)
+	testing.expect(t, ok)
+	// Denied: b5 shows d2 and its file, and the tmpfs in d2 is an empty directory in it.
+	closed, _ := expected(spec, 0, true)
+	testing.expect_value(t, closed, Tally{files = 1, dirs = 4, mounts = 1, unread = 1, apparent = 4096})
+	testing.expect_value(t, expected_flat(spec, 0, true), closed)
+	// Allowed: d2 is read where it lies, and both binds are mounts of it.
+	open, _ := expected(spec, 0, false)
+	testing.expect_value(t, open, Tally{files = 1, dirs = 3, mounts = 3, apparent = 4096})
+	testing.expect_value(t, expected_flat(spec, 0, false), open)
+}
+
+// A bind of a directory below the one another bind shows is a mount: the walk finds
+// its tree at the other bind's path.
+@(test)
+model_stops_at_a_bind_inside_another :: proc(t: ^testing.T) {
+	context.allocator = context.temp_allocator
+	spec := Spec {
+		nodes = []Node {
+			{id = 0, parent = NONE, kind = .Dir, target = NONE},
+			{id = 1, parent = 0, name = "u1", kind = .Unreadable, target = NONE},
+			{id = 2, parent = 1, name = "d2", kind = .Dir, target = NONE},
+			{id = 3, parent = 2, name = "d3", kind = .Dir, target = NONE},
+			{id = 4, parent = 0, name = "b4", kind = .Mount, mount = .Bind, target = 3},
+			{id = 5, parent = 0, name = "b5", kind = .Mount, mount = .Bind, target = 2},
+		},
+	}
+	got, _ := expected(spec, 0, true)
+	// b5 is walked, with d3 in it; b4, of d3, is a mount.
+	testing.expect_value(t, got, Tally{dirs = 4, mounts = 1, unread = 1})
+	testing.expect_value(t, expected_flat(spec, 0, true), got)
+}
+
+// The same, built and walked, where this host can mount.
+@(test)
+walk_reads_a_bind_of_an_unreadable_tree :: proc(t: ^testing.T) {
+	context.allocator = context.temp_allocator
+	if skip_reason() != "" {
+		return
+	}
+	spec := Spec {
+		nodes = []Node {
+			{id = 0, parent = NONE, kind = .Dir, target = NONE},
+			{id = 1, parent = 0, name = "u1", kind = .Unreadable, target = NONE},
+			{id = 2, parent = 1, name = "d2", kind = .Dir, target = NONE},
+			{id = 3, parent = 2, name = "f3", kind = .File, size = 4096, target = NONE},
+			{id = 4, parent = 0, name = "b4", kind = .Mount, mount = .Bind, target = 2},
+			{id = 5, parent = 0, name = "b5", kind = .Mount, mount = .Bind, target = 2},
+		},
+	}
+	class, what := scan_spec(spec)
+	testing.expectf(t, class == "", "%s: %s", class, what)
+}
+
+// A bind of a directory below an unreadable one must be drawn, or the model's rule
+// for it is never tried.
+@(test)
+draws_hidden_binds :: proc(t: ^testing.T) {
+	context.allocator = context.temp_allocator
+	hidden_binds := 0
+	for seed in 1 ..= 600 {
+		raw := make([]byte, 256)
+		state := u64(seed) * 2654435761
+		for &b in raw {
+			state = state * 6364136223846793005 + 1442695040888963407
+			b = byte(state >> 33)
+		}
+		src := harness.source(raw)
+		spec := draw(&src)
+		for n in spec.nodes {
+			if n.kind == .Mount && n.mount == .Bind && under_unreadable(spec, n.target) {
+				hidden_binds += 1
+			}
+		}
+	}
+	testing.expect(t, hidden_binds > 0, "no bind of a directory below an unreadable one was drawn in 600 specs")
+}
+
 // Shrinking a spec stops at the smallest that still fails, and keeps it valid.
 @(test)
 minimise_drops_what_is_not_needed :: proc(t: ^testing.T) {

@@ -13,6 +13,16 @@ not read, whatever it is (a tmpfs is another filesystem, a bind is another view
 of a directory that is counted where it is). A hard link group is one file with
 the other names counted as extras. A directory a reader cannot open is counted
 and not read, when the scan is not allowed past a mode of 0 (`denies`).
+
+One bind is the exception, and it is the walk's rule and not a bug (walk's
+read_linux.odin, `stops_at`): a bind is a mount because its tree is counted where
+it lies, and a tree the scan is refused is counted nowhere else. So a bind of a
+directory below an unreadable one, on the same filesystem as the bind, is walked
+as the directory it appears to be, and its tree is read through it, with the
+mounts inside it empty directories (a bind made without --rbind shows none of
+them). Of several binds of that tree, or of trees one inside another, only the
+one with the shortest way in, and of those the earliest made, is walked and
+the others are mounts (`hidden_peer`).
 */
 
 // Tally is what a scan finds.
@@ -35,12 +45,14 @@ expected :: proc(spec: Spec, start: int, denies: bool, allocator := context.temp
 	// representative. Names seen later are extras.
 	seen := make(map[int]bool, allocator)
 	t.dirs = 1
-	read(spec, start, denies, &t, &reps, &seen)
+	read(spec, start, start, denies, false, &t, &reps, &seen)
 	return t, reps[:]
 }
 
+// read counts what lies in `dir` for a scan from `start`. In a view, the tree a
+// bind shows, a mount is the empty directory under it.
 @(private)
-read :: proc(spec: Spec, dir: int, denies: bool, t: ^Tally, reps: ^[dynamic]int, seen: ^map[int]bool) {
+read :: proc(spec: Spec, start, dir: int, denies, view: bool, t: ^Tally, reps: ^[dynamic]int, seen: ^map[int]bool) {
 	for id in children(spec, dir) {
 		n, _ := find(spec, id)
 		switch n.kind {
@@ -57,18 +69,26 @@ read :: proc(spec: Spec, dir: int, denies: bool, t: ^Tally, reps: ^[dynamic]int,
 			}
 		case .Dir:
 			t.dirs += 1
-			read(spec, id, denies, t, reps, seen)
+			read(spec, start, id, denies, view, t, reps, seen)
 		case .Unreadable:
 			t.dirs += 1
 			if denies {
 				t.unread += 1
 			} else {
-				read(spec, id, denies, t, reps, seen)
+				read(spec, start, id, denies, view, t, reps, seen)
 			}
 		case .Symlink, .Dangling:
 			t.symlinks += 1
 		case .Mount:
-			t.mounts += 1
+			switch {
+			case view:
+				t.dirs += 1
+			case walks_bind(spec, n, start, denies):
+				t.dirs += 1
+				read(spec, start, n.target, denies, true, t, reps, seen)
+			case:
+				t.mounts += 1
+			}
 		}
 	}
 }
@@ -115,8 +135,28 @@ expected_flat :: proc(spec: Spec, start: int, denies: bool, allocator := context
 	t: Tally
 	t.dirs = 1
 	seen := make(map[int]int, allocator) // group -> names seen
+	count_below(spec, start, start, denies, false, &t, &seen)
+	for b in spec.nodes {
+		if b.kind == .Mount && b.id != start && below(spec, b.id, start, denies) && walks_bind(spec, b, start, denies) {
+			t.dirs += 1
+			count_below(spec, start, b.target, denies, true, &t, &seen)
+		}
+	}
+
+	for group, names in seen {
+		file, _ := find(spec, group)
+		t.files += 1
+		t.extras += names - 1
+		t.apparent += file.size
+	}
+	return t
+}
+
+// count_below adds what the nodes below `place` come to, for a scan from `start`.
+@(private)
+count_below :: proc(spec: Spec, start, place: int, denies, view: bool, t: ^Tally, seen: ^map[int]int) {
 	for n in spec.nodes {
-		if n.id == start || !below(spec, n.id, start, denies) {
+		if n.id == place || !below(spec, n.id, place, denies) {
 			continue
 		}
 		switch n.kind {
@@ -130,20 +170,18 @@ expected_flat :: proc(spec: Spec, start: int, denies: bool, allocator := context
 		case .Symlink, .Dangling:
 			t.symlinks += 1
 		case .Mount:
-			t.mounts += 1
+			switch {
+			case view:
+				t.dirs += 1
+			case !walks_bind(spec, n, start, denies):
+				t.mounts += 1
+			}
 		case .File, .Sparse, .Scatter:
 			seen[n.id] += 1
 		case .Link:
 			seen[n.target] += 1
 		}
 	}
-	for group, names in seen {
-		file, _ := find(spec, group)
-		t.files += 1
-		t.extras += names - 1
-		t.apparent += file.size
-	}
-	return t
 }
 
 // below says whether the scan from `start` reads the node: start is above it
@@ -160,6 +198,92 @@ below :: proc(spec: Spec, id, start: int, denies: bool) -> bool {
 			return false
 		}
 		at = p
+	}
+	return false
+}
+
+/*
+walks_bind says whether a scan from `start` walks the mount node `b` as the
+directory it appears to be: it is a bind of a directory below an unreadable one
+that the scan is denied, on the filesystem the bind is on (another one is a
+mount by its device), and no other bind shows its tree in a place the scan can
+open (`hidden_peer`).
+*/
+walks_bind :: proc(spec: Spec, b: Node, start: int, denies: bool) -> bool {
+	if !hidden(spec, b, denies) || domain(spec, b.target) != domain(spec, b.parent) {
+		return false
+	}
+	return !hidden_peer(spec, b, start, denies)
+}
+
+// hidden says whether a bind shows a tree the scan cannot open by its own path.
+@(private)
+hidden :: proc(spec: Spec, b: Node, denies: bool) -> bool {
+	return denies && b.mount == .Bind && under_unreadable(spec, b.target)
+}
+
+// hidden_peer says whether another bind shows the tree of `b` at a path the
+// scan can open, so that `b` is a mount: the other bind is of the same
+// directory and was made first, or of a directory above it with no unreadable
+// one between, and lies at or under the start with none between.
+@(private)
+hidden_peer :: proc(spec: Spec, b: Node, start: int, denies: bool) -> bool {
+	for p, i in spec.nodes {
+		if p.id == b.id || p.kind != .Mount || !hidden(spec, p, denies) || domain(spec, p.target) != domain(spec, b.target) {
+			continue
+		}
+		if p.target == b.target && i > index_of(spec, b.id) {
+			continue
+		}
+		if !opens_to(spec, b.target, p.target) || !visible_from(spec, p.id, start, denies) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+@(private)
+index_of :: proc(spec: Spec, id: int) -> int {
+	for n, i in spec.nodes {
+		if n.id == id {
+			return i
+		}
+	}
+	return -1
+}
+
+// opens_to says whether `from` is `above` or lies below it, with no unreadable
+// directory on the way, so a path from `above` down to `from` can be opened.
+@(private)
+opens_to :: proc(spec: Spec, from, above: int) -> bool {
+	at := from
+	for at != NONE {
+		if at == above {
+			return true
+		}
+		n, ok := find(spec, at)
+		if !ok || n.kind == .Unreadable || n.kind == .Mount {
+			return false
+		}
+		at = n.parent
+	}
+	return false
+}
+
+// visible_from says whether the node lies at or under `start` by its path, with
+// no directory the scan is denied between: a mount does not hide it.
+@(private)
+visible_from :: proc(spec: Spec, id, start: int, denies: bool) -> bool {
+	at, ok := find(spec, id)
+	for ok && at.parent != NONE {
+		if at.parent == start {
+			return true
+		}
+		at, ok = find(spec, at.parent)
+		if ok && at.kind == .Unreadable && denies {
+			return false
+		}
 	}
 	return false
 }
