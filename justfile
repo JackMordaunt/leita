@@ -424,9 +424,10 @@ test: sqlite
 # Flags after the duration go to leita-fuzz and win over the 64 cases. A
 # failure prints the seed, the saved case, and the just command that runs it
 # again. The corpus beside each suite is replayed first. The tree suite builds
-# directories and mounts under the temp directory, in a user and mount namespace
-# this recipe enters where it can (no root needed); where it cannot, that suite
-# runs what needs no mount and says what it left out.
+# directories and mounts under the temp directory: on Linux in a user and mount
+# namespace this recipe enters where it can, on macOS on APFS disk images that
+# hdiutil attaches, neither needing root; where it cannot, that suite runs what
+# needs no mount and says what it left out.
 fuzz suite="" seed="1" duration="2m" *extra: sqlite
     mkdir -p build/debug
     {{odin}} build tools/leita-fuzz -debug {{san}} {{flags}} {{curl_open}} -out:build/debug/leita-fuzz{{exe}}
