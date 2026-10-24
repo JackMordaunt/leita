@@ -849,6 +849,13 @@ mft-bench folder: sqlite
     mkdir -p build/test
     LEITA_BENCH_MFT='{{folder}}' {{odin}} test survey -o:speed {{flags}} -define:ODIN_TEST_NAMES=survey.bench_a_folder_from_the_mft_against_a_walk -out:build/test/mft-bench{{exe}}
 
+# Folders of each entry count made up under the temp directory, each read from
+# the MFT and walked, then the whole volume from the MFT, from an elevated
+# prompt on Windows: where a walk stops being the faster reader (card 705)
+crossover-bench counts="10,1000,100000": sqlite
+    mkdir -p build/test
+    LEITA_BENCH_CROSSOVER='{{counts}}' {{odin}} test survey -o:speed {{flags}} -define:ODIN_TEST_NAMES=survey.bench_where_a_walk_overtakes_the_mft -out:build/test/crossover-bench{{exe}}
+
 # leita against fd on one seeded tree: the host filesystem, then throw-away
 # ext4 and btrfs images, then tmpfs. Loop images sit on this disk, so they
 # are not a raw drive. Warm cache only. "scan ~ under 500 ms warm" is fast

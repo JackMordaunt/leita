@@ -122,6 +122,7 @@ bench_a_folder_from_the_mft_against_a_walk :: proc(t: ^testing.T) {
 
 @(private = "file")
 Read :: struct {
+	first: time.Duration, // the first read, which may find the cache cold
 	took:  time.Duration,
 	nodes: u64, // used nodes, not counting a file's extra names
 	bytes: u64,
@@ -130,7 +131,7 @@ Read :: struct {
 // Read the target whole with one engine, twice, and time and count the second.
 @(private = "file")
 read_twice :: proc(t: ^testing.T, target: scan.Target, engine: scan.Engine) -> (r: Read) {
-	for _ in 0 ..< 2 {
+	for pass in 0 ..< 2 {
 		tree: scan.Tree
 		testing.expect_value(t, scan.tree_init(&tree, 32), scan.Error.None)
 		defer scan.tree_destroy(&tree)
@@ -143,7 +144,8 @@ read_twice :: proc(t: ^testing.T, target: scan.Target, engine: scan.Engine) -> (
 		defer fill_destroy(&f)
 		start := time.tick_now()
 		fill_run(&f)
-		r = {took = time.tick_since(start)}
+		took := time.tick_since(start)
+		r = {first = r.first if pass > 0 else took, took = took}
 		testing.expectf(t, problem(&f) == "", "%s", problem(&f))
 		for i in 0 ..< scan.slots(&tree) {
 			n := scan.node(&tree, i)
@@ -155,6 +157,104 @@ read_twice :: proc(t: ^testing.T, target: scan.Target, engine: scan.Engine) -> (
 		}
 	}
 	return
+}
+
+/*
+Where a walk stops beating the MFT reader on an elevated NTFS volume, measured when
+LEITA_BENCH_CROSSOVER lists entry counts, such as 10,1000,100000 (`just
+crossover-bench`). Each count is a folder made up under the temp directory, a hundred
+files to a directory, read by both engines twice. The whole volume the temp directory
+is on is read by the MFT once more at the end, as the cost a folder's MFT read pays
+whatever its size. Card 705 picks the walk probe's budget from these numbers.
+*/
+@(test)
+bench_where_a_walk_overtakes_the_mft :: proc(t: ^testing.T) {
+	asked := os.get_env("LEITA_BENCH_CROSSOVER", context.temp_allocator)
+	if asked == "" {
+		return
+	}
+	context.allocator = runtime.heap_allocator()
+	tmp, _ := os.temp_directory(context.temp_allocator)
+	top := strings.trim_right(tmp, `\/`)
+	for count in strings.split(asked, ",", context.temp_allocator) {
+		entries, ok := strconv.parse_int(count)
+		if !testing.expectf(t, ok && entries > 0, "%q is not a count of entries", count) {
+			return
+		}
+		place := fmt.aprintf("%s%sleita-crossover-%d", top, scan.SEPARATOR, entries)
+		defer delete(place)
+
+		os.remove_all(place)
+		made := time.tick_now()
+		crossover_make(t, place, entries)
+		making := time.tick_since(made)
+		defer os.remove_all(place)
+
+		target, choice, err := scan.resolve(place)
+		testing.expect_value(t, err, scan.Error.None)
+		defer scan.target_destroy(&target)
+
+		if target.fs != .Ntfs || target.record == nil {
+			testing.expectf(t, false, "%s is no NTFS folder with a record (%v)", place, choice)
+			return
+		}
+		mft := read_twice(t, target, .Mft)
+		walked := read_twice(t, target, .Walk)
+		testing.expectf(
+			t,
+			mft.nodes == walked.nodes,
+			"the MFT found %d nodes and the walk %d",
+			mft.nodes,
+			walked.nodes,
+		)
+		fmt.printfln(
+			"crossover %d entries (made in %.0f ms): MFT %.0f ms then %.0f ms, %d nodes; walk %.0f ms then %.0f ms, %d nodes",
+			entries,
+			time.duration_milliseconds(making),
+			time.duration_milliseconds(mft.first),
+			time.duration_milliseconds(mft.took),
+			mft.nodes,
+			time.duration_milliseconds(walked.first),
+			time.duration_milliseconds(walked.took),
+			walked.nodes,
+		)
+	}
+	volume, _, err := scan.resolve(top[:2])
+	testing.expect_value(t, err, scan.Error.None)
+	defer scan.target_destroy(&volume)
+
+	whole := read_twice(t, volume, .Mft)
+	fmt.printfln(
+		"crossover whole volume %s: MFT %.0f ms then %.0f ms, %d nodes",
+		top[:2],
+		time.duration_milliseconds(whole.first),
+		time.duration_milliseconds(whole.took),
+		whole.nodes,
+	)
+}
+
+// `entries` entries under root: a directory for each hundred, holding small files.
+@(private = "file")
+crossover_make :: proc(t: ^testing.T, root: string, entries: int) {
+	testing.expect(t, os.make_directory(root) == nil, "could not make the place")
+
+	body := []byte{'x'}
+	dir: string
+	for i in 0 ..< entries {
+		runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+		if i % 100 == 0 {
+			delete(dir)
+			dir = fmt.aprintf("%s%sd%d", root, scan.SEPARATOR, i / 100)
+			testing.expect(t, os.make_directory(dir) == nil, "could not make a directory")
+			continue
+		}
+		name := fmt.tprintf("%s%sf%d", dir, scan.SEPARATOR, i)
+		if os.write_entire_file(name, body) != nil {
+			testing.expectf(t, false, "could not write %s", name)
+			break
+		}
+	}
+	delete(dir)
 }
 
 @(private = "file")
