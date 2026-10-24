@@ -169,13 +169,7 @@ scan_from :: proc(spec: Spec, fx: ^Fixture, start: int, allocator: runtime.Alloc
 	}
 	// Following links reads a tree again by each name that leads to it, and a
 	// loop of links must end: the scan comes back, with at least the directories
-	// and no fewer files than the scan that does not follow. Linux's and Windows'
-	// walks end a loop (walk.Config.follow), so elsewhere a tree with a link to a
-	// directory is not followed: on macOS one hung the walk past the 30 s a case
-	// may take (CI run 40116061136, after "update done").
-	if !FOLLOW_ENDS_LOOPS && links_to_a_directory(spec) {
-		return "", ""
-	}
+	// and no fewer files than the scan that does not follow (walk.Config.follow).
 	followed: Scan_Result
 	defer scan.tree_destroy(&followed.tree)
 
@@ -192,24 +186,6 @@ scan_from :: proc(spec: Spec, fx: ^Fixture, start: int, allocator: runtime.Alloc
 		)
 	}
 	return "", ""
-}
-
-// FOLLOW_ENDS_LOOPS says whether the walk stops at a followed link that leads
-// back to a directory above it.
-FOLLOW_ENDS_LOOPS :: ODIN_OS == .Linux || ODIN_OS == .Windows
-
-// links_to_a_directory says whether a symbolic link leads to a directory, which
-// may lead back to it.
-@(private)
-links_to_a_directory :: proc(spec: Spec) -> bool {
-	for n in spec.nodes {
-		if n.kind == .Symlink {
-			if t, ok := find(spec, n.target); ok && (can_hold(t) || t.kind == .Mount) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // Scan_Result is one scan and what it adds up to.
