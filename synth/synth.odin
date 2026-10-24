@@ -82,6 +82,36 @@ space :: proc(day: int) -> (total, free: u64) {
 	return
 }
 
+/*
+mac_path is path, which scan.path built for the made-up disk, as the Mac it plays
+writes it: names joined by "/" and never "\". On Windows scan.path joins a root
+called "/" to its names with "\", which leaves "/\Users\alex", and a Reclaim
+opened below the top would carry both separators into every path it offered.
+Only a Windows host (windows, by default) joins with "\"; elsewhere path is
+copied as it is. The copy is the caller's, in allocator.
+*/
+mac_path :: proc(
+	path: string,
+	allocator := context.allocator,
+	windows := ODIN_OS == .Windows,
+) -> string {
+	if !windows {
+		return strings.clone(path, allocator)
+	}
+	b := strings.builder_make(allocator)
+	for i in 0 ..< len(path) {
+		c := path[i]
+		if c == '\\' {
+			c = '/'
+		}
+		if c == '/' && strings.has_suffix(strings.to_string(b), "/") {
+			continue
+		}
+		strings.write_byte(&b, c)
+	}
+	return strings.to_string(b)
+}
+
 // modified is when the directory at path was last changed, as Unix seconds: some
 // time in the last 40 days, the same each time it is asked.
 modified :: proc(path: string) -> i64 {

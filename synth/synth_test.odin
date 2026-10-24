@@ -7,6 +7,19 @@ import "core:time"
 
 import "../scan"
 
+// A path of the made-up disk on a Windows host, built with \ under a root called /,
+// is the Mac's with / alone; on any other host it is left as it is.
+@(test)
+the_made_up_disks_paths_use_only_slashes :: proc(t: ^testing.T) {
+	want := "/Users/alex/Library/Caches"
+	mixed := mac_path(`/\Users\alex\Library\Caches`, context.temp_allocator, true)
+	testing.expect_value(t, mixed, want)
+	testing.expect_value(t, mac_path(want, context.temp_allocator, true), want)
+	testing.expect_value(t, mac_path(`\Users\alex`, context.temp_allocator, true), "/Users/alex")
+	testing.expect_value(t, mac_path("/", context.temp_allocator, true), "/")
+	testing.expect_value(t, mac_path(`/a\b`, context.temp_allocator, false), `/a\b`)
+}
+
 // Made_Up_Disk is what a test reads off a made-up tree.
 @(private = "file")
 Made_Up_Disk :: struct {

@@ -993,3 +993,19 @@ a_report_not_run_as_root_lists_every_candidate :: proc(t: ^testing.T) {
 	}
 	testing.expect_value(t, len(offered(found, {"/home/ann", "1000"}, 1000)), 2)
 }
+
+// Only a made-up disk's top is rewritten as a Mac's, whichever host builds the report;
+// a real one is searched from where it is.
+@(test)
+only_a_made_up_disks_top_is_rewritten :: proc(t: ^testing.T) {
+	mixed := `/Users/alex\Library`
+	for windows in ([]bool{false, true}) {
+		testing.expect_value(t, synthetic_top(mixed, .Walk, windows = windows), mixed)
+	}
+	testing.expect_value(
+		t,
+		synthetic_top(mixed, .Synthetic, windows = true),
+		"/Users/alex/Library",
+	)
+	testing.expect_value(t, synthetic_top(mixed, .Synthetic, windows = false), mixed)
+}

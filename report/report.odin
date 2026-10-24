@@ -361,7 +361,15 @@ build :: proc(
 	r.largest_files = entries(t, places, top, files[:file_count], p, allocator)
 
 	if opt.reclaim {
-		r.reclaim = candidates(t, roll, top, r.target, opt.user, facts.engine, allocator)
+		r.reclaim = candidates(
+			t,
+			roll,
+			top,
+			synthetic_top(r.target, facts.engine),
+			opt.user,
+			facts.engine,
+			allocator,
+		)
 	}
 	return
 }
@@ -476,6 +484,21 @@ keep_largest :: proc(top: []Contender, count: ^int, cand: Contender) {
 	if count^ < len(top) {
 		count^ += 1
 	}
+}
+
+// synthetic_top is top_path as the Mac a made-up disk plays writes it (synth.mac_path),
+// in allocator; any other is top_path itself.
+@(private)
+synthetic_top :: proc(
+	top_path: string,
+	engine: scan.Engine,
+	allocator := context.temp_allocator,
+	windows := ODIN_OS == .Windows,
+) -> string {
+	if engine != .Synthetic {
+		return top_path
+	}
+	return synth.mac_path(top_path, allocator, windows)
 }
 
 /*
