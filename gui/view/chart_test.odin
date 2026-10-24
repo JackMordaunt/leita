@@ -6,6 +6,7 @@ import "core:testing"
 
 import "jm:ui"
 import "jm:ui/ops"
+import tok "jm:ui/primer/tokens"
 import "jm:ui/render"
 
 import "../command"
@@ -111,6 +112,23 @@ chart_open :: proc(r: ^Chart_Rig, mode := Mode.Sunburst, movie := "movie.mkv") {
 chart_close :: proc(r: ^Chart_Rig) {
 	render.headless_destroy(&r.h)
 	model_destroy(&r.m)
+}
+
+// A largest file's path starts under its name's icon, where the name's button
+// starts its contents, rather than out at the button's edge.
+@(test)
+a_largest_files_path_lines_up_with_its_icon :: proc(t: ^testing.T) {
+	r: Chart_Rig
+	chart_open(&r)
+	defer chart_close(&r)
+	p := &r.h.p
+	files := []query.File{{node = MOVIE, parent = 1, path = "/top/clips/take.mkv", bytes = 30, was = -1}}
+	ui.probe_deliver(p, query.Largest{generation = 1}, query.Largest_Result{files = files})
+	ui.probe_advance(p, 5, 1.0 / 60)
+	name := ui.probe_bounds(p, "take.mkv")
+	path := ui.probe_bounds(p, "/top/clips/take.mkv")
+	testing.expect(t, name.w > 0 && path.w > 0, "the name and its path are drawn")
+	testing.expect_value(t, path.x, name.x + tok.CONTROL_SMALL_PADDING_INLINE_CONDENSED)
 }
 
 // ring_point is the middle of the first ring's arc at turn t, in device space.
