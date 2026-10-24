@@ -300,6 +300,10 @@ chosen_total :: proc(m: ^Model, r: ^query.Reclaim_Result) -> (count: int, bytes:
 // list short.
 CLEAN_LISTED :: 100
 
+// CLEAN_FITS is about how many paths the confirmation holds under its warning
+// before it is as tall as a Large dialog.
+CLEAN_FITS :: 8
+
 // CLEAN_ROOM is the width a path has in the confirmation: the dialog's, less the
 // padding of its body and the scroll bar.
 CLEAN_ROOM :: f32(480 - 2 * 16 - 12)
@@ -320,8 +324,15 @@ clean_dialog :: proc(gtx: ^ui.Ctx, m: ^Model, r: ^query.Reclaim_Result) {
 		trf(gtx, .Delete_Title, count),
 		footer = buttons[:],
 		width = .Large,
+		// A long list scrolls in a dialog of a set height: one sized to its
+		// content grows past the window and takes Delete and Cancel with it.
+		height = .Large if count > CLEAN_FITS else .Auto,
 	) {
+		// One column, the paths close under the warning: the body lays its
+		// children one over another otherwise.
+		ui.column(gtx, gap = 4, align = .Fill)
 		primer.text(gtx, trf(gtx, .Delete_Body, human.bytes(bytes)))
+		ui.spacer(gtx, 8)
 		listed := 0
 		for g in r.groups {
 			if g.trash {
