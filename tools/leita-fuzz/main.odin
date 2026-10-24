@@ -12,12 +12,14 @@ leaves the input that caused it. -isolate runs each case in a child process.
 */
 package main
 
+import "core:debug/trace"
 import "core:fmt"
 import "core:os"
 import "core:strconv"
 import "core:strings"
 import "core:time"
 
+@(require) import "jm:debug"
 import harness "jm:fuzz"
 
 import btrfs_fuzz "../../btrfs/fuzz"
@@ -57,12 +59,42 @@ runners := []Runner {
 }
 
 main :: proc() {
+	os.exit(run())
+}
+
+// run puts every suite on the debug allocator in a debug build, so a block
+// written past its end, freed twice or written after it was freed fails the
+// run, as a property that did not hold does. The allocator reports before
+// the process exits.
+run :: proc(allocator := context.allocator) -> int {
+	context.assertion_failure_proc = trace.assertion_failure_proc
+	when ODIN_DEBUG {
+		da: debug.Allocator
+		debug.init(&da, allocator)
+		defer debug.destroy(&da)
+
+		code := run_suites(debug.allocator(&da))
+		debug.report(&da)
+		if n := debug.issue_count(&da); n > 0 {
+			fmt.eprintfln("leita-fuzz: the debug allocator found %d issues", n)
+			return 1
+		}
+		return code
+	} else {
+		return run_suites(allocator)
+	}
+}
+
+@(private)
+run_suites :: proc(allocator := context.allocator) -> int {
+	context.allocator = allocator
+
 	opts := harness.Opts {
 		log = note,
 	}
 	corpus_root := ""
 	no_corpus := false
-	wanted: [dynamic]string
+	wanted := make([dynamic]string, context.temp_allocator)
 	for arg in os.args[1:] {
 		switch {
 		case arg == "-h", arg == "--help":
@@ -155,9 +187,7 @@ main :: proc() {
 			failed = true
 		}
 	}
-	if failed {
-		os.exit(1)
-	}
+	return 1 if failed else 0
 }
 
 // replay_command is the just command that reaches a failure again: the
@@ -175,11 +205,11 @@ replay_command :: proc(suite: string, seed: u64, iteration: int, isolate: bool) 
 }
 
 @(private)
-pick :: proc(wanted: []string) -> []Runner {
+pick :: proc(wanted: []string, allocator := context.temp_allocator) -> []Runner {
 	if len(wanted) == 0 {
 		return runners
 	}
-	chosen := make([dynamic]Runner)
+	chosen := make([dynamic]Runner, allocator)
 	for name in wanted {
 		found := false
 		for r in runners {
