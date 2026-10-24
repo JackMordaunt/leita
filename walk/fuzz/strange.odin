@@ -14,7 +14,9 @@ a zero byte is still a plain one.
 
 What changes is what the tree is made of. A name may be awkward, a file may sit
 on a boundary of size or be written in pieces, and a hard link storm or
-a symlink that leads back to the directory it is in may be added at the end. Each
+a symlink that leads back to the directory it is in may be added at the end.
+Last of all a file may get a fork, and clones of a file may be added (`add_forks`,
+`add_clones`), from bytes a case saved before them left over. Each
 changed node keeps its id; its name, which the shrinker puts back to the plain
 one when the failure does not need it.
 */
@@ -80,6 +82,55 @@ make_strange :: proc(nodes: ^[dynamic]Node, src: ^harness.Source, allocator: run
 	}
 	if storm == 2 || storm == 3 {
 		add_loop_links(nodes, src, allocator)
+	}
+
+	add_forks(nodes, src)
+	if harness.integer_in(src, 0, 3) == 1 {
+		add_clones(nodes, src, allocator)
+	}
+}
+
+FORKS := []Fork{.Xattr, .Resource}
+
+// add_forks gives some files an extended attribute or a resource fork.
+@(private)
+add_forks :: proc(nodes: ^[dynamic]Node, src: ^harness.Source) {
+	for &n in nodes {
+		if is_file(n) && harness.integer_in(src, 0, 6) == 1 {
+			n.fork = harness.choice(src, FORKS)
+		}
+	}
+}
+
+// add_clones adds up to 4 clones of one file, in directories on its filesystem.
+@(private)
+add_clones :: proc(nodes: ^[dynamic]Node, src: ^harness.Source, allocator: runtime.Allocator) {
+	spec := Spec{nodes[:]}
+	files := make([dynamic]int, context.temp_allocator)
+	for n in nodes {
+		if is_file(n) && !is_clone(n) {
+			append(&files, n.id)
+		}
+	}
+	if len(files) == 0 {
+		return
+	}
+	target, _ := find(spec, harness.choice(src, files[:]))
+	here := domain(spec, target.parent)
+	holders := make([dynamic]int, context.temp_allocator)
+	for n in nodes {
+		if can_hold(n) && domain(spec, n.id) == here {
+			append(&holders, n.id)
+		}
+	}
+
+	for _ in 0 ..< harness.integer_in(src, 1, 5) {
+		n := target
+		n.id = len(nodes)
+		n.parent = harness.choice(src, holders[:])
+		n.target = target.id
+		n.name = name_of(n, allocator)
+		append(nodes, n)
 	}
 }
 

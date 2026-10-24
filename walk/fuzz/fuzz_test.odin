@@ -189,6 +189,78 @@ draws_strange_inputs :: proc(t: ^testing.T) {
 	}
 }
 
+// Clones and forks must be drawn, a clone of each kind of file and one in a
+// mount among them, or the clone oracle never sees them.
+@(test)
+draws_clones_and_forks :: proc(t: ^testing.T) {
+	context.allocator = context.temp_allocator
+	seen: map[string]int
+	for seed in 1 ..= 600 {
+		raw := make([]byte, 256)
+		state := u64(seed) * 2654435761
+		for &b in raw {
+			state = state * 6364136223846793005 + 1442695040888963407
+			b = byte(state >> 33)
+		}
+		src := harness.source(raw)
+		spec := draw(&src)
+		if why, ok := valid(spec); !ok {
+			testing.expectf(t, false, "seed %d draws an invalid spec: %s", seed, why)
+		}
+		for n in spec.nodes {
+			if is_clone(n) {
+				seen[fmt.tprintf("clone of a %v", n.kind)] += 1
+				if domain(spec, n.parent) != 0 {
+					seen["clone in a mount"] += 1
+				}
+				if n.fork != .None {
+					seen["clone with a fork"] += 1
+				}
+			}
+			if n.fork != .None {
+				seen[fmt.tprintf("%v", n.fork)] += 1
+			}
+		}
+	}
+	for what in ([]string {
+			"clone of a File",
+			"clone of a Sparse",
+			"clone of a Scatter",
+			"clone in a mount",
+			"clone with a fork",
+			"Xattr",
+			"Resource",
+		}) {
+		testing.expectf(t, seen[what] > 0, "no %s was drawn in 600 specs", what)
+	}
+}
+
+// A file and two clones of it, with a fork and without, built and walked where this
+// host can mount: on APFS the clones share the data and are charged it once.
+@(test)
+walk_charges_clones_once :: proc(t: ^testing.T) {
+	context.allocator = context.temp_allocator
+	if cannot_mount(t) {
+		return
+	}
+	spec := Spec {
+		nodes = []Node {
+			{id = 0, parent = NONE, kind = .Dir, target = NONE},
+			{id = 1, parent = 0, name = "f1", kind = .File, size = 1 << 20, target = NONE},
+			{id = 2, parent = 0, name = "d2", kind = .Dir, target = NONE},
+			{id = 3, parent = 2, name = "c3", kind = .File, size = 1 << 20, target = 1},
+			{id = 4, parent = 0, name = "c4", kind = .File, size = 1 << 20, target = 1},
+			{id = 5, parent = 0, name = "f5", kind = .File, size = 4096, target = NONE, fork = .Resource},
+			{id = 6, parent = 2, name = "c6", kind = .File, size = 4096, target = 5, fork = .Resource},
+			{id = 7, parent = 0, name = "f7", kind = .File, size = 4096, target = NONE, fork = .Xattr},
+		},
+	}
+	_, ok := valid(spec)
+	testing.expect(t, ok)
+	class, what := scan_spec(spec)
+	testing.expectf(t, class == "", "%s: %s", class, what)
+}
+
 // The strange inputs are drawn from the bytes a plain tree leaves, so the case saved
 // for card 668 still draws the tmpfs in a tmpfs it was saved for.
 @(test)

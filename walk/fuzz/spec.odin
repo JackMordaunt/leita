@@ -55,8 +55,32 @@ Node :: struct {
 	kind:   Kind,
 	mount:  Mount_Kind,
 	size:   u64, // File, Sparse: the apparent size
-	target: int, // Link: the file; Symlink: the node; Bind: the directory
+	// Link: the file; Symlink: the node; Bind: the directory; a File, Sparse or
+	// Scatter: the file it is a clone of, NONE for one that is no clone.
+	target: int,
+	fork:   Fork, // File, Sparse, Scatter: what it carries besides its data
 }
+
+/*
+A clone is a regular file made from another one on its filesystem, of the same
+kind, size and fork, and a name of its own. Where the filesystem shares blocks
+between files (APFS clonefile), the clone shares all of its data; where it
+cannot, the materialiser makes a copy. The model counts a clone as a file of its
+own either way, and what it occupies is the materialiser's to say (`allocated`):
+the bytes it shares are charged once.
+*/
+
+// Fork is what a file carries besides its data. macOS writes an extended
+// attribute or a resource fork; a materialiser with neither makes none, and
+// the model needs nothing of it.
+Fork :: enum u8 {
+	None,
+	Xattr, // an extended attribute of XATTR_BYTES, more than APFS keeps in the inode
+	Resource, // a resource fork of RESOURCE_BYTES, which takes blocks of its own
+}
+
+XATTR_BYTES :: 20000
+RESOURCE_BYTES :: 65536
 
 Spec :: struct {
 	nodes: []Node,
@@ -168,6 +192,9 @@ name_of :: proc(n: Node, allocator := context.allocator) -> string {
 	case .Scatter:
 		prefix = "e"
 	}
+	if is_clone(n) {
+		prefix = "c"
+	}
 	return fmt.aprintf("%s%d", prefix, n.id, allocator = allocator)
 }
 
@@ -179,6 +206,21 @@ can_hold :: proc(n: Node) -> bool {
 // is_file says whether a node is a regular file's own name, not a link.
 is_file :: proc(n: Node) -> bool {
 	return n.kind == .File || n.kind == .Sparse || n.kind == .Scatter
+}
+
+// is_clone says whether a node is a file made as a clone of another.
+is_clone :: proc(n: Node) -> bool {
+	return is_file(n) && n.target != NONE
+}
+
+// cloned says whether a clone was made of the file `id`.
+cloned :: proc(spec: Spec, id: int) -> bool {
+	for n in spec.nodes {
+		if is_clone(n) && n.target == id {
+			return true
+		}
+	}
+	return false
 }
 
 find :: proc(spec: Spec, id: int) -> (node: Node, ok: bool) {
@@ -337,6 +379,18 @@ valid :: proc(spec: Spec, allocator := context.temp_allocator) -> (why: string, 
 				return format_reason(allocator, "%q: %s", n.name, reason), false
 			}
 		}
+		if n.fork != .None && !is_file(n) {
+			return format_reason(allocator, "%s: a fork on what is not a file", n.name), false
+		}
+		if is_clone(n) {
+			t, found := find(spec, n.target)
+			if !found || !is_file(t) || is_clone(t) || t.kind != n.kind || t.size != n.size || t.fork != n.fork {
+				return format_reason(allocator, "%s: a clone of %d, which is not a file like it", n.name, n.target), false
+			}
+			if domain(spec, t.parent) != domain(spec, n.parent) {
+				return format_reason(allocator, "%s: a clone across filesystems", n.name), false
+			}
+		}
 		switch n.kind {
 		case .Link:
 			t, found := find(spec, n.target)
@@ -423,6 +477,16 @@ render_dir :: proc(b: ^strings.Builder, spec: Spec, id, depth: int, allocator: r
 				fmt.sbprintf(b, "mount bind of %s", target_name(spec, n.target, allocator))
 			}
 		}
+		if is_clone(n) {
+			fmt.sbprintf(b, ", a clone of %s", target_name(spec, n.target, allocator))
+		}
+		switch n.fork {
+		case .None:
+		case .Xattr:
+			fmt.sbprintf(b, ", an xattr of %d bytes", XATTR_BYTES)
+		case .Resource:
+			fmt.sbprintf(b, ", a resource fork of %d bytes", RESOURCE_BYTES)
+		}
 		strings.write_byte(b, '\n')
 	}
 	for c in children(spec, id, allocator) {
@@ -434,7 +498,7 @@ render_dir :: proc(b: ^strings.Builder, spec: Spec, id, depth: int, allocator: r
 Shrinking edits the spec, never the bytes. `shrink_steps` lists every spec one step
 simpler than the one given, the most useful first: drop a subtree, collapse a
 mount to a plain directory, lift a node out of its directory, turn a special file into a plain one, remove a hard
-link, make a file smaller. The caller takes the first that still fails and asks
+link, make a clone a file of its own, drop a fork, make a file smaller. The caller takes the first that still fails and asks
 again, until none does.
 */
 shrink_steps :: proc(spec: Spec, allocator := context.temp_allocator) -> []Spec {
@@ -466,6 +530,22 @@ shrink_steps :: proc(spec: Spec, allocator := context.temp_allocator) -> []Spec 
 		}
 	}
 	for n, i in spec.nodes {
+		if is_clone(n) {
+			nodes := copy_nodes(spec, allocator)
+			nodes[i].target = NONE
+			nodes[i].name = name_of(nodes[i], allocator)
+			append(&out, Spec{nodes})
+		}
+		if n.fork != .None && !is_clone(n) {
+			// A clone has the fork of what it is a clone of, so both go together.
+			nodes := copy_nodes(spec, allocator)
+			for &m in nodes {
+				if m.id == n.id || (is_clone(m) && m.target == n.id) {
+					m.fork = .None
+				}
+			}
+			append(&out, Spec{nodes})
+		}
 		switch n.kind {
 		case .Mount:
 			// A tmpfs collapses into a directory holding the same things, a
@@ -522,6 +602,7 @@ change :: proc(spec: Spec, at: int, e: Edit, allocator := context.temp_allocator
 	nodes[at].size = e.size
 	nodes[at].target = NONE
 	nodes[at].mount = .Tmpfs
+	nodes[at].fork = .None
 	// The name keeps its id and says what the node now is.
 	nodes[at].name = name_of(nodes[at], allocator)
 	return {nodes}

@@ -109,7 +109,9 @@ draw_ops :: proc(spec: Spec, src: ^harness.Source, allocator := context.allocato
 		case .Grow:
 			grow := make([dynamic]int, context.temp_allocator)
 			for id in leaves {
-				if n, _ := find(now, id); n.kind == .File && n.size > 0 {
+				// Not a clone, nor a file a clone was made of: the oracle charges a
+				// clone's data once, which holds only while both are unwritten.
+				if n, _ := find(now, id); n.kind == .File && n.size > 0 && !is_clone(n) && !cloned(now, id) {
 					append(&grow, id)
 				}
 			}
