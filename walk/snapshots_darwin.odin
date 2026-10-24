@@ -12,8 +12,9 @@ foreign import libc "system:System"
 
 // Ask the physical volume root, including Data when the scanned path is reached
 // through a firmlink. Snapshot enumeration is read-only and includes Time Machine
-// snapshots. Names say nothing about retained bytes. No public purgeable byte
-// counter is assumed; the volume's purgeable measurement stays unknown.
+// snapshots. Names say nothing about retained bytes. Purgeable space is what
+// macOS itself estimates it can free on demand (darwin_purgeable); when the
+// system gives no figure it stays unknown.
 @(private)
 darwin_retention :: proc(path: string, t: ^scan.Tree) {
 	st, ok := scan.stat_fs(path)
@@ -31,7 +32,76 @@ darwin_retention :: proc(path: string, t: ^scan.Tree) {
 	if !scan.note_snapshot_names(t, names[:]) {
 		state = .Unchecked
 	}
-	scan.note_retention(t, {snapshots = state})
+	purgeable, known := darwin_purgeable(string(cstring(&st.mntonname[0])))
+	scan.note_retention(t, {snapshots = state, purgeable = purgeable, purgeable_known = known})
+}
+
+/*
+darwin_purgeable is the space macOS expects to clear on the volume at root by
+purging. CFURL.h in the macOS 11.3 SDK defines the important-usage capacity as
+"Total available capacity in bytes for "Important" resources, including space
+expected to be cleared by purging non-essential and cached resources", and the
+plain capacity as "Total free space in bytes"; the gap between the two is that
+purge. Both are CFURL volume resource values, so every macOS from the 11 floor
+answers through CoreFoundation alone.
+
+It is the system's estimate, not a measurement of any file; the walk never
+charges it to one. No figure, a figure that is not a positive-or-zero 64-bit
+number, or an important-usage capacity below the plain one (the two disagree,
+or space was taken between the reads) is unknown, never 0.
+*/
+@(private)
+darwin_purgeable :: proc(root: string) -> (purgeable: u64, known: bool) {
+	url := CFURLCreateFromFileSystemRepresentation(nil, raw_data(root), len(root), true)
+	if url == nil {
+		return
+	}
+	defer CFRelease(url)
+
+	available := cf_url_i64(url, kCFURLVolumeAvailableCapacityKey) or_return
+	important := cf_url_i64(url, kCFURLVolumeAvailableCapacityForImportantUsageKey) or_return
+	if available < 0 || important < available {
+		return
+	}
+	return u64(important - available), true
+}
+
+// cf_url_i64 is url's numeric resource value for key, false when there is none.
+@(private = "file")
+cf_url_i64 :: proc(url: rawptr, key: rawptr) -> (n: i64, ok: bool) {
+	value: rawptr
+	if !CFURLCopyResourcePropertyForKey(url, key, &value, nil) || value == nil {
+		return
+	}
+	defer CFRelease(value)
+
+	if CFGetTypeID(value) != CFNumberGetTypeID() {
+		return
+	}
+	if !CFNumberGetValue(value, CF_NUMBER_SINT64, &n) {
+		return
+	}
+	return n, true
+}
+
+// kCFNumberSInt64Type in <CoreFoundation/CFNumber.h>.
+@(private = "file")
+CF_NUMBER_SINT64 :: 4
+
+foreign import core_foundation "system:CoreFoundation.framework"
+
+// <CoreFoundation/CFURL.h>: the important-usage key is API_AVAILABLE(macos(10.13)),
+// the plain capacity key API_AVAILABLE(macos(10.6)).
+@(private = "file", default_calling_convention = "c")
+foreign core_foundation {
+	kCFURLVolumeAvailableCapacityKey:                  rawptr
+	kCFURLVolumeAvailableCapacityForImportantUsageKey: rawptr
+	CFURLCreateFromFileSystemRepresentation :: proc(allocator: rawptr, path: [^]u8, length: int, directory: b8) -> rawptr ---
+	CFURLCopyResourcePropertyForKey         :: proc(url: rawptr, key: rawptr, value: ^rawptr, err: ^rawptr) -> b8 ---
+	CFGetTypeID                             :: proc(cf: rawptr) -> uint ---
+	CFNumberGetTypeID                       :: proc() -> uint ---
+	CFNumberGetValue                        :: proc(number: rawptr, type: int, value: rawptr) -> b8 ---
+	CFRelease                               :: proc(cf: rawptr) ---
 }
 
 // A complete empty enumeration means None. Any syscall, parse, allocation, or

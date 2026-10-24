@@ -90,7 +90,7 @@ Space :: struct {
 Volume_Retention :: struct {
 	snapshots: scan.Snapshot_State,
 	names:     []string, // owned by the report
-	purgeable: Maybe(u64), // no verified public numeric API on macOS 11+
+	purgeable: Maybe(u64), // macOS's own estimate; nil when the system gave none
 }
 
 // Baseline is the earlier scan of the same place that sizes are compared with:

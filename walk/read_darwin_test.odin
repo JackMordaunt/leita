@@ -169,7 +169,30 @@ test_empty_apfs_image_has_no_local_snapshots :: proc(t: ^testing.T) {
 	testing.expect(t, scan.has_snapshot_volume(&tree))
 	testing.expect_value(t, scan.retention_of(&tree).snapshots, scan.Snapshot_State.None)
 	testing.expect_value(t, len(scan.snapshot_names_of(&tree)), 0)
-	testing.expect(t, !scan.retention_of(&tree).purgeable_known)
+	// Whatever macOS answers for the image must fit in it.
+	got := scan.retention_of(&tree)
+	log.infof("purgeable on a fresh APFS image: %d (known %v)", got.purgeable, got.purgeable_known)
+	if got.purgeable_known {
+		testing.expect(t, got.purgeable <= 64 * 1024 * 1024)
+	}
+}
+
+/*
+macOS answers for purgeable space on the startup Data volume, the one a home
+folder scan reaches. The figure is the system's; the test asserts only that it
+answers and that the answer is a byte count no larger than the volume.
+*/
+@(test)
+test_purgeable_on_data_volume :: proc(t: ^testing.T) {
+	root := "/System/Volumes/Data"
+	st, ok := scan.stat_fs(root)
+	if !testing.expect(t, ok) {
+		return
+	}
+	purgeable, known := darwin_purgeable(root)
+	log.infof("purgeable on %s: %d bytes (known %v)", root, purgeable, known)
+	testing.expect(t, known, "macOS 11+ answers both CFURL capacity keys")
+	testing.expect(t, purgeable <= u64(st.blocks) * u64(st.bsize))
 }
 
 /*

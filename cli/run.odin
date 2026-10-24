@@ -515,7 +515,8 @@ scan_and_say :: proc(
 }
 
 // APFS snapshot names are volume facts. Their presence cannot be converted to
-// bytes held by a particular file, and purgeable space has no measured number.
+// bytes held by a particular file. Purgeable space is the volume's, as macOS
+// estimates it, and unknown when the system gave no figure.
 say_retention :: proc(t: ^scan.Tree) {
 	r := scan.retention_of(t)
 	names := scan.snapshot_names_of(t)

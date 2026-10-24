@@ -226,6 +226,30 @@ apfs_retention_reports_names_and_unknown_purgeable :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(text, "Purgeable space: unknown"))
 }
 
+// A purgeable figure macOS gave is its own entry beside the snapshots, in bytes.
+@(test)
+apfs_retention_reports_known_purgeable :: proc(t: ^testing.T) {
+	r := sample()
+	r.retention = Volume_Retention {
+		snapshots = .None,
+		purgeable = u64(1_048_576),
+	}
+	sb := strings.builder_make(context.temp_allocator)
+	write_json(&sb, &r)
+	v, err := json.parse_string(strings.to_string(sb), parse_integers = true, allocator = context.temp_allocator)
+	if !testing.expect_value(t, err, json.Error.None) {return}
+	retained := v.(json.Object)["retention"].(json.Object)
+	testing.expect_value(t, retained["purgeable_bytes"].(json.Integer), i64(1_048_576))
+	strings.builder_reset(&sb)
+	write_csv(&sb, &r)
+	testing.expect(t, strings.contains(strings.to_string(sb), "Purgeable space: 1048576 bytes"))
+	strings.builder_reset(&sb)
+	write_html(&sb, &r)
+	html := strings.to_string(sb)
+	testing.expect(t, strings.contains(html, " (1048576 bytes).</p>"))
+	testing.expect(t, !strings.contains(html, "Purgeable space: unknown"))
+}
+
 @(test)
 csv_reads_back_one_row_per_entry :: proc(t: ^testing.T) {
 	r := sample()
