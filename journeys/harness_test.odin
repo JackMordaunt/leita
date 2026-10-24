@@ -197,7 +197,8 @@ licence_line :: proc() -> string {
 // end_evaluation dates the first use of h's run far in the past, so the 30-day
 // Pro evaluation has ended there.
 end_evaluation :: proc(t: ^testing.T, h: Home) {
-	testing.expect(t, os.make_directory_all(data(h)) == nil, "could not make the data folder")
+	os.make_directory_all(data(h))
+	testing.expect(t, os.exists(data(h)), "could not make the data folder")
 	testing.expect(
 		t,
 		os.write_entire_file(fmt.tprintf("%s/first-use", data(h)), "1000000000\n") == nil,
