@@ -7,8 +7,6 @@ import "core:mem"
 import "core:os"
 import "core:strings"
 import "core:sys/linux"
-import "core:thread"
-import "core:time"
 
 /*
 The Linux materialiser builds a spec under a temp directory. A tmpfs mount and a
@@ -54,6 +52,17 @@ scratch_dir :: proc(what: string, allocator: runtime.Allocator) -> (path: string
 @(private)
 c :: proc(s: string, allocator: runtime.Allocator) -> cstring {
 	return strings.clone_to_cstring(s, allocator)
+}
+
+// fit is the spec as Linux can hold it, which is all of it: `name_fault` keeps
+// every name within what Linux takes, and a clone is made as a copy.
+fit :: proc(spec: Spec, allocator := context.temp_allocator) -> Spec {
+	return spec
+}
+
+// aliases are the other paths to the directory of node `start`: none here.
+aliases :: proc(fx: ^Fixture, start: int, allocator := context.temp_allocator) -> []string {
+	return nil
 }
 
 // build makes the spec. The error is what failed, in words. Whatever was made
@@ -222,29 +231,6 @@ make_file :: proc(path: string, size: u64, kind: Kind, allocator: runtime.Alloca
 	return ""
 }
 
-// relative is the path from the directory `from` to the node `to`, as a symbolic
-// link written in `from` would say it.
-@(private)
-relative :: proc(spec: Spec, from, to: int, allocator: runtime.Allocator) -> string {
-	up := path_of(spec, from, allocator)
-	down := path_of(spec, to, allocator)
-	a := strings.split(up, "/", allocator) if up != "" else nil
-	d := strings.split(down, "/", allocator) if down != "" else nil
-	same := 0
-	for same < len(a) && same < len(d) && a[same] == d[same] {
-		same += 1
-	}
-	b := strings.builder_make(allocator)
-	for _ in same ..< len(a) {
-		strings.write_string(&b, "../")
-	}
-	strings.write_string(&b, strings.join(d[same:], "/", allocator))
-	if strings.builder_len(b) == 0 {
-		return "."
-	}
-	return strings.to_string(b)
-}
-
 // destroy unmounts what was mounted, newest first, makes what was locked
 // readable, removes everything and frees what the fixture holds.
 destroy :: proc(fx: ^Fixture) {
@@ -344,81 +330,6 @@ sizes_match :: proc(spec: Spec, fx: ^Fixture, allocator := context.temp_allocato
 		}
 	}
 	return ""
-}
-
-/*
-The mutator is a thread that does a script of ops (mutate.odin) to the real files
-while the caller scans. It waits to be released, so the caller can start a scan
-at the same moment, and sleeps a little between ops so that a scan of a small tree
-is still under way for several of them. It keeps its own map of paths, as the
-caller reads the fixture's, and hands it over when it is joined.
-*/
-Churn :: struct {
-	ops:       []Op,
-	paths:     map[int]string, // the mutator's own, allocated from `allocator`
-	go:        u32,
-	done:      u32,
-	err:       string, // allocated from `allocator`
-	worker:    ^thread.Thread,
-	allocator: runtime.Allocator, // the mutator's memory, which outlives the thread's own context
-}
-
-// PAUSE is how long the mutator rests between ops.
-PAUSE :: 20 * time.Microsecond
-
-// start_churn starts the mutator for a built fixture. It does nothing until
-// `release_churn`.
-start_churn :: proc(fx: ^Fixture, ops: []Op, allocator: runtime.Allocator) -> ^Churn {
-	c := new(Churn, allocator)
-	c.ops = ops
-	c.allocator = allocator
-	c.paths = make(map[int]string, allocator)
-	for id, p in fx.paths {
-		c.paths[id] = strings.clone(p, allocator)
-	}
-
-
-	c.worker = thread.create_and_start_with_data(c, proc(data: rawptr) {
-		c := (^Churn)(data)
-		for intrinsics.atomic_load(&c.go) == 0 {
-			thread.yield()
-		}
-		for op in c.ops {
-			if why := do_op(c, op); why != "" {
-				c.err = why
-				break
-			}
-			time.sleep(PAUSE)
-		}
-		intrinsics.atomic_store(&c.done, 1)
-	})
-	return c
-}
-
-release_churn :: proc(c: ^Churn) {
-	intrinsics.atomic_store(&c.go, 1)
-}
-
-// churn_finished says whether the mutator has done its last op.
-churn_finished :: proc(c: ^Churn) -> bool {
-	return intrinsics.atomic_load(&c.done) == 1
-}
-
-// finish_churn waits for the mutator, puts the paths it left into the fixture,
-// and says what it could not do, "" if nothing.
-finish_churn :: proc(fx: ^Fixture, c: ^Churn, allocator: runtime.Allocator) -> string {
-	release_churn(c)
-	thread.join(c.worker)
-	thread.destroy(c.worker)
-	for id, p in c.paths {
-		fx.paths[id] = strings.clone(p, fx.allocator)
-		delete(p, c.allocator)
-	}
-	delete(c.paths)
-	err := strings.clone(c.err, allocator)
-	delete(c.err, c.allocator)
-	free(c, c.allocator)
-	return err
 }
 
 @(private)

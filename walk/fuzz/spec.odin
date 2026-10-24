@@ -344,6 +344,30 @@ path_of :: proc(spec: Spec, id: int, allocator := context.temp_allocator) -> str
 	return strings.to_string(b)
 }
 
+// relative is the path from the directory `from` to the node `to`, as a symbolic
+// link written in `from` would say it.
+@(private)
+relative :: proc(spec: Spec, from, to: int, allocator: runtime.Allocator) -> string {
+	up := path_of(spec, from, allocator)
+	down := path_of(spec, to, allocator)
+	a := strings.split(up, "/", allocator) if up != "" else nil
+	d := strings.split(down, "/", allocator) if down != "" else nil
+	same := 0
+	for same < len(a) && same < len(d) && a[same] == d[same] {
+		same += 1
+	}
+
+	b := strings.builder_make(allocator)
+	for _ in same ..< len(a) {
+		strings.write_string(&b, "../")
+	}
+	strings.write_string(&b, strings.join(d[same:], "/", allocator))
+	if strings.builder_len(b) == 0 {
+		return "."
+	}
+	return strings.to_string(b)
+}
+
 // format_reason formats the reason a spec or a step is turned down.
 format_reason :: proc(allocator: runtime.Allocator, format: string, args: ..any) -> string {
 	return fmt.aprintf(format, ..args, allocator = allocator)

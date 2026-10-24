@@ -1,8 +1,11 @@
 package walk_fuzz
 
+import "base:intrinsics"
 import "base:runtime"
 import "core:fmt"
 import "core:slice"
+import "core:strings"
+import "core:thread"
 import "core:time"
 
 import harness "jm:fuzz"
@@ -38,7 +41,7 @@ check_churn :: proc(_: Case, src: ^harness.Source) -> (detail: string, ok: bool)
 	if skip_reason() != "" {
 		return "", true
 	}
-	spec := draw(src)
+	spec := fit(draw(src))
 	ops, _ := draw_ops(spec, src)
 	flaw := churn_flaw(spec, ops)
 	return flaw, flaw == ""
@@ -126,7 +129,8 @@ an update against a whole scan. The class is the kind of failure, "" for none.
 tree's before and after, which only a scan that overlapped the ops can: the
 evidence that the mutator and the scan run at the same time.
 */
-run_churn :: proc(spec: Spec, ops: []Op, allocator := context.temp_allocator, midway: ^int = nil) -> (class, what: string) {
+run_churn :: proc(drawn: Spec, ops: []Op, allocator := context.temp_allocator, midway: ^int = nil) -> (class, what: string) {
+	spec := fit(drawn, allocator)
 	fx: Fixture
 	defer destroy(&fx)
 	if err := build(spec, &fx, allocator); err != "" {
@@ -229,4 +233,79 @@ layout :: proc(t: ^scan.Tree, allocator: runtime.Allocator) -> []string {
 	}
 	slice.sort(out[:])
 	return out[:]
+}
+
+/*
+The mutator is a thread that does a script of ops (mutate.odin) to the real files
+while the caller scans. It waits to be released, so the caller can start a scan
+at the same moment, and sleeps a little between ops so that a scan of a small tree
+is still under way for several of them. It keeps its own map of paths, as the
+caller reads the fixture's, and hands it over when it is joined. Each OS's
+materialiser does an op (`do_op`).
+*/
+Churn :: struct {
+	ops:       []Op,
+	paths:     map[int]string, // the mutator's own, allocated from `allocator`
+	go:        u32,
+	done:      u32,
+	err:       string, // allocated from `allocator`
+	worker:    ^thread.Thread,
+	allocator: runtime.Allocator, // the mutator's memory, which outlives the thread's own context
+}
+
+// PAUSE is how long the mutator rests between ops.
+PAUSE :: 20 * time.Microsecond
+
+// start_churn starts the mutator for a built fixture. It does nothing until
+// `release_churn`.
+start_churn :: proc(fx: ^Fixture, ops: []Op, allocator: runtime.Allocator) -> ^Churn {
+	c := new(Churn, allocator)
+	c.ops = ops
+	c.allocator = allocator
+	c.paths = make(map[int]string, allocator)
+	for id, p in fx.paths {
+		c.paths[id] = strings.clone(p, allocator)
+	}
+
+	c.worker = thread.create_and_start_with_data(c, proc(data: rawptr) {
+		c := (^Churn)(data)
+		for intrinsics.atomic_load(&c.go) == 0 {
+			thread.yield()
+		}
+		for op in c.ops {
+			if why := do_op(c, op); why != "" {
+				c.err = why
+				break
+			}
+			time.sleep(PAUSE)
+		}
+		intrinsics.atomic_store(&c.done, 1)
+	})
+	return c
+}
+
+release_churn :: proc(c: ^Churn) {
+	intrinsics.atomic_store(&c.go, 1)
+}
+
+// churn_finished says whether the mutator has done its last op.
+churn_finished :: proc(c: ^Churn) -> bool {
+	return intrinsics.atomic_load(&c.done) == 1
+}
+
+// finish_churn waits for the mutator, puts the paths it left into the fixture,
+// and says what it could not do, "" if nothing.
+finish_churn :: proc(fx: ^Fixture, c: ^Churn, allocator: runtime.Allocator) -> string {
+	release_churn(c)
+	thread.join(c.worker)
+	thread.destroy(c.worker)
+	for id, p in c.paths {
+		fx.paths[id] = strings.clone(p, fx.allocator)
+		delete(p, c.allocator)
+	}
+	delete(c.paths)
+	err := strings.clone(c.err, allocator)
+	delete(c.err, c.allocator)
+	free(c, c.allocator)
+	return err
 }

@@ -10,6 +10,9 @@ Fixture :: struct {
 	paths:   map[int]string, // the path of each node
 	mounted: [dynamic]string, // in the order mounted
 	locked:  [dynamic]string, // unreadable directories, whose mode is 0
+	// The files whose data a clone shares, by node, a clone and what it is a clone
+	// of, and their hard links; empty where a clone is a copy.
+	clones:  map[int]bool,
 	// Whether this process is refused what a mode of 0 refuses, found by
 	// asking: a root in a user namespace is not, unless it gives up the
 	// capabilities that say so (`deny`).

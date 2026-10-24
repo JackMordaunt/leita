@@ -313,7 +313,6 @@ ATTR_CMN_OBJTYPE :: 0x00000008
 ATTR_CMN_FILEID :: 0x02000000
 @(private)
 ATTR_CMN_ERROR :: 0x20000000
-@(private)
 ATTR_CMN_RETURNED_ATTRS :: 0x80000000
 @(private)
 ATTR_FILE_LINKCOUNT :: 0x00000001
@@ -321,7 +320,6 @@ ATTR_FILE_LINKCOUNT :: 0x00000001
 ATTR_DIR_MOUNTSTATUS :: 0x00000004
 @(private)
 DIR_MNTSTATUS_MNTPOINT :: 0x00000001
-@(private)
 ATTR_FILE_ALLOCSIZE :: 0x00000004
 
 // enum vtype from <sys/vnode.h>, the values ATTR_CMN_OBJTYPE takes.
@@ -341,15 +339,12 @@ foreign libc {
 // keys to the device reported for each filesystem object.
 @(private)
 ATTR_FILE_DATALENGTH :: 0x00000200
-@(private)
 ATTR_FILE_DATAALLOCSIZE :: 0x00000400
 @(private)
 ATTR_CMNEXT_PRIVATESIZE :: 0x00000008
 @(private)
 ATTR_CMNEXT_REALDEVID :: 0x00000040
-@(private)
 ATTR_CMNEXT_CLONEID :: 0x00000100
-@(private)
 FSOPT_ATTR_CMN_EXTENDED :: 0x00000020
 
 @(private)

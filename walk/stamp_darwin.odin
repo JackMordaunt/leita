@@ -52,7 +52,6 @@ disk_of :: proc(path: string) -> (disk: u64, verdict: Verdict) {
 	return u64(max(reply.allocated, 0)), .Sized
 }
 
-@(private = "file")
 FSOPT_NOFOLLOW :: 0x00000001
 
 @(private = "file", default_calling_convention = "c")

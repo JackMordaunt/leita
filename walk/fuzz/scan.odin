@@ -1,6 +1,7 @@
 package walk_fuzz
 
 import "base:runtime"
+import "core:os"
 import "core:slice"
 import "core:strings"
 import "core:sync"
@@ -29,7 +30,7 @@ check_scan :: proc(_: Case, src: ^harness.Source) -> (detail: string, ok: bool) 
 	if skip_reason() != "" {
 		return "", true
 	}
-	flaw := scan_flaw(draw(src))
+	flaw := scan_flaw(fit(draw(src)))
 	return flaw, flaw == ""
 }
 
@@ -52,7 +53,7 @@ scan_flaw :: proc(spec: Spec, allocator := context.temp_allocator) -> string {
 		small_what,
 		len(spec.nodes) - 1,
 		len(small.nodes) - 1,
-		render(small, allocator),
+		render(fit(small, allocator), allocator),
 	)
 }
 
@@ -65,11 +66,12 @@ still_fails :: proc(spec: Spec, data: rawptr) -> bool {
 }
 
 /*
-scan_spec builds the spec, walks it from each start and checks what came back.
-The class is the kind of failure ("" for none), kept short so shrinking can hold
-to it, and what is the detail.
+scan_spec builds the spec, as this OS's filesystems can hold it (`fit`), walks it
+from each start and checks what came back. The class is the kind of failure (""
+for none), kept short so shrinking can hold to it, and what is the detail.
 */
-scan_spec :: proc(spec: Spec, allocator := context.temp_allocator) -> (class, what: string) {
+scan_spec :: proc(drawn: Spec, allocator := context.temp_allocator) -> (class, what: string) {
+	spec := fit(drawn, allocator)
 	fx: Fixture
 	defer destroy(&fx)
 	if err := build(spec, &fx, allocator); err != "" {
@@ -109,7 +111,35 @@ scan_from :: proc(spec: Spec, fx: ^Fixture, start: int, allocator: runtime.Alloc
 		return "tally", format_reason(allocator, "%s: %s", at, d)
 	}
 	if first.disk != disk {
-		return "disk", format_reason(allocator, "%s: allocated bytes, statx says %d, the scan %d", at, disk, first.disk)
+		return "disk", format_reason(
+			allocator,
+			"%s: allocated bytes, the files' own stat says %d, the scan %d (%s)",
+			at,
+			disk,
+			first.disk,
+			du(fx.paths[start], allocator),
+		)
+	}
+	// Another path to the same directory, a firmlink's, is the same tree.
+	for alias in aliases(fx, start, allocator) {
+		other: Scan_Result
+		defer scan.tree_destroy(&other.tree)
+
+		if class, what = read_whole(fx, start, &other, allocator, path = alias); class != "" {
+			return class, format_reason(allocator, "%s, by way of %s: %s", at, alias, what)
+		}
+		if other.tally != first.tally || other.disk != first.disk {
+			return "alias", format_reason(
+				allocator,
+				"%s: by way of %s the scan finds %v and %d bytes, by its own path %v and %d",
+				at,
+				alias,
+				other.tally,
+				other.disk,
+				first.tally,
+				first.disk,
+			)
+		}
 	}
 	if class, what = read_whole(fx, start, &second, allocator); class != "" {
 		return class, format_reason(allocator, "%s, again: %s", at, what)
@@ -133,7 +163,13 @@ scan_from :: proc(spec: Spec, fx: ^Fixture, start: int, allocator: runtime.Alloc
 	}
 	// Following links reads a tree again by each name that leads to it, and a
 	// loop of links must end: the scan comes back, with at least the directories
-	// and no fewer files than the scan that does not follow.
+	// and no fewer files than the scan that does not follow. Only Linux's walk
+	// ends a loop (walk.Config.follow), so elsewhere a tree with a link to a
+	// directory is not followed: on macOS one hung the walk past the 30 s a case
+	// may take (CI run 40116061136, after "update done").
+	if !FOLLOW_ENDS_LOOPS && links_to_a_directory(spec) {
+		return "", ""
+	}
 	followed: Scan_Result
 	defer scan.tree_destroy(&followed.tree)
 
@@ -152,6 +188,24 @@ scan_from :: proc(spec: Spec, fx: ^Fixture, start: int, allocator: runtime.Alloc
 	return "", ""
 }
 
+// FOLLOW_ENDS_LOOPS says whether the walk stops at a followed link that leads
+// back to a directory above it.
+FOLLOW_ENDS_LOOPS :: ODIN_OS == .Linux
+
+// links_to_a_directory says whether a symbolic link leads to a directory, which
+// may lead back to it.
+@(private)
+links_to_a_directory :: proc(spec: Spec) -> bool {
+	for n in spec.nodes {
+		if n.kind == .Symlink {
+			if t, ok := find(spec, n.target); ok && (can_hold(t) || t.kind == .Mount) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // Scan_Result is one scan and what it adds up to.
 Scan_Result :: struct {
 	tree:  scan.Tree,
@@ -164,9 +218,30 @@ same :: proc(a, b: ^Scan_Result, allocator: runtime.Allocator) -> bool {
 	return a.disk == b.disk && slice.equal(signature(&a.tree, allocator), signature(&b.tree, allocator))
 }
 
-// read_whole scans the directory of node `start` once.
+// du is what du says the directory takes, without crossing a mount: a second
+// opinion for a person reading a disk mismatch.
 @(private)
-read_whole :: proc(fx: ^Fixture, start: int, w: ^Scan_Result, allocator: runtime.Allocator, follow := false) -> (class, what: string) {
+du :: proc(path: string, allocator: runtime.Allocator) -> string {
+	state, out, _, err := os.process_exec({command = []string{"du", "-skx", path}}, allocator)
+	if err != nil || !state.exited {
+		return "du did not run"
+	}
+	kib, _, _ := strings.partition(string(out), "\t")
+	return format_reason(allocator, "du -skx says %s KiB", strings.trim_space(kib))
+}
+
+// read_whole scans the directory of node `start` once, by its own path or by `path`.
+@(private)
+read_whole :: proc(
+	fx: ^Fixture,
+	start: int,
+	w: ^Scan_Result,
+	allocator: runtime.Allocator,
+	follow := false,
+	path := "",
+) -> (
+	class, what: string,
+) {
 	if scan.tree_init(&w.tree, 1) != .None {
 		return "walk", "no tree"
 	}
@@ -174,7 +249,7 @@ read_whole :: proc(fx: ^Fixture, start: int, w: ^Scan_Result, allocator: runtime
 	if fx.denies {
 		restore, _ = deny(fx)
 	}
-	err := walk.read(fx.paths[start], &w.tree, walk.Config{follow = follow})
+	err := walk.read(path if path != "" else fx.paths[start], &w.tree, walk.Config{follow = follow})
 	if restore != nil {
 		restore()
 	}

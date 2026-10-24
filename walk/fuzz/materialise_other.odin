@@ -1,11 +1,18 @@
 #+build !linux
+#+build !darwin
 package walk_fuzz
 
-import "base:runtime"
-
-// probe says why no tree can be made here. Mounts are Linux's.
+// probe says why no tree can be made here. Mounts are Linux's and macOS's.
 probe :: proc(allocator := context.temp_allocator) -> (reason: string) {
-	return "the materialiser makes mounts, which only Linux does here"
+	return "the materialiser makes mounts, which only Linux and macOS do here"
+}
+
+fit :: proc(spec: Spec, allocator := context.temp_allocator) -> Spec {
+	return spec
+}
+
+aliases :: proc(fx: ^Fixture, start: int, allocator := context.temp_allocator) -> []string {
+	return nil
 }
 
 build :: proc(spec: Spec, fx: ^Fixture, allocator := context.temp_allocator) -> string {
@@ -28,18 +35,7 @@ sizes_match :: proc(spec: Spec, fx: ^Fixture, allocator := context.temp_allocato
 	return ""
 }
 
-Churn :: struct {}
-
-start_churn :: proc(fx: ^Fixture, ops: []Op, allocator: runtime.Allocator) -> ^Churn {
-	return nil
-}
-
-release_churn :: proc(c: ^Churn) {}
-
-churn_finished :: proc(c: ^Churn) -> bool {
-	return true
-}
-
-finish_churn :: proc(fx: ^Fixture, c: ^Churn, allocator: runtime.Allocator) -> string {
-	return probe(allocator)
+@(private)
+do_op :: proc(m: ^Churn, op: Op) -> string {
+	return probe()
 }
