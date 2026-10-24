@@ -88,14 +88,31 @@ jobs:
           if [ "${{ runner.os }}" = Windows ]; then export SAN=; fi
           mkdir -p build/journeys/artifacts
           just journeys 2>&1 | tee build/journeys/artifacts/journeys.log
-      # Each window journey's PNGs and accessibility trees, and the log, kept
-      # whether or not the journeys passed.
+      # The real window driven by the operating system's own input: found,
+      # given the keyboard, typed into and closed (tools/journeys/window.py).
+      # Linux runs it on an Xvfb display with xdotool; macOS and Windows on
+      # the runner's own desktop session.
+      - name: window journey (real input)
+        timeout-minutes: 15
+        run: |
+          if [ "${{ runner.os }}" = Windows ]; then export SAN=; fi
+          if [ "${{ runner.os }}" = Linux ]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq xvfb xdotool
+          fi
+          just window-journey
+      # Each window journey's PNGs and accessibility trees, the real window's
+      # steps, log and replayed tree, and the journeys' log, kept whether or
+      # not the journeys passed.
       - name: journey evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: journeys-${{ matrix.os }}
-          path: build/journeys/artifacts
+          path: |
+            build/journeys/artifacts
+            build/journeys/window
+            !build/journeys/window/home
           if-no-files-found: warn
           retention-days: 14
       # The btrfs and walk tests again on a btrfs image, mounted with the
