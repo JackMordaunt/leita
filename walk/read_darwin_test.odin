@@ -3,12 +3,14 @@ package walk
 
 import "core:encoding/endian"
 import "core:fmt"
+import "core:log"
 import "core:os"
 import "core:slice"
 import "core:strconv"
 import "core:strings"
 import "core:sys/posix"
 import "core:testing"
+import "core:time"
 
 import "../scan"
 
@@ -154,10 +156,12 @@ test_empty_apfs_image_has_no_local_snapshots :: proc(t: ^testing.T) {
 	if !hdiutil(t, "create", "-size", "64m", "-fs", "APFS", "-volname", "leita", image) {
 		return
 	}
-	if !hdiutil(t, "attach", "-nobrowse", "-noverify", "-mountpoint", mount, image) {
+	device, attached := attach_image(t, image, mount)
+	if !attached {
 		return
 	}
-	defer hdiutil(t, "detach", "-force", mount)
+	defer detach_image(t, device)
+
 	tree: scan.Tree
 	testing.expect_value(t, scan.tree_init(&tree, 1), scan.Error.None)
 	defer scan.tree_destroy(&tree)
@@ -233,10 +237,12 @@ test_a_mount_point_is_not_walked :: proc(t: ^testing.T) {
 	if !hdiutil(t, "create", "-size", "1m", "-fs", "HFS+", "-volname", "leita", image) {
 		return
 	}
-	if !hdiutil(t, "attach", "-nobrowse", "-noverify", "-mountpoint", mount, image) {
+	device, attached := attach_image(t, image, mount)
+	if !attached {
 		return
 	}
-	defer hdiutil(t, "detach", "-force", mount)
+	defer detach_image(t, device)
+
 	hidden := fmt.tprintf("%s/hidden", mount)
 	testing.expect(t, os.write_entire_file(hidden, []byte{'x'}) == nil, "could not write")
 
@@ -264,13 +270,76 @@ test_a_mount_point_is_not_walked :: proc(t: ^testing.T) {
 // Run hdiutil, failing the test with what it said if it does not succeed.
 @(private = "file")
 hdiutil :: proc(t: ^testing.T, args: ..string) -> bool {
+	ok, stdout, stderr := capture_hdiutil(args)
+	testing.expectf(t, ok, "hdiutil %v failed: %s%s", args, stdout, stderr)
+	return ok
+}
+
+@(private = "file")
+capture_hdiutil :: proc(args: []string) -> (ok: bool, stdout, stderr: string) {
 	command := make([dynamic]string, context.temp_allocator)
 	append(&command, "hdiutil")
 	append(&command, ..args)
-	state, stdout, stderr, err := os.process_exec({command = command[:]}, context.temp_allocator)
-	ok := err == nil && state.exited && state.exit_code == 0
-	testing.expectf(t, ok, "hdiutil %v failed: %v %s%s", args, err, stdout, stderr)
-	return ok
+	state, out, errout, err := os.process_exec({command = command[:]}, context.temp_allocator)
+	return err == nil && state.exited && state.exit_code == 0, string(out), string(errout)
+}
+
+// Attach image on mount and return the whole-disk device it came up as, the first
+// line of what attach prints. The device, not the mount point, is what detach must
+// name: once the volume is unmounted the mount point no longer identifies anything.
+@(private = "file")
+attach_image :: proc(t: ^testing.T, image, mount: string) -> (device: string, ok: bool) {
+	args := []string{"attach", "-nobrowse", "-noverify", "-mountpoint", mount, image}
+	stdout, stderr: string
+	ok, stdout, stderr = capture_hdiutil(args)
+	if !testing.expectf(t, ok, "hdiutil %v failed: %s%s", args, stdout, stderr) {
+		return
+	}
+
+	first, _, _ := strings.partition(stdout, "\n")
+	fields := strings.fields(first, context.temp_allocator)
+	if !testing.expectf(
+		t,
+		len(fields) > 0 && strings.has_prefix(fields[0], "/dev/disk"),
+		"hdiutil attach named no device: %q",
+		stdout,
+	) {
+		return "", false
+	}
+	return fields[0], true
+}
+
+// Eject the image's disk, retrying while the kernel reports it busy.
+//
+// On a loaded macOS runner (load average 10 to 19, GitHub Actions runs 40029404222,
+// 40029515459 and 40091300468) `detach -force <mount>` unmounted the APFS volume and still
+// failed to eject its container, "couldn't eject disk7 - Resource busy"; ten
+// seconds of retries by mount point then said "No such file or directory", the
+// volume being gone, so the device is what gets retried. Who held the container is
+// not known; the retry waits for it to let go.
+@(private = "file")
+detach_image :: proc(t: ^testing.T, device: string) {
+	ATTEMPTS :: 40
+	stdout, stderr: string
+	for attempt in 1 ..= ATTEMPTS {
+		ok: bool
+		ok, stdout, stderr = capture_hdiutil({"detach", "-force", device})
+		if ok {
+			if attempt > 1 {
+				log.infof(
+					"hdiutil detach %s: ejected on attempt %d, after it was busy",
+					device,
+					attempt,
+				)
+			}
+			return
+		}
+		if !strings.contains(stderr, "busy") {
+			break
+		}
+		time.sleep(500 * time.Millisecond)
+	}
+	testing.expectf(t, false, "hdiutil detach %s failed: %s%s", device, stdout, stderr)
 }
 
 // An entry claiming more than the buffer holds, or a name lying outside its entry, is
