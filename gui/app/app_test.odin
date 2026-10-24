@@ -4304,6 +4304,106 @@ automatic_checks_reach_the_release_through_the_host :: proc(t: ^testing.T) {
 	testing.expect(t, string(body) == "the current window", "automatic checks never install")
 }
 
+// pump_until runs frames until n manifest requests reached the fixture or the
+// deadline passes.
+@(private = "file")
+pump_until :: proc(r: ^Rig, f: ^Schedule_HTTP_Fixture, n: int) {
+	deadline := time.tick_now()._nsec + i64(10 * time.Second)
+	for sync.atomic_load(&f.checks) < n && time.tick_now()._nsec < deadline {
+		ui.probe_frame(&r.p)
+		hand_on(r)
+		time.sleep(time.Millisecond)
+	}
+}
+
+// A person who never opted in is never asked of the network, however many days
+// pass, and the scan finishes. The settings file has no choice in it, as an
+// upgraded install does not.
+@(test)
+automatic_checks_ask_nothing_before_consent :: proc(t: ^testing.T) {
+	root := fixture(t, "schedule_off")
+	defer expect_tree_gone(t, root)
+	data := fmt.tprintf("%s-data", root)
+	defer expect_tree_gone(t, data)
+	release := fmt.tprintf("%s-release", root)
+	defer expect_tree_gone(t, release)
+	key: ed25519.Private_Key
+	testing.expect(t, ed25519.private_key_generate(&key))
+	pub: [ed25519.PUBLIC_KEY_SIZE]byte
+	ed25519.private_key_public_bytes(&key, pub[:])
+	publish_release(t, release, "the next signed window", "v9.9.9\n", &key)
+	f := Schedule_HTTP_Fixture{directory = release}
+	srv, up := loopback.start(answer_scheduled_release, &f, runtime.heap_allocator())
+	if !testing.expect(t, up) {
+		return
+	}
+	defer loopback.stop(srv)
+	clock := Update_Time{wall = 1_700_000_000, mono = 1_000_000_000}
+	r: Rig
+	rig_open(&r, root, kept = fmt.tprintf("%s/history.db", data), release_base = loopback.url(srv, ""), update_key = pub[:], update_time = &clock)
+	defer rig_close(&r)
+	testing.expect(t, settle(&r, "Done"), "the scan finishes with checks off")
+	for _ in 0 ..< 3 {
+		sync.atomic_store(&clock.wall, clock.wall + 3 * DAY_SEC)
+		sync.atomic_store(&clock.mono, clock.mono + 3 * DAY_NS)
+		for _ in 0 ..< 200 {
+			ui.probe_frame(&r.p)
+			hand_on(&r)
+			time.sleep(time.Millisecond)
+		}
+	}
+	testing.expect_value(t, sync.atomic_load(&f.checks), 0)
+	testing.expect(t, !ui.probe_tagged(&r.p, "Version v9.9.9 of Leita is available."))
+}
+
+// A scheduled check that fails does not hold up the scan or end the schedule.
+// The next day's check still runs and finds the release.
+@(test)
+a_failed_automatic_check_leaves_the_next_day_to_find_the_release :: proc(t: ^testing.T) {
+	root := fixture(t, "schedule_fail")
+	defer expect_tree_gone(t, root)
+	data := fmt.tprintf("%s-data", root)
+	defer expect_tree_gone(t, data)
+	release := fmt.tprintf("%s-release", root)
+	defer expect_tree_gone(t, release)
+	key: ed25519.Private_Key
+	testing.expect(t, ed25519.private_key_generate(&key))
+	pub: [ed25519.PUBLIC_KEY_SIZE]byte
+	ed25519.private_key_public_bytes(&key, pub[:])
+	st: settings.Store
+	if !testing.expect(t, settings.open(&st, fmt.tprintf("%s/%s", data, settings.FILE)) == nil) {
+		return
+	}
+	testing.expect(t, settings.set(&st, settings.UPDATES, "on") == nil)
+	settings.close(&st)
+	f := Schedule_HTTP_Fixture{directory = release}
+	srv, up := loopback.start(answer_scheduled_release, &f, runtime.heap_allocator())
+	if !testing.expect(t, up) {
+		return
+	}
+	defer loopback.stop(srv)
+	clock := Update_Time{wall = 1_700_000_000, mono = 1_000_000_000}
+	r: Rig
+	rig_open(&r, root, kept = fmt.tprintf("%s/history.db", data), release_base = loopback.url(srv, ""), update_key = pub[:], update_time = &clock)
+	defer rig_close(&r)
+	testing.expect(t, settle(&r, "Done"), "the scan finishes while the check fails")
+	pump_until(&r, &f, 1)
+	testing.expect_value(t, sync.atomic_load(&f.checks), 1)
+	for _ in 0 ..< 100 {
+		ui.probe_frame(&r.p)
+		hand_on(&r)
+		time.sleep(time.Millisecond)
+	}
+	testing.expect(t, !ui.probe_tagged(&r.p, "Version v9.9.9 of Leita is available."))
+	testing.expect_value(t, sync.atomic_load(&f.checks), 1)
+	publish_release(t, release, "the next signed window", "v9.9.9\n", &key)
+	sync.atomic_store(&clock.wall, clock.wall + DAY_SEC)
+	sync.atomic_store(&clock.mono, clock.mono + DAY_NS)
+	pump_until(&r, &f, 2)
+	testing.expect_value(t, sync.atomic_load(&f.checks), 2)
+	testing.expect(t, settle(&r, "Version v9.9.9 of Leita is available."))
+}
+
 // Hook_Server is a webhook's server on this machine, keeping each body it was sent.
 @(private = "file")
 Hook_Server :: struct {
