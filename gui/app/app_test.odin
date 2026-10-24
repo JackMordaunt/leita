@@ -2237,6 +2237,8 @@ each_chart_is_a_tree_a_screen_reader_walks :: proc(t: ^testing.T) {
 	defer rig_close(&r)
 	testing.expect(t, settle(&r, "Done"))
 	testing.expect(t, settle(&r, "arc photos"))
+	// The listing is answered apart from the rings; its notes.txt row is hovered below.
+	testing.expect(t, settle(&r, "274.4 kB in 2 items"))
 	ui.probe_advance(&r.p, 60, 1.0 / 60)
 
 	// Each chart is a tree named for what it shows, its top layer the directory's
