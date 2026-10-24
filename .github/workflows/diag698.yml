@@ -1,0 +1,58 @@
+# Throwaway diagnosis for card 698: build the Windows test binary the way
+# `just test` does, run it directly from PowerShell, and print the real exit
+# code; on a failure run it once more under cdb for the faulting stack.
+name: diag698
+
+on:
+  push:
+    branches: ["ci/698-**"]
+  workflow_dispatch:
+
+jobs:
+  windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          submodules: true
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: build test binary
+        run: |
+          export SAN=
+          just sqlite
+          mkdir -p build/test
+          odin build cmd/cli -build-mode:test -all-packages -debug $(just --evaluate flags) -out:build/test/leita.exe
+          dumpbin_hint=$(python -c "import struct;d=open('build/test/leita.exe','rb').read();o=struct.unpack_from('<I',d,0x3c)[0];print(hex(struct.unpack_from('<Q',d,o+24+72)[0]))")
+          echo "PE SizeOfStackReserve: $dumpbin_hint"
+      - name: run directly, print the exit code
+        shell: pwsh
+        run: |
+          $fail = 0
+          for ($i = 1; $i -le 5; $i++) {
+            $p = Start-Process -FilePath build\test\leita.exe -NoNewWindow -PassThru -Wait -RedirectStandardError "run$i.err" -RedirectStandardOutput "run$i.out"
+            $code = $p.ExitCode
+            "run ${i}: exit $code (0x{0:X8})" -f $code | Write-Host
+            if ($code -ne 0) {
+              $fail++
+              Get-Content "run$i.err" -Tail 8 | Write-Host
+            }
+          }
+          "failures: $fail of 5" | Write-Host
+          if ($fail -gt 0) {
+            $cdb = Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe" -ErrorAction SilentlyContinue
+            if ($cdb) {
+              for ($j = 1; $j -le 3; $j++) {
+                & $cdb.FullName -G -lines -c "sxe sov; sxe av; g; .lastevent; r rsp; kc 60; ~*kc 3; q" build\test\leita.exe 2>&1 | Select-String -Pattern "Last event|stack overflow|Stack overflow|code c0|^[0-9a-f]{2} |rsp=|leita!" | Select-Object -First 120 | Write-Host
+              }
+            } else { "no cdb on the runner" | Write-Host }
+            exit 1
+          }
