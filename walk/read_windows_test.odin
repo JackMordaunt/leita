@@ -398,7 +398,7 @@ Make `path` a junction to `target`, an NT path such as \??\C:\dir or
 \??\Volume{guid}\, by writing it a mount-point reparse point. Not ok, with the reason
 logged, where the volume refuses it.
 */
-@(private = "file")
+@(private)
 make_junction :: proc(t: ^testing.T, path, target: string) -> bool {
 	make_dir(t, path)
 	d := win.CreateFileW(

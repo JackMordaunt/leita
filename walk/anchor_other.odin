@@ -1,10 +1,11 @@
-#+build !linux
+#+build windows
 package walk
 
 import "core:mem"
 
-// Linux keeps a root descriptor here (read_linux.odin). Elsewhere a walk opens
-// each directory by the path it queued.
+// Linux and macOS keep a root descriptor here (read_linux.odin, read_darwin.odin).
+// Windows opens each directory by the path it queued and checks that it is the one
+// listed (read_windows.odin).
 @(private)
 Anchor :: struct {}
 

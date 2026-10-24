@@ -50,7 +50,7 @@ fixture :: proc(t: ^testing.T, name: string) -> string {
 
 // Every node the walk recorded, by name. Names repeat across directories in general;
 // none of them do in the fixture.
-@(private = "file")
+@(private)
 named :: proc(tree: ^scan.Tree, name: string) -> (^scan.Node, int) {
 	found: ^scan.Node
 	count := 0

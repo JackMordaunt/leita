@@ -686,33 +686,6 @@ anchor_release :: proc(a: ^Anchor) {
 	a.root = ""
 }
 
-// `path` relative to `root`, as `join` built it. Not ok unless `path` is `root`
-// or a slash separates `root` from the rest.
-@(private)
-rel_under :: proc(root, path: string) -> (rel: string, ok: bool) {
-	if path == root {
-		return "", true
-	}
-	base := root
-	if len(base) > 1 && base[len(base) - 1] == '/' {
-		base = base[:len(base) - 1]
-	}
-	if base == "/" {
-		if len(path) > 1 && path[0] == '/' {
-			return path[1:], true
-		}
-		return "", false
-	}
-	if len(path) <= len(base) || path[:len(base)] != base || path[len(base)] != '/' {
-		return "", false
-	}
-	rest := path[len(base) + 1:]
-	if rest == "" {
-		return "", false
-	}
-	return rest, true
-}
-
 // Packed for the openat2 syscall below: flags, mode, resolve. The size
 // argument is the size of this struct.
 @(private)

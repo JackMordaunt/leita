@@ -36,6 +36,17 @@ compressed-away clusters.
 */
 @(private)
 read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
+	nodes, bytes, ok = list_dir(d, w)
+	// After the children are queued and the directory is closed, since Windows will
+	// not rename a directory held open, and before any child is opened.
+	if ok && w.after_list != nil {
+		w.after_list(d.path, w.after_list_data)
+	}
+	return
+}
+
+@(private = "file")
+list_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 	s := &w.scratch
 	base, extended_ok := extended(d.path, s)
 	if !extended_ok {
@@ -64,6 +75,20 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 		return 0, 0, false
 	}
 	defer win.CloseHandle(dir)
+
+	// Not following links, the directory the path opened must be the one its parent
+	// listed. CreateFileW follows a junction or a symlink in any component, so a
+	// directory or an ancestor replaced by one since the listing would lead
+	// elsewhere, to a directory with another id.
+	own: win.FILE_ID_INFO
+	known := !w.follow && bool(win.GetFileInformationByHandleEx(dir, .FileIdInfo, &own, size_of(own)))
+	if d.identified {
+		id := transmute([2]u64)own.FileId
+		if !known || own.VolumeSerialNumber != d.listed[0] || id != {d.listed[1], d.listed[2]} {
+			mark_unread(w, d.index, false)
+			return 0, 0, false
+		}
+	}
 
 	vol, vol_ok := volume_of(dir, s)
 	if !vol_ok {
@@ -117,7 +142,7 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 						w.err = .Out_Of_Memory
 						return nodes, bytes, false
 					}
-					append(&w.found, Dir{index = index, path = child})
+					append(&w.found, pending_dir(index, child, l, own if known else nil))
 				}
 				nodes += 1
 				bytes += charged
@@ -129,6 +154,24 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 		}
 	}
 	return nodes, bytes, true
+}
+
+/*
+The directory a listing found, to be opened later. `parent` is the volume and id of
+the directory listing it, nil when that was not asked. A listing without ids, on a
+volume that refused the extended class, leaves the child unchecked.
+*/
+@(private = "file")
+pending_dir :: proc(index: u32, path: string, l: Dir_Entry, parent: Maybe(win.FILE_ID_INFO)) -> Dir {
+	d := Dir {
+		index = index,
+		path  = path,
+	}
+	if own, known := parent.?; known && l.has_id {
+		d.listed = {own.VolumeSerialNumber, l.id[0], l.id[1]}
+		d.identified = true
+	}
+	return d
 }
 
 /*

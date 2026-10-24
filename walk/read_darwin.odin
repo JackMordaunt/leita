@@ -4,6 +4,7 @@ package walk
 import "core:c"
 import "core:encoding/endian"
 import "core:mem"
+import "core:strings"
 import "core:sys/posix"
 
 import "../scan"
@@ -24,16 +25,9 @@ compressed file is charged what it occupies, not its length.
 @(private)
 read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 	path: Path
-	cpath, path_ok := terminate(d.path, &path)
-	if !path_ok {
-		mark_unread(w, d.index, false)
-		return 0, 0, false
-	}
-	// Not NOFOLLOW, for the reason the Linux reader gives: the queue holds symlinks
-	// only when the caller asked for them to be followed.
-	fd := posix.open(cpath, {.DIRECTORY, .CLOEXEC})
-	if fd < 0 {
-		mark_unread(w, d.index, denied_errno(posix.errno()))
+	fd, open_errno := open_listed(d, w, &path)
+	if open_errno != .NONE {
+		mark_unread(w, d.index, denied_errno(open_errno))
 		return 0, 0, false
 	}
 	defer {posix.close(fd)}
@@ -60,9 +54,10 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 		   options != 0 &&
 		   (posix.errno() == .EINVAL || posix.errno() == .ENOTSUP) {
 			posix.close(fd)
-			fd = posix.open(cpath, {.DIRECTORY, .CLOEXEC})
-			if fd < 0 {
-				mark_unread(w, d.index, denied_errno(posix.errno()))
+			// Reopened as the first open was, so the retry keeps its refusal of links.
+			fd, open_errno = open_listed(d, w, &path)
+			if open_errno != .NONE {
+				mark_unread(w, d.index, denied_errno(open_errno))
 				return nodes, bytes, false
 			}
 			request.forkattr = 0
@@ -104,7 +99,141 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 			bytes += charged
 		}
 	}
+
+	// After the children are queued and before any of them is opened.
+	if w.after_list != nil {
+		w.after_list(d.path, w.after_list_data)
+	}
 	return nodes, bytes, true
+}
+
+/*
+The root a walk that is not following links keeps open for the whole walk, as the
+Linux reader keeps one.
+
+`fd` is the directory opened from the path the caller named, following any link in
+it: the caller chose that path. `root` is that path, so a child's path can be turned
+back into a path relative to `fd`. Shared by every worker.
+*/
+@(private)
+Anchor :: struct {
+	fd:        posix.FD, // -1 when the walk is not anchored
+	root:      string, // owned; empty when fd < 0
+	errno:     posix.Errno, // why the root did not open; NONE when fd >= 0
+	allocator: mem.Allocator,
+}
+
+@(private)
+anchor_prepare :: proc(
+	path: string,
+	follow: bool,
+	allocator: mem.Allocator,
+) -> (
+	a: Anchor,
+	err: mem.Allocator_Error,
+) {
+	a.fd = -1
+	a.allocator = allocator
+	if follow {
+		return a, nil
+	}
+	buf: Path
+	cpath, path_ok := terminate(path, &buf)
+	if !path_ok {
+		a.errno = .ENAMETOOLONG
+		return a, nil
+	}
+	fd := posix.open(cpath, {.DIRECTORY, .CLOEXEC})
+	if fd < 0 {
+		a.errno = posix.errno()
+		return a, nil
+	}
+	root, clone_err := strings.clone(path, allocator)
+	if clone_err != nil {
+		posix.close(fd)
+		return a, clone_err
+	}
+	a.fd = fd
+	a.root = root
+	return a, nil
+}
+
+@(private)
+anchor_release :: proc(a: ^Anchor) {
+	if a.fd >= 0 {
+		posix.close(a.fd)
+		a.fd = -1
+	}
+	delete(a.root, a.allocator)
+	a.root = ""
+}
+
+// O_NOFOLLOW_ANY from <sys/fcntl.h>, macOS 11 and later: the open fails with ELOOP
+// if any component of the path it resolves is a symbolic link.
+@(private = "file")
+O_NOFOLLOW_ANY :: 0x20000000
+
+/*
+The directory `d` for listing.
+
+When the walk holds an anchor, every directory is opened relative to that
+descriptor with O_NOFOLLOW_ANY, so a directory or an ancestor below the root that
+was replaced by a symbolic link since it was listed is refused, not followed. When
+it does not, and the caller asked to follow links, the path is opened as given.
+When it does not and the caller did not, the open is refused.
+*/
+@(private = "file")
+open_listed :: proc(d: Dir, w: ^Worker, buf: ^Path) -> (posix.FD, posix.Errno) {
+	if w.held.fd >= 0 {
+		rel, rel_ok := rel_under(w.held.root, d.path)
+		if !rel_ok {
+			return -1, .ENOENT
+		}
+		if rel == "" {
+			rel = "."
+		}
+		// A listing never names "..", which would climb out of the root.
+		if climbs(rel) {
+			return -1, .EXDEV
+		}
+		crel, term_ok := terminate(rel, buf)
+		if !term_ok {
+			return -1, .ENAMETOOLONG
+		}
+		flags := posix.O_Flags{.DIRECTORY, .CLOEXEC} | transmute(posix.O_Flags)c.int(O_NOFOLLOW_ANY)
+		fd := posix.openat(w.held.fd, crel, flags)
+		if fd < 0 {
+			return -1, posix.errno()
+		}
+		return fd, .NONE
+	}
+	if !w.follow {
+		if w.held.errno != .NONE {
+			return -1, w.held.errno
+		}
+		return -1, .ENOENT
+	}
+	cpath, path_ok := terminate(d.path, buf)
+	if !path_ok {
+		return -1, .ENAMETOOLONG
+	}
+	fd := posix.open(cpath, {.DIRECTORY, .CLOEXEC})
+	if fd < 0 {
+		return -1, posix.errno()
+	}
+	return fd, .NONE
+}
+
+// Whether a relative path has a ".." component.
+@(private = "file")
+climbs :: proc(rel: string) -> bool {
+	rest := rel
+	for part in strings.split_iterator(&rest, "/") {
+		if part == ".." {
+			return true
+		}
+	}
+	return false
 }
 
 /*

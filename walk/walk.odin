@@ -310,6 +310,11 @@ Dir :: struct {
 	// The directories it lies under where the reader keeps them (Ancestor); nil
 	// where it does not.
 	ancestors:  ^Ancestor,
+	// Windows, when the walk does not follow links: the volume serial and the file
+	// id its parent's listing gave it, which the directory the path opens must
+	// still have (read_windows.odin). Unset elsewhere.
+	listed:     [3]u64,
+	identified: bool,
 }
 
 /*
