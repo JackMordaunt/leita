@@ -808,6 +808,11 @@ requests_name_leita_and_the_version_only :: proc(t: ^testing.T) {
 	testing.expect_value(t, r.outcome, Outcome.Applied)
 	testing.expect_value(t, read(f.exe), "new build")
 
+	// The handler appends on the server's thread; the replies that follow are no
+	// ordering the thread sanitizer can see, so the heads are read under the lock.
+	sync.mutex_lock(&seen.mutex)
+	defer sync.mutex_unlock(&seen.mutex)
+
 	testing.expect(t, len(seen.heads) >= 3, "sums, version and the asset were asked for")
 	for h in seen.heads {
 		testing.expect(t, strings.has_prefix(h, "GET /"), "only GET")
