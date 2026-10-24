@@ -31,7 +31,8 @@
 #                             -> build/package/
 #   just journeys             the built command line driven end to end on the made-up disk
 #                             (LEITA_SYNTHETIC), as a person would: scan, limits, reports,
-#                             history, monitoring, licence -> build/test/journeys
+#                             history, monitoring, licence, then the window's on the
+#                             same disk -> build/test/journeys, build/journeys/artifacts
 #   just lifecycle            native lifecycle evidence, then the release gate
 #
 # The debug allocator, flow, sqlite3, stream and ui come from the jm collection, pinned as
@@ -647,10 +648,16 @@ schedule-evidence:
 # and journey_update_key, the public half of the seed journeys/update_test.odin
 # signs with, and a release stamp for the licence to be measured against. Neither key is a
 # release's.
-journeys: sqlite
+#
+# Then the window's journeys (journeys/gui): the view in a probe over the real host
+# on the made-up disk, checked on what a screen reader is told. Each keeps a PNG
+# and the accessibility tree of its steps in LEITA_JOURNEY_ARTIFACTS, by default
+# build/journeys/artifacts.
+journeys: deps
     mkdir -p build/journeys build/test
     {{odin}} build cmd/cli -debug {{san}} {{odin_target}} {{flags}} {{curl_open}} -define:LEITA_LICENCE_KEY={{test_licence_key}} -define:LEITA_UPDATE_KEY={{journey_update_key}} -define:LEITA_RELEASED=2026-10-24T00:00:00Z -out:build/journeys/{{bin}}{{exe}}
     LEITA_BIN="{{justfile_directory()}}/build/journeys/{{bin}}{{exe}}" LEITA_TEST_LICENCE='{{test_licence}}' {{odin}} test journeys -debug {{san}} {{flags}} -out:build/test/journeys{{exe}}
+    LEITA_JOURNEY_ARTIFACTS="${LEITA_JOURNEY_ARTIFACTS:-{{root}}/build/journeys/artifacts}" {{odin}} test journeys/gui -debug {{san}} {{flags}} {{curl_open}} -out:build/test/journeys-gui{{exe}}
 
 gui-test: deps
     mkdir -p build/test/app
