@@ -1,18 +1,29 @@
 # Bounded fuzz on Linux, macOS and Windows. test.yml is the correctness matrix
-# and is left alone; this workflow is the only fuzz job. The budget is a fixed seed, a
-# fixed case count and a wall clock, so a run is deterministic and cannot
-# grow. Suites replay the corpus committed beside them. A crash leaves a
-# breadcrumb there for the next run; committing that case is a person's job.
+# and is left alone; this workflow is the only fuzz job. On a push the budget is
+# fixed seeds, a fixed case count and a wall clock, so a run is deterministic and
+# cannot grow. Nightly, and on a dispatch that asks for it, the same legs run
+# every suite and the tree suite for longer, on seeds drawn from the date, so
+# each night covers cases no push does and a failure can still be replayed.
+# Suites replay the corpus committed beside them first. A failure saves its
+# shrunk case there; the runner keeps the new ones as an artifact, and
+# committing one to the corpus is a person's job.
 name: fuzz
 
 on:
   push:
     branches: [main, "ci/**"]
   pull_request:
+  schedule:
+    - cron: "17 3 * * *"
   workflow_dispatch:
+    inputs:
+      nightly:
+        description: run the nightly long budget too
+        type: boolean
+        default: false
 
 concurrency:
-  group: fuzz-${{ github.ref }}
+  group: fuzz-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -27,7 +38,7 @@ jobs:
         # The tree suite builds its specs on APFS disk images there.
         os: [ubuntu-latest, macos-14, macos-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 180
     defaults:
       run:
         shell: bash
@@ -54,18 +65,30 @@ jobs:
       # mount is a disk image attached, and the set takes a few minutes.
       - name: fuzz tree seeds
         timeout-minutes: 10
+        run: just fuzz tree 2,3,4,5 0 -iters=128
+      # The nightly budget: every suite for 5m on a seed of the date, then the
+      # tree suite for 10m on each of six more. The seeds are printed, and
+      # just fuzz SUITE SEED 0 -iters=N replays a failure from them.
+      - name: fuzz nightly
+        if: github.event_name == 'schedule' || inputs.nightly
+        timeout-minutes: 140
         run: |
-          for seed in 2 3 4 5; do
-            just fuzz tree "$seed" 0 -iters=128
-          done
-      # A failing case is saved beside its suite. The runner is thrown away,
-      # so keep the cases for a person to commit.
+          day=$(date -u +%Y%m%d)
+          status=0
+          just fuzz "" "${day}0" 5m || status=1
+          just fuzz tree "${day}1,${day}2,${day}3,${day}4,${day}5,${day}6" 10m || status=1
+          exit "$status"
+      # A failing case is saved, shrunk, beside its suite. The runner is thrown
+      # away, so keep the new cases for a person to commit to the corpus.
+      - name: gather failing cases
+        if: failure()
+        run: tools/new-fuzz-cases build/fuzz-cases
       - name: keep failing cases
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: fuzz-cases-${{ matrix.os }}
-          path: "*/fuzz/corpus/*.case"
+          path: build/fuzz-cases
           if-no-files-found: ignore
 
   # The same recipe on Windows, where tools/in-namespace hands the run to
@@ -74,7 +97,7 @@ jobs:
   # the MFT reader with the walk. ASan is off on Windows, as in test.yml.
   fuzz-windows:
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 180
     defaults:
       run:
         shell: bash
@@ -89,14 +112,23 @@ jobs:
         run: SAN='' just fuzz
       - name: fuzz tree seeds
         timeout-minutes: 15
+        run: SAN='' just fuzz tree 2,3,4,5 0 -iters=128
+      - name: fuzz nightly
+        if: github.event_name == 'schedule' || inputs.nightly
+        timeout-minutes: 140
         run: |
-          for seed in 2 3 4 5; do
-            SAN='' just fuzz tree "$seed" 0 -iters=128
-          done
+          day=$(date -u +%Y%m%d)
+          status=0
+          SAN='' just fuzz "" "${day}0" 5m || status=1
+          SAN='' just fuzz tree "${day}1,${day}2,${day}3,${day}4,${day}5,${day}6" 10m || status=1
+          exit "$status"
+      - name: gather failing cases
+        if: failure()
+        run: tools/new-fuzz-cases build/fuzz-cases
       - name: keep failing cases
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: fuzz-cases-windows
-          path: "*/fuzz/corpus/*.case"
+          path: build/fuzz-cases
           if-no-files-found: ignore
