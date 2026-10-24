@@ -64,8 +64,9 @@ builder_pass :: proc(b: ^Builder, complete: bool) {
 
 	s := Snapshot {
 		count    = count,
-		nodes    = b.tree.nodes_done,
-		bytes    = b.tree.bytes_done,
+		// Readers add to these as they go, so they are loaded as progress stores them.
+		nodes    = sync.atomic_load(&b.tree.nodes_done),
+		bytes    = sync.atomic_load(&b.tree.bytes_done),
 		pending  = b.roll.pending,
 		elapsed  = time.duration_milliseconds(time.tick_since(b.started)),
 		complete = complete,
