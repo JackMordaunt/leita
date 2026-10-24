@@ -279,3 +279,38 @@ test_an_update_walks_what_the_base_could_not_read :: proc(t: ^testing.T) {
 	_, charged := flags_of(&tree, "big.bin")
 	testing.expect(t, charged, "the update did not read the directory the base could not")
 }
+
+/*
+Following links, a link back to a directory above it is a loop, and is left the
+link it is: a and b, each with a link to the other, are read once each by name and
+once through the link from the other, and no deeper. Before card 731 the macOS walk
+went down a/to_b/to_a/... until the path grew past what open accepts (card 672's
+fuzz harness, which timed out); Linux has ended such a loop since card 525.
+*/
+@(test)
+test_a_loop_of_links_ends_when_followed :: proc(t: ^testing.T) {
+	dir, dir_err := os.temp_directory(context.temp_allocator)
+	testing.expect(t, dir_err == nil, "no temp directory")
+	root := fmt.tprintf("%s/leita_walk_link_loop_%d", dir, os.get_pid())
+	os.remove_all(root)
+	defer os.remove_all(root)
+
+	testing.expect(t, os.make_directory(root) == nil, "could not make the root")
+	a, b := fmt.tprintf("%s/a", root), fmt.tprintf("%s/b", root)
+	testing.expect(t, os.make_directory(a) == nil, "could not make a")
+	testing.expect(t, os.make_directory(b) == nil, "could not make b")
+	testing.expect(t, os.write_entire_file(fmt.tprintf("%s/in_a.txt", a), []byte{'x'}) == nil, "could not write in_a.txt")
+	testing.expect(t, symlink_directory(b, fmt.tprintf("%s/to_b", a)), "could not link a/to_b")
+	testing.expect(t, symlink_directory(a, fmt.tprintf("%s/to_a", b)), "could not link b/to_a")
+	testing.expect(t, symlink_directory(a, fmt.tprintf("%s/to_self", a)), "could not link a/to_self")
+
+	tree: scan.Tree
+	testing.expect_value(t, scan.tree_init(&tree, 1), scan.Error.None)
+	defer scan.tree_destroy(&tree)
+
+	testing.expect_value(t, read(root, &tree, Config{follow = true}), Error.None)
+
+	// a by name, and through b/to_a; a/to_b/to_a leads back into a, a loop.
+	_, in_a := named(&tree, "in_a.txt")
+	testing.expect_value(t, in_a, 2)
+}

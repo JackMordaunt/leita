@@ -32,6 +32,22 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 	}
 	defer {posix.close(fd)}
 
+	// Following links, the directories on the way down are kept, as on Linux
+	// (follow_link in mounts_linux.odin) and Windows, and a directory already
+	// among them is a loop of links: the link that led here stays the link it
+	// is, unread.
+	below: ^Ancestor
+	if w.follow {
+		st: posix.stat_t
+		if posix.fstat(fd, &st) == .OK {
+			id := File_Id{device = u64(st.st_dev), inode = u64(st.st_ino)}
+			if on_path(d.ancestors, id) {
+				return 0, 0, true
+			}
+			below = push(w, id, d.ancestors, ancestry(w)) or_return
+		}
+	}
+
 	request := Attr_List {
 		bitmapcount = ATTR_BIT_MAP_COUNT,
 		dirattr     = ATTR_DIR_MOUNTSTATUS,
@@ -93,7 +109,7 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 					w.err = .Out_Of_Memory
 					return nodes, bytes, false
 				}
-				append(&w.found, Dir{index = index, path = child})
+				append(&w.found, Dir{index = index, path = child, ancestors = below})
 			}
 			nodes += 1
 			bytes += charged
@@ -395,18 +411,28 @@ denied_errno :: proc(errno: posix.Errno) -> bool {
 	return errno == .EACCES || errno == .EPERM
 }
 
-// Scratch is what a worker reuses between directories: nothing, since the buffer
-// a batch lands in lives on the stack.
+// Scratch is what a worker keeps between directories. The buffer a batch lands
+// in lives on the stack.
 @(private)
-Scratch :: struct {}
-
-@(private)
-scratch_make :: proc(allocator: mem.Allocator) -> Scratch {
-	return {}
+Scratch :: struct {
+	// The chains of directories a walk that follows links keeps (Ancestor),
+	// which a directory queued by this worker may be read with by another.
+	ancestry: mem.Dynamic_Arena,
 }
 
 @(private)
-scratch_destroy :: proc(s: ^Scratch) {}
+scratch_make :: proc(allocator: mem.Allocator) -> Scratch {
+	s: Scratch
+	// Takes no memory until the first Ancestor, which only a walk that follows
+	// links makes.
+	mem.dynamic_arena_init(&s.ancestry, allocator, allocator)
+	return s
+}
+
+@(private)
+scratch_destroy :: proc(s: ^Scratch) {
+	mem.dynamic_arena_destroy(&s.ancestry)
+}
 
 // struct attrlist and attribute_set_t from <sys/attr.h>.
 @(private)

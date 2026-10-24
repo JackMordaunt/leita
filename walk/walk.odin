@@ -23,9 +23,8 @@ import "jm:flow"
 
 Config :: struct {
 	workers:         int, // 0 lets `width` choose
-	// Descend through symlinks and junctions. On Linux and Windows a link to a
-	// directory above it is not followed (follow_link); on macOS such a loop is
-	// not detected.
+	// Descend through symlinks and junctions. A link to a directory above it is
+	// not followed (follow_link), so a loop of links ends.
 	follow:          bool,
 	media:           scan.Media, // what holds the tree, which `width` fits the choice to
 	pace:            Pace,
