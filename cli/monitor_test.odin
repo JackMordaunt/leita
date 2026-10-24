@@ -501,6 +501,15 @@ monitor_hook_receive :: proc(conn: ^loopback.Conn, req: loopback.Request) {
 	loopback.send(conn, "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")
 }
 
+// What the server has heard so far, copied under its lock: the handler appends
+// on the server's thread, and the reply that follows is no ordering the thread
+// sanitizer can see.
+@(private = "file")
+monitor_hook_heard :: proc(s: ^Monitor_Hook_Server) -> []string {
+	sync.guard(&s.mutex)
+	return slice.clone(s.bodies[:], context.temp_allocator)
+}
+
 // A webhook is added with a secret, tested, and sent each new alert with the
 // scan's summary: the place named, the folder paths inside it only once they
 // are allowed. Nothing goes anywhere before one is added.
@@ -527,7 +536,7 @@ a_monitor_webhook_hears_each_new_alert_and_a_test :: proc(t: ^testing.T) {
 	_, _ = monitor_run_monitor(&b, "on")
 	_, out := monitor_run_monitor(&b, "run")
 	testing.expect(t, !strings.contains(out, "webhooks:"), out)
-	testing.expect_value(t, len(server.bodies), 0) // nothing is sent before a webhook is added
+	testing.expect_value(t, len(monitor_hook_heard(&server)), 0) // nothing is sent before a webhook is added
 
 	code: int
 	code, out = monitor_run_monitor(&b, "webhook", "add", "http://example.com/leita")
@@ -540,7 +549,7 @@ a_monitor_webhook_hears_each_new_alert_and_a_test :: proc(t: ^testing.T) {
 	code, out = monitor_run_monitor(&b, "webhook", "test")
 	testing.expect_value(t, code, 0)
 	testing.expect(t, strings.contains(out, "took the test"), out)
-	testing.expect_value(t, len(server.bodies), 1)
+	testing.expect_value(t, len(monitor_hook_heard(&server)), 1)
 
 	// The alert fired last run, before the webhook: clear it, and raise it again.
 	_, _ = monitor_run_monitor(&b, "add", b.place)
@@ -548,9 +557,10 @@ a_monitor_webhook_hears_each_new_alert_and_a_test :: proc(t: ^testing.T) {
 	_, _ = monitor_run_monitor(&b, "add", b.place, "--warn-used", "1")
 	_, out = monitor_run_monitor(&b, "run", "--all")
 	testing.expect(t, strings.contains(out, "webhooks: 1 delivered"), out)
-	testing.expect_value(t, len(server.bodies), 2)
-	if len(server.bodies) == 2 {
-		body := server.bodies[1]
+	heard := monitor_hook_heard(&server)
+	testing.expect_value(t, len(heard), 2)
+	if len(heard) == 2 {
+		body := heard[1]
 		testing.expect(t, strings.contains(body, `"event": "warn_used"`), body)
 		testing.expect(t, strings.contains(body, `"schema": "leita.report/1"`), body)
 		testing.expect(t, strings.contains(body, `"largest_directories": []`), body)
@@ -562,9 +572,10 @@ a_monitor_webhook_hears_each_new_alert_and_a_test :: proc(t: ^testing.T) {
 	_, _ = monitor_run_monitor(&b, "run", "--all")
 	_, _ = monitor_run_monitor(&b, "add", b.place, "--warn-used", "1")
 	_, _ = monitor_run_monitor(&b, "run", "--all")
-	testing.expect_value(t, len(server.bodies), 3)
-	if len(server.bodies) == 3 {
-		testing.expect(t, strings.contains(server.bodies[2], "big.raw"), "paths, once allowed")
+	heard = monitor_hook_heard(&server)
+	testing.expect_value(t, len(heard), 3)
+	if len(heard) == 3 {
+		testing.expect(t, strings.contains(heard[2], "big.raw"), "paths, once allowed")
 	}
 
 	_, out = monitor_run_monitor(&b, "webhook", "list")
