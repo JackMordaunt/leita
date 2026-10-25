@@ -7,6 +7,7 @@ import "core:os"
 import "core:path/filepath"
 import "core:strings"
 import "core:testing"
+import "core:time"
 import "core:unicode/utf16"
 
 import "../../home"
@@ -20,6 +21,10 @@ folder Reclaim sizes. Other SID folders are excluded. A record is
 matched on the end of the path it holds, dir's last name and name, since the
 shell may hold the path long where dir holds it short (RUNNER~1 for
 runneradmin).
+
+On the Windows runner a recycled file's $I and $R were at times found a moment
+after the shell returned, though not at once (run 40217759402), so the folder is
+read again until the pair is found, for up to five seconds.
 */
 recycled :: proc(dir, name: string) -> (record, file: string) {
 	who := home.user(context.temp_allocator)
@@ -28,7 +33,15 @@ recycled :: proc(dir, name: string) -> (record, file: string) {
 		return "", ""
 	}
 	folder := fmt.tprintf(`%s\$Recycle.Bin\%s`, filepath.volume_name(dir), who.uid)
-	return recycled_in(folder, fmt.tprintf(`\%s\%s`, filepath.base(dir), name))
+	want := fmt.tprintf(`\%s\%s`, filepath.base(dir), name)
+	deadline := time.tick_now()._nsec + i64(5 * time.Second)
+	for {
+		record, file = recycled_in(folder, want)
+		if file != "" || time.tick_now()._nsec >= deadline {
+			return
+		}
+		time.sleep(10 * time.Millisecond)
+	}
 }
 
 // recycled_in is the $I and $R in folder whose record ends with want.
