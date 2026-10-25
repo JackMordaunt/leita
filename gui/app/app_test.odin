@@ -179,15 +179,26 @@ hand_on :: proc(r: ^Rig) {
 	ui.data_after_frame(&r.data, &r.needs, &r.p.router)
 }
 
-// take_answers drains the host's answers into the probe and lays out a frame on
-// them. The side column's rows fit the frame they land in
-// (the_side_rows_fit_the_window_on_the_frame_they_land), so what a test finds
-// there is where a hand would find it.
+/*
+take_answers drains the host's answers into the probe and lays out a frame on
+them, and then the frame that layout asks for at once, as the window draws it
+straight after. A flex jm:ui lays out for the first time shares a weighted child
+out from estimates when an unweighted one follows it, and asks for the next
+frame (ui.flexible). primer.banner is such a flex, its body weighted and Dismiss
+after it, and leita cannot reorder it: on the frame the trial banner first
+appears its Dismiss sits 36 px right of where every later frame draws it, so a
+click aimed from that frame lands where the button no longer is (card 814). A
+spinner asks for every frame, so one more frame at most.
+*/
 @(private = "file")
 take_answers :: proc(r: ^Rig) {
 	ui.inbox_drain(&r.h.inbox, &r.p.layout)
 	ui.probe_frame(&r.p)
 	hand_on(r)
+	if r.p.wants_frame && r.p.frame_after <= 0 {
+		ui.probe_frame(&r.p)
+		hand_on(r)
+	}
 }
 
 // settle drains the host's answers into the probe and runs a frame, until a
