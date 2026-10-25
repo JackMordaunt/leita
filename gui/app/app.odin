@@ -148,6 +148,9 @@ Desk :: struct {
 	generation:          u32,
 	scan:                ^Scan,
 	made_up:             Maybe(int), // the made-up disk's day to scan in place of any path, nil for real ones
+	// The made-up disk's clock for this host's scans alone (survey.Fill.clock):
+	// a journey's way to hold a scan where it wants it. Zero in the window.
+	made_up_clock:       synth.Clock,
 	// Called by the walk after each directory it lists (walk.Config.after_list):
 	// a journey's way to change the disk while a scan reads it. Nil in the window.
 	after_list:          proc(path: string, data: rawptr),
@@ -290,9 +293,11 @@ this binary (monitor.odin). update_key is 32 bytes of a fixture's Ed25519
 public key; nil uses the key the build was given. update_exe is that fixture's
 executable; "" is this process. made_up is the day of a made-up disk to scan in
 place of every path, as scan.synthetic_day read it at startup, nil for real
-scans. after_list, with after_list_data, is called by a walk after each
-directory it lists, to change the disk in the middle of a scan as a journey
-does; nil in the window. allocator builds the desk.
+scans. made_up_clock times this host's scans of the made-up disk in place of
+synth's clock, as a journey holding a scan does; zero in the window.
+after_list, with after_list_data, is called by a walk after each directory it
+lists, to change the disk in the middle of a scan as a journey does; nil in the
+window. allocator builds the desk.
 */
 init :: proc(
 	h: ^Host,
@@ -310,6 +315,7 @@ init :: proc(
 	update_exe := "",
 	update_time: ^Update_Time = nil,
 	made_up: Maybe(int) = nil,
+	made_up_clock: synth.Clock = {},
 	after_list: proc(path: string, data: rawptr) = nil,
 	after_list_data: rawptr = nil,
 	allocator := context.allocator,
@@ -338,6 +344,7 @@ init :: proc(
 		h.desk.update_key_set = true
 	}
 	h.desk.update_exe = update_exe
+	h.desk.made_up_clock = made_up_clock
 	h.desk.after_list = after_list
 	h.desk.after_list_data = after_list_data
 	h.desk.update_time = update_time
@@ -784,6 +791,7 @@ scan_begin :: proc(d: ^Desk, path: string, cut := false) {
 	s.fill.probe = choice.probe
 	s.fill.opts = ntfs.Read_Options{}
 	s.fill.watched = true
+	s.fill.clock = d.made_up_clock
 	s.fill.tree = &s.tree
 	// With history on, the place's whole tree is kept beside it, shared with the
 	// command line and the monitor, and the next scan reads only what changed since.

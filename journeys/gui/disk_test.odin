@@ -8,6 +8,8 @@ import "core:sync"
 import "core:testing"
 import "core:time"
 
+import "../../scan"
+
 /*
 Disk is the state of the disk a person opens Leita on that the made-up disk
 cannot be: a folder with nothing in it, one with a folder Leita may not open,
@@ -268,20 +270,24 @@ read_a_folder_that_loses_one :: proc(t: ^testing.T, scenario: Scenario) -> bool 
 	return true
 }
 
-// The made-up disk's scan, stopped from the settings menu while it reads, says
-// it was stopped and that its chart is incomplete.
+/*
+The made-up disk's scan, stopped from the settings menu while it reads, says it
+was stopped and that its chart is incomplete. The walk is held a second into its
+nine (hold_a_second_in) until Stop cancels it, so it cannot end first: paced by
+the wall clock, it raced Stop through the desk's queue, and on a busy runner the
+scan was done before Stop reached it (card 777).
+*/
 stop_a_scan_half_way :: proc(t: ^testing.T, scenario: Scenario) -> bool {
 	w: Window
-	open(&w, t, "stopped", 0, scenario = scenario)
+	open(&w, t, "stopped", 0, scenario = scenario, made_up_clock = {wait = hold_a_second_in})
 	defer close(&w)
 
-	// A second of the walk's nine.
-	deadline := time.tick_now()._nsec + i64(time.Second)
-	for time.tick_now()._nsec < deadline {
-		frames(&w, 1)
-		time.sleep(10 * time.Millisecond)
-	}
-
+	testing.expectf(
+		t,
+		settle_said(&w, `tree item "Users, `),
+		"the chart shows the top of the disk while it reads:\n%s",
+		show(&w),
+	)
 	testing.expect(t, click(&w, tr(&w, .Settings)))
 	frames(&w, 10)
 	testing.expectf(
@@ -311,6 +317,20 @@ stop_a_scan_half_way :: proc(t: ^testing.T, scenario: Scenario) -> bool {
 	)
 	keep(&w, "stopped")
 	return true
+}
+
+/*
+hold_a_second_in is a made-up disk's clock (synth.Clock) that reads as fast as it
+can to a second into the walk, and from there waits for the scan to be cancelled:
+by Stop, or by the window closing.
+*/
+hold_a_second_in :: proc(tree: ^scan.Tree, elapsed: time.Duration) {
+	if elapsed < time.Second {
+		return
+	}
+	for !scan.cancelled(tree) {
+		time.sleep(time.Millisecond)
+	}
 }
 
 /*

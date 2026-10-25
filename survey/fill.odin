@@ -40,6 +40,9 @@ Fill :: struct {
 	// pays for doing so repeatedly, which is worth it only if someone is looking.
 	watched:   bool,
 	tree:      ^scan.Tree,
+	// The made-up disk's clock for this fill alone, in place of synth.config's
+	// (clock_override, else the pace of a walk); zero for that.
+	clock:     synth.Clock,
 	// A file to keep the place's whole tree in between runs. Set, the place is
 	// updated from it by what the system says changed, when that can be trusted, and
 	// read whole otherwise; either way the result is kept there for next time. Empty,
@@ -298,6 +301,9 @@ fill_walk :: proc(f: ^Fill) {
 @(private)
 fill_synthetic :: proc(f: ^Fill) {
 	cfg := synth.config(f.target.day)
+	if f.clock.wait != nil {
+		cfg.clock = f.clock
+	}
 	root := scan.location(f.target, context.allocator)
 	defer delete(root)
 	f.synth_err = synth.read(root, f.tree, cfg)
