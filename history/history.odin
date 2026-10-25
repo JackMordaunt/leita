@@ -34,7 +34,10 @@ import "../gui/query"
 // is told it is.
 KEPT_MIN :: query.KEPT_MIN
 
-// KEPT is how many snapshots of one place are kept, newest first.
+// KEPT is how many snapshots of one place are kept, newest first. Newest is the
+// order they were kept in, here as everywhere in the store, not the order of
+// their stamps: a clock set back stamps the newest scan earlier than the last,
+// and ordering by the stamp listed it last and forgot it as the oldest.
 KEPT :: 30
 
 // BUSY_WAIT is how long a write waits for another connection's to finish before
@@ -277,7 +280,7 @@ save :: proc(
 		return sqlite3.exec_args(
 			db,
 			`DELETE FROM snapshot WHERE top = ? AND id NOT IN
-				(SELECT id FROM snapshot WHERE top = ? ORDER BY taken DESC, id DESC LIMIT ?)`,
+				(SELECT id FROM snapshot WHERE top = ? ORDER BY id DESC LIMIT ?)`,
 			s.top,
 			s.top,
 			i64(KEPT),
@@ -340,7 +343,7 @@ actions :: proc(
 	rows := sqlite3.query(
 		st.db,
 		`SELECT taken, kind, path, detail, bytes, failed FROM action
-			WHERE taken >= ? ORDER BY taken DESC, id DESC LIMIT ?`,
+			WHERE taken >= ? ORDER BY id DESC LIMIT ?`,
 		since,
 		i64(limit) if limit > 0 else -1,
 		allocator = allocator,
@@ -392,7 +395,7 @@ list :: proc(
 	rows := sqlite3.query(
 		st.db,
 		`SELECT id, taken, bytes, items, disk_total, disk_free FROM snapshot
-			WHERE top = ? ORDER BY taken DESC, id DESC`,
+			WHERE top = ? ORDER BY id DESC`,
 		top,
 		allocator = context.temp_allocator,
 	) or_return
