@@ -88,3 +88,121 @@ blocks :: proc(path: string) -> u64 {
 	posix.lstat(strings.clone_to_cstring(path, context.temp_allocator), &st)
 	return u64(st.st_blocks) * 512
 }
+
+// 60 folders of 100 bytes each below root, past PATH_MAX on Linux (4096) and macOS
+// (1024), and a folder victim at the bottom holding one file. Made and removed with
+// *at calls, since no path reaches the bottom. walk/unix_test.odin builds a tree as
+// deep for the walk; either depth only has to pass PATH_MAX, so the two need not
+// stay in step.
+@(private)
+DEEP_DEPTH :: 60
+
+@(private)
+deep_step :: proc() -> cstring {
+	return strings.clone_to_cstring(strings.repeat("p", 100, context.temp_allocator), context.temp_allocator)
+}
+
+@(private)
+deep_make :: proc(t: ^testing.T, root: string) -> (victim: string, ok: bool) {
+	at := posix.open(strings.clone_to_cstring(root, context.temp_allocator), {.DIRECTORY})
+	if !testing.expect(t, at >= 0, "could not open the root") {
+		return "", false
+	}
+
+	path := strings.builder_make(context.temp_allocator)
+	strings.write_string(&path, root)
+	for _ in 0 ..< DEEP_DEPTH {
+		testing.expect(t, posix.mkdirat(at, deep_step(), {.IRUSR, .IWUSR, .IXUSR}) == .OK)
+		next := posix.openat(at, deep_step(), {.DIRECTORY})
+		posix.close(at)
+		if !testing.expect(t, next >= 0, "could not open a step") {
+			return "", false
+		}
+		at = next
+		strings.write_byte(&path, '/')
+		strings.write_string(&path, string(deep_step()))
+	}
+	defer posix.close(at)
+
+	testing.expect(t, posix.mkdirat(at, "victim", {.IRUSR, .IWUSR, .IXUSR}) == .OK)
+
+	file := posix.openat(at, "victim/file", {.WRONLY, .CREAT}, {.IRUSR, .IWUSR})
+	if !testing.expect(t, file >= 0, "could not make the file") {
+		return "", false
+	}
+	posix.close(file)
+
+	strings.write_string(&path, "/victim")
+	return strings.to_string(path), true
+}
+
+// Whether the file deep_make put at the bottom is still there, asked a folder at a
+// time.
+@(private)
+deep_survives :: proc(victim: string) -> bool {
+	fd, err := open_directory(victim)
+	if err != .None {
+		return false
+	}
+	defer posix.close(fd)
+
+	st: posix.stat_t
+	return posix.fstatat(fd, "file", &st, {.SYMLINK_NOFOLLOW}) == .OK
+}
+
+@(private)
+deep_remove :: proc(root: string) {
+	fds: [DEEP_DEPTH + 1]posix.FD
+	fds[0] = posix.open(strings.clone_to_cstring(root, context.temp_allocator), {.DIRECTORY})
+	if fds[0] < 0 {
+		return
+	}
+
+	depth := 0
+	for depth < DEEP_DEPTH {
+		next := posix.openat(fds[depth], deep_step(), {.DIRECTORY})
+		if next < 0 {
+			break
+		}
+		depth += 1
+		fds[depth] = next
+	}
+
+	posix.unlinkat(fds[depth], "victim/file", {})
+	posix.unlinkat(fds[depth], "victim", {.REMOVEDIR})
+
+	for depth > 0 {
+		posix.close(fds[depth])
+		depth -= 1
+		posix.unlinkat(fds[depth], deep_step(), {.REMOVEDIR})
+	}
+	posix.close(fds[0])
+	os.remove_all(root)
+}
+
+/*
+A folder deeper than PATH_MAX, which the walk reads since card 771 and so can be
+offered, is refused by delete_tree, which cannot stat it by its path, and nothing in
+it is touched: a delete acts only on what it can open, never on a shorter path.
+*/
+@(test)
+a_delete_past_path_max_is_refused_and_removes_nothing :: proc(t: ^testing.T) {
+	root := strings.concatenate(
+		{temp_root(), fmt.tprintf("/leita_files_deep_%d", os.get_pid())},
+		context.temp_allocator,
+	)
+	deep_remove(root)
+	testing.expect(t, os.make_directory(root) == nil)
+	defer deep_remove(root)
+
+	victim, ok := deep_make(t, root)
+	if !ok {
+		return
+	}
+	testing.expect(t, deep_survives(victim), "the fixture has no file at the bottom")
+
+	_, freed, err := delete_tree(victim)
+	testing.expectf(t, err != .None, "a delete past PATH_MAX said %v", err)
+	testing.expect_value(t, freed, 0)
+	testing.expect(t, deep_survives(victim), "a refused delete removed the file")
+}

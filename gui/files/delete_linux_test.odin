@@ -1,6 +1,7 @@
 #+build linux
 package leita_files
 
+import "core:fmt"
 import "core:log"
 import "core:os"
 import "core:strings"
@@ -99,4 +100,39 @@ look_at :: proc(path: string) -> (Look, posix.Errno) {
 	dir, _ := open_dir_at(posix.AT_FDCWD, strings.clone_to_cstring(os.dir(path), context.temp_allocator), true)
 	defer posix.close(dir)
 	return look(dir, strings.clone_to_cstring(os.base(path), context.temp_allocator))
+}
+
+/*
+A folder deeper than PATH_MAX goes to the Trash whole, and only it: trash_into
+opens its parent a folder at a time (open_directory) and renames the entry out of
+that descriptor, so no path the kernel refuses is ever asked for, and the folders
+above it stay.
+*/
+@(test)
+a_trash_past_path_max_moves_only_that_folder :: proc(t: ^testing.T) {
+	root := fmt.tprintf("%s/leita_files_deep_trash_%d", temp_root(), os.get_pid())
+	deep_remove(root)
+	testing.expect(t, os.make_directory(root) == nil)
+	defer deep_remove(root)
+
+	victim, ok := deep_make(t, root)
+	if !ok {
+		return
+	}
+	trash_dir := fmt.tprintf("%s/leita_files_deep_bin_%d", temp_root(), os.get_pid())
+	os.remove_all(trash_dir)
+	defer os.remove_all(trash_dir)
+
+	testing.expect_value(t, trash_into(victim, trash_dir), Error.None)
+	testing.expect(t, !deep_survives(victim), "the folder stayed where it was")
+	parent, err := open_directory(os.dir(victim))
+	testing.expect_value(t, err, Error.None)
+	if err == .None {
+		posix.close(parent)
+	}
+	testing.expect(
+		t,
+		os.exists(strings.concatenate({trash_dir, "/files/victim/file"}, context.temp_allocator)),
+		"the Trash does not hold the folder and its file",
+	)
 }
