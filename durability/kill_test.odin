@@ -230,7 +230,7 @@ a_baseline_save_killed_anywhere_keeps_a_whole_baseline :: proc(t: ^testing.T) {
 SELECTED :: [?]string{"a", "b", "sub/c", "sub/deeper/d"}
 
 // setup_selection makes a selection to delete or trash, and a file beside it.
-@(private = "file")
+@(private)
 setup_selection :: proc(t: ^testing.T, dir: string) {
 	selection := in_dir(dir, SELECTION)
 	testing.expect(t, os.make_directory_all(in_dir(selection, "sub/deeper")) == nil)
@@ -244,7 +244,7 @@ setup_selection :: proc(t: ^testing.T, dir: string) {
 
 // every file left of the selection at selection is whole, and the file beside it
 // is there.
-@(private = "file")
+@(private)
 expect_whole :: proc(t: ^testing.T, dir, selection: string, at: int) -> (left: int) {
 	for name in SELECTED {
 		got, err := os.read_entire_file(in_dir(selection, name), context.temp_allocator)
@@ -340,7 +340,7 @@ acked :: proc(dir: string) -> []int {
 }
 
 // integrity is what SQLite's integrity check says of db, "ok" when it is sound.
-@(private = "file")
+@(private)
 integrity :: proc(db: sqlite3.Db) -> string {
 	rows, err := sqlite3.query(db, "PRAGMA integrity_check", allocator = context.temp_allocator)
 	if err != nil {

@@ -15,6 +15,7 @@
 #   just btrfs-test [--sudo]  the btrfs and walk tests on a throw-away btrfs image,
 #                             as root too with --sudo where sudo asks no password
 #   just mount-test [--sudo]  the delete test that mounts, in a namespace of its own
+#   just durability [--sudo]  kill each durable write part way; full and read-only volumes
 #   just fsbench-ci [--update] the walk on a seeded tmpfs, against the baseline
 #   just install              put the release command line on PATH as leita and le
 #   just check                type-check both modes without producing a binary
@@ -486,6 +487,24 @@ mount-test *args:
         exit 0
     fi
     echo "mount-test: skipped: no user namespaces here; give --sudo where sudo asks no password"
+
+# Kills each durable write part way, and fills and freezes real volumes under
+# them (durability/). The kills run everywhere. On Linux a tmpfs of a fixed size
+# is mounted in a user and mount namespace where one can be had; with --sudo,
+# as root, an ext4 image on a loop device too.
+durability *args: sqlite
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p build/test
+    {{odin}} build durability -build-mode:test -debug {{san}} {{flags}} -out:build/test/durability{{exe}}
+    if [ "{{os()}}" != linux ]; then exec build/test/durability{{exe}}; fi
+    if [ "{{args}}" = --sudo ]; then
+        exec sudo -n env LEITA_VOLUME_TEST=1 LEITA_VOLUME_EXT4=1 build/test/durability
+    elif unshare --user --map-root-user --mount true 2>/dev/null; then
+        exec env LEITA_VOLUME_TEST=1 unshare --user --map-root-user --mount build/test/durability
+    fi
+    echo "durability: no user namespace here, so no volume is mounted; give --sudo where sudo asks no password" >&2
+    exec build/test/durability
 
 # Type-check both modes without producing a binary. gui/notices is separate:
 # the command line does not import it, and its test is what renders

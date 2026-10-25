@@ -1,0 +1,55 @@
+# Kills each durable write part way, and fills and freezes real volumes under
+# them: `just durability` (durability/). test.yml runs the same tests through
+# `just test`, where no volume is mounted; this workflow is where they are. On
+# Linux a tmpfs is mounted in a user namespace, then, as root, an ext4 image
+# on a loop device too. macOS and Windows run the kills and the fault seam.
+name: durability
+
+on:
+  push:
+    branches: [main, "ci/**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: durability-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  durability:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: keep line endings as committed (windows)
+        if: runner.os == 'Windows'
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          submodules: true
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      # Ubuntu 24.04 refuses a user namespace to a process without an AppArmor
+      # profile.
+      - name: allow user namespaces
+        if: runner.os == 'Linux'
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      # Windows runs without AddressSanitizer, as in test.yml.
+      - name: durability
+        timeout-minutes: 10
+        run: |
+          if [ "${{ runner.os }}" = Windows ]; then export SAN=; fi
+          just durability
+      - name: durability as root, on ext4 too (linux)
+        if: runner.os == 'Linux'
+        timeout-minutes: 10
+        run: just durability --sudo
