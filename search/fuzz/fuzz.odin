@@ -46,8 +46,22 @@ setup :: proc() -> (Case, bool) {
 
 teardown :: proc(_: ^Case) {}
 
-// seeds are the strings damage starts from. The last one is not UTF-8.
-seeds := []string{"Resume", "Résumé", "src/Main.go", "ABC/def", "\xff\xfe"}
+// seeds are the strings damage starts from. The fifth one is not UTF-8.
+seeds := []string {
+	"Resume",
+	"Résumé",
+	"src/Main.go",
+	"ABC/def",
+	"\xff\xfe",
+	// Names from search_test.odin: the cases its folds and bracket matches
+	// are written against, each a fold that is not a plain ASCII lower-casing.
+	"Straße",
+	"CV/RÉSUMÉ",
+	"Núñez/Ñoño.txt",
+	"Øresund",
+	"Фотографии",
+	"写真フォルダ/写真.jpg",
+}
 
 // check_fold: folding a rune twice is the same as folding it once, and the
 // same for every rune of the drawn string.
