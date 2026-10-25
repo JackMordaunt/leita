@@ -114,7 +114,9 @@ leave_gone :: proc(m: ^Model, up: u32) {
 // walk_history walks the history on the mouse's back and forward buttons, or Alt with
 // an arrow, wherever the pointer is: keys the frame asks for window-wide. The
 // platform's command key, Cmd on macOS and Ctrl elsewhere, with L edits the
-// location, with F searches, and with R scans the place again.
+// location, with F searches, and with R scans the place again. None of them
+// acts while a modal dialog is open: the window behind it is not the person's
+// to change, and a field opened there would take the keyboard out of the dialog.
 @(private)
 walk_history :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result) {
 	nav := ui.claim_id(gtx)
@@ -126,7 +128,7 @@ walk_history :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result) {
 	ui.key_interest(gtx, nav, .F, {ui.SHORTCUT})
 	ui.key_interest(gtx, nav, .R, {ui.SHORTCUT})
 	for e in ui.events(gtx, nav) {
-		if e.kind != .Key {
+		if e.kind != .Key || dialog_open(m) {
 			continue
 		}
 		#partial switch e.key {
@@ -145,6 +147,23 @@ walk_history :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result) {
 			rescan(gtx, prog)
 		}
 	}
+}
+
+// dialog_open is whether a modal dialog is over the window.
+@(private)
+dialog_open :: proc(m: ^Model) -> bool {
+	return(
+		m.about_open ||
+		m.notices_open ||
+		m.licence_open ||
+		m.record_open ||
+		m.monitor_open ||
+		m.export_open ||
+		m.rename_open ||
+		m.trash_open ||
+		m.clean_open ||
+		m.empty_open \
+	)
 }
 
 // can_rescan is whether there is a finished scan to run again: a place, and no
