@@ -77,16 +77,33 @@ check_charge :: proc(_: Case, src: ^harness.Source) -> (detail: string, ok: bool
 }
 
 check_search :: proc(_: Case, src: ^harness.Source) -> (detail: string, ok: bool) {
-	raw, _ := harness.damage(src, [][]byte{search_seed()})
+	raw, _ := harness.damage(src, search_seeds())
 	if len(raw) > 4096 {
 		return fmt.tprintf("drew %d bytes, cap is %d", len(raw), 4096), false
 	}
-	rest, _, _, body, ok_item := btrfs.read_search_item(raw)
-	if !ok_item {
-		return "", true
-	}
-	if !inside(raw, body) || !inside(raw, rest) {
-		return "search item leaves the buffer", false
+	// The reader of a reply takes item after item from what is left, so the
+	// walk is the property: every body and every remainder stays in the buffer.
+	u: btrfs.Usage
+	defer btrfs.usage_destroy(&u)
+	f: btrfs.File
+	defer btrfs.file_destroy(&f)
+	rest := raw
+	for len(rest) > 0 {
+		next, _, kind, body, ok_item := btrfs.read_search_item(rest)
+		if !ok_item {
+			return "", true
+		}
+		if !inside(raw, body) || !inside(raw, next) {
+			return "search item leaves the buffer", false
+		}
+		if len(next) >= len(rest) {
+			return "search item took no bytes", false
+		}
+		if kind == 108 {
+			// EXTENT_DATA: what the reader does with the body, whatever it holds.
+			_ = btrfs.charge(body, &u, &f)
+		}
+		rest = next
 	}
 	return "", true
 }
@@ -113,13 +130,38 @@ make_item :: proc(at, disk: u64) -> []byte {
 	return b
 }
 
+// search_seeds are TREE_SEARCH_V2 buffers: an item with a 4-byte body, as
+// the unit test cuts one, the regular extent item the charge tests make, an
+// inline one, and two items back to back, the shape a real reply has.
 @(private)
-search_seed :: proc() -> []byte {
-	b := make([]byte, 32 + 4)
-	endian.put_u64(b[16:24], .Little, 1)
-	endian.put_u32(b[24:28], .Little, 108)
-	endian.put_u32(b[28:32], .Little, 4)
+search_seeds :: proc() -> [][]byte {
+	regular := make_item(4096, 8192)
+	inline := make([]byte, 21 + 6)
+	inline[20] = 0
+	out := make([][]byte, 4)
+	out[0] = search_item(1, 108, make([]byte, 4))
+	out[1] = search_item(4096, 108, regular)
+	out[2] = search_item(0, 108, inline)
+	out[3] = join(search_item(4096, 108, regular), search_item(8192, 108, regular))
+	return out
+}
+
+@(private)
+search_item :: proc(offset: u64, type: u32, body: []byte) -> []byte {
+	b := make([]byte, 32 + len(body))
+	endian.put_u64(b[16:24], .Little, offset)
+	endian.put_u32(b[24:28], .Little, type)
+	endian.put_u32(b[28:32], .Little, u32(len(body)))
+	copy(b[32:], body)
 	return b
+}
+
+@(private)
+join :: proc(a, b: []byte) -> []byte {
+	out := make([]byte, len(a) + len(b))
+	copy(out, a)
+	copy(out[len(a):], b)
+	return out
 }
 
 @(private)
