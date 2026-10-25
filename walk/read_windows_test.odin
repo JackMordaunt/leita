@@ -541,3 +541,85 @@ foreign kernel32 {
 	GetVolumePathNameW                :: proc(file_name: win.wstring, mount: [^]u16, length: win.DWORD) -> win.BOOL ---
 	GetVolumeNameForVolumeMountPointW :: proc(mount: win.wstring, volume: [^]u16, length: win.DWORD) -> win.BOOL ---
 }
+
+/*
+leita's totals against what Windows itself reports for the same files, on a tree this
+test builds: sizes around a cluster, a sparse file, hard links, Unicode names and a
+nested path.
+
+The apparent total is held to PowerShell's Get-ChildItem, the sum of Length over every
+file. It counts each name of a hard-linked file, as du -l does, where leita counts the
+file once: the test adds the further names' lengths to leita's total, and that is the
+only difference it allows. A directory has no Length, and leita charges it nothing.
+
+The allocated total is printed beside what `compact /s` says the files are stored in,
+so a disagreement can be read off the CI output; it is not asserted.
+*/
+@(test)
+test_totals_agree_with_powershell :: proc(t: ^testing.T) {
+	root := fresh_root(t, "tools")
+	defer remove_tree(root)
+	for size in ([?]int{0, 1, 511, 4095, 4096, 4097, 65_537, 1 << 20}) {
+		write_file(t, join_path(root, fmt.tprintf("f%d", size)), size)
+	}
+	make_dir(t, join_path(root, "a"))
+	make_dir(t, join_path(root, "b"))
+	one := join_path(root, `a\one`)
+	write_file(t, one, 100_000)
+	two := join_path(root, `b\two`)
+	if !win.CreateHardLinkW(long(two), long(one), nil) {
+		log.errorf("could not link %s: %d", two, win.GetLastError())
+		return
+	}
+	write_file(t, join_path(root, "lone"), 100_000)
+	for name, i in ([?]string{"héllo", "日本語", "\U0001F600 emoji.txt", "sp ace"}) {
+		write_file(t, join_path(root, name), 1000 * (i + 1))
+	}
+	nested := root
+	for i in 0 ..< 6 {
+		nested = join_path(nested, fmt.tprintf("%s%d", strings.repeat("n", 30, context.temp_allocator), i))
+		make_dir(t, nested)
+	}
+	write_file(t, join_path(nested, "leaf"), 12_345)
+	hole := create(t, join_path(root, "hole"))
+	if hole != win.INVALID_HANDLE_VALUE {
+		returned: win.DWORD
+		testing.expect(t, bool(win.DeviceIoControl(hole, FSCTL_SET_SPARSE, nil, 0, nil, 0, &returned, nil)))
+		testing.expect(t, bool(win.SetFilePointerEx(hole, 8 << 20, nil, win.FILE_BEGIN)))
+		testing.expect(t, bool(win.SetEndOfFile(hole)))
+		win.CloseHandle(hole)
+	}
+
+	tree := walk_tree(t, root)
+	defer scan.tree_destroy(&tree)
+
+	sum := totals_of(&tree, true)
+
+	// The further names of hard-linked files, which Get-ChildItem counts again.
+	names: u64
+	for i in 0 ..< tree.count {
+		n := scan.node(&tree, i)
+		if .Used in n.flags && .Extra_Name in n.flags {
+			names += 100_000
+		}
+	}
+
+	script := fmt.tprintf(
+		"(Get-ChildItem -LiteralPath '%s' -Recurse -Force -File | Measure-Object -Property Length -Sum).Sum",
+		root,
+	)
+	apparent, text, ok := run_tool({"powershell", "-NoProfile", "-NonInteractive", "-Command", script})
+	testing.expectf(t, ok, "Get-ChildItem failed: %s", text)
+	_, compact_text, _ := run_tool({"compact", fmt.tprintf("/s:%s", root), "/a"})
+	log.infof(
+		"leita: apparent %d, allocated %d, %d files; Get-ChildItem: %d (+%d for further names); compact: %s",
+		sum.apparent,
+		sum.allocated,
+		sum.files,
+		apparent,
+		names,
+		compact_text,
+	)
+	testing.expect_value(t, tree.bytes_done, sum.allocated)
+	testing.expect_value(t, apparent, sum.apparent + names)
+}
