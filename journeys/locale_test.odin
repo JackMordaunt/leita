@@ -92,7 +92,7 @@ expect_same_in :: proc(t: ^testing.T, name: string, sets: [][]string) {
 	base, base_csv, _ := scan(t, h, "base", {"LC_ALL=C"})
 	testing.expect(t, strings.contains(base, "32.7 GB  "), base)
 	testing.expect(t, strings.contains(base, "largest files (20)"), base)
-	testing.expect(t, strings.contains(base_csv, "directory,1,/Users/alex/Users,Folder,206005809152,64.21,"), base_csv)
+	testing.expect(t, strings.contains(slashes(base_csv), "directory,1,/Users/alex/Users,Folder,206005809152,64.21,"), base_csv)
 
 	for set, i in sets {
 		out, csv, ok := scan(t, h, fmt.tprintf("l%d", i), set)
