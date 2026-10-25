@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+# Build this platform's release artefacts the way release.yml builds them, but
+# with the justfile's test licence key and a throwaway update key, never a
+# release's: tools/test-install/build OUT VERSION [REF]
+#
+# OUT receives what a person would download for this machine, named as
+# release.yml names them, and the single binaries leita update fetches:
+#   linux    leita-VERSION-linux-ARCH.{deb,rpm,AppImage,tar.zst},
+#            leita-linux-ARCH, leita-window-linux-ARCH
+#   windows  leita-VERSION-windows-amd64.zip, leita-windows-amd64.exe,
+#            leita-window-windows-amd64.exe
+#   darwin   leita-VERSION-darwin-ARCH.dmg, leita-darwin-universal,
+#            leita-window-darwin-universal (this machine's slice: the
+#            universal job's lipo is release.yml's alone)
+# REF, when given, is built from a detached worktree of that commit under
+# build/install/src-REF with that commit's own justfile, so an older build is
+# made as it was then. INSTALL_UPDATE_KEY is the update public key both builds
+# carry (64 hex), LEITA_RELEASED the instant compiled in. On Linux zig must be
+# on PATH (LEITA_ZIG), as for release.yml: the window is linked at the glibc
+# 2.35 floor and the command line at 2.17.
+set -euo pipefail
+out=${1:?usage: build OUT VERSION [REF]}
+version=${2:?usage: build OUT VERSION [REF]}
+ref=${3:-}
+here=$(cd "$(dirname "$0")" && pwd)
+root=$(cd "$here/../.." && pwd)
+[[ ${INSTALL_UPDATE_KEY:-} =~ ^[0-9a-fA-F]{64}$ ]] || { echo "build: INSTALL_UPDATE_KEY must be an update public key, 64 hex" >&2; exit 1; }
+mkdir -p "$out"
+out=$(cd "$out" && pwd)
+
+src=$root
+if [ -n "$ref" ]; then
+	sha=$(git -C "$root" rev-parse --verify "$ref^{commit}")
+	src=$root/build/install/src-${sha::12}
+	if [ ! -e "$src/.git" ]; then
+		git -C "$root" worktree add -q --detach "$src" "$sha"
+	fi
+	git -C "$src" submodule update -q --init jm
+	# jm's Windows recipes for its C libraries are PowerShell, which just
+	# runs under sh there; the setup action builds them for this checkout's
+	# jm instead (.github/actions/setup), and the older build takes those.
+	case "$(uname -s)" in MINGW* | MSYS* | CYGWIN*)
+		for lib in sqlite3/lib zstd/lib ui/kb/lib ui/blend2d/lib ui/accesskit/lib; do
+			if [ -d "$root/jm/$lib" ] && [ ! -d "$src/jm/$lib" ]; then
+				mkdir -p "$src/jm/$lib"
+				cp -R "$root/jm/$lib/." "$src/jm/$lib/"
+			fi
+		done
+		;;
+	esac
+fi
+
+case "$(uname -s)" in
+Linux) os=linux ;;
+Darwin) os=darwin ;;
+MINGW* | MSYS* | CYGWIN*) os=windows ;;
+*) echo "build: no release is built on $(uname -s)" >&2; exit 1 ;;
+esac
+case "$(uname -m)" in
+x86_64 | AMD64) arch=amd64 ;;
+aarch64 | arm64) arch=arm64 ;;
+*) echo "build: no release is built on $(uname -m)" >&2; exit 1 ;;
+esac
+
+export LEITA_VERSION=$version
+export LEITA_LICENCE_KEY
+LEITA_LICENCE_KEY=$(cd "$root" && just --evaluate test_licence_key)
+export LEITA_UPDATE_KEY=$INSTALL_UPDATE_KEY
+export LEITA_RELEASED=${LEITA_RELEASED:-2026-10-24T00:00:00Z}
+cd "$src"
+target=$os-$arch
+pack=$src/build/install/pack
+rm -rf "$pack"
+case $os in
+linux)
+	export LEITA_GLIBC_FLOOR=${LEITA_GLIBC_FLOOR:-2.35}
+	just build release
+	just cli-baseline "$arch" "${LEITA_CLI_FLOOR:-2.17}"
+	cp "build/baseline/$arch/leita" build/release/leita
+	just package-built
+	cp build/package/* "$out/"
+	exe=
+	;;
+windows)
+	just build release
+	exe=.exe
+	;;
+darwin)
+	just build release
+	exe=
+	;;
+esac
+"build/release/leita$exe" --version | grep -qF "leita $version " || { echo "build: build/release/leita$exe is not $version" >&2; exit 1; }
+
+# release.yml's package step: the archive a person downloads, both binaries
+# with the window in app/ and the notices beside them.
+name=leita-$version-$target
+mkdir -p "$pack/$name/app"
+cp "build/release/leita$exe" LICENSE.md THIRD_PARTY.md "$pack/$name/"
+cp "build/release/app/Leita$exe" "$pack/$name/app/"
+case $os in
+linux)
+	tar -C "$pack" --owner=0 --group=0 --numeric-owner -cf - "$name" | zstd -q -19 -T0 -f -o "$out/$name.tar.zst"
+	;;
+windows)
+	cp build/release/app/SDL3.dll build/release/app/accesskit.dll "$pack/$name/app/"
+	rm -f "$out/$name.zip"
+	(cd "$pack" && 7z a -tzip -bso0 -bsp0 "$out/$name.zip" "$name")
+	;;
+darwin)
+	# release.yml's universal job, for this one slice: just bundle, then the
+	# disk image with Leita.app and a link to /Applications.
+	just bundle build/release/app/Leita build/release/leita
+	stage=$pack/dmg
+	mkdir -p "$stage"
+	ditto build/release/Leita.app "$stage/Leita.app"
+	ln -s /Applications "$stage/Applications"
+	hdiutil create -volname Leita -srcfolder "$stage" -fs HFS+ -format UDZO -ov "$out/$name.dmg" >/dev/null
+	target=darwin-universal
+	;;
+esac
+cp "build/release/leita$exe" "$out/leita-$target$exe"
+cp "build/release/app/Leita$exe" "$out/leita-window-$target$exe"
+ls -l "$out"

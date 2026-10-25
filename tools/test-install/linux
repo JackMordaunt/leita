@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+# Every Linux artefact's story (tools/test-install/story) on clean machines,
+# each a container started from a stock distribution image pinned by digest:
+#   tools/test-install/linux OLD NEW [GUEST...]
+# OLD and NEW are the folders tools/test-install/build made from the previous
+# build and from this one. A GUEST is NAME or NAME:systemd; with none, every
+# one below runs. NAME:systemd boots systemd as PID 1 in a privileged
+# container, so leita journal on starts the recorder as a system service and
+# the package upgrade restarts it; the rest have no init, as a person's
+# container has none, and run without the recorder.
+#   deb       debian-12, debian-13, ubuntu-22.04, ubuntu-24.04
+#   rpm       fedora-42
+#   appimage  ubuntu-22.04, the window's glibc floor (2.35)
+#   tar.zst   ubuntu-22.04, the same
+# INSTALL_UPDATE_SEED is the throwaway seed both builds' update key is the
+# public half of; the update folders are signed with it. Each story's output
+# is build/install/log/KIND-GUEST.log; the exit status is 1 if any failed.
+#
+# A :systemd guest runs only on a CI runner (CI=true or GITHUB_ACTIONS=true):
+# a privileged container sees the host's /dev, and systemd booted in one on a
+# desktop took the host's terminals and ended the person's session. Elsewhere
+# this refuses before it starts any container. Even on a runner the guest is
+# told it is a container (container=docker) and its gettys are masked, so its
+# systemd leaves the host's consoles alone.
+set -euo pipefail
+old=$(cd "${1:?usage: linux OLD NEW [GUEST...]}" && pwd)
+new=$(cd "${2:?usage: linux OLD NEW [GUEST...]}" && pwd)
+shift 2
+if [ $# = 0 ]; then
+	set -- deb:debian-12 deb:debian-13 deb:ubuntu-22.04 deb:ubuntu-24.04 rpm:fedora-42 \
+		appimage:ubuntu-22.04 tar.zst:ubuntu-22.04 \
+		deb:debian-12:systemd rpm:fedora-42:systemd tar.zst:ubuntu-24.04:systemd
+fi
+if [ "${CI:-}" != true ] && [ "${GITHUB_ACTIONS:-}" != true ]; then
+	for spec in "$@"; do
+		case $spec in *:systemd)
+			echo "linux: $spec boots systemd in a privileged container, which runs only on a CI runner (CI=true); nothing was started" >&2
+			exit 2
+			;;
+		esac
+	done
+fi
+here=$(cd "$(dirname "$0")" && pwd)
+root=$(cd "$here/../.." && pwd)
+arch=$(uname -m)
+case $arch in x86_64) a=amd64 ;; aarch64) a=arm64 ;; *) echo "linux: no artefacts for $arch" >&2; exit 1 ;; esac
+work=$root/build/install
+mkdir -p "$work/log"
+
+image() {
+	case $1 in
+	debian-12) echo debian@sha256:854dd8ab51d62866dbd8f5431d15ce77b12983a2a4a1e1fe43a2395dc7ef9f61 ;;
+	debian-13) echo debian@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308 ;;
+	ubuntu-22.04) echo ubuntu@sha256:0a9887931b0e38af2e3487ed39e29436b0535c4f3f52e57745baaf79d1898956 ;;
+	ubuntu-24.04) echo ubuntu@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac ;;
+	fedora-42) echo fedora@sha256:99e203b80b1c3d8f7e161ec10a68fd02b081ef83a3963553e513c82846b97814 ;;
+	*) return 1 ;;
+	esac
+}
+
+# The tools a story needs that a stock image may lack: zstd to unpack the
+# archive. A person unpacking a .tar.zst has it; nothing leita runs needs it.
+# systemd itself, for a :systemd guest.
+prepare() { # NAME KIND SYSTEMD
+	local tools=""
+	[ "$2" = tar.zst ] && tools="zstd"
+	# Fedora's container image leaves out util-linux, which runuser is in and
+	# every Fedora install has.
+	case $1 in fedora-*) tools="$tools util-linux" ;; esac
+	[ "$3" = 1 ] && tools="$tools systemd"
+	[ -n "$tools" ] || return 0
+	case $1 in
+	debian-* | ubuntu-*) echo "apt-get update -q >/dev/null && DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends $tools >/dev/null" ;;
+	fedora-*) echo "dnf install -y -q $tools >/dev/null" ;;
+	esac
+}
+
+# The update folders: NEW's single binaries for the upgrade, OLD's for the
+# downgrade. version.txt names the version each build says it is.
+version_of() { "$1/leita-linux-$a" --version | awk '{print $2}'; }
+old_version=$(version_of "$old")
+new_version=$(version_of "$new")
+rm -rf "$work/up" "$work/down"
+python3 -I "$here/release.py" "$work/up" "$new_version" "${LEITA_RELEASED:-2026-10-24T00:00:00Z}" "$new/leita-linux-$a" "$new/leita-window-linux-$a"
+python3 -I "$here/release.py" "$work/down" "$old_version" "${LEITA_RELEASED:-2026-10-24T00:00:00Z}" "$old/leita-linux-$a" "$old/leita-window-linux-$a"
+line=$(cd "$root" && just --evaluate test_licence)
+# No getty or console unit starts in a :systemd guest.
+nogetty="for u in getty.target console-getty.service getty@.service serial-getty@.service; do ln -sf /dev/null /etc/systemd/system/\$u; done"
+
+status=0
+for spec in "$@"; do
+	IFS=: read -r kind name sd <<<"$spec"
+	img=$(image "$name") || { echo "linux: no guest $name" >&2; exit 2; }
+	systemd=0
+	[ "${sd:-}" = systemd ] && systemd=1
+	case $kind in
+	deb | rpm | AppImage | appimage | tar.zst) ;;
+	*) echo "linux: no artefact kind $kind" >&2; exit 2 ;;
+	esac
+	ext=$kind
+	[ "$kind" = appimage ] && ext=AppImage
+	o=$(ls "$old"/leita-*-linux-"$a.$ext") n=$(ls "$new"/leita-*-linux-"$a.$ext")
+	log=$work/log/$kind-$name${sd:+-$sd}.log
+	mounts=(-v "$here/story:/story:ro" -v "$old:/old:ro" -v "$new:/new:ro" -v "$work/up:/up:ro" -v "$work/down:/down:ro")
+	run_story=(env LEITA_TEST_LICENCE="$line" STORY_JOURNAL="$([ $systemd = 1 ] && echo on || echo off)" \
+		bash /story "$kind" "/old/$(basename "$o")" "/new/$(basename "$n")" /up /down)
+	echo "== $kind on $name${sd:+ ($sd)}"
+	set +e
+	if [ $systemd = 1 ]; then
+		# systemd as PID 1 needs a writable cgroup tree (privileged, in a
+		# cgroup namespace of its own) and a /run of its own.
+		c=$(docker run -d --privileged --cgroupns=private -e container=docker --tmpfs /run --tmpfs /run/lock \
+			"${mounts[@]}" "$img" sh -c "$(prepare "$name" "$kind" 1) && $nogetty && exec /usr/lib/systemd/systemd")
+		for _ in $(seq 180); do
+			state=$(docker exec "$c" systemctl is-system-running 2>/dev/null)
+			case $state in running | degraded) break ;; esac
+			docker inspect -f '{{.State.Running}}' "$c" 2>/dev/null | grep -q true || break
+			sleep 1
+		done
+		docker exec "$c" "${run_story[@]}" >"$log" 2>&1
+		code=$?
+		[ "${state:-}" = running ] || [ "${state:-}" = degraded ] || { echo "systemd did not start: ${state:-}" >>"$log"; docker logs "$c" >>"$log" 2>&1; code=1; }
+		docker rm -f "$c" >/dev/null
+	else
+		prep=$(prepare "$name" "$kind" 0)
+		docker run --rm "${mounts[@]}" "$img" sh -c "${prep:-true} && exec \"\$@\"" sh "${run_story[@]}" >"$log" 2>&1
+		code=$?
+	fi
+	set -e
+	grep '^STORY' "$log" | grep -v '^STORY ok' || true
+	echo "== $kind on $name${sd:+ ($sd)}: exit $code, $(grep -c '^STORY ok' "$log") checks passed"
+	[ $code = 0 ] || status=1
+done
+exit $status

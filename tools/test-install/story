@@ -1,0 +1,381 @@
+#!/usr/bin/env bash
+# One packaged artefact's life on a clean machine, as a person lives it:
+#   tools/test-install/story KIND OLD NEW UP DOWN
+#
+# KIND is deb, rpm, appimage, tar.zst, zip or dmg. OLD and NEW are that kind of
+# artefact from the previous build and from this one (tools/test-install/build),
+# UP a signed release directory holding NEW's single binaries and DOWN one
+# holding OLD's, both signed with the key the two builds carry. The story:
+#   install OLD, run both programs, scan a folder, write reports, add the test
+#   licence, keep a setting (a watched place), start the recorder;
+#   upgrade to NEW: leita update against UP for an archive, the package
+#   manager or the new file for the rest, and leita update refused there;
+#   the scan history, the licence and the setting are all still there, and
+#   the recorder runs the new binary with its logs kept;
+#   downgrade to OLD (DOWN, or the package manager), which either works or is
+#   refused, then upgrade again: nothing the person kept is lost;
+#   uninstall, and nothing of the program is left behind, while the person's
+#   own data stays where it was.
+#
+# Each check prints `STORY ok|FAIL <step>: <detail>`, and what is only worth
+# reading `STORY note <step>: <detail>`; the last line is
+# `STORY-END pass` or `STORY-END fail N`, and the exit status is 0 or 1.
+#
+# Run as root on Linux (a container or VM): packages are installed as root and
+# leita runs as the user STORY_USER (made if missing, default person), as a
+# person who installed with sudo would. The recorder is started only where
+# systemd is PID 1 (STORY_JOURNAL=auto|on|off). Elsewhere (the hosted macOS and
+# Windows runners) everything runs as the user running this.
+# LEITA_TEST_LICENCE is the licence line to add (the justfile's test_licence).
+set -uo pipefail
+kind=${1:?usage: story KIND OLD NEW UP DOWN}
+old=${2:?usage: story KIND OLD NEW UP DOWN}
+new=${3:?usage: story KIND OLD NEW UP DOWN}
+up=${4:?usage: story KIND OLD NEW UP DOWN}
+down=${5:?usage: story KIND OLD NEW UP DOWN}
+line=${LEITA_TEST_LICENCE:?LEITA_TEST_LICENCE must hold the test licence line}
+abs() { (cd "$(dirname "$1")" && printf '%s/%s\n' "$(pwd)" "$(basename "$1")"); }
+old=$(abs "$old") new=$(abs "$new") up=$(abs "$up") down=$(abs "$down")
+old_version=$(cat "$down/version.txt")
+new_version=$(cat "$up/version.txt")
+
+failed=0
+ok() { echo "STORY ok $1: ${2:-}"; }
+fail() {
+	echo "STORY FAIL $1: ${2:-}"
+	failed=$((failed + 1))
+}
+# check STEP DETAIL CMD...: ok when CMD succeeds, FAIL with its output when not.
+check() {
+	local step=$1 detail=$2 out
+	shift 2
+	if out=$("$@" 2>&1); then ok "$step" "$detail"; else fail "$step" "$detail: $(tail -c 600 <<<"$out")"; fi
+}
+
+case "$(uname -s)" in
+Linux) os=linux ;;
+Darwin) os=darwin ;;
+*) os=windows ;;
+esac
+
+# The person, and the commands run as them.
+user_cmd=()
+if [ $os = linux ] && [ "$(id -u)" = 0 ]; then
+	person=${STORY_USER:-person}
+	id "$person" >/dev/null 2>&1 || useradd -m "$person" 2>/dev/null || adduser -D "$person"
+	person_home=$(getent passwd "$person" | cut -d: -f6)
+	user_cmd=(runuser -u "$person" -- env HOME="$person_home" USER="$person" PATH=/usr/local/bin:/usr/bin:/bin)
+	sudo_cmd=()
+else
+	person_home=$HOME
+	sudo_cmd=()
+	if [ $os = darwin ] && [ "$(id -u)" != 0 ]; then sudo_cmd=(sudo); fi
+fi
+# macOS's bash 3.2 calls an empty "${a[@]}" unbound under set -u.
+as_person() { if [ ${#user_cmd[@]} -gt 0 ]; then "${user_cmd[@]}" "$@"; else "$@"; fi; }
+as_root() { if [ ${#sudo_cmd[@]} -gt 0 ]; then "${sudo_cmd[@]}" "$@"; else "$@"; fi; }
+
+case $os in
+linux) data=$person_home/.local/share/leita ;;
+darwin) data=$person_home/Library/Application\ Support/leita ;;
+windows) data=$(cygpath -u "$LOCALAPPDATA")/leita ;;
+esac
+
+journal=off
+if [ $os = linux ] && [ "${STORY_JOURNAL:-auto}" != off ] && [ "$(id -u)" = 0 ] && [ -d /run/systemd/system ]; then
+	journal=on
+elif [ "${STORY_JOURNAL:-auto}" = on ]; then
+	fail journal "STORY_JOURNAL=on, but systemd is not running here as root"
+fi
+
+work=$(mktemp -d)
+# The person writes the reports here.
+chmod 777 "$work"
+trap 'rm -rf "$work"' EXIT
+place=$person_home/story-place
+
+# install KIND FILE: put that artefact in place as a person would; sets leita
+# (the command line), window, and how the copy is updated (archive, package,
+# appimage, bundle).
+install_kind() {
+	case $1 in
+	deb)
+		# apt resolves the Depends: line from the distribution, as a person's
+		# apt install ./file does.
+		DEBIAN_FRONTEND=noninteractive apt-get install -y -q --allow-downgrades "$2" >"$work/apt.log" 2>&1 || {
+			cat "$work/apt.log"
+			return 1
+		}
+		leita=/usr/bin/leita window=/usr/bin/Leita how=package
+		;;
+	rpm)
+		if command -v dnf >/dev/null; then
+			dnf install -y -q --allowerasing "$2" >"$work/dnf.log" 2>&1 || {
+				# dnf install refuses an older version; that is the downgrade.
+				dnf downgrade -y -q "$2" >>"$work/dnf.log" 2>&1 || {
+					cat "$work/dnf.log"
+					return 1
+				}
+			}
+		else
+			rpm -U --oldpackage "$2" || return 1
+		fi
+		leita=/usr/bin/leita window=/usr/bin/Leita how=package
+		;;
+	appimage)
+		mkdir -p "$person_home/Applications"
+		cp "$2" "$person_home/Applications/Leita.AppImage"
+		chmod 755 "$person_home/Applications/Leita.AppImage"
+		[ ${#user_cmd[@]} -eq 0 ] || chown -R "$person:" "$person_home/Applications"
+		window=$person_home/Applications/Leita.AppImage leita=$window how=appimage
+		;;
+	tar.zst)
+		local dir=$person_home/.local/opt
+		mkdir -p "$dir"
+		rm -rf "$dir/leita"
+		zstd -dc "$2" | tar -C "$work" -xf - || return 1
+		mv "$work"/leita-*-linux-* "$dir/leita"
+		[ ${#user_cmd[@]} -eq 0 ] || chown -R "$person:" "$person_home/.local"
+		leita=$dir/leita/leita window=$dir/leita/app/Leita how=archive
+		;;
+	zip)
+		local dir
+		dir=$(cygpath -u "$LOCALAPPDATA")/Programs
+		mkdir -p "$dir"
+		rm -rf "$dir/leita"
+		if command -v unzip >/dev/null; then
+			unzip -q -o "$2" -d "$work/unzip" || return 1
+		else
+			7z x -bso0 -bsp0 -o"$work/unzip" "$2" || return 1
+		fi
+		mv "$work"/unzip/leita-*-windows-* "$dir/leita"
+		rm -rf "$work/unzip"
+		leita=$dir/leita/leita.exe window=$dir/leita/app/Leita.exe how=archive
+		;;
+	dmg)
+		local mount=$work/mount
+		mkdir -p "$mount"
+		hdiutil attach -nobrowse -readonly -mountpoint "$mount" "$2" >/dev/null || return 1
+		[ -L "$mount/Applications" ] || {
+			hdiutil detach "$mount" >/dev/null
+			echo "the disk image has no Applications link"
+			return 1
+		}
+		# A person drags Leita.app onto the Applications link: the old copy
+		# is replaced whole.
+		as_root rm -rf /Applications/Leita.app
+		as_root ditto "$mount/Leita.app" /Applications/Leita.app || {
+			hdiutil detach "$mount" >/dev/null
+			return 1
+		}
+		hdiutil detach "$mount" >/dev/null
+		leita=/Applications/Leita.app/Contents/Helpers/leita window=/Applications/Leita.app/Contents/MacOS/Leita how=bundle
+		;;
+	*)
+		echo "story: no artefact kind $1"
+		return 1
+		;;
+	esac
+}
+
+# put KIND FILE: install_kind in this shell, so the paths it sets stay set;
+# out is what it printed.
+put() {
+	install_kind "$@" >"$work/put.log" 2>&1
+	local code=$?
+	out=$(tail -c 1500 "$work/put.log")
+	return $code
+}
+
+# The AppImage runtime mounts the image with FUSE, which a container has not;
+# APPIMAGE_EXTRACT_AND_RUN runs it from a temporary extraction instead.
+run_leita() { as_person env APPIMAGE_EXTRACT_AND_RUN=1 LEITA_COLOR=never "$leita" "$@"; }
+run_window() { as_person env APPIMAGE_EXTRACT_AND_RUN=1 LEITA_COLOR=never "$window" "$@"; }
+# scan PLACE ARGS...: a scan from the command line. The AppImage is the window,
+# which a lone path opens as a window; a flag makes it the command line.
+scan() { run_leita --color never "$@"; }
+
+# versions WANT STEP: both programs say they are WANT.
+versions() {
+	local out
+	out=$(run_leita --version 2>&1)
+	case "$out" in "leita $1 "* | "leita $1") ok "$2" "leita --version: $out" ;; *) fail "$2" "leita --version said '$out', not $1" ;; esac
+	out=$(run_window --version 2>&1)
+	case "$out" in *" $1 "* | *" $1") ok "$2" "the window's --version: $out" ;; *) fail "$2" "the window's --version said '$out', not $1" ;; esac
+}
+
+# kept STEP: what the person kept is still there: the licence, the watched
+# place and the scans of it.
+kept() {
+	local out
+	out=$(run_leita licence 2>&1)
+	if grep -qF test@leita.example <<<"$out"; then ok "$1" "the licence is still added"; else fail "$1" "leita licence lost the licence: $out"; fi
+	out=$(run_leita monitor list 2>&1)
+	if grep -qF story-place <<<"$out"; then ok "$1" "the watched place is still set"; else fail "$1" "leita monitor list lost the watched place: $out"; fi
+	if [ -f "$data/history.db" ]; then ok "$1" "the scan history is still there"; else fail "$1" "$data/history.db is gone"; fi
+}
+
+# journal_pid: the recorder's main PID, or nothing.
+journal_pid() { systemctl show -p MainPID --value leita-journal.service 2>/dev/null | grep -v '^0$'; }
+
+system=$(uname -sr)
+# shellcheck source=/dev/null
+if [ -f /etc/os-release ]; then system=$(. /etc/os-release && echo "$PRETTY_NAME"); fi
+echo "STORY $kind: $old_version -> $new_version, on $system"
+
+# --- install the previous build, and use it
+if put "$kind" "$old"; then ok install "$(basename "$old")"; else
+	fail install "$out"
+	echo "STORY-END fail $failed"
+	exit 1
+fi
+versions "$old_version" first-run
+if [ "$kind" = deb ] || [ "$kind" = rpm ]; then
+	# The package's own list: Ubuntu's minimised container images set
+	# path-exclude=/usr/share/doc/* in /etc/dpkg/dpkg.cfg.d/excludes, so on
+	# 22.04 and 24.04 the file itself was not there (install run 40183604875).
+	if [ "$kind" = deb ]; then listed=$(dpkg -L leita); else listed=$(rpm -ql leita); fi
+	for f in /usr/libexec/leita/leita /usr/lib/systemd/system/leita-journal.service /usr/share/applications/dev.mordaunt.Leita.desktop /usr/share/doc/leita/THIRD_PARTY.md; do
+		grep -qxF "$f" <<<"$listed" || fail install "the package does not hold $f"
+	done
+fi
+
+as_person mkdir -p "$place/a/b" "$place/c"
+as_person sh -c "head -c 1048576 /dev/zero > '$place/a/one.bin'; head -c 2097152 /dev/zero > '$place/a/b/two.bin'; echo hi > '$place/c/three.txt'"
+out=$(scan "$place" 2>&1)
+if grep -qE '^history +the first scan of this place kept' <<<"$out"; then ok scan "a first scan of a folder, kept"; else fail scan "the first scan: $(tail -c 600 <<<"$out")"; fi
+check report "a JSON report" scan "$place" --report "$work/r.json"
+check report "a CSV report" scan "$place" --report "$work/r.csv"
+check report "an HTML report, in the Pro evaluation" scan "$place" --report "$work/r.html"
+if grep -q one.bin "$work/r.json" 2>/dev/null; then ok report "the JSON names the files"; else fail report "the JSON report does not name one.bin"; fi
+check licence "leita licence add" run_leita licence add "$line"
+out=$(run_leita licence 2>&1)
+if grep -qF test@leita.example <<<"$out"; then ok licence "leita licence: $(head -n1 <<<"$out")"; else fail licence "leita licence does not show the test licence: $out"; fi
+check settings "leita monitor add" run_leita monitor add "$place" --every weekly
+
+if [ $journal = on ]; then
+	check journal "leita journal on" as_root "$leita" journal on
+	check journal "the recorder is active" systemctl is-active leita-journal.service
+	pid_before=$(journal_pid)
+	as_person sh -c "echo change > '$place/c/four.txt'"
+	sleep 2
+	if ls /var/lib/leita/journal/* >/dev/null 2>&1; then ok journal "the recorder writes its logs"; else fail journal "/var/lib/leita/journal is empty: $(as_root "$leita" journal status 2>&1)"; fi
+fi
+
+# --- upgrade to this build
+if [ "$how" = archive ]; then
+	if out=$(as_person env LEITA_RELEASE_BASE="$up" "$leita" update 2>&1); then ok update "leita update: $(tail -n1 <<<"$out")"; else fail update "leita update: $out"; fi
+	if out=$(as_person env LEITA_RELEASE_BASE="$up" "$window" update 2>&1); then ok update "Leita update: $(tail -n1 <<<"$out")"; else fail update "Leita update: $out"; fi
+	if out=$(as_person env LEITA_RELEASE_BASE="$up" "$leita" update --check 2>&1); then ok update "--check after: up to date"; else fail update "leita update --check after updating: $out"; fi
+else
+	# leita update says where to download from and replaces nothing.
+	before=$(cksum <"$leita")
+	if out=$(as_person env APPIMAGE_EXTRACT_AND_RUN=1 LEITA_RELEASE_BASE="$up" "$leita" update 2>&1); then
+		fail update "leita update replaced a $how copy: $out"
+	elif [ "$(cksum <"$leita")" != "$before" ]; then
+		fail update "leita update changed $leita"
+	else
+		ok update "leita update refuses a $how copy: $(tail -n1 <<<"$out")"
+	fi
+	if put "$kind" "$new"; then ok upgrade "$(basename "$new") over $(basename "$old")"; else fail upgrade "$out"; fi
+fi
+versions "$new_version" upgrade
+kept upgrade
+as_person sh -c "head -c 3145728 /dev/zero > '$place/c/five.bin'"
+out=$(scan "$place" 2>&1)
+if grep -qE '^history +up 3.1 MB since' <<<"$out"; then ok upgrade "the next scan compares with the old build's: $(grep '^history' <<<"$out")"; else fail upgrade "the scan after the upgrade does not compare with the one before it: $(tail -c 600 <<<"$out")"; fi
+
+if [ $journal = on ]; then
+	if [ "$how" = archive ]; then
+		# The archive's recorder runs its own copy, which leita update leaves
+		# alone; leita journal on puts the new one in place.
+		check journal "leita journal on again, after the update" as_root "$leita" journal on
+	fi
+	check journal "the recorder is active after the upgrade" systemctl is-active leita-journal.service
+	pid_after=$(journal_pid)
+	if [ -n "$pid_after" ] && [ "$pid_after" != "${pid_before:-}" ]; then ok journal "the recorder restarted ($pid_before -> $pid_after)"; else fail journal "the recorder did not restart: $pid_before -> $pid_after"; fi
+	exe_link=$(readlink "/proc/$pid_after/exe" 2>/dev/null)
+	case "$exe_link" in *deleted*) fail journal "the recorder still runs the removed binary: $exe_link" ;; *) ok journal "the recorder runs $exe_link" ;; esac
+	running=$(cat "/proc/$pid_after/exe" 2>/dev/null | cksum)
+	if [ "$running" = "$(cksum <"$leita")" ]; then ok journal "the recorder runs the new build"; else fail journal "the recorder's binary is not the new leita"; fi
+	if ls /var/lib/leita/journal/* >/dev/null 2>&1; then ok journal "the recorder's logs were kept"; else fail journal "the upgrade removed /var/lib/leita/journal"; fi
+fi
+
+# --- downgrade, then upgrade again: refused or safe, and nothing lost
+if [ "$how" = archive ]; then
+	out=$(as_person env LEITA_RELEASE_BASE="$down" "$leita" update 2>&1)
+	status=$?
+	if [ $status = 0 ]; then
+		out=$(as_person env LEITA_RELEASE_BASE="$down" "$window" update 2>&1)
+		status=$?
+		echo "STORY note downgrade: Leita update said: $(tr '\n' ' ' <<<"$out")"
+		# A listing for a person to read, not to parse.
+		# shellcheck disable=SC2012
+		echo "STORY note downgrade: $(ls -l "$(dirname "$window")" | tr '\n' ' ')"
+		echo "STORY note downgrade: window $(cksum <"$window"), published $(cksum <"$down/$(basename "$(ls "$down"/leita-window-*)")")"
+	fi
+else
+	put "$kind" "$old"
+	status=$?
+fi
+if [ $status = 0 ]; then
+	ok downgrade "to $old_version: $(tail -n1 <<<"$out")"
+	versions "$old_version" downgrade
+	# The previous build reads what this one wrote, or says it cannot.
+	for args in "licence" "monitor list" "$place"; do
+		# shellcheck disable=SC2086
+		run_leita $args >"$work/down.out" 2>&1
+		code=$?
+		if [ $code -gt 1 ] && [ $code -ne 2 ] && [ $code -ne 3 ]; then fail downgrade "leita $args exited $code after the downgrade: $(tail -c 400 "$work/down.out")"; fi
+	done
+	ok downgrade "the previous build ran on this build's data"
+	if [ "$how" = archive ]; then
+		out=$(as_person env LEITA_RELEASE_BASE="$up" "$leita" update 2>&1) || fail downgrade "leita update back to $new_version: $out"
+		out=$(as_person env LEITA_RELEASE_BASE="$up" "$window" update 2>&1) || fail downgrade "Leita update back to $new_version: $out"
+	else
+		put "$kind" "$new" || fail downgrade "back to $new_version: $out"
+	fi
+else
+	ok downgrade "refused: $(tail -n1 <<<"$out")"
+fi
+versions "$new_version" reupgrade
+kept reupgrade
+
+# --- uninstall
+before_data=$(cd "$data" 2>/dev/null && ls)
+if [ $journal = on ] && [ "$how" = archive ]; then
+	check uninstall "leita journal off" as_root "$leita" journal off
+fi
+case $kind in
+deb) check uninstall "apt-get remove leita" env DEBIAN_FRONTEND=noninteractive apt-get remove -y -q leita ;;
+rpm) if command -v dnf >/dev/null; then check uninstall "dnf remove leita" dnf remove -y -q leita; else check uninstall "rpm -e leita" rpm -e leita; fi ;;
+appimage) rm -f "$window" && ok uninstall "removed the AppImage" ;;
+tar.zst | zip) rm -rf "$(dirname "$leita")" && ok uninstall "removed the folder" ;;
+dmg) as_root rm -rf /Applications/Leita.app && ok uninstall "removed Leita.app" ;;
+esac
+left=()
+for f in /usr/bin/leita /usr/bin/Leita /usr/libexec/leita /usr/local/libexec/leita /usr/lib/systemd/system/leita-journal.service \
+	/etc/systemd/system/leita-journal.service /etc/systemd/system/multi-user.target.wants/leita-journal.service \
+	/usr/share/applications/dev.mordaunt.Leita.desktop /usr/share/metainfo/dev.mordaunt.Leita.metainfo.xml \
+	/usr/share/icons/hicolor/scalable/apps/dev.mordaunt.Leita.svg /usr/share/doc/leita /var/lib/leita \
+	"$person_home/.local/opt/leita" "$person_home/Applications/Leita.AppImage" /Applications/Leita.app; do
+	[ $os = linux ] || [ "$f" = /Applications/Leita.app ] || continue
+	[ -e "$f" ] || [ -L "$f" ] && left+=("$f")
+done
+if [ $os = windows ]; then
+	[ -e "$(cygpath -u "$LOCALAPPDATA")/Programs/leita" ] && left+=("%LOCALAPPDATA%/Programs/leita")
+fi
+if [ ${#left[@]} = 0 ]; then ok uninstall "nothing of the program is left"; else fail uninstall "left behind: ${left[*]}"; fi
+if [ $journal = on ]; then
+	if systemctl is-active -q leita-journal.service; then fail uninstall "the recorder still runs"; else ok uninstall "the recorder is stopped"; fi
+	if systemctl cat leita-journal.service >/dev/null 2>&1; then fail uninstall "systemd still knows leita-journal.service"; else ok uninstall "systemd no longer knows the unit"; fi
+fi
+after_data=$(cd "$data" 2>/dev/null && ls)
+if [ -n "$before_data" ] && [ "$after_data" = "$before_data" ]; then ok uninstall "the person's data stays: $(tr '\n' ' ' <<<"$after_data")"; else fail uninstall "the person's data changed: '$before_data' -> '$after_data'"; fi
+
+if [ $failed = 0 ]; then
+	echo "STORY-END pass"
+	exit 0
+fi
+echo "STORY-END fail $failed"
+exit 1
