@@ -1,0 +1,2 @@
+# Fixtures are bytes an earlier build wrote; a checkout must not convert their line endings.
+cli/testdata/compat/** -text
