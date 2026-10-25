@@ -25,7 +25,8 @@ jobs:
       - name: five complete Windows journeys suites
         run: |
           set -euo pipefail
-          export SAN=
+          # Odin removes test executables unless explicitly retained for replay.
+          export SAN=-keep-executable
           root="$(just --evaluate root)"
           export LEITA_BIN="$root/build/journeys/leita.exe"
           export LEITA_TEST_LICENCE="$(just --evaluate test_licence)"
@@ -43,6 +44,8 @@ jobs:
             if [ "$iteration" = 1 ]; then
               # Build and run both suites with the committed recipe and flags.
               just journeys 2>&1 | tee "$log"
+              test -f build/test/journeys.exe
+              test -f build/test/journeys-gui.exe
             else
               # Replay those same test binaries with the recipe's environment.
               build/test/journeys.exe 2>&1 | tee "$log"
