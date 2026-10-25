@@ -21,7 +21,7 @@ tag, so it cannot tell a junction or a symlink from a mount point: those are one
 count, links, against the model's symlinks and mounts together.
 
 The bytes it charges the files are held to what Win32 says of the same files
-(`allocated`). The walk was held to both first, so when the two readers disagree
+(`allocated`), with the attribute lists Win32's sizes leave out (`attribute_lists`). The walk was held to both first, so when the two readers disagree
 it is the MFT reader that is wrong, and the failure says so.
 
 Reading a volume needs an administrator. Where it cannot be opened, this says so
@@ -119,11 +119,16 @@ second_reader :: proc(spec: Spec, fx: ^Fixture, start: int, allocator: runtime.A
 		)
 	}
 
-	if bytes < disk || bytes > disk + spill_room(fx, reps, allocator) {
+	lists, lists_why := attribute_lists(guid, fx, reps, allocator)
+	if lists_why != "" {
+		return "mft disk", lists_why
+	}
+	if bytes != disk + lists {
 		return "mft disk", format_reason(
 			allocator,
-			"the MFT reader is wrong: Win32 says the files occupy %d bytes, the MFT reader %d (the walk agreed with Win32)%s",
+			"the MFT reader is wrong: Win32 says the files occupy %d bytes and their attribute lists %d, the MFT reader %d (the walk agreed with Win32)%s",
 			disk,
+			lists,
 			bytes,
 			describe_files(fx, reps, allocator),
 		)
@@ -132,18 +137,71 @@ second_reader :: proc(spec: Spec, fx: ^Fixture, start: int, allocator: runtime.A
 }
 
 /*
-spill_room is how far the MFT reader may charge above Win32 for the files named
-by `nodes`: a cluster for each file with more than one name. The reader charges
-every attribute a record keeps out of it, and a file's names can outgrow its
-record: a 511-byte file with eight names was charged a cluster of 4096 beside
-its data, which FileStandardInfo and the cluster map of its data leave out (seed
-4 of the tree suite), most likely for an attribute list, which a walk cannot see.
+attribute_lists is the bytes the files named by `nodes` hold in an
+$ATTRIBUTE_LIST outside their base records, which the MFT reader charges and
+Win32's sizes of a file leave out. A file whose names outgrow its record (a
+511-byte file with eight long names and their 8.3 aliases, seed 4 of the tree
+suite) keeps them in extension records, and NTFS moves the list of them out to
+a cluster when the base record has no room for it; deleting the file frees that
+cluster. The base record comes from the file system (FSCTL_GET_NTFS_FILE_RECORD),
+not from the MFT reader's read of the disk, and the list's size from its
+attribute header.
 */
 @(private)
-spill_room :: proc(fx: ^Fixture, nodes: []int, allocator: runtime.Allocator) -> (room: u64) {
+attribute_lists :: proc(guid: string, fx: ^Fixture, nodes: []int, allocator: runtime.Allocator) -> (bytes: u64, why: string) {
+	volume := open_volume(guid, false, allocator)
+	if volume == win.INVALID_HANDLE_VALUE {
+		return 0, format_reason(allocator, "open %s: %d", guid, win.GetLastError())
+	}
+	defer win.CloseHandle(volume)
+
 	for id in nodes {
-		if f, why := figures(fx.paths[id], allocator); why == "" && f.links > 1 {
-			room += f.cluster
+		n, n_why := attribute_list(volume, fx.paths[id], allocator)
+		if n_why != "" {
+			return 0, n_why
+		}
+		bytes += n
+	}
+	return
+}
+
+@(private)
+FSCTL_GET_NTFS_FILE_RECORD :: 0x00090068
+
+// attribute_list is the bytes the file at `path` holds in a non-resident
+// $ATTRIBUTE_LIST, read from its base record on `volume`.
+@(private)
+attribute_list :: proc(volume: win.HANDLE, path: string, allocator: runtime.Allocator) -> (bytes: u64, why: string) {
+	record, found := record_of(path, allocator)
+	if !found {
+		return 0, format_reason(allocator, "no file id for %s: %d", path, win.GetLastError())
+	}
+
+	// NTFS_FILE_RECORD_OUTPUT_BUFFER: the record's reference, its length, then
+	// the record, of at most 4096 bytes.
+	want := i64(record)
+	out: [12 + 4096]u8
+	returned: win.DWORD
+	if !win.DeviceIoControl(volume, FSCTL_GET_NTFS_FILE_RECORD, &want, size_of(want), &out, size_of(out), &returned, nil) {
+		return 0, format_reason(allocator, "the record of %s: %d", path, win.GetLastError())
+	}
+
+	// The call answers with the nearest record in use at or below the one asked
+	// (its page in the Win32 documentation), which must be the one asked.
+	got := (^i64)(&out[0])^ & 0xFFFF_FFFF_FFFF
+	length := int((^u32)(&out[8])^)
+	if got != want || length > len(out) - 12 || 12 + length > int(returned) {
+		return 0, format_reason(allocator, "the record of %s: record %d of %d bytes for %d", path, got, length, want)
+	}
+
+	it := ntfs.attributes(out[12:12 + length])
+	for {
+		a, ok := ntfs.next_attribute(&it)
+		if !ok {
+			break
+		}
+		if a.type == .Attribute_List && a.non_resident {
+			bytes += a.allocated_size
 		}
 	}
 	return

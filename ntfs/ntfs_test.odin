@@ -537,6 +537,55 @@ test_extension_record_and_hard_links :: proc(t: ^testing.T) {
 	testing.expect_value(t, m.stats.in_use, u64(1))
 }
 
+/*
+A file whose names outgrow its record keeps them in extension records, and its
+base record lists every attribute in an $ATTRIBUTE_LIST, which NTFS moves out to
+a cluster of its own when the base record has no room for it: a 511-byte file
+with eight names was charged 8192 bytes on a 4 KiB volume, its data's cluster
+and the list's. Deleting the file frees both, so both are charged, though the
+size Win32 reports for the file (FileStandardInfo) is its data stream's alone.
+*/
+@(test)
+test_a_nonresident_attribute_list_is_charged_beside_the_data :: proc(t: ^testing.T) {
+	root := make_ref(RECORD_ROOT, 5)
+	base := build_record(
+		{
+			resident(.Standard_Information, standard_info_value({})),
+			nonresident(.Attribute_List, 4096, 600, []byte{0x11, 0x01, 0x30, 0x00}),
+			resident(.File_Name, file_name_value(root, "name 0 of a file with eight", .Win32)),
+		},
+		record_number = 100,
+		sequence = 9,
+		link_count = 8,
+	)
+	names := build_record(
+		{
+			resident(.File_Name, file_name_value(root, "NAME1~1", .Dos)),
+			resident(.File_Name, file_name_value(root, "name 1 of a file with eight", .Win32)),
+			resident(.File_Name, file_name_value(root, "name 2 of a file with eight", .Win32)),
+		},
+		record_number = 101,
+		base = make_ref(100, 9),
+	)
+	data := build_record(
+		{nonresident(.Data, 4096, 511, []byte{0x11, 0x01, 0x20, 0x00})},
+		record_number = 102,
+		base = make_ref(100, 9),
+	)
+	m: Mft
+	testing.expect_value(t, mft_init(&m, 128, 4096, 1), Error.None)
+	defer mft_destroy(&m)
+
+	add(t, &m, names)
+	add(t, &m, base)
+	add(t, &m, data)
+
+	testing.expect_value(t, m.entries[100].allocated, u64(4096 + 4096))
+	testing.expect_value(t, len(m.links), 2) // the DOS alias is not a link
+	testing.expect_value(t, m.entries[101].allocated, u64(0))
+	testing.expect_value(t, m.entries[102].allocated, u64(0))
+}
+
 @(test)
 test_free_record_is_ignored :: proc(t: ^testing.T) {
 	rec := build_record(

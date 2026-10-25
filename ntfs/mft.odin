@@ -299,6 +299,9 @@ mft_add_record :: proc(m: ^Mft, record_number: u32, rec: []byte, sink: ^Sink) ->
 			}
 		case:
 			// Directory indexes, bitmaps, reparse data, and EFS streams occupy clusters too.
+			// So does an $ATTRIBUTE_LIST NTFS moved out of a full base record (a file with
+			// many names): deleting the file frees that cluster, though Win32's size of
+			// the file is its data stream's alone.
 			charge_allocated(e, a, m.bytes_per_cluster)
 		}
 	}
