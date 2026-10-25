@@ -308,7 +308,8 @@ Scans, settings and the licence stay in one folder on this machine.
 The folder holds `history.db` (the scans and the deletion record),
 `baselines/` (the tree of each place, replaced on each scan), `settings.db`
 (the language, the theme and the watches), `licence`, `first-use` (when the
-trial began) and `monitor.lock`.
+trial began), `trial-seen` (the latest clock the trial was read at, so a clock
+set back does not reopen it) and `monitor.lock`.
 
 The recorder's logs on Linux are `/var/lib/leita/journal`. Monitoring's
 scheduler entry is separate: `leita-monitor.service` and `leita-monitor.timer`

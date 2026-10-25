@@ -863,3 +863,143 @@ a_disk_fault_in_forget_keeps_the_line :: proc(t: ^testing.T) {
 		testing.expect(t, l.order != "", "the line kept no longer reads")
 	}
 }
+
+/*
+The clock skewed forward and back against the trial and the licence. The
+trial is read by the clock, so the clock can only ever close it early: moved
+forward it ends sooner, moved back past its start or past a moment it was
+already read at it is over until the clock is right, and it never runs past
+thirty days of the clock it began by. A licence is read by its signature and
+the build's release stamp, never by the clock, so no clock opens or closes one.
+*/
+
+// A trial read on a clock that runs forward, jumps, and is set back, as a
+// person's machine is over a month: never more days than are left of the
+// thirty since it began, and none once the clock was set back past what it read.
+@(test)
+the_trial_never_runs_longer_than_the_clock_allows :: proc(t: ^testing.T) {
+	dir, path := trial_dir(t)
+	defer os.remove_all(dir)
+	memo: Memo
+	start := time.unix(1_800_000_000, 0)
+	at   :: proc(start: time.Time, days: f64) -> time.Time {
+		return time.time_add(start, time.Duration(days * f64(DAY)))
+	}
+	left :: proc(path: string, memo: ^Memo, now: time.Time) -> int {
+		return days_left(first_use(path, memo_ledger(memo), now), now)
+	}
+
+	testing.expect_value(t, left(path, &memo, start), TRIAL_DAYS)
+	testing.expect_value(t, left(path, &memo, at(start, 10)), TRIAL_DAYS - 10)
+	// A jump forward, as a clock set right after a dead battery: days gone.
+	testing.expect_value(t, left(path, &memo, at(start, 29.5)), 1)
+	testing.expect_value(t, left(path, &memo, at(start, 30)), 0)
+	testing.expect_value(t, left(path, &memo, at(start, 365)), 0)
+
+	// Set back past the end the trial was read at, into its thirty days, even
+	// its last day: still over. Before TRIAL_SEEN, the trial opened again for as
+	// long as the clock was held there.
+	testing.expect_value(t, left(path, &memo, at(start, 5)), 0)
+	testing.expect_value(t, left(path, &memo, at(start, 29)), 0)
+	// And back past the start too.
+	testing.expect_value(t, left(path, &memo, at(start, -3)), 0)
+
+	// The start is where it was all along: neither jump moved it.
+	testing.expect_value(t, unix(first_use(path, memo_ledger(&memo), at(start, 400))), unix(start))
+	testing.expect_value(t, memo.text, "1800000000")
+}
+
+// Set back a little, as a clock corrected by the network after it ran fast,
+// the trial goes on: CLOCK_SLACK of it is forgiven, no more.
+@(test)
+a_clock_corrected_a_little_keeps_the_trial :: proc(t: ^testing.T) {
+	dir, path := trial_dir(t)
+	defer os.remove_all(dir)
+	memo: Memo
+	start := time.unix(1_800_000_000, 0)
+	first := first_use(path, memo_ledger(&memo), start)
+	day3 := time.time_add(start, 3 * DAY)
+	testing.expect_value(
+		t,
+		days_left(first_use(path, memo_ledger(&memo), day3), day3),
+		TRIAL_DAYS - 3,
+	)
+
+	nudged := time.time_add(day3, -2 * time.Hour)
+	testing.expect_value(t, unix(first_use(path, memo_ledger(&memo), nudged)), unix(first))
+	testing.expect_value(t, days_left(first, nudged), TRIAL_DAYS - 2)
+
+	pushed := time.time_add(day3, -(CLOCK_SLACK + time.Hour))
+	testing.expect_value(t, first_use(path, memo_ledger(&memo), pushed), TRIAL_OVER)
+
+	// The clock right again, the trial is where it would have been.
+	day4 := time.time_add(start, 4 * DAY)
+	testing.expect_value(
+		t,
+		days_left(first_use(path, memo_ledger(&memo), day4), day4),
+		TRIAL_DAYS - 4,
+	)
+}
+
+// What the clock last read is kept beside the start, and only as often as it
+// must be: not on every run within SEEN_EVERY, and not once it is past the end.
+// A seen file that is not a number is a doubt, which ends the trial.
+@(test)
+the_clock_seen_is_kept_seldom_and_a_garbled_one_ends_the_trial :: proc(t: ^testing.T) {
+	dir, path := trial_dir(t)
+	defer os.remove_all(dir)
+	seen, _ := filepath.join({filepath.dir(path), TRIAL_SEEN}, context.temp_allocator)
+	read_seen :: proc(seen: string) -> string {
+		data, _ := os.read_entire_file(seen, context.temp_allocator)
+		return strings.trim_space(string(data))
+	}
+	start := time.unix(1_800_000_000, 0)
+	_ = first_use(path, {}, start)
+	testing.expect_value(t, read_seen(seen), "1800000000")
+	_ = first_use(path, {}, time.time_add(start, 30 * time.Minute))
+	testing.expect_value(t, read_seen(seen), "1800000000")
+	_ = first_use(path, {}, time.time_add(start, 2 * time.Hour))
+	testing.expect_value(t, read_seen(seen), "1800007200")
+
+	past := time.time_add(start, 31 * DAY)
+	_ = first_use(path, {}, past)
+	testing.expect_value(t, read_seen(seen), fmt.tprintf("%d", unix(past)))
+	_ = first_use(path, {}, time.time_add(past, 10 * DAY))
+	testing.expect_value(t, read_seen(seen), fmt.tprintf("%d", unix(past)))
+
+	testing.expect(t, os.write_entire_file(seen, "soon\n") == nil)
+	testing.expect_value(t, first_use(path, {}, time.time_add(start, DAY)), TRIAL_OVER)
+}
+
+// A licence is the same licence whatever the clock says: one issued after the
+// clock's now, as when the clock is behind the shop's, verifies, and one whose
+// paid-through date the clock has passed still verifies and still covers the
+// releases it covered. Only the build's release stamp decides Pro.
+@(test)
+a_licence_does_not_follow_the_clock :: proc(t: ^testing.T) {
+	s := signer()
+	l, err := check(mint(&s, TERMS), s.pub[:])
+	defer destroy(&l)
+	testing.expect_value(t, err, Error.None)
+	clocks := []time.Time {
+		// 1970, a clock reset to the epoch. TRIAL_OVER is this
+		// instant too, and once read the trial as thirty days from it.
+		time.unix(0, 0),
+		time.unix(946_684_800, 0), // 2000, a clock reset to its own epoch
+		time.unix(1_800_000_000, 0),
+		time.unix(4_102_444_800, 0), // 2100, a clock far ahead
+	}
+	for now in clocks {
+		// The trial is long over; only the licence can unlock.
+		testing.expectf(t, unlocked(true, TRIAL_OVER, now), "a line held at %v", now)
+		testing.expectf(t, !unlocked(false, TRIAL_OVER, now), "no line at %v", now)
+		testing.expectf(
+			t,
+			entitled_to_pro(l, TRIAL_OVER, now) == pro_for_this_build(l),
+			"Pro at %v is the build's stamp against the line",
+			now,
+		)
+	}
+	testing.expect(t, pro_entitled(l, "2027-10-19T00:00:00Z"), "a release on the paid-through day")
+	testing.expect(t, !pro_entitled(l, "2027-10-19T00:00:01Z"), "a release after it")
+}

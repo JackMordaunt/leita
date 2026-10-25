@@ -612,8 +612,13 @@ unlocked :: proc(licensed: bool, first, now: time.Time) -> bool {
 
 // days_left is how many days of the trial that began at first are left at now,
 // counting the day under way; 0 once it is over, or when the clock was turned
-// back past its start.
+// back past its start. TRIAL_OVER is the epoch, so a clock reset to the epoch
+// read a trial that was over as one begun that instant; it is over whatever
+// the clock reads.
 days_left :: proc(first, now: time.Time) -> int {
+	if first == TRIAL_OVER {
+		return 0
+	}
 	gone := time.diff(first, now)
 	if gone < -CLOCK_SLACK || gone >= TRIAL_DAYS * DAY {
 		return 0
@@ -657,8 +662,9 @@ file, or settings.db, does not start the trial again while the other holds it.
 
 Every other doubt ends the trial, and first_use returns TRIAL_OVER: a start that
 is not a number, a file that is there but cannot be read, a start further ahead
-of now than CLOCK_SLACK, and a machine where neither place can be written, which
-would be told now again on every run. This fails closed on purpose. What it
+of now than CLOCK_SLACK, a clock further behind one the trial was already read
+at (TRIAL_SEEN), and a machine where neither place can be written, which would
+be told now again on every run. This fails closed on purpose. What it
 guards is the paid features, reports and change tracking; scanning and Reclaim
 never ask. Failing open would let a deleted file, a stamp set years ahead or a
 read-only folder keep the trial for ever.
@@ -687,7 +693,66 @@ first_use :: proc(path: string, ledger: Ledger, now: time.Time) -> time.Time {
 	if !found && !wrote {
 		return TRIAL_OVER
 	}
+	if !seen_allows(path, start, now) {
+		return TRIAL_OVER
+	}
 	return start
+}
+
+/*
+TRIAL_SEEN is the file beside FIRST_USE that holds the latest clock the trial
+was read at, in unix seconds. A clock now further behind it than CLOCK_SLACK
+was turned back, and the trial is over until the clock is right again: without
+it, a clock set back past the trial's end, but not past its start, opened the
+trial again for as long as it was held there. It is written when the clock has
+moved on SEEN_EVERY since, and no longer once it holds a moment past the
+trial's end by CLOCK_SLACK, which is all it must keep from then on. Deleting it forgets what
+was seen, as deleting both places of the start would start the trial again:
+the honest limit of a trial kept on the machine it guards.
+*/
+TRIAL_SEEN :: "trial-seen"
+
+// SEEN_EVERY is how far the clock moves on before TRIAL_SEEN is written again.
+SEEN_EVERY :: time.Hour
+
+/*
+seen_allows says whether now is not behind the clock last seen beside path,
+for a trial that began at start, and keeps now as the clock seen when it has
+moved on. A garbled file is a doubt, and a doubt ends the trial. One that
+cannot be written is no worse than none: the start still holds. Its scratch
+is in allocator.
+*/
+@(private)
+seen_allows :: proc(
+	path: string,
+	start, now: time.Time,
+	allocator := context.temp_allocator,
+) -> bool {
+	if path == "" {
+		return true
+	}
+	context.allocator = allocator
+	seen_path, _ := filepath.join({filepath.dir(path), TRIAL_SEEN}, allocator)
+	seen := stamp_of_file(seen_path)
+	at := time.to_unix_seconds(now)
+	slack := i64(CLOCK_SLACK / time.Second)
+	switch seen.held {
+	case .Garbled:
+		return false
+	case .Stamp:
+		if at < seen.secs - slack {
+			return false
+		}
+	case .Nothing:
+	}
+	// Kept until it is past the end by more than the slack, so a clock set back
+	// into the trial's last day after its end does not open that day again.
+	end := time.to_unix_seconds(start) + i64(TRIAL_DAYS * DAY / time.Second) + slack
+	if seen.held == .Nothing ||
+	   (at >= seen.secs + i64(SEEN_EVERY / time.Second) && seen.secs < end) {
+		write_stamp(seen_path, fmt.aprintf("%d\n", at))
+	}
+	return true
 }
 
 // earliest is the earlier start of a and b, and whether either holds one.
