@@ -87,7 +87,8 @@ slashes :: proc(path: string) -> string {
 
 // run is leita args in h. A day of 0 or more scans the made-up disk of that
 // day; a negative day scans what is on disk. extra is KEY=VALUE, each set for
-// this run.
+// this run. The session bus is one that is not there, so an alert a run raises
+// never reaches the desktop the journeys run on.
 run :: proc(t: ^testing.T, h: Home, day: int, args: ..string, extra: []string = nil) -> Result {
 	env := make([dynamic]string, context.temp_allocator)
 	parent, _ := os.environ(context.temp_allocator)
@@ -115,7 +116,9 @@ run :: proc(t: ^testing.T, h: Home, day: int, args: ..string, extra: []string = 
 		     "ALL_PROXY",
 		     "all_proxy",
 		     "NO_PROXY",
-		     "no_proxy":
+		     "no_proxy",
+		     // A desktop session of the machine's gets no notification.
+		     "DBUS_SESSION_BUS_ADDRESS":
 			continue
 		}
 		append(&env, kv)
@@ -127,6 +130,7 @@ run :: proc(t: ^testing.T, h: Home, day: int, args: ..string, extra: []string = 
 	append(&env, fmt.tprintf("XDG_STATE_HOME=%s/state", h.dir))
 	append(&env, fmt.tprintf("XDG_CACHE_HOME=%s/cache", h.dir))
 	append(&env, fmt.tprintf("APPDATA=%s/data", h.dir), fmt.tprintf("LOCALAPPDATA=%s/data", h.dir))
+	append(&env, "DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent")
 	// Plain, unless the journey asks for colour itself; never two settings of
 	// one name, since which of them a process reads is not defined.
 	coloured := false
