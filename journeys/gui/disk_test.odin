@@ -310,13 +310,13 @@ user is let in whatever it says, as root is.
 */
 lock :: proc(t: ^testing.T, path: string) -> bool {
 	when ODIN_OS == .Windows {
-		state, _, errout, err := os.process_exec(
+		state, _, errout, exec_err := os.process_exec(
 			{command = {"icacls", path, "/deny", "*S-1-1-0:(RD)"}},
 			context.temp_allocator,
 		)
 		testing.expectf(
 			t,
-			err == nil && state.exit_code == 0,
+			exec_err == nil && state.exit_code == 0,
 			"icacls could not deny %s: %s",
 			path,
 			string(errout),
