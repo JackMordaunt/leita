@@ -306,9 +306,10 @@ stop_a_scan_half_way :: proc(t: ^testing.T, scenario: Scenario) -> bool {
 /*
 lock shuts the folder at path to the user the test runs as: its mode cleared,
 or on Windows its access list cut to SYSTEM's alone and this process's backup
-privileges put down until unlock (allow_backup). false, and a failure, when this
-process can still list it, as root can; on Windows the failure says the
-process's privileges.
+privileges put down until unlock (allow_backup). false, and a failure, when the
+user can still list it, as root can. On Windows the story itself is the check:
+os.read_dir there listed the shut folder without an error, whatever its list
+and privileges said (CI runs 40189468193, 40191152318, 40192665469).
 */
 lock :: proc(t: ^testing.T, path: string) -> bool {
 	when ODIN_OS == .Windows {
@@ -323,31 +324,21 @@ lock :: proc(t: ^testing.T, path: string) -> bool {
 			path,
 			string(errout),
 		)
-		testing.expect(t, allow_backup(false), "could not put this process's backup privileges down")
+		testing.expect(
+			t,
+			allow_backup(false),
+			"could not put this process's backup privileges down",
+		)
 	} else {
 		testing.expect(t, os.chmod(path, {}) == nil, "could not shut the folder")
-	}
-	if dir, err := os.open(path); err == nil {
-		defer os.close(dir)
+		if dir, err := os.open(path); err == nil {
+			defer os.close(dir)
 
-		if _, read_err := os.read_dir(dir, -1, context.temp_allocator); read_err == nil {
-			unlock(path)
-			privileges := ""
-			when ODIN_OS == .Windows {
-				_, out, _, _ := os.process_exec(
-					{command = {"whoami", "/priv"}},
-					context.temp_allocator,
-				)
-				privileges = string(out)
+			if _, read_err := os.read_dir(dir, -1, context.temp_allocator); read_err == nil {
+				unlock(path)
+				testing.expectf(t, false, "%s is listed whatever its mode says", path)
+				return false
 			}
-			testing.expectf(
-				t,
-				false,
-				"%s is listed whatever its permissions say\n%s",
-				path,
-				privileges,
-			)
-			return false
 		}
 	}
 	return true
