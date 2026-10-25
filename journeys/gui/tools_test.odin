@@ -5,6 +5,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:testing"
+import "core:time"
 
 import "jm:ui"
 
@@ -43,12 +44,28 @@ a_search_finds_a_file_by_name_and_says_where_it_is :: proc(t: ^testing.T) {
 	)
 }
 
-// Story: a developer frees space. Reclaim offers what a project's tools make
-// again, sized, chosen by age; they unchoose one, and the clean up is refused
-// on a made-up disk.
+/*
+Story: a developer frees space. Reclaim offers what a project's tools make
+again, sized, chosen by age; they unchoose one, and the clean up is refused on a
+made-up disk. On a real folder of projects, in every scenario, it deletes what
+was chosen, says so, and leaves each project's own files and what it did not
+offer.
+*/
 @(test)
 reclaim_offers_what_rebuilds_and_cleans_only_a_real_disk :: proc(t: ^testing.T) {
-	budget(t, 120)
+	budget(t, 180)
+	offer_on_the_made_up_disk(t)
+	for scenario in SCENARIOS {
+		testing.expectf(
+			t,
+			clean_real_projects(t, scenario),
+			"%s: the story was told to its end",
+			scenario.name,
+		)
+	}
+}
+
+offer_on_the_made_up_disk :: proc(t: ^testing.T) {
 	w: Window
 	open(&w, t, "reclaim", 0)
 	defer close(&w)
@@ -104,6 +121,87 @@ reclaim_offers_what_rebuilds_and_cleans_only_a_real_disk :: proc(t: ^testing.T) 
 		ui.probe_tagged(&w.p, "Users/alex/Source/sketchpad/node_modules"),
 		"the offers stay",
 	)
+}
+
+/*
+clean_real_projects scans a real folder of three: web, whose node_modules sits
+beside package.json and was last touched a month ago; rust, whose target beside
+Cargo.toml, tagged as a cache, was built today; and plain, whose build folder belongs to no project.
+*/
+clean_real_projects :: proc(t: ^testing.T, scenario: Scenario) -> bool {
+	root := real_folder(t, "projects")
+	defer os.remove_all(root)
+
+	for d in ([][]string{{"web"}, {"web", "node_modules"}, {"web", "node_modules", "lib"}, {"rust"}, {"rust", "target"}, {"plain"}, {"plain", "build"}}) {
+		make_folder(t, within(root, ..d))
+	}
+	write_file(t, within(root, "web", "package.json"), 2)
+	write_file(t, within(root, "web", "node_modules", "lib", "index.js"), 64 * 1024)
+	write_file(t, within(root, "rust", "Cargo.toml"), 2)
+	write_file(t, within(root, "rust", "target", "app"), 128 * 1024)
+	write_file(t, within(root, "rust", "target", "CACHEDIR.TAG"), 4 * 1024)
+	write_file(t, within(root, "plain", "build", "out.o"), 32 * 1024)
+	age(t, within(root, "web", "node_modules"), 30)
+	modules := within("web", "node_modules")
+	target := within("rust", "target")
+
+	w: Window
+	open(&w, t, "projects", REAL, path = root, scenario = scenario)
+	defer close(&w)
+
+	testing.expect(t, settle(&w, tr(&w, .Done)))
+	testing.expect(t, click(&w, tr(&w, .Mode_Reclaim)))
+	testing.expectf(
+		t,
+		settle(&w, trf(&w, .Reclaim_Chosen, 1, "65.5 kB")),
+		"node_modules starts chosen, the target built today does not:\n%s",
+		show(&w),
+	)
+	said_now := said(&w)
+	for line in ([]string{fmt.tprintf(`checkbox "%s" desc "`, modules), fmt.tprintf(`checkbox "%s" desc "`, target)}) {
+		testing.expectf(
+			t,
+			strings.contains(said_now, line),
+			"Reclaim offers %s:\n%s",
+			line,
+			said_now,
+		)
+	}
+	testing.expectf(
+		t,
+		!strings.contains(said_now, fmt.tprintf(`checkbox "%s"`, within("plain", "build"))),
+		"a build folder of no project is not offered:\n%s",
+		said_now,
+	)
+	keep(&w, "offered")
+
+	testing.expect(t, click(&w, tr(&w, .Clean_Up)))
+	frames(&w, 4)
+	testing.expectf(t, click_top(&w, tr(&w, .Delete)), "the dialog asks first:\n%s", show(&w))
+	testing.expectf(
+		t,
+		settle(&w, trf(&w, .Cleaned, 1)),
+		"the window says what it deleted:\n%s",
+		show(&w),
+	)
+	testing.expect(t, settle(&w, modules, present = false), "node_modules leaves the list")
+	keep(&w, "cleaned")
+	testing.expect(t, !os.exists(within(root, "web", "node_modules")), "and the disk")
+	testing.expect(t, os.exists(within(root, "web", "package.json")), "its project stays")
+	testing.expect(t, os.exists(within(root, "rust", "target", "app")), "the unchosen stays")
+	testing.expect(t, os.exists(within(root, "plain", "build", "out.o")), "the unoffered stays")
+	return true
+}
+
+// age sets the times of path and what it holds to days ago.
+age :: proc(t: ^testing.T, path: string, days: int) {
+	then := time.time_add(time.now(), -time.Duration(days) * 24 * time.Hour)
+	testing.expectf(t, os.change_times(path, then, then) == nil, "could not age %s", path)
+	entries, err := os.read_all_directory_by_path(path, context.temp_allocator)
+	testing.expect(t, err == nil)
+	for e in entries {
+		testing.expect(t, os.change_times(e.fullpath, then, then) == nil)
+	}
 }
 
 // Story: a person comes back days later. The same place is opened again, and
