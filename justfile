@@ -492,7 +492,7 @@ soak sanitizer="address" duration="10m" seed="1" rounds="2" gui="gui": sqlite
     esac
     for s in $(seq {{seed}} $(( {{seed}} + {{rounds}} - 1 ))); do
         echo "soak: {{sanitizer}} fuzz, seed $s, {{duration}} a suite"
-        j fuzz "" "$s" "{{duration}}" -iters=1000000000
+        j fuzz "" "$s" "{{duration}}"
     done
 
 # The btrfs and walk tests on a btrfs image made, mounted and filled for them,
