@@ -105,7 +105,17 @@ run :: proc(t: ^testing.T, h: Home, day: int, args: ..string, extra: []string = 
 		     "XDG_DATA_HOME",
 		     "XDG_CONFIG_HOME",
 		     "XDG_STATE_HOME",
-		     "XDG_CACHE_HOME":
+		     "XDG_CACHE_HOME",
+		     // A proxy of the machine's is not the journey's: one that wants
+		     // a proxy sets it in extra.
+		     "HTTPS_PROXY",
+		     "https_proxy",
+		     "HTTP_PROXY",
+		     "http_proxy",
+		     "ALL_PROXY",
+		     "all_proxy",
+		     "NO_PROXY",
+		     "no_proxy":
 			continue
 		}
 		append(&env, kv)
