@@ -266,7 +266,15 @@ a_technician_reports_a_disk_before_and_after :: proc(t: ^testing.T) {
 		"the total says what it grew by:\n%s",
 		show(&w),
 	)
-	for line in ([]string{`button "Since `, `  tree item "Users, 210.5 GB, 64.7% of alex, +4.5 GB since then" level 1`, `  tree item "Applications, 40.2 GB, 12.4% of alex, unchanged" level 1`, `text "325.5 GB in 17 items · +4.6 GB since then"`}) {
+	// The legend waits on the history of earlier scans, which may come after
+	// the total does.
+	testing.expectf(
+		t,
+		settle_said(&w, `button "Since `),
+		"the legend says which scan it compares with:\n%s",
+		show(&w),
+	)
+	for line in ([]string{`  tree item "Users, 210.5 GB, 64.7% of alex, +4.5 GB since then" level 1`, `  tree item "Applications, 40.2 GB, 12.4% of alex, unchanged" level 1`, `text "325.5 GB in 17 items · +4.6 GB since then"`}) {
 		testing.expectf(
 			t,
 			strings.contains(said(&w), line),
