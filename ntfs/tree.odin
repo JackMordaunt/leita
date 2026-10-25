@@ -170,14 +170,25 @@ to_tree :: proc(m: ^Mft, t: ^scan.Tree, p: ^Projection) -> scan.Error {
 			continue
 		}
 		e := &m.entries[i]
+
+		// The root takes the caller's name, so it is wanted even where the table has none.
+		named_root := i == root && p.root_name != ""
+
 		// Only records the reader has finished with, so a name is never half written.
-		if !entry_published(e) || e.name == "" {
+		if !entry_published(e) || (e.name == "" && !named_root) {
 			continue
 		}
 		n := scan.node(t, i)
-		// Borrowed, not copied: names live in the table's arenas and stay put for its
-		// life, so repeating this projection allocates nothing.
-		n.name = borrow(t, e.name) or_return
+
+		if named_root {
+			// Named before it is published: a watcher may read the node the moment
+			// it is, and a name written afterwards would race that read.
+			n.name = p.root
+		} else {
+			// Borrowed, not copied: names live in the table's arenas and stay put for its
+			// life, so repeating this projection allocates nothing.
+			n.name = borrow(t, e.name) or_return
+		}
 		n.disk = e.allocated
 
 		flags := scan.Node_Flags{.Used}
@@ -235,9 +246,6 @@ to_tree :: proc(m: ^Mft, t: ^scan.Tree, p: ^Projection) -> scan.Error {
 	p.links_done = links
 
 	sync.atomic_store(&t.root, root)
-	if p.root_name != "" {
-		scan.node(t, root).name = p.root
-	}
 	sync.atomic_store(&t.nodes_done, used)
 	sync.atomic_store(&t.bytes_done, bytes)
 	return .None

@@ -3,7 +3,9 @@ package ntfs
 import "core:fmt"
 import "core:os"
 import "core:slice"
+import "core:sync"
 import "core:testing"
+import "core:thread"
 import "core:unicode/utf16"
 
 import "../scan"
@@ -865,6 +867,78 @@ test_a_tree_rooted_at_a_folder_holds_only_that_folder :: proc(t: ^testing.T) {
 	// here.txt is another name for a file counted in Windows, so it adds nothing.
 	testing.expect_value(t, tree.nodes_done, u64(8))
 	testing.expect_value(t, tree.bytes_done, u64((1 + 2 + 3 + 4 + 1 + 1) * 4096))
+}
+
+// What a window does while a scan fills the tree: reads the root's name as soon as the
+// root is published, over and over, until told to stop.
+@(private = "file")
+Root_Watch :: struct {
+	tree:   ^scan.Tree,
+	stop:   bool,
+	wrong:  int,
+	reads:  int,
+	wanted: string,
+}
+
+@(private = "file")
+watch_root :: proc(w: ^Root_Watch) {
+	for !sync.atomic_load(&w.stop) {
+		if scan.slots(w.tree) <= RECORD_ROOT {
+			continue
+		}
+		if .Used in scan.node_flags(scan.node(w.tree, RECORD_ROOT)) {
+			sync.atomic_add(&w.reads, 1)
+			if scan.name_of(w.tree, RECORD_ROOT) != w.wanted {
+				w.wrong += 1
+			}
+		}
+	}
+}
+
+// The root is published early in a pass, with the records after it still to go, so a
+// reader looking at it meanwhile must already find its final name.
+@(test)
+test_the_root_is_named_before_a_reader_can_see_it :: proc(t: ^testing.T) {
+	m: Mft
+	testing.expect_value(t, mft_init(&m, 1024, 4096, 1), Error.None)
+	defer mft_destroy(&m)
+
+	tree: scan.Tree
+	testing.expect_value(t, scan.tree_init(&tree), scan.Error.None)
+	defer scan.tree_destroy(&tree)
+
+	p := Projection {
+		root_name = `C:\`,
+	}
+	defer projection_destroy(&p)
+
+	root :=make_ref(RECORD_ROOT, 5)
+	put_record(t, &m, RECORD_ROOT, root, ".", directory = true, sequence = 5)
+	for i in u32(64) ..< 1000 {
+		put_record(t, &m, i, root, "f", clusters = 1)
+	}
+
+	w := Root_Watch {
+		tree   = &tree,
+		wanted = `C:\`,
+	}
+	th := thread.create_and_start_with_poly_data(&w, watch_root)
+	testing.expect_value(t, to_tree(&m, &tree, &p), scan.Error.None)
+	// Every pass after the first finds the root published already.
+	mft_set_complete(&m)
+	for _ in 0 ..< 200 {
+		testing.expect_value(t, to_tree(&m, &tree, &p), scan.Error.None)
+	}
+	published := .Used in scan.node_flags(scan.node(&tree, RECORD_ROOT))
+	testing.expect(t, published, "the root was never published")
+	for published && sync.atomic_load(&w.reads) == 0 {
+		thread.yield()
+	}
+	sync.atomic_store(&w.stop, true)
+	thread.join(th)
+	thread.destroy(th)
+
+	testing.expect_value(t, w.wrong, 0)
 }
 
 @(test)

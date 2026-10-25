@@ -262,7 +262,18 @@ reserve :: proc(t: ^Tree, n: u32) -> Error {
 	if !grow(t, n) {
 		return .Out_Of_Memory
 	}
-	t.count = max(t.count, n)
+
+	// Atomically: a watcher loads the count (slots) while the next pass reserves again.
+	for {
+		have := sync.atomic_load(&t.count)
+		if have >= n {
+			break
+		}
+		if _, swapped := sync.atomic_compare_exchange_strong(&t.count, have, n); swapped {
+			break
+		}
+	}
+
 	return .None
 }
 
