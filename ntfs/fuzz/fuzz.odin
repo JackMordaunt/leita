@@ -13,6 +13,7 @@ package ntfs_fuzz
 
 import "core:fmt"
 import "core:math/bits"
+import "core:unicode/utf16"
 
 import harness "jm:fuzz"
 
@@ -66,7 +67,7 @@ boot_seed :: proc() -> []byte {
 RUNLIST_SEED := []byte{0x21, 0x18, 0x34, 0x56, 0x11, 0x30, 0xF0, 0x01, 0x10, 0x00}
 
 check_boot :: proc(_: Case, src: ^harness.Source) -> (detail: string, ok: bool) {
-	raw, _ := harness.damage(src, [][]byte{boot_seed()})
+	raw, _ := harness.damage(src, boots())
 	if len(raw) > INPUT_CAP {
 		return fmt.tprintf("drew %d bytes, cap is %d", len(raw), INPUT_CAP), false
 	}
@@ -84,7 +85,7 @@ check_boot :: proc(_: Case, src: ^harness.Source) -> (detail: string, ok: bool) 
 }
 
 check_attributes :: proc(_: Case, src: ^harness.Source) -> (detail: string, ok: bool) {
-	raw, _ := harness.damage(src, [][]byte{file_record()})
+	raw, _ := harness.damage(src, records())
 	if len(raw) > INPUT_CAP {
 		return fmt.tprintf("drew %d bytes, cap is %d", len(raw), INPUT_CAP), false
 	}
@@ -92,7 +93,7 @@ check_attributes :: proc(_: Case, src: ^harness.Source) -> (detail: string, ok: 
 }
 
 check_runlist :: proc(_: Case, src: ^harness.Source) -> (detail: string, ok: bool) {
-	raw, _ := harness.damage(src, [][]byte{RUNLIST_SEED})
+	raw, _ := harness.damage(src, runlists())
 	if len(raw) > INPUT_CAP {
 		return fmt.tprintf("drew %d bytes, cap is %d", len(raw), INPUT_CAP), false
 	}
@@ -125,7 +126,7 @@ check_runlist :: proc(_: Case, src: ^harness.Source) -> (detail: string, ok: boo
 }
 
 check_record :: proc(_: Case, src: ^harness.Source) -> (detail: string, ok: bool) {
-	raw, _ := harness.damage(src, [][]byte{file_record()})
+	raw, _ := harness.damage(src, records())
 	if len(raw) > INPUT_CAP {
 		return fmt.tprintf("drew %d bytes, cap is %d", len(raw), INPUT_CAP), false
 	}
@@ -184,7 +185,8 @@ inside :: proc(lo, hi: uintptr, b: []byte) -> bool {
 }
 
 @(private)
-file_record :: proc() -> []byte {
+file_record :: proc(allocator := context.allocator) -> []byte {
+	context.allocator = allocator
 	// A resident $FILE_NAME of one letter. Parent ref 5, name "a" after the
 	// 66-byte header.
 	value := make([]byte, 66 + 2)
@@ -193,34 +195,54 @@ file_record :: proc() -> []byte {
 	value[0x41] = 1
 	value[66] = u8('a')
 	attr := resident(u32(ntfs.Attr_Type.File_Name), value)
-	return record_with(attr)
+	return record_with({attr})
 }
 
 @(private)
-resident :: proc(type: u32, value: []byte) -> []byte {
-	length := (24 + len(value) + 7) & ~int(7)
-	b := make([]byte, length)
+resident :: proc(type: u32, value: []byte, name := "", allocator := context.allocator) -> []byte {
+	units: [32]u16
+	n := utf16.encode_string(units[:], name)
+	value_at := (24 + 2 * n + 7) & ~int(7)
+	length := (value_at + len(value) + 7) & ~int(7)
+	b := make([]byte, length, allocator)
 	put32(b, 0, type)
 	put32(b, 4, u32(length))
+	b[9] = u8(n)
+	put16(b, 10, 24)
 	put32(b, 16, u32(len(value)))
-	put16(b, 20, 24)
-	copy(b[24:], value)
+	put16(b, 20, u16(value_at))
+	for c, i in units[:n] {
+		put16(b, 24 + 2 * i, c)
+	}
+	copy(b[value_at:], value)
 	return b
 }
 
+// record_with is a 1024-byte FILE record holding attrs, with the fixups
+// applied the way the file system writes them.
 @(private)
-record_with :: proc(attr: []byte) -> []byte {
-	rec := make([]byte, 1024)
+record_with :: proc(
+	attrs: [][]byte,
+	number := u32(1),
+	base := u64(0),
+	directory := false,
+	allocator := context.allocator,
+) -> []byte {
+	rec := make([]byte, 1024, allocator)
 	put32(rec, 0, 0x454C4946)
 	put16(rec, 4, 0x30)
 	put16(rec, 6, 3)
 	put16(rec, 0x10, 7)
 	put16(rec, 0x12, 1)
 	put16(rec, 0x14, 0x38)
-	put16(rec, 0x16, 1) // in use
-	put32(rec, 0x2C, 1)
-	copy(rec[0x38:], attr)
-	off := 0x38 + len(attr)
+	put16(rec, 0x16, 3 if directory else 1) // in use, and a directory
+	put64(rec, 0x20, base)
+	put32(rec, 0x2C, number)
+	off := 0x38
+	for a in attrs {
+		copy(rec[off:], a)
+		off += len(a)
+	}
 	put32(rec, off, 0xFFFFFFFF)
 	off += 8
 	put32(rec, 0x18, u32(off))
