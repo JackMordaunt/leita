@@ -35,8 +35,9 @@
 #                             -> build/package/
 #   just journeys             the built command line driven end to end on the made-up disk
 #                             (LEITA_SYNTHETIC), as a person would: scan, limits, reports,
-#                             history, monitoring, licence, then the window's on the
-#                             same disk -> build/test/journeys, build/journeys/artifacts
+#                             history, monitoring, licence, then the window's user
+#                             stories in each scenario -> build/test/journeys,
+#                             build/journeys/artifacts
 #   just lifecycle            native lifecycle evidence, then the release gate
 #
 # The debug allocator, flow, sqlite3, stream and ui come from the jm collection, pinned as
@@ -727,16 +728,19 @@ schedule-evidence:
 # signs with, and a release stamp for the licence to be measured against. Neither key is a
 # release's.
 #
-# Then the window's journeys (journeys/gui): the view in a probe over the real host
-# on the made-up disk, checked on what a screen reader is told. Each keeps a PNG
-# and the accessibility tree of its steps in LEITA_JOURNEY_ARTIFACTS, by default
-# build/journeys/artifacts. tools/journeys/run keeps what journeys/quarantine
-# holds out of the gate.
+# Then the window's journeys (journeys/gui): each core user story walked through
+# the view in a probe over the real host, on the made-up disk or a real folder,
+# in each of its scenarios, checked on what a screen reader is told. They are
+# built with the licence test key and the release stamp, so a story can buy a
+# licence from a stand-in shop that answers with the test licence. Each keeps a
+# PNG and the accessibility tree of its steps in LEITA_JOURNEY_ARTIFACTS, by
+# default build/journeys/artifacts. tools/journeys/run keeps what
+# journeys/quarantine holds out of the gate.
 journeys: deps
     mkdir -p build/journeys build/test
     {{odin}} build cmd/cli -debug {{san}} {{odin_target}} {{flags}} {{curl_open}} -define:LEITA_LICENCE_KEY={{test_licence_key}} -define:LEITA_UPDATE_KEY={{journey_update_key}} -define:LEITA_RELEASED=2026-10-24T00:00:00Z -out:build/journeys/{{bin}}{{exe}}
     ODIN="{{odin}}" LEITA_BIN="{{justfile_directory()}}/build/journeys/{{bin}}{{exe}}" LEITA_TEST_LICENCE='{{test_licence}}' tools/journeys/run journeys build/test/journeys{{exe}} -debug {{san}} {{flags}}
-    ODIN="{{odin}}" LEITA_JOURNEY_ARTIFACTS="${LEITA_JOURNEY_ARTIFACTS:-{{root}}/build/journeys/artifacts}" tools/journeys/run journeys/gui build/test/journeys-gui{{exe}} -debug {{san}} {{flags}} {{curl_open}}
+    ODIN="{{odin}}" LEITA_TEST_LICENCE='{{test_licence}}' LEITA_JOURNEY_ARTIFACTS="${LEITA_JOURNEY_ARTIFACTS:-{{root}}/build/journeys/artifacts}" tools/journeys/run journeys/gui build/test/journeys-gui{{exe}} -debug {{san}} {{flags}} {{curl_open}} -define:LEITA_LICENCE_KEY={{test_licence_key}} -define:LEITA_RELEASED=2026-10-24T00:00:00Z
 
 # The window as the operating system drives it, kept small: tools/journeys/window.py
 # starts the debug window on the made-up disk, finds it, gives it the keyboard,
