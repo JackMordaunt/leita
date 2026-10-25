@@ -204,10 +204,15 @@ age :: proc(t: ^testing.T, path: string, days: int) {
 	}
 }
 
-// Story: a person comes back days later. The same place is opened again, and
-// the window says what grew since the scan before, from the history it kept.
+/*
+Story: a technician hands a client a report of their disk before and after.
+The settings menu's Export writes the first scan up where they choose, with the
+made-up disk's exact totals. Days later the same place is opened again: the
+window says what grew since the scan before, from the history it kept, and the
+second report holds that comparison.
+*/
 @(test)
-a_second_day_is_compared_with_the_first :: proc(t: ^testing.T) {
+a_technician_reports_a_disk_before_and_after :: proc(t: ^testing.T) {
 	budget(t, 180)
 	dir := folder("compare")
 	defer forget(dir)
@@ -229,6 +234,21 @@ a_second_day_is_compared_with_the_first :: proc(t: ^testing.T) {
 			show(&w),
 		)
 		keep(&w, "first")
+
+		before, ok := export_json(t, &w, "before.json")
+		if !ok {
+			return
+		}
+		totals, _ := before["totals"].(json.Object)
+		bytes, _ := totals["bytes"].(json.Integer)
+		files, _ := totals["files"].(json.Integer)
+		testing.expect_value(t, bytes, 320838590464)
+		testing.expect_value(t, files, 778414)
+		target, _ := before["target"].(json.Object)
+		engine, _ := target["engine"].(json.String)
+		testing.expect_value(t, engine, "synthetic")
+		_, compared := before["compared"].(json.Object)
+		testing.expect(t, !compared, "the first report compares with nothing")
 	}
 
 	w: Window
@@ -256,47 +276,59 @@ a_second_day_is_compared_with_the_first :: proc(t: ^testing.T) {
 		)
 	}
 	keep(&w, "second")
+
+	after, ok := export_json(t, &w, "after.json")
+	if !ok {
+		return
+	}
+	totals, _ := after["totals"].(json.Object)
+	now, _ := totals["bytes"].(json.Integer)
+	compared, has := after["compared"].(json.Object)
+	if !testing.expect(t, has, "the second report compares with the first scan") {
+		return
+	}
+	was, _ := compared["bytes"].(json.Integer)
+	taken, _ := compared["taken"].(json.String)
+	testing.expect_value(t, was, 320838590464)
+	testing.expectf(t, now > was, "it grew: %d after %d", now, was)
+	testing.expect(t, strings.has_prefix(taken, "20"), "it says when the first was taken")
 }
 
-// Story: a technician hands over a report. The settings menu's Export writes
-// the scan up where they choose, and the report holds the made-up disk's
-// exact totals.
-@(test)
-a_report_is_exported_where_chosen :: proc(t: ^testing.T) {
-	budget(t, 120)
-	w: Window
-	open(&w, t, "export", 0)
-	defer close(&w)
-
-	testing.expect(t, settle(&w, "Done"))
-
-	testing.expect(t, click(&w, "Settings"))
-	testing.expect(t, click_top(&w, "Export"), "the menu offers Export")
-	frames(&w, 10)
+/*
+export_json exports the scan as JSON through the settings menu's Export and the
+save dialog, answered with name in the window's data folder, and reads the
+report back.
+*/
+export_json :: proc(t: ^testing.T, w: ^Window, name: string) -> (report: json.Object, ok: bool) {
+	testing.expect(t, click(w, "Settings"))
+	testing.expect(t, click_top(w, "Export"), "the menu offers Export")
+	frames(w, 10)
 	testing.expectf(
 		t,
-		strings.contains(said(&w), `heading "Export report"`),
+		strings.contains(said(w), `heading "Export report"`),
 		"the dialog opened:\n%s",
-		show(&w),
+		show(w),
 	)
-	testing.expect(t, click(&w, "JSON"))
-	keep(&w, "dialog")
-	testing.expect(t, click_top(&w, "Export"), "the dialog's Export")
+	testing.expect(t, click(w, "JSON"))
+	keep(w, "dialog")
+	testing.expect(t, click_top(w, "Export"), "the dialog's Export")
 	q, asked := ui.probe_picking(&w.p)
 	testing.expect(t, asked, "the save dialog opened")
 	testing.expect_value(t, q.kind, ui.Pick_Kind.Save)
 	testing.expectf(t, strings.has_suffix(q.name, ".json"), "%s is a JSON name", q.name)
 
-	chosen := fmt.tprintf("%s/mine.json", w.dir)
+	chosen := fmt.tprintf("%s/%s", w.dir, name)
 	testing.expect(t, ui.probe_pick(&w.p, chosen))
-	frames(&w, 2)
+	frames(w, 2)
 	testing.expectf(
 		t,
-		settle(&w, fmt.tprintf("Saved report to %s", chosen)),
+		settle(w, fmt.tprintf("Saved report to %s", chosen)),
 		"the notice names the file:\n%s",
-		show(&w),
+		show(w),
 	)
-	keep(&w, "saved")
+	keep(w, "saved")
+	// The notice times out, so the next one is not mistaken for it.
+	ui.probe_advance(&w.p, 400, 1.0 / 60)
 
 	data, err := os.read_entire_file(chosen, context.temp_allocator)
 	if !testing.expect(t, err == nil, "the report is where it was put") {
@@ -304,13 +336,6 @@ a_report_is_exported_where_chosen :: proc(t: ^testing.T) {
 	}
 	v, jerr := json.parse(data, parse_integers = true, allocator = context.temp_allocator)
 	testing.expect_value(t, jerr, json.Error.None)
-	top, _ := v.(json.Object)
-	totals, _ := top["totals"].(json.Object)
-	bytes, _ := totals["bytes"].(json.Integer)
-	files, _ := totals["files"].(json.Integer)
-	testing.expect_value(t, bytes, 320838590464)
-	testing.expect_value(t, files, 778414)
-	target, _ := top["target"].(json.Object)
-	engine, _ := target["engine"].(json.String)
-	testing.expect_value(t, engine, "synthetic")
+	report, ok = v.(json.Object)
+	return
 }
