@@ -11,8 +11,6 @@ import "core:testing"
 Case :: struct {
 	name:  string,
 	build: proc(t: ^testing.T, root: string),
-	// The tree holds a file du reaches and leita does not (a known gap).
-	gap:    bool,
 	// The tree holds more than one name of a file, which du -l counts again.
 	linked: bool,
 }

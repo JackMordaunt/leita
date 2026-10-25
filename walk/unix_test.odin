@@ -5,6 +5,7 @@ import "core:fmt"
 import "core:log"
 import "core:os"
 import "core:slice"
+import "core:strings"
 import "core:sys/posix"
 import "core:testing"
 
@@ -83,6 +84,147 @@ test_a_path_too_long_is_refused :: proc(t: ^testing.T) {
 	fits, fits_ok := terminate("/usr/share", &buf)
 	testing.expect(t, fits_ok, "an ordinary path was refused")
 	testing.expect_value(t, string(fits), "/usr/share")
+}
+
+// A path is cut into pieces the kernel takes, at a slash, and no piece but the first
+// is absolute, even where slashes double at the cut.
+@(test)
+test_a_long_path_is_cut_where_a_slash_lies :: proc(t: ^testing.T) {
+	piece, rest, ok := next_piece("/usr/share", 16)
+	testing.expect(t, ok && piece == "/usr/share" && rest == "", "a short path was cut")
+
+	piece, rest, ok = next_piece("/aaa/bbb/ccc", 10)
+	testing.expect(t, ok, "a long path was refused")
+	testing.expect_value(t, piece, "/aaa/bbb")
+	testing.expect_value(t, rest, "ccc")
+
+	piece, rest, ok = next_piece("aaa//bbb//ccc", 10)
+	testing.expect(t, ok, "a path with doubled slashes was refused")
+	testing.expect_value(t, piece, "aaa//bbb")
+	testing.expect_value(t, rest, "ccc")
+
+	_, _, ok = next_piece("/aaaaaaaaaaaa/b", 10)
+	testing.expect(t, !ok, "a name longer than the limit was cut")
+}
+
+// 60 directories of 100 bytes each and a 12,345 byte file at the bottom: 6,000
+// bytes and more past the root, longer than PATH_MAX on Linux (4096) and macOS
+// (1024). Made with *at calls, since no path reaches the bottom. gui/files builds a
+// tree as deep for its delete tests (delete_unix_test.odin); either depth only has
+// to pass PATH_MAX, so the two need not stay in step.
+DEEP_DEPTH :: 60
+DEEP_STEP :: 100
+DEEP_BODY :: 12_345
+
+@(private)
+deep_tree :: proc(t: ^testing.T, root: string) -> bool {
+	at := posix.open(strings.clone_to_cstring(root, context.temp_allocator), {.DIRECTORY})
+	if !testing.expectf(t, at >= 0, "could not open %s", root) {
+		return false
+	}
+	step := strings.clone_to_cstring(strings.repeat("p", DEEP_STEP, context.temp_allocator), context.temp_allocator)
+	for _ in 0 ..< DEEP_DEPTH {
+		testing.expect(t, posix.mkdirat(at, step, {.IRUSR, .IWUSR, .IXUSR}) == .OK, "could not make a step")
+		next := posix.openat(at, step, {.DIRECTORY})
+		posix.close(at)
+		if !testing.expect(t, next >= 0, "could not open a step") {
+			return false
+		}
+		at = next
+	}
+	defer posix.close(at)
+
+	file := posix.openat(at, "leaf", {.WRONLY, .CREAT}, {.IRUSR, .IWUSR})
+	if !testing.expect(t, file >= 0, "could not make the leaf") {
+		return false
+	}
+	body := make([]byte, DEEP_BODY, context.temp_allocator)
+	slice.fill(body, 'x')
+	wrote := posix.write(file, raw_data(body), len(body))
+	posix.close(file)
+	return testing.expect_value(t, int(wrote), DEEP_BODY)
+}
+
+// Remove what deep_tree made, from the bottom up, which no path reaches.
+@(private)
+deep_remove :: proc(root: string) {
+	fds: [DEEP_DEPTH + 1]posix.FD
+	fds[0] = posix.open(strings.clone_to_cstring(root, context.temp_allocator), {.DIRECTORY})
+	if fds[0] < 0 {
+		return
+	}
+	step := strings.clone_to_cstring(strings.repeat("p", DEEP_STEP, context.temp_allocator), context.temp_allocator)
+	depth := 0
+	for depth < DEEP_DEPTH {
+		next := posix.openat(fds[depth], step, {.DIRECTORY})
+		if next < 0 {
+			break
+		}
+		depth += 1
+		fds[depth] = next
+	}
+
+	posix.unlinkat(fds[depth], "leaf", {})
+	for depth > 0 {
+		posix.close(fds[depth])
+		depth -= 1
+		posix.unlinkat(fds[depth], step, {.REMOVEDIR})
+	}
+
+	posix.close(fds[0])
+	os.remove_all(root)
+}
+
+/*
+A directory whose path from the root is longer than PATH_MAX is read, whether the
+walk holds the root open or follows links, and the file at the bottom is charged and
+named by its whole path. Before card 771 each was opened by its path, which the
+kernel refuses past PATH_MAX, so the walk stopped there and called it unread.
+*/
+@(test)
+test_a_directory_deeper_than_path_max_is_read :: proc(t: ^testing.T) {
+	dir, dir_err := os.temp_directory(context.temp_allocator)
+	testing.expect(t, dir_err == nil, "no temp directory")
+	root := fmt.tprintf("%s/leita_walk_deep_%d", strings.trim_right(dir, "/"), os.get_pid())
+	deep_remove(root)
+	testing.expect(t, os.make_directory(root) == nil, "could not make the root")
+	defer deep_remove(root)
+
+	if !deep_tree(t, root) {
+		return
+	}
+
+	want := strings.builder_make(context.temp_allocator)
+	strings.write_string(&want, root)
+	for _ in 0 ..< DEEP_DEPTH {
+		strings.write_byte(&want, '/')
+		strings.write_string(&want, strings.repeat("p", DEEP_STEP, context.temp_allocator))
+	}
+	strings.write_string(&want, "/leaf")
+
+	for follow in ([]bool{false, true}) {
+		tree: scan.Tree
+		testing.expect_value(t, scan.tree_init(&tree, 1), scan.Error.None)
+		defer scan.tree_destroy(&tree)
+
+		testing.expect_value(t, read(root, &tree, Config{follow = follow}), Error.None)
+
+		count, _ := scan.unread(&tree)
+		testing.expectf(t, count == 0, "follow %v: %d directories unread", follow, count)
+		leaf, found := u32(0), 0
+		for i in 0 ..< tree.count {
+			if .Used in scan.node_flags(scan.node(&tree, i)) && scan.name_of(&tree, i) == "leaf" {
+				leaf, found = i, found + 1
+			}
+		}
+		testing.expectf(t, found == 1, "follow %v: the leaf was found %d times", follow, found)
+		if found != 1 {
+			continue
+		}
+		testing.expectf(t, scan.node(&tree, leaf).disk >= DEEP_BODY, "follow %v: the leaf was charged %d", follow, scan.node(&tree, leaf).disk)
+		testing.expect_value(t, tree.bytes_done, scan.node(&tree, leaf).disk)
+		testing.expect_value(t, scan.path(&tree, leaf, context.temp_allocator), strings.to_string(want))
+	}
 }
 
 /*

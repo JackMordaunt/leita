@@ -19,6 +19,29 @@ terminate :: proc(path: string, buf: ^Path) -> (cstring, bool) {
 	return cstring(&buf[0]), true
 }
 
+/*
+The first piece of `path` the kernel takes in one call, where `limit` bytes,
+terminator included, is the most it takes (PATH_MAX), and what follows it. The
+piece ends before a slash and the rest starts after every slash there, so the rest
+is never absolute: opened from the piece's descriptor, it lies beneath it. Not ok
+when no slash lies within `limit`: one name that long is past NAME_MAX, 255 in
+linux/limits.h and macOS's sys/syslimits.h.
+*/
+@(private)
+next_piece :: proc(path: string, limit: int) -> (piece, rest: string, ok: bool) {
+	if len(path) < limit {
+		return path, "", true
+	}
+	cut := strings.last_index_byte(path[:limit], '/')
+	for cut > 0 && path[cut - 1] == '/' {
+		cut -= 1
+	}
+	if cut <= 0 {
+		return "", "", false
+	}
+	return path[:cut], strings.trim_left(path[cut:], "/"), true
+}
+
 // The child's path, which getdents does not hand back and the queue needs.
 @(private)
 join :: proc(dir, name: string, allocator: mem.Allocator) -> (string, mem.Allocator_Error) {

@@ -44,12 +44,11 @@ temp directory's, is tmpfs or ext4 and has neither.
 
 // 60 directories of 100 bytes each: a path past PATH_MAX (4096), which only
 // *at calls can reach. du reaches the file at the bottom (fts_open keeps a
-// descriptor on the directory it is in); the walk opens each directory by its path
-// under the root, which the kernel refuses past 4096 bytes, so it records the
-// directory as unread and charges nothing below it. Draft card 771.
+// descriptor on the directory it is in), and so does the walk, which opens a
+// directory that deep a piece at a time (open_pieces in read_linux.odin).
 @(private = "file")
 deep_case := Case {
-	name = "path past PATH_MAX", gap = true, build = proc(t: ^testing.T, root: string) {
+	name = "path past PATH_MAX", build = proc(t: ^testing.T, root: string) {
 			at, err := linux.open(strings.clone_to_cstring(root, context.temp_allocator), {.PATH, .DIRECTORY})
 			testing.expect_value(t, err, linux.Errno.NONE)
 			if err != .NONE {return}
@@ -199,13 +198,6 @@ test_totals_agree_with_du_after_the_documented_differences :: proc(t: ^testing.T
 			extras.names_size,
 		)
 		testing.expect_value(t, tree.bytes_done, sum.allocated)
-		if c.gap {
-			testing.expectf(t, tree.unread > 0, "%s: no directory was recorded unread", c.name)
-			testing.expect_value(t, sum.files, 0)
-			testing.expect_value(t, sum.allocated, 0)
-			testing.expectf(t, apparent >= 12_345 && allocated >= 12_345, "%s: du found %d, %d", c.name, apparent, allocated)
-			continue
-		}
 		testing.expect_value(t, tree.unread, 0)
 		dir_size := extras.dir_size if dirs_counted else 0
 		testing.expectf(

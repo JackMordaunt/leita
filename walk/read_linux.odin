@@ -654,13 +654,14 @@ anchor_prepare :: proc(
 		return a, nil
 	}
 	buf: Path
-	cpath, path_ok := terminate(path, &buf)
-	if !path_ok {
-		a.errno = .ENAMETOOLONG
-		return a, nil
-	}
 	// The caller's path is opened here. Children are opened from the descriptor.
-	fd, errno := linux.open(cpath, {.DIRECTORY, .CLOEXEC})
+	fd: linux.Fd
+	errno: linux.Errno
+	if cpath, path_ok := terminate(path, &buf); path_ok {
+		fd, errno = linux.open(cpath, {.DIRECTORY, .CLOEXEC})
+	} else {
+		fd, errno = open_pieces(nil, linux.AT_FDCWD, path, &buf)
+	}
 	if errno != .NONE {
 		a.errno = errno
 		return a, nil
@@ -812,7 +813,7 @@ open_listed :: proc(d: Dir, w: ^Worker, buf: ^Path) -> (linux.Fd, linux.Errno) {
 		}
 		crel, term_ok := terminate(rel, buf)
 		if !term_ok {
-			return {}, .ENAMETOOLONG
+			return open_pieces(&w.held, linux.Fd(i32(w.held.fd)), rel, buf)
 		}
 		return open_child(&w.held, linux.Fd(i32(w.held.fd)), crel, rel)
 	}
@@ -824,7 +825,52 @@ open_listed :: proc(d: Dir, w: ^Worker, buf: ^Path) -> (linux.Fd, linux.Errno) {
 	}
 	cpath, path_ok := terminate(d.path, buf)
 	if !path_ok {
-		return {}, .ENAMETOOLONG
+		return open_pieces(nil, linux.AT_FDCWD, d.path, buf)
 	}
 	return linux.open(cpath, {.DIRECTORY, .CLOEXEC})
+}
+
+/*
+A directory whose path the kernel refuses whole (ENAMETOOLONG past PATH_MAX, 4096
+bytes) opened a piece at a time, each piece from the descriptor the one before it
+opened (next_piece). With an anchor, each piece is opened as open_child opens a
+whole path, beneath the one before and following no link, so the chain refuses
+what the single call would. Without one, as open does, following links: the walk
+was asked to.
+
+Only a directory past PATH_MAX takes this, so the walk of an ordinary tree makes
+the one call it always did. A path n times PATH_MAX costs n + 1 opens.
+*/
+@(private)
+open_pieces :: proc(a: ^Anchor, dir: linux.Fd, path: string, buf: ^Path) -> (linux.Fd, linux.Errno) {
+	at := dir
+	owned := false
+	rest := path
+	for {
+		piece, after, ok := next_piece(rest, len(buf))
+		if !ok {
+			if owned {
+				linux.close(at)
+			}
+			return {}, .ENAMETOOLONG
+		}
+		cpiece, _ := terminate(piece, buf)
+		fd: linux.Fd
+		errno: linux.Errno
+		if a != nil {
+			fd, errno = open_child(a, at, cpiece, piece)
+		} else {
+			fd, errno = linux.openat(at, cpiece, {.DIRECTORY, .CLOEXEC})
+		}
+		if owned {
+			linux.close(at)
+		}
+		if errno != .NONE {
+			return {}, errno
+		}
+		if after == "" {
+			return fd, .NONE
+		}
+		at, owned, rest = fd, true, after
+	}
 }

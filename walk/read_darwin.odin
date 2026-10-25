@@ -154,14 +154,9 @@ anchor_prepare :: proc(
 		return a, nil
 	}
 	buf: Path
-	cpath, path_ok := terminate(path, &buf)
-	if !path_ok {
-		a.errno = .ENAMETOOLONG
-		return a, nil
-	}
-	fd := posix.open(cpath, {.DIRECTORY, .CLOEXEC})
-	if fd < 0 {
-		a.errno = posix.errno()
+	fd, errno := open_pieces(posix.AT_FDCWD, path, {.DIRECTORY, .CLOEXEC}, &buf)
+	if errno != .NONE {
+		a.errno = errno
 		return a, nil
 	}
 	root, clone_err := strings.clone(path, allocator)
@@ -212,16 +207,8 @@ open_listed :: proc(d: Dir, w: ^Worker, buf: ^Path) -> (posix.FD, posix.Errno) {
 		if climbs(rel) {
 			return -1, .EXDEV
 		}
-		crel, term_ok := terminate(rel, buf)
-		if !term_ok {
-			return -1, .ENAMETOOLONG
-		}
 		flags := posix.O_Flags{.DIRECTORY, .CLOEXEC} | transmute(posix.O_Flags)c.int(O_NOFOLLOW_ANY)
-		fd := posix.openat(w.held.fd, crel, flags)
-		if fd < 0 {
-			return -1, posix.errno()
-		}
-		return fd, .NONE
+		return open_pieces(w.held.fd, rel, flags, buf)
 	}
 	if !w.follow {
 		if w.held.errno != .NONE {
@@ -229,15 +216,46 @@ open_listed :: proc(d: Dir, w: ^Worker, buf: ^Path) -> (posix.FD, posix.Errno) {
 		}
 		return -1, .ENOENT
 	}
-	cpath, path_ok := terminate(d.path, buf)
-	if !path_ok {
-		return -1, .ENAMETOOLONG
+	return open_pieces(posix.AT_FDCWD, d.path, {.DIRECTORY, .CLOEXEC}, buf)
+}
+
+/*
+`path` opened from `dir` with `flags`: in one call when it is shorter than
+PATH_MAX (1024 bytes, sys/syslimits.h; open(2) refuses a longer path with
+ENAMETOOLONG), and otherwise a piece at a time, each piece from the descriptor the
+one before it opened (next_piece). Each piece is opened with the same flags, so with
+O_NOFOLLOW_ANY the chain refuses a link in any piece, as the single call would.
+Only a directory past PATH_MAX takes more than one call; a path n times PATH_MAX
+costs n + 1 opens. test_a_directory_deeper_than_path_max_is_read reads a tree 6,000
+bytes deep.
+*/
+@(private = "file")
+open_pieces :: proc(dir: posix.FD, path: string, flags: posix.O_Flags, buf: ^Path) -> (posix.FD, posix.Errno) {
+	at := dir
+	owned := false
+	rest := path
+	for {
+		piece, after, ok := next_piece(rest, int(posix.PATH_MAX))
+		if !ok {
+			if owned {
+				posix.close(at)
+			}
+			return -1, .ENAMETOOLONG
+		}
+		cpiece, _ := terminate(piece, buf)
+		fd := posix.openat(at, cpiece, flags)
+		errno := posix.errno() if fd < 0 else .NONE
+		if owned {
+			posix.close(at)
+		}
+		if fd < 0 {
+			return -1, errno
+		}
+		if after == "" {
+			return fd, .NONE
+		}
+		at, owned, rest = fd, true, after
 	}
-	fd := posix.open(cpath, {.DIRECTORY, .CLOEXEC})
-	if fd < 0 {
-		return -1, posix.errno()
-	}
-	return fd, .NONE
 }
 
 // Whether a relative path has a ".." component.
