@@ -148,6 +148,10 @@ Desk :: struct {
 	generation:          u32,
 	scan:                ^Scan,
 	made_up:             Maybe(int), // the made-up disk's day to scan in place of any path, nil for real ones
+	// Called by the walk after each directory it lists (walk.Config.after_list):
+	// a journey's way to change the disk while a scan reads it. Nil in the window.
+	after_list:          proc(path: string, data: rawptr),
+	after_list_data:     rawptr,
 	live:                map[ui.Need_Key]Query,
 	notice:              query.Notice, // its text owned
 	words:               ^msg.Strings, // what the host says, in the window's language (words.odin)
@@ -290,7 +294,9 @@ this binary (monitor.odin). update_key is 32 bytes of a fixture's Ed25519
 public key; nil uses the key the build was given. update_exe is that fixture's
 executable; "" is this process. made_up is the day of a made-up disk to scan in
 place of every path, as scan.synthetic_day read it at startup, nil for real
-scans. allocator builds the desk.
+scans. after_list, with after_list_data, is called by a walk after each
+directory it lists, to change the disk in the middle of a scan as a journey
+does; nil in the window. allocator builds the desk.
 */
 init :: proc(
 	h: ^Host,
@@ -308,6 +314,8 @@ init :: proc(
 	update_exe := "",
 	update_time: ^Update_Time = nil,
 	made_up: Maybe(int) = nil,
+	after_list: proc(path: string, data: rawptr) = nil,
+	after_list_data: rawptr = nil,
 	allocator := context.allocator,
 ) {
 	ui.inbox_init(&h.inbox, allocator)
@@ -336,6 +344,8 @@ init :: proc(
 		h.desk.update_key_set = true
 	}
 	h.desk.update_exe = update_exe
+	h.desk.after_list = after_list
+	h.desk.after_list_data = after_list_data
 	h.desk.update_time = update_time
 	msg.init(h.desk.words, .English)
 	history_open(&h.desk, kept)
@@ -766,7 +776,9 @@ scan_begin :: proc(d: ^Desk, path: string, cut := false) {
 		return
 	}
 	s.fill.wcfg = walk.Config {
-		media = target.media,
+		media           = target.media,
+		after_list      = d.after_list,
+		after_list_data = d.after_list_data,
 	}
 	if tree_err := scan.tree_init(&s.tree, walk.width(s.fill.wcfg)); tree_err != nil {
 		s.problem = strings.clone(fmt.tprintf("%v", tree_err))
