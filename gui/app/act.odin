@@ -5,8 +5,6 @@ import "base:runtime"
 import "core:fmt"
 import "core:os"
 import "core:strings"
-import "core:sync"
-import "core:thread"
 import "core:time"
 
 import "jm:stream"
@@ -49,7 +47,7 @@ act :: proc(d: ^Desk, c: ^command.Command) {
 	#partial switch &c in c {
 	case command.Locate:
 		if path, ok := entry_path(d, c.entry, .Locate); ok {
-			files.locate(path)
+			errand_keep(d.errands, files.locate(path))
 		}
 	case command.Open:
 		if path, ok := entry_path(d, c.entry, .Open); ok {
@@ -114,7 +112,6 @@ Opening :: struct {
 	path:   command.Text,
 	name:   command.Text,
 	answer: ^stream.Port(Open_Failure),
-	done:   ^sync.Wait_Group,
 }
 
 /*
@@ -130,18 +127,20 @@ open_entry :: proc(d: ^Desk, path, name: string) {
 		path   = command.text_make(path),
 		name   = command.text_make(name),
 		answer = d.open_failures,
-		done   = d.opening,
 	}
-	sync.wait_group_add(d.opening, 1)
-	thread.create_and_start_with_data(o, proc(data: rawptr) {
-			o := (^Opening)(data)
-			if !files.open_default(command.text_of(&o.path)) {
-				stream.port_send(o.answer^, Open_Failure{name = o.name})
-			}
-			done := o.done
-			free(o)
-			sync.wait_group_done(done)
-		}, context, self_cleanup = true)
+	started := errand_start(d.errands, o, proc(data: rawptr) {
+		defer release_temp()
+
+		o := (^Opening)(data)
+		if !files.open_default(command.text_of(&o.path)) {
+			stream.port_send(o.answer^, Open_Failure{name = o.name})
+		}
+		free(o)
+	})
+	if !started {
+		free(o)
+		tell(d, true, .Open_Failed, name)
+	}
 }
 
 // Doing is a request about an entry, for entry_path to say it could not do.

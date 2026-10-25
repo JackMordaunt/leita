@@ -336,10 +336,12 @@ report_stem :: proc(target: string, now: time.Time) -> string {
 /*
 locate shows path in the system's file manager, selected. It hands the asking to a
 thread of its own and returns at once: a file manager that is slow to start must
-not hold up the caller, and none of them says whether it found the entry.
+not hold up the caller, and none of them says whether it found the entry. The
+caller joins and destroys the thread returned, nil when none started, before
+the allocator it was called with goes.
 */
-locate :: proc(path: string) {
-	run_in_background(path, reveal)
+locate :: proc(path: string) -> ^thread.Thread {
+	return run_in_background(path, reveal, detach = false)
 }
 
 // Job is work on a path that runs on a thread of its own, holding its own copy of

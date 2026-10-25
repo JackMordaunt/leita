@@ -2,8 +2,6 @@
 package leita_app
 
 import "core:strings"
-import "core:sync"
-import "core:thread"
 
 import "jm:sh"
 import "jm:stream"
@@ -37,12 +35,8 @@ set_recording :: proc(d: ^Desk, c: command.Recording) {
 			command.text_make("on" if c.on else "off"),
 		},
 		answer = d.recordings,
-		done   = d.recording,
 	}
-	sync.wait_group_add(d.recording, 1)
-	started := thread.create_and_start_with_data(run, recording_main, context, self_cleanup = true)
-	if started == nil {
-		sync.wait_group_done(d.recording)
+	if !errand_start(d.errands, run, recording_main) {
 		free(run)
 		mo.toggling = false
 		monitor_settle(d, say(d, .Record_Changes_Failed, "no thread to run it on"))
@@ -54,7 +48,6 @@ set_recording :: proc(d: ^Desk, c: command.Recording) {
 Recording_Run :: struct {
 	argv:   [4]command.Text,
 	answer: ^stream.Port(Recorder_Change),
-	done:   ^sync.Wait_Group,
 }
 
 @(private = "file")
@@ -78,9 +71,7 @@ recording_main :: proc(data: rawptr) {
 	case .Done, .Dismissed, .Refused:
 	}
 	stream.port_send(run.answer^, out)
-	done := run.done
 	free(run)
-	sync.wait_group_done(done)
 }
 
 // outcome_of is how the change of the recorder that ran as r ended.

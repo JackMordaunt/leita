@@ -2,8 +2,6 @@ package leita_app
 
 import "core:mem"
 import "core:strings"
-import "core:sync"
-import "core:thread"
 import "core:time"
 
 import "jm:stream"
@@ -37,7 +35,6 @@ Test_Run :: struct {
 	settings: string,
 	hook:     i64,
 	answer:   ^stream.Port(Test_Done),
-	done:     ^sync.Wait_Group,
 	made_in:  mem.Allocator,
 }
 
@@ -112,11 +109,9 @@ test_webhook :: proc(
 			settings = strings.clone(mo.paths.settings, allocator),
 			hook     = h.id,
 			answer   = d.tested,
-			done     = d.testing_wg,
 			made_in  = allocator,
 		}
-		sync.wait_group_add(d.testing_wg, 1)
-		thread.create_and_start_with_data(job, proc(data: rawptr) {
+		started := errand_start(d.errands, job, proc(data: rawptr) {
 				job := (^Test_Run)(data)
 				st: settings.Store
 				if settings.open(&st, job.settings) == nil {
@@ -130,11 +125,15 @@ test_webhook :: proc(
 					settings.close(&st)
 				}
 				stream.port_send(job.answer^, Test_Done{})
-				done := job.done
 				delete(job.settings, job.made_in)
 				free(job, job.made_in)
-				sync.wait_group_done(done)
-			}, context, self_cleanup = true)
+			})
+		if !started {
+			delete(job.settings, allocator)
+			free(job, allocator)
+			mo.testing = false
+			monitor_settle(d, say(d, .Monitor_Unkept))
+		}
 		return
 	}
 }

@@ -3567,15 +3567,63 @@ first_hit :: proc(r: ^Rig) -> string {
 	return strings.clone(name, context.temp_allocator)
 }
 
+/*
+Late_Calls is an allocator over the heap that counts the calls a thread other
+than the test's makes after stop has returned (closed). A thread the host
+started frees its own Thread, if it cleans up after itself, through the
+allocator it was made with, after its last word to the desk: the window's
+debug allocator, or a test's, is gone by then (card 773). That free is held
+until closed, or 5 s, so one stop did not wait for is counted, not raced.
+*/
+@(private = "file")
+Late_Calls :: struct {
+	owner:  int, // the test's thread
+	closed: bool, // atomic
+	late:   int, // atomic
+}
+
+@(private = "file")
+late_calls_proc :: proc(
+	data: rawptr,
+	mode: runtime.Allocator_Mode,
+	size, alignment: int,
+	old_memory: rawptr,
+	old_size: int,
+	loc := #caller_location,
+) -> (
+	[]byte,
+	runtime.Allocator_Error,
+) {
+	l := (^Late_Calls)(data)
+	if sync.current_thread_id() != l.owner {
+		// core:thread's entry frees a self-cleaning thread's Thread.
+		if mode == .Free && strings.has_suffix(loc.procedure, "thread_entry_proc") {
+			deadline := time.tick_now()._nsec + i64(5 * time.Second)
+			for !sync.atomic_load(&l.closed) && time.tick_now()._nsec < deadline {
+				time.sleep(time.Millisecond)
+			}
+		}
+		if sync.atomic_load(&l.closed) {
+			sync.atomic_add(&l.late, 1)
+		}
+	}
+	return runtime.heap_allocator_proc(nil, mode, size, alignment, old_memory, old_size, loc)
+}
+
 // A hit double-clicked, and one picked and given Return, are opened as the
 // system opens them, by their paths; one the system would not open is said in
 // a notice. A stand-in gio, first on PATH, writes down what it was given and
-// exits as told.
+// exits as told. Once the host has stopped, no opener calls the allocator it
+// was given.
 @(test)
 a_search_hit_opens_as_the_system_would :: proc(t: ^testing.T) {
 	when ODIN_OS != .Linux {
 		return
 	}
+	l := Late_Calls {
+		owner = sync.current_thread_id(),
+	}
+	context.allocator = {late_calls_proc, &l}
 	dir, _ := os.temp_directory(context.temp_allocator)
 	info, _ := os.stat(dir, context.temp_allocator)
 	root := fmt.tprintf("%s/leita_open_hit_%d", info.fullpath, os.get_pid())
@@ -3609,7 +3657,6 @@ a_search_hit_opens_as_the_system_would :: proc(t: ^testing.T) {
 
 	r: Rig
 	rig_open(&r, root)
-	defer rig_close(&r)
 	testing.expect(t, settle(&r, "Done"), "the scan finished")
 	ui.probe_advance(&r.p, 10, 1.0 / 60)
 	testing.expect(t, ui.probe_click(&r.p, "Search"), "the magnifier")
@@ -3656,6 +3703,11 @@ a_search_hit_opens_as_the_system_would :: proc(t: ^testing.T) {
 	ui.probe_key(&r.p, .Enter)
 	hand_on(&r)
 	testing.expect(t, settle(&r, "Could not open notes.txt"), "a failure is said")
+
+	rig_close(&r)
+	sync.atomic_store(&l.closed, true)
+	time.sleep(200 * time.Millisecond)
+	testing.expect_value(t, sync.atomic_load(&l.late), 0)
 }
 
 // Schedule_Calls are what the system's scheduler was asked, as a test's scheduler

@@ -247,12 +247,10 @@ Desk :: struct {
 	workers:             ^stream.Workers,
 	searched:            ^stream.Port(Finished_Pass),
 	open_failures:       ^stream.Port(Open_Failure), // act.odin's open_entry
-	opening:             ^sync.Wait_Group, // the entries open_entry is opening
+	errands:             ^Errands, // the threads opening, locating, recording and testing (errand.odin)
 	recordings:          ^stream.Port(Recorder_Change), // recorder_linux.odin's set_recording
-	recording:           ^sync.Wait_Group, // the change it is running, if any
 	scratch:             ^search.Scratch,
 	tested:              ^stream.Port(Test_Done), // webhook.odin's test_webhook
-	testing_wg:          ^sync.Wait_Group, // the tests test_webhook is sending
 	monitoring:          Monitoring, // monitor.odin
 }
 
@@ -264,11 +262,9 @@ Host :: struct {
 	update_port:   stream.Port(Updated),
 	searched:      stream.Port(Finished_Pass),
 	open_failures: stream.Port(Open_Failure),
-	opening:       sync.Wait_Group,
 	recordings:    stream.Port(Recorder_Change),
-	recording:     sync.Wait_Group,
 	tested:        stream.Port(Test_Done),
-	testing:       sync.Wait_Group,
+	errands:       Errands, // errand.odin
 	thumbs:        Thumbs, // thumbs.odin
 	workers:       ^stream.Workers,
 	inbox:         ui.Inbox,
@@ -332,11 +328,9 @@ init :: proc(
 		workers       = h.workers,
 		searched      = &h.searched,
 		open_failures = &h.open_failures,
-		opening       = &h.opening,
+		errands       = &h.errands,
 		recordings    = &h.recordings,
-		recording     = &h.recording,
 		tested        = &h.tested,
-		testing_wg    = &h.testing,
 		scratch       = new(search.Scratch, allocator),
 	}
 	if len(update_key) == 32 {
@@ -442,10 +436,10 @@ stop :: proc(h: ^Host) {
 	stream.port_close(h.recordings)
 	stream.port_close(h.tested)
 	// An entry still being opened says a failure through the port, which
-	// refuses it now but lives until the pipeline goes.
-	sync.wait_group_wait(&h.opening)
-	sync.wait_group_wait(&h.recording)
-	sync.wait_group_wait(&h.testing)
+	// refuses it now but lives until the pipeline goes. Each errand is
+	// joined, not waited for, so none is still freeing its own thread
+	// through the allocator after stop returns.
+	errands_join(&h.errands)
 	stream.workers_stop(h.workers)
 	find_stop(&h.desk)
 	thumbs_destroy(h)

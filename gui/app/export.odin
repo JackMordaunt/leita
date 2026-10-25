@@ -127,7 +127,7 @@ export :: proc(d: ^Desk, c: command.Export) {
 // reveal shows the file a notice said was saved, if this desk saved it.
 reveal :: proc(d: ^Desk, c: command.Reveal) {
 	if path, ok := d.saved[c.notice]; ok {
-		files.locate(path)
+		errand_keep(d.errands, files.locate(path))
 	}
 }
 
