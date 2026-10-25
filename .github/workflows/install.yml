@@ -1,0 +1,234 @@
+# Every packaged artefact installed, upgraded, downgraded and uninstalled on a
+# clean machine (tools/test-install/story), for a release candidate: a v* tag,
+# a ci/release-* branch, or a branch whose name has "install" in it. The
+# release workflow publishes a tag only when this run for its commit passed.
+#
+# Each job builds the artefacts twice, as release.yml builds them
+# (tools/test-install/build): this commit, and the previous build, which is
+# the newest v* tag before this commit, else PREVIOUS below, else what the
+# dispatch names. Both carry the justfile's test licence key and one
+# throwaway update key the plan job makes, so the story can add the test
+# licence and update the previous build to this one through leita update from
+# a local signed release folder. No release secret is read; nothing here is a
+# release's signature.
+#
+# Linux: the .deb on Debian 12 and 13 and Ubuntu 22.04 and 24.04, the .rpm on
+# Fedora 42, the AppImage and the tar.zst on Ubuntu 22.04 (the window's glibc
+# floor), each a stock container; and with systemd booted in a privileged
+# container, the recorder upgraded under the .deb, the .rpm and the tar.zst.
+# Windows: the zip on windows-2025. macOS: the dmg on macos-26 (this slice of
+# Leita.app, not the universal lipo). What a hosted image cannot prove is in
+# tools/test-install/README.md.
+name: install
+
+on:
+  push:
+    tags: ["v*"]
+    branches: ["ci/release-**", "ci/*install*"]
+  workflow_dispatch:
+    inputs:
+      previous:
+        description: The commit or tag the previous build is made from (default the newest v* tag before this commit)
+        required: false
+
+concurrency:
+  group: install-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+permissions:
+  contents: read
+
+env:
+  # The last release dry run's commit before the first v* tag
+  # (run 39844489678, 2026-10-22).
+  PREVIOUS: d8187045fbd71be5e86af6648b39c84cf9681045
+  LEITA_RELEASED: "2026-10-24T00:00:00Z"
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      previous: ${{ steps.plan.outputs.previous }}
+      update_key: ${{ steps.plan.outputs.update_key }}
+      update_seed: ${{ steps.plan.outputs.update_seed }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: harness unit tests
+        run: python3 -m unittest discover -s tools/test-install -p 'test_*.py'
+      - id: plan
+        env:
+          ASKED: ${{ inputs.previous }}
+        run: |
+          set -euo pipefail
+          previous=${ASKED:-}
+          if [ -z "$previous" ]; then
+            previous=$(git describe --tags --abbrev=0 --match 'v*' HEAD^ 2>/dev/null || echo "$PREVIOUS")
+          fi
+          previous=$(git rev-parse --verify "$previous^{commit}")
+          # The seed is throwaway and signs only this run's fixture folders.
+          pair=$(python3 tools/test-lifecycle/fixture.py keygen)
+          {
+            echo "previous=$previous"
+            echo "update_key=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["public_hex"])' <<<"$pair")"
+            echo "update_seed=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["seed_hex"])' <<<"$pair")"
+          } >> "$GITHUB_OUTPUT"
+          echo "previous build: $previous ($(git log -1 --format='%cs %s' "$previous"))"
+
+  # The Linux artefacts of one build; the guests below take both builds'.
+  linux-build:
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix:
+        build: [new, old]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          submodules: true
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          cache: "false"
+      - name: zig
+        run: |
+          set -euo pipefail
+          ver=0.17.0 sum=1cbe9df9f27e6b78d14ccbca43b6703a404ef79ef1c463de901d7f088d4e2026
+          curl -sSfL --max-time 300 -o "$RUNNER_TEMP/zig.tar.xz" "https://ziglang.org/download/$ver/zig-x86_64-linux-$ver.tar.xz"
+          echo "$sum  $RUNNER_TEMP/zig.tar.xz" | sha256sum -c
+          tar -xJf "$RUNNER_TEMP/zig.tar.xz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/zig-x86_64-linux-$ver" >> "$GITHUB_PATH"
+          command -v zstd >/dev/null || sudo apt-get install -y --no-install-recommends zstd
+      - name: build
+        env:
+          INSTALL_UPDATE_KEY: ${{ needs.plan.outputs.update_key }}
+          PREVIOUS_REF: ${{ needs.plan.outputs.previous }}
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.build }}" = new ]; then
+            tools/test-install/build dist v9.9.9-candidate
+          else
+            tools/test-install/build dist v9.9.8-previous "$PREVIOUS_REF"
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: install-linux-${{ matrix.build }}
+          path: dist
+          if-no-files-found: error
+
+  linux:
+    needs: [plan, linux-build]
+    strategy:
+      fail-fast: false
+      matrix:
+        guest:
+          - deb:debian-12
+          - deb:debian-13
+          - deb:ubuntu-22.04
+          - deb:ubuntu-24.04
+          - rpm:fedora-42
+          - appimage:ubuntu-22.04
+          - tar.zst:ubuntu-22.04
+          - deb:debian-12:systemd
+          - rpm:fedora-42:systemd
+          - tar.zst:ubuntu-24.04:systemd
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/just
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: install-linux-new
+          path: new
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: install-linux-old
+          path: old
+      - name: story
+        env:
+          INSTALL_UPDATE_SEED: ${{ needs.plan.outputs.update_seed }}
+          GUEST: ${{ matrix.guest }}
+        run: |
+          set -euo pipefail
+          chmod +x old/leita-* new/leita-*
+          tools/test-install/linux old new "$GUEST"
+      - name: log name
+        if: always()
+        id: log
+        env:
+          GUEST: ${{ matrix.guest }}
+        run: echo "name=${GUEST//:/-}" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: install-log-${{ steps.log.outputs.name }}
+          path: build/install/log
+
+  # Windows and macOS build both artefacts on the runner the story runs on:
+  # nothing of a build's machine is left there but the files it made.
+  native:
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2025
+            kind: zip
+          - os: macos-26
+            kind: dmg
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: keep line endings as committed (windows)
+        if: runner.os == 'Windows'
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          submodules: true
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          cache: "false"
+      - name: build
+        env:
+          INSTALL_UPDATE_KEY: ${{ needs.plan.outputs.update_key }}
+          PREVIOUS_REF: ${{ needs.plan.outputs.previous }}
+        run: |
+          set -euo pipefail
+          tools/test-install/build "$RUNNER_TEMP/new" v9.9.9-candidate
+          tools/test-install/build "$RUNNER_TEMP/old" v9.9.8-previous "$PREVIOUS_REF"
+      - name: story
+        env:
+          INSTALL_UPDATE_SEED: ${{ needs.plan.outputs.update_seed }}
+          KIND: ${{ matrix.kind }}
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = Windows ]; then t=windows-amd64; e=.exe; else t=darwin-universal; e=; fi
+          for b in old new; do
+            v=$("$RUNNER_TEMP/$b/leita-$t$e" --version | awk '{print $2}')
+            python3 -I tools/test-install/release.py "$RUNNER_TEMP/rel-$b" "$v" "$LEITA_RELEASED" "$RUNNER_TEMP/$b/leita-$t$e" "$RUNNER_TEMP/$b/leita-window-$t$e"
+          done
+          ext=$KIND
+          LEITA_TEST_LICENCE=$(just --evaluate test_licence) tools/test-install/story "$KIND" \
+            "$(ls "$RUNNER_TEMP"/old/leita-*."$ext")" "$(ls "$RUNNER_TEMP"/new/leita-*."$ext")" \
+            "$RUNNER_TEMP/rel-new" "$RUNNER_TEMP/rel-old" 2>&1 | tee "$RUNNER_TEMP/story.log"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: install-log-${{ matrix.kind }}
+          path: ${{ runner.temp }}/story.log

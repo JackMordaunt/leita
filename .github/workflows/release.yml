@@ -1060,11 +1060,60 @@ jobs:
           [ "${#files[@]}" -ge 1 ] || { echo "::error::lifecycle artifacts have no evidence.json"; exit 1; }
           python3 tools/test-lifecycle/gate.py judge --sha "$GITHUB_SHA" "${files[@]}"
 
+  # Publishing waits, too, for the install run of this commit
+  # (install.yml): every artefact installed, upgraded, downgraded and
+  # uninstalled on a clean machine. Its builds carry test keys, so it reads
+  # no secret and the gate reads only its conclusion.
+  install-gate:
+    needs: plan
+    if: needs.plan.outputs.dry_run == 'false'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          sparse-checkout: tools/test-lifecycle/gate.py
+          sparse-checkout-cone-mode: false
+      - name: wait for the install run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh_failures=0
+          deadline=$((SECONDS + 8400))
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            if ! gh run list --workflow install.yml --commit "$GITHUB_SHA" --limit 20 \
+              --json databaseId,headSha,status,conclusion,url > runs.json; then
+              gh_failures=$((gh_failures + 1))
+              if [ "$gh_failures" -ge 3 ]; then
+                echo "::error::gh run list failed three times"
+                exit 1
+              fi
+              sleep 20
+              continue
+            fi
+            gh_failures=0
+            line=$(python3 tools/test-lifecycle/gate.py select runs.json "$GITHUB_SHA")
+            echo "$line"
+            case "$line" in
+              ready\ *) exit 0 ;;
+              failed\ *) echo "::error::install run failed: ${line#failed }"; exit 1 ;;
+              waiting) sleep 60 ;;
+              *) echo "::error::unexpected select output: $line"; exit 1 ;;
+            esac
+          done
+          echo "::error::no successful install run for $GITHUB_SHA"
+          exit 1
+
   # The only job that writes: it creates the release from the assembled
   # artifact with the runner's own gh, no third-party uploader. It checks
   # the key once more itself, so no path to it skips that check.
   release:
-    needs: [plan, assemble, lifecycle-gate]
+    needs: [plan, assemble, lifecycle-gate, install-gate]
     if: needs.plan.outputs.dry_run == 'false'
     runs-on: ubuntu-24.04
     permissions:
