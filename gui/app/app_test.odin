@@ -33,6 +33,7 @@ import "jm:ui/primer"
 import "jm:ui/render"
 
 import "../../changes"
+import netfault "../../faults/net"
 import "../../history"
 import "../../licence"
 import "../../monitor"
@@ -4393,4 +4394,316 @@ settle_prefix :: proc(r: ^Rig, prefix: string) -> bool {
 		time.sleep(time.Millisecond)
 	}
 	return false
+}
+
+/*
+Activation over a network that fails. A key is offered to a licence server on
+this machine that fails on purpose (faults/net): every failure ends in a
+sentence within a bound, the window is not left waiting, and nothing is kept,
+not the licence, not a part of one, not the key. The server's body, when it
+gets that far, is the licence for the key, so a body cut short is a licence
+cut short.
+*/
+
+// ACTIVATE_TEST_TIMEOUT is each exchange's limit here, and ACTIVATE_BOUND how
+// long a failure may take to be said: the timeout, and slack for the frames.
+ACTIVATE_TEST_TIMEOUT :: 1500 * time.Millisecond
+ACTIVATE_BOUND :: ACTIVATE_TEST_TIMEOUT + 8 * time.Second
+
+ACTIVATE_SLOW :: "The licence server did not answer in time; try again."
+ACTIVATE_UNREACHABLE :: "Leita could not reach the licence server. Check the connection, or open the licence file from your receipt instead."
+ACTIVATE_BUSY :: "The licence server could not answer just now; try again later."
+
+// offer_and_await offers key and waits until the desk has settled the offer and
+// the window says says, and how long that took; false when it did not within
+// ACTIVATE_BOUND.
+@(private = "file")
+offer_and_await :: proc(
+	t: ^testing.T,
+	r: ^Rig,
+	key, says: string,
+) -> (
+	took: time.Duration,
+	ok: bool,
+) {
+	// The answer to the last offer settles into the dialog first, so the field
+	// and the button are where the clicks land.
+	// A second click on the field soon after the first is a double click, so
+	// the key is put in the field as a paste would leave it.
+	ui.probe_advance(&r.p, 60, 1.0 / 60)
+	hand_on(r)
+	before := sync.atomic_load(&r.h.desk.licence_offered)
+	start := time.tick_now()
+	ui.text_set(&r.m.licence_text, key)
+	ui.probe_frame(&r.p)
+	testing.expect(t, ui.probe_click_top(&r.p, "Add licence"), "the key is offered")
+	hand_on(r)
+	deadline := time.tick_now()._nsec + i64(ACTIVATE_BOUND)
+	for time.tick_now()._nsec < deadline {
+		if ui.inbox_pending(&r.h.inbox) {
+			ui.inbox_drain(&r.h.inbox, &r.p.layout)
+			ui.probe_frame(&r.p)
+			hand_on(r)
+		}
+		// The window, not only the desk, has its answer to this offer: the
+		// same sentence as the last one's is already there before it.
+		_, waiting := r.m.licence_waiting.?
+		if sync.atomic_load(&r.h.desk.licence_offered) != before &&
+		   !waiting &&
+		   ui.probe_tagged(&r.p, says) {
+			return time.tick_since(start), true
+		}
+		time.sleep(time.Millisecond)
+	}
+	return time.tick_since(start), false
+}
+
+// expect_nothing_kept fails unless data holds no licence and no receipt key.
+@(private = "file")
+expect_nothing_kept :: proc(t: ^testing.T, r: ^Rig, data, what: string, loc := #caller_location) {
+	testing.expectf(t, !r.h.desk.licensed, "%s: the copy is licensed", what, loc = loc)
+	testing.expectf(t, !r.h.desk.activating, "%s: the window still waits", what, loc = loc)
+	for name in ([]string{"licence", "licence-key"}) {
+		path := fmt.tprintf("%s/%s", data, name)
+		testing.expectf(t, !os.exists(path), "%s: %s was kept: %q", what, name, licence_bytes(data), loc = loc)
+	}
+	entries, _ := os.read_all_directory_by_path(data, context.temp_allocator)
+	for e in entries {
+		testing.expectf(
+			t,
+			!strings.has_prefix(e.name, "licence"),
+			"%s: %s was left in the data folder",
+			what,
+			e.name,
+			loc = loc,
+		)
+	}
+}
+
+// open_activation_rig opens a rig on a data folder of its own whose exchanges go to
+// url within ACTIVATE_TEST_TIMEOUT, and opens the licence dialog.
+@(private = "file")
+open_activation_rig :: proc(t: ^testing.T, r: ^Rig, root, data: string, s: ^Signer, url: string) {
+	rig_open(r, root, kept = fmt.tprintf("%s/history.db", data), licence_key = s.pub[:], activate_url = url)
+	r.h.desk.activate_timeout = ACTIVATE_TEST_TIMEOUT
+	testing.expect(t, settle(r, "Done"))
+	open_licence(t, r)
+}
+
+// point_at sends the desk's next exchange to url.
+@(private = "file")
+point_at :: proc(r: ^Rig, url: string) {
+	delete(r.h.desk.activate_url)
+	r.h.desk.activate_url = strings.clone(url)
+}
+
+@(test)
+an_activation_that_fails_says_so_in_time_and_keeps_nothing :: proc(t: ^testing.T) {
+	root := fixture(t, "activate_faults")
+	defer os.remove_all(root)
+	data := fmt.tprintf("%s-data", root)
+	os.remove_all(data)
+	defer os.remove_all(data)
+	s := signer_make(t)
+	defer delete(s.line, runtime.heap_allocator())
+	granted := strings.concatenate({`{"licence":"`, s.line, `"}`}, context.temp_allocator)
+
+	r: Rig
+	open_activation_rig(t, &r, root, data, &s, netfault.refused("/activate"))
+	defer rig_close(&r)
+
+	Case :: struct {
+		fault:  netfault.Fault,
+		status: int,
+		says:   string,
+	}
+	cases := []Case {
+		{.Stall_Head, 0, ACTIVATE_SLOW},
+		{.Stall_Body, 0, ACTIVATE_SLOW},
+		{.Trickle, 0, ACTIVATE_SLOW},
+		{.Truncate, 0, ACTIVATE_UNREACHABLE},
+		{.Truncate_Unframed, 0, ACTIVATE_BUSY},
+		{.Reset, 0, ACTIVATE_UNREACHABLE},
+		{.Redirect_Loop, 0, ACTIVATE_UNREACHABLE},
+		{.Status, 400, "the server answered 400"},
+		{.Status, 404, "the server answered 404"},
+		{.Status, 500, ACTIVATE_BUSY},
+		{.Status, 503, ACTIVATE_BUSY},
+		{.Portal, 0, ACTIVATE_BUSY},
+	}
+	for c in cases {
+		srv := netfault.start(c.fault, body = granted, status = c.status, gap = time.Second)
+		point_at(&r, netfault.url(srv, "/activate"))
+		what := fmt.tprintf("%v %d", c.fault, c.status)
+		took, ok := offer_and_await(t, &r, "LEITA-SOLD", c.says)
+		testing.expectf(
+			t,
+			ok,
+			"%s: the window did not say %q within %v; the desk says %q",
+			what,
+			c.says,
+			ACTIVATE_BOUND,
+			r.h.desk.licence_problem,
+		)
+		testing.expectf(t, took < ACTIVATE_BOUND, "%s: took %v", what, took)
+		testing.expectf(t, netfault.accepted(srv) >= 1, "%s: the key was not sent", what)
+		expect_nothing_kept(t, &r, data, what)
+		netfault.stop(srv)
+	}
+
+	// What cannot be reached at all: nothing listening, a name no resolver
+	// answers, a server that does not speak TLS, and certificates no one
+	// vouches for.
+	plain := netfault.start(.None, body = granted)
+	defer netfault.stop(plain)
+	Unreached :: struct {
+		url, says: string,
+	}
+	unreached := [dynamic]Unreached{}
+	defer delete(unreached)
+	append(
+		&unreached,
+		Unreached{netfault.refused("/activate"), ACTIVATE_UNREACHABLE},
+		Unreached{"https://" + netfault.UNRESOLVABLE + "/activate", ACTIVATE_UNREACHABLE},
+		Unreached{netfault.url_tls_without_tls(plain, "/activate"), ACTIVATE_SLOW},
+	)
+	tlses: [2]netfault.Tls
+	defer {
+		for &tls in tlses {
+			netfault.stop_tls(&tls)
+		}
+	}
+	if netfault.openssl_found() {
+		dir, _ := os.make_directory_temp("", "leita-certs-*", context.temp_allocator)
+		defer os.remove_all(dir)
+		certs, why, made := netfault.make_certs(dir)
+		testing.expect(t, made, why)
+		pairs := [2][2]string{{certs.wrong_host, certs.wrong_key}, {certs.self, certs.self_key}}
+		for pair, i in pairs {
+			if !made {
+				break
+			}
+			started: bool
+			tlses[i], why, started = netfault.start_tls(pair[0], pair[1])
+			if testing.expect(t, started, why) {
+				append(&unreached, Unreached{netfault.tls_url(tlses[i], "/activate"), ACTIVATE_UNREACHABLE})
+			}
+		}
+	} else {
+		testing.expect(t, os.get_env("CI", context.temp_allocator) == "", "openssl is on every runner")
+	}
+	for u in unreached {
+		point_at(&r, u.url)
+		took, ok := offer_and_await(t, &r, "LEITA-SOLD", u.says)
+		testing.expectf(t, ok, "%s: the window did not say %q within %v", u.url, u.says, ACTIVATE_BOUND)
+		testing.expectf(t, took < ACTIVATE_BOUND, "%s: took %v", u.url, took)
+		expect_nothing_kept(t, &r, data, u.url)
+	}
+
+	// After all that, a redirect to the server that answers whole is followed,
+	// and the licence it brings back is taken: the failures left nothing in the
+	// way.
+	hop := netfault.start(.Redirect, location = netfault.base(plain))
+	defer netfault.stop(hop)
+	point_at(&r, netfault.url(hop, "/activate"))
+	_, ok := offer_and_await(t, &r, "LEITA-SOLD", "Licensed to ada@example.com")
+	testing.expect(t, ok, "the licence through the redirect is taken")
+	testing.expect_value(t, strings.trim_space(licence_bytes(data)), s.line)
+}
+
+/*
+HTTPS_PROXY is honoured: the exchange goes to the proxy, which is asked to
+CONNECT to the licence server, and the proxy's failure is the exchange's. curl
+reads the variable from the process's environment (the CURLOPT_PROXY manual
+page), and setting it in this one would change it under the other tests'
+feet, so each case runs in a child: this test binary again, with the one test
+named and HTTPS_PROXY set.
+*/
+PROXY_CASE_ENV :: "LEITA_TEST_PROXY_SAYS"
+
+@(test)
+an_activation_through_a_proxy_that_fails_says_so :: proc(t: ^testing.T) {
+	if says := os.get_env(PROXY_CASE_ENV, context.temp_allocator); says != "" {
+		activate_through_the_proxy(t, says)
+		return
+	}
+	refusing := netfault.start(.Status, status = 502)
+	defer netfault.stop(refusing)
+	asking := netfault.start(.Status, status = 407)
+	defer netfault.stop(asking)
+	stalling := netfault.start(.Stall_Head)
+	defer netfault.stop(stalling)
+	portal := netfault.start(.Portal)
+	defer netfault.stop(portal)
+	Case :: struct {
+		proxy: string,
+		says:  string,
+		srv:   ^netfault.Server,
+	}
+	cases := []Case {
+		{netfault.proxy(refusing), ACTIVATE_UNREACHABLE, refusing},
+		{netfault.proxy(asking), ACTIVATE_UNREACHABLE, asking},
+		{netfault.proxy(stalling), ACTIVATE_SLOW, stalling},
+		{netfault.proxy(portal), ACTIVATE_UNREACHABLE, portal},
+		{strings.trim_suffix(netfault.refused("/"), "/"), ACTIVATE_UNREACHABLE, nil},
+	}
+	exe, _ := os.get_executable_path(context.temp_allocator)
+	for c in cases {
+		env := make([dynamic]string, context.temp_allocator)
+		parent, _ := os.environ(context.temp_allocator)
+		for kv in parent {
+			key, _, _ := strings.partition(kv, "=")
+			switch strings.to_lower(key, context.temp_allocator) {
+			case "https_proxy", "http_proxy", "all_proxy", "no_proxy", PROXY_CASE_ENV:
+				continue
+			}
+			append(&env, kv)
+		}
+		append(&env, fmt.tprintf("HTTPS_PROXY=%s", c.proxy), fmt.tprintf("%s=%s", PROXY_CASE_ENV, c.says))
+		state, out, err_out, err := os.process_exec(
+			{
+				command = {exe, "-tests:leita_app.an_activation_through_a_proxy_that_fails_says_so"},
+				env = env[:],
+			},
+			context.temp_allocator,
+		)
+		testing.expectf(t, err == nil, "could not run the child: %v", err)
+		testing.expectf(
+			t,
+			state.exited && state.exit_code == 0,
+			"through %s, the child failed (%d):\n%s\n%s",
+			c.proxy,
+			state.exit_code,
+			out,
+			err_out,
+		)
+		if c.srv != nil {
+			heads := netfault.seen(c.srv)
+			asked := false
+			for h in heads {
+				asked ||= strings.has_prefix(h, "CONNECT licence.leita.invalid:443 ")
+			}
+			testing.expectf(t, asked, "the proxy %s was not asked to connect: %v", c.proxy, heads)
+		}
+	}
+}
+
+// activate_through_the_proxy is the child's half: an exchange with a licence server
+// whose name only the proxy could resolve, which must end saying says.
+@(private = "file")
+activate_through_the_proxy :: proc(t: ^testing.T, says: string) {
+	root := fixture(t, "activate_proxy")
+	defer os.remove_all(root)
+	data := fmt.tprintf("%s-data", root)
+	os.remove_all(data)
+	defer os.remove_all(data)
+	s := signer_make(t)
+	defer delete(s.line, runtime.heap_allocator())
+	r: Rig
+	open_activation_rig(t, &r, root, data, &s, "https://licence.leita.invalid/activate")
+	defer rig_close(&r)
+	took, ok := offer_and_await(t, &r, "LEITA-SOLD", says)
+	testing.expectf(t, ok, "the window did not say %q within %v", says, ACTIVATE_BOUND)
+	testing.expectf(t, took < ACTIVATE_BOUND, "took %v", took)
+	expect_nothing_kept(t, &r, data, "through the proxy")
 }

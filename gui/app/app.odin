@@ -190,9 +190,11 @@ Desk :: struct {
 	refreshing:          bool,
 	// Exchanging a key for its licence: the client, started on the first key,
 	// where it sends to, the port its answer comes back through, and whether one
-	// is under way.
+	// is under way. activate_timeout is how long one may take, 0 for
+	// ACTIVATE_TIMEOUT; a test shortens it.
 	client:              ^http.Client,
 	activate_url:        string,
+	activate_timeout:    time.Duration,
 	activations:         ^stream.Port(Activated),
 	activating:          bool,
 	// Updates (update.odin): the release to ask, "" for update's own; the

@@ -269,7 +269,7 @@ activate :: proc(d: ^Desk, key: string) {
 		url        = d.activate_url,
 		headers    = headers[:],
 		body       = string(body),
-		timeout    = ACTIVATE_TIMEOUT,
+		timeout    = d.activate_timeout if d.activate_timeout > 0 else ACTIVATE_TIMEOUT,
 		max_body   = 64 * 1024,
 		user_agent = "leita/" + version.VERSION,
 	}
