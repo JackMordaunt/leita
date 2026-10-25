@@ -42,6 +42,8 @@ Outcome :: struct {
 	done:      bool, // it finished the case and wrote DONE
 	crossings: int, // the calls it made through the seam, when done
 	said:      string, // its standard error
+	exit:      int, // its exit code
+	wait:      os.Error, // how waiting for it failed, nil if it did not
 }
 
 // start runs case c in dir in a child, to be killed at the at'th call it makes
@@ -76,15 +78,38 @@ start :: proc(t: ^testing.T, c: Case, dir: string, at := 0) -> (child: os.Proces
 	return child, err == nil
 }
 
+// wait_for_exit waits for child to exit, and says how, for as long as WAIT.
+// After a non-timeout wait error, query the child's state until it has exited
+// or the deadline has passed.
+@(private = "file")
+wait_for_exit :: proc(child: os.Process) -> (state: os.Process_State, err: os.Error) {
+	state, err = os.process_wait(child, WAIT)
+	if err == nil || err == os.General_Error.Timeout {
+		return
+	}
+
+	deadline := time.time_add(time.now(), WAIT)
+	for {
+		state, err = os.process_wait(child, 0)
+		if err != os.General_Error.Timeout || time.diff(time.now(), deadline) <= 0 {
+			return
+		}
+		// Still running: ask again a moment on.
+		time.sleep(time.Millisecond)
+	}
+}
+
 // finish waits for child and says how its run in dir ended.
 @(private = "file")
 finish :: proc(t: ^testing.T, child: os.Process, dir: string) -> (out: Outcome) {
-	_, werr := os.process_wait(child, WAIT)
+	state, werr := wait_for_exit(child)
 	if werr == os.General_Error.Timeout {
 		_ = os.process_kill(child)
 		_, werr = os.process_wait(child)
 		testing.expectf(t, false, "the child in %s hung", dir)
 	}
+	out.exit = state.exit_code
+	out.wait = werr
 
 	said, _ := os.read_entire_file(in_dir(dir, "stderr"), context.temp_allocator)
 	out.said = string(said)
@@ -105,7 +130,7 @@ run_child :: proc(t: ^testing.T, c: Case, dir: string, at := 0) -> Outcome {
 	}
 	out := finish(t, child, dir)
 	if at == 0 {
-		testing.expectf(t, out.done, "%v did not finish: %s", c, out.said)
+		testing.expectf(t, out.done, "%v did not finish (exit %d, wait %v): %s", c, out.exit, out.wait, out.said)
 	} else {
 		testing.expectf(t, !out.done, "%v was not killed at %d: %s", c, at, out.said)
 	}
