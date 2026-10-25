@@ -161,11 +161,18 @@ Not_Directory: none is passed through. Other reparse points, such as a cloud
 file's placeholder, are opened as they would be without the check, once the
 handle is shown to be the same directory. ".." is refused. The caller closes the
 handle.
+
+Given hold, every folder above the one returned is kept open in it, the volume's
+root included, and each is opened without FILE_SHARE_DELETE, as the one returned
+is: while the handles are open, none of those folders can be renamed or deleted, so
+none can be swapped for a link, and the path names what was checked. The caller
+closes those too.
 */
 @(private)
 open_directory :: proc(
 	path: string,
 	allocator := context.temp_allocator,
+	hold: ^[dynamic]win32.HANDLE = nil,
 ) -> (
 	h: win32.HANDLE,
 	err: Error,
@@ -183,10 +190,11 @@ open_directory :: proc(
 	wide_root := win32.utf8_to_wstring(root, allocator)
 	defer free(rawptr(wide_root), allocator)
 
+	share: u32 = SHARE_ALL if hold == nil else win32.FILE_SHARE_READ | win32.FILE_SHARE_WRITE
 	h = win32.CreateFileW(
 		wide_root,
 		LOOKUP_ACCESS,
-		win32.FILE_SHARE_READ | win32.FILE_SHARE_WRITE | win32.FILE_SHARE_DELETE,
+		share,
 		nil,
 		win32.OPEN_EXISTING,
 		win32.FILE_FLAG_BACKUP_SEMANTICS,
@@ -209,7 +217,7 @@ open_directory :: proc(
 			win32.CloseHandle(h)
 			return nil, .Bad_Name
 		}
-		next, status := open_at(h, name, LOOKUP_ACCESS, kstat.FILE_DIRECTORY_FILE)
+		next, status := open_at(h, name, LOOKUP_ACCESS, kstat.FILE_DIRECTORY_FILE, share = share)
 		if status < 0 {
 			win32.CloseHandle(h)
 			return nil, status_error(status)
@@ -225,7 +233,7 @@ open_directory :: proc(
 			// is still the directory just opened as itself.
 			seen := file_id(next)
 			win32.CloseHandle(next)
-			reopened, rstatus := open_at(h, name, LOOKUP_ACCESS, kstat.FILE_DIRECTORY_FILE, follow = true)
+			reopened, rstatus := open_at(h, name, LOOKUP_ACCESS, kstat.FILE_DIRECTORY_FILE, follow = true, share = share)
 			if rstatus < 0 {
 				win32.CloseHandle(h)
 				return nil, status_error(rstatus)
@@ -237,7 +245,11 @@ open_directory :: proc(
 			}
 			next = reopened
 		}
-		win32.CloseHandle(h)
+		if hold != nil {
+			append(hold, h)
+		} else {
+			win32.CloseHandle(h)
+		}
 		h = next
 	}
 	return h, .None
@@ -354,6 +366,10 @@ DIRECTORY_ACCESS ::
 @(private = "file")
 ENTRY_ACCESS :: win32.DELETE | win32.FILE_READ_ATTRIBUTES | win32.FILE_WRITE_ATTRIBUTES | win32.SYNCHRONIZE
 
+// SHARE_ALL lets others read, write, rename and delete what is open.
+@(private = "file")
+SHARE_ALL :: win32.FILE_SHARE_READ | win32.FILE_SHARE_WRITE | win32.FILE_SHARE_DELETE
+
 /*
 open_at opens the entry name of dir by that name alone, so nothing above dir is
 looked up again. Unless follow is set, a reparse point is opened as itself.
@@ -365,6 +381,7 @@ open_at :: proc(
 	access: u32,
 	options: u32,
 	follow := false,
+	share: u32 = SHARE_ALL,
 ) -> (
 	h: win32.HANDLE,
 	status: win32.NTSTATUS,
@@ -392,7 +409,7 @@ open_at :: proc(
 		&iosb,
 		nil,
 		0,
-		win32.FILE_SHARE_READ | win32.FILE_SHARE_WRITE | win32.FILE_SHARE_DELETE,
+		share,
 		win32.FILE_OPEN,
 		flags,
 		nil,

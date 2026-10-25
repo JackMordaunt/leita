@@ -97,8 +97,13 @@ that warning. A refusal, a failure or a path still in place is Not_Recycled.
 
 The folder holding path is first opened without passing through a symbolic link or
 a junction (open_directory), so a path reaching the entry through one is refused as
-Not_Directory. The shell takes a path, not a handle, so a folder swapped for a link
-after that check and before the recycle is not caught.
+Not_Directory. The shell takes a path, not a handle, so that folder and every one
+above it are held open, none sharing delete, until the shell is done: no folder on
+the path can be renamed away and replaced with a link between the check and the
+recycle, and the shell's path reaches the entry that was checked. A folder someone
+else has open to delete or rename it cannot be held, and nothing is recycled. What
+is not held is the drive letter: one redefined in that time (subst, DefineDosDevice)
+by the same user would still send the shell elsewhere.
 */
 trash :: proc(path: string) -> Error {
 	if !present(path) {
@@ -109,11 +114,20 @@ trash :: proc(path: string) -> Error {
 		return .Not_Directory
 	}
 
-	parent, perr := open_directory(dir)
+	// One handle per folder above the entry's, closed once the shell is done.
+	held: [dynamic]win32.HANDLE
+	defer {
+		for h in held {
+			win32.CloseHandle(h)
+		}
+		delete(held)
+	}
+
+	parent, perr := open_directory(dir, hold = &held)
 	if perr != .None {
 		return perr
 	}
-	win32.CloseHandle(parent)
+	defer win32.CloseHandle(parent)
 
 	if before_trash != nil {
 		before_trash(path)
