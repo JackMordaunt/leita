@@ -44,9 +44,11 @@ every_dialog_opens_says_what_it_is_and_closes :: proc(t: ^testing.T) {
 			d.says,
 			show(&w),
 		)
+		// The keyboard is given to the dialog once it has opened, a frame or
+		// more after it is first drawn.
 		testing.expectf(
 			t,
-			strings.contains(said(&w), `button "Close" focused`),
+			settle_said(&w, `button "Close" focused`, seconds = 10),
 			"%s holds the keyboard:\n%s",
 			d.item,
 			show(&w),
