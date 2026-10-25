@@ -6,16 +6,18 @@ import "core:testing"
 
 import "jm:ui"
 
+import "../../gui/msg"
+
 /*
 Story: a person whose disk is filling opens Leita and reads what fills it. Each
 chart says the same top layer, with the made-up disk's exact sizes, and so do
 the Contents and the Largest files beside it; coloured by type, each entry says
-its kind. In every scenario: light, dark, and the smallest window.
+its kind. In every scenario: light, dark, the smallest window, and German.
 */
 //review:ignore test-no-assertion read_what_fills_the_disk asserts, once per scenario
 @(test)
 a_scan_is_said_the_same_in_every_chart :: proc(t: ^testing.T) {
-	budget(t, 240)
+	budget(t, 300)
 	for scenario in SCENARIOS {
 		read_what_fills_the_disk(t, scenario)
 	}
@@ -26,20 +28,25 @@ read_what_fills_the_disk :: proc(t: ^testing.T, scenario: Scenario) {
 	open(&w, t, "charts", 0, scenario = scenario)
 	defer close(&w)
 
-	testing.expect(t, settle(&w, "Done"), "the scan of the made-up disk finished")
+	testing.expect(t, settle(&w, tr(&w, .Done)), "the scan of the made-up disk finished")
 	frames(&w)
+	status := fmt.tprintf(
+		`text "%s · 320.8 GB · %s · `,
+		trf(&w, .Count_Items, 806_693),
+		trf(&w, .Count_Free, "151.0 GB", "494.4 GB"),
+	)
 	testing.expectf(
 		t,
-		strings.contains(
-			said(&w),
-			`text "806,693 items · 320.8 GB · 151.0 GB free of 494.4 GB · `,
-		),
+		strings.contains(said(&w), status),
 		"the status names the disk:\n%s",
 		show(&w),
 	)
 	testing.expectf(
 		t,
-		strings.contains(said(&w), `text "320.8 GB in 17 items"`),
+		strings.contains(
+			said(&w),
+			fmt.tprintf(`text "%s"`, trf(&w, .Listing_Summary, 17, "320.8 GB")),
+		),
 		"Contents totals the top:\n%s",
 		show(&w),
 	)
@@ -56,15 +63,22 @@ read_what_fills_the_disk :: proc(t: ^testing.T, scenario: Scenario) {
 	)
 	keep(&w, "sunburst")
 
-	for chart in ([?]string{"Sunburst", "Treemap", "Icicle"}) {
-		if chart != "Sunburst" {
+	for mode, i in ([?]msg.Msg{.Mode_Sunburst, .Mode_Treemap, .Mode_Icicle}) {
+		chart := tr(&w, mode)
+		if i > 0 {
 			testing.expect(t, click(&w, chart))
 			frames(&w)
 			keep(&w, chart)
 		}
-		tree := fmt.tprintf(`tree "%s of alex, 320.8 GB, 7 items" at`, chart)
-		users := `  tree item "Users, 206.0 GB, 64.2% of alex" level 1 expandable at`
-		system := `  tree item "System, 40.0 GB, 12.5% of alex" level 1 expandable at`
+		tree := fmt.tprintf(`tree "%s" at`, trf(&w, .Chart_Title, 7, chart, "alex", "320.8 GB"))
+		users := fmt.tprintf(
+			`  tree item "%s" level 1 expandable at`,
+			trf(&w, .Chart_Item, "Users", "206.0 GB", "64.2", "alex"),
+		)
+		system := fmt.tprintf(
+			`  tree item "%s" level 1 expandable at`,
+			trf(&w, .Chart_Item, "System", "40.0 GB", "12.5", "alex"),
+		)
 		testing.expectf(
 			t,
 			said_after(said(&w), tree, users, system),
@@ -75,11 +89,16 @@ read_what_fills_the_disk :: proc(t: ^testing.T, scenario: Scenario) {
 	}
 
 	// Coloured by type, each entry says its kind as well.
-	testing.expect(t, click(&w, "Type"))
+	testing.expect(t, click(&w, tr(&w, .Colour_Type)))
 	frames(&w, 3)
+	folder := fmt.tprintf(
+		`  tree item "%s, %s" level 1`,
+		trf(&w, .Chart_Item, "Users", "206.0 GB", "64.2", "alex"),
+		tr(&w, .Kind_Folder),
+	)
 	testing.expectf(
 		t,
-		strings.contains(said(&w), `  tree item "Users, 206.0 GB, 64.2% of alex, Folder" level 1`),
+		strings.contains(said(&w), folder),
 		"Users says it is a folder:\n%s",
 		show(&w),
 	)

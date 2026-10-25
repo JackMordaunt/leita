@@ -1,8 +1,9 @@
 /*
 Package journeys_gui holds the window's user stories: each test is one story a
 person comes to Leita with, walked end to end the way they would, on the made-up
-disk, in each Scenario it names (SCENARIOS: the theme, a small window). Card 748
-adds its stories here, in this form.
+disk, in each Scenario it names (SCENARIOS: the theme, a small window, a
+translated window). A disk the made-up one cannot be, empty, shut to Leita or
+changing while it is read, is a real folder made for the story (disk_test.odin).
 
 A story runs the real host, desk and reader on their own threads, and the real
 view in a probe in place of a window. What it checks is what a screen reader is
@@ -23,17 +24,21 @@ import "base:runtime"
 
 import "core:fmt"
 import "core:os"
+import "core:slice"
 import "core:strings"
 import "core:testing"
 import "core:time"
 
+import "jm:i18n"
 import "jm:ui"
 import bl "jm:ui/blend2d"
 import "jm:ui/ops"
 import "jm:ui/render"
 
 import "../../gui/app"
+import "../../gui/msg"
 import "../../gui/view"
+import "../../scan"
 import "../../synth"
 
 // HOME is the made-up disk's home folder, the path a journey opens on.
@@ -51,6 +56,7 @@ Window :: struct {
 	data:     ui.Data_Host,
 	faces:    []ops.Font_Ref,
 	backs:    []ops.Font_Id,
+	words:    msg.Strings, // the scenario's language, which the story's checks are in
 }
 
 /*
@@ -79,26 +85,50 @@ folder :: proc(name: string) -> string {
 }
 
 // Scenario is how a story's window is set up: its name, as the story's
-// evidence is named, its size, and its theme.
+// evidence is named, its size, its theme, and its language.
 Scenario :: struct {
-	name: string,
-	size: ops.Size,
-	dark: bool,
+	name:   string,
+	size:   ops.Size,
+	dark:   bool,
+	locale: i18n.Locale,
 }
 
 // LIGHT is the window as it opens (gui/main.odin), the scenario a story that
 // names none runs in.
-LIGHT :: Scenario{"light", {1280, 820}, false}
+LIGHT :: Scenario{"light", {1280, 820}, false, .English}
 
-// SCENARIOS are the setups every story that loops over them runs in: the
-// window as it opens, dark, and small, at its minimum size (gui/main.odin).
-SCENARIOS := [?]Scenario{LIGHT, {"dark", {1280, 820}, true}, {"small", {640, 420}, false}}
+// DARK is the same window in the dark theme.
+DARK :: Scenario{"dark", {1280, 820}, true, .English}
+
+// SMALL is the window at its minimum size (gui/main.odin).
+SMALL :: Scenario{"small", {640, 420}, false, .English}
+
+// GERMAN is the window in German, as a person whose system is in German opens
+// it: what it says is checked in German (tr, trf).
+GERMAN :: Scenario{"german", {1280, 820}, false, .German}
+
+// SCENARIOS are the setups every story that loops over them runs in.
+SCENARIOS := [?]Scenario{LIGHT, DARK, SMALL, GERMAN}
+
+// tr is key's text in the language of w's scenario, as the window says it.
+tr :: proc(w: ^Window, key: msg.Msg) -> string {
+	return msg.tr(&w.words, key)
+}
+
+// trf is key's text in the language of w's scenario with args filled in, in
+// the temporary allocator.
+trf :: proc(w: ^Window, key: msg.Msg, args: ..i18n.Arg) -> string {
+	return msg.trf(&w.words, key, ..args)
+}
 
 /*
 open starts the application on path, scanning the made-up disk of day, keeping
 its history, settings and licence in dir ("" for a folder of its own, removed
 by close), set up as scenario says. Two windows given one dir are two runs on
-one machine.
+one machine. A day of REAL scans path itself, a folder on this disk; the walk
+then calls after_list with after_list_data after each directory it lists. A
+licence key is exchanged at activate_url; updates are looked for at
+release_base, signed by update_key, to replace update_exe (app.init).
 */
 open :: proc(
 	w: ^Window,
@@ -108,6 +138,12 @@ open :: proc(
 	dir := "",
 	path := HOME,
 	scenario := LIGHT,
+	after_list: proc(path: string, data: rawptr) = nil,
+	after_list_data: rawptr = nil,
+	activate_url := "",
+	release_base := "",
+	update_key: []byte = nil,
+	update_exe := "",
 ) {
 	w.name = name if scenario.name == LIGHT.name else fmt.tprintf("%s-%s", name, scenario.name)
 	w.dir = dir if dir != "" else folder(name)
@@ -117,10 +153,17 @@ open :: proc(
 		kept = fmt.tprintf("%s/history.db", w.dir),
 		reports = w.dir,
 		thumbs = w.dir,
-		made_up = day,
+		made_up = day if day != REAL else nil,
+		after_list = after_list,
+		after_list_data = after_list_data,
+		activate_url = activate_url,
+		release_base = release_base,
+		update_key = update_key,
+		update_exe = update_exe,
 	)
 	w.data = app.data_host(&w.h)
-	view.model_init(&w.m, path)
+	msg.init(&w.words, scenario.locale)
+	view.model_init(&w.m, path, scenario.locale)
 	w.m.dark = scenario.dark
 	w.faces = view.fonts()
 	w.backs = view.fallbacks(w.faces)
@@ -135,6 +178,9 @@ open :: proc(
 	)
 	ui.probe_frame(&w.p)
 }
+
+// REAL is the day open is given to scan a real folder, not the made-up disk.
+REAL :: -1
 
 // close stops the application, and removes its data folder unless keep.
 close :: proc(w: ^Window, keep := false) {
@@ -310,4 +356,58 @@ keep :: proc(w: ^Window, step: string) {
 		strings.clone_to_cstring(fmt.tprintf("%s.png", base), context.temp_allocator),
 		nil,
 	)
+}
+
+/*
+real_folder is a new, empty folder for a story that scans this disk, named for
+name and this process, as the scan names it: the temp directory with its links
+resolved (macOS's /var is /private/var), joined with the platform's separator
+and, on Windows, as scan.location stores it. Remove it with os.remove_all.
+*/
+real_folder :: proc(t: ^testing.T, name: string) -> string {
+	tmp, tmp_err := os.temp_directory(context.temp_allocator)
+	testing.expect(t, tmp_err == nil, "no temp directory")
+	info, stat_err := os.stat(tmp, context.temp_allocator)
+	testing.expect(t, stat_err == nil, "the temp directory is not there")
+	root := within(
+		strings.trim_right(info.fullpath, `/\`),
+		fmt.tprintf("leita_story_%s_%d", name, os.get_pid()),
+	)
+	os.remove_all(root)
+	testing.expectf(t, os.make_directory(root) == nil, "could not make %s", root)
+	when ODIN_OS == .Windows {
+		named, _, err := scan.resolve(root)
+		if err == nil {
+			defer scan.target_destroy(&named)
+
+			if got := scan.location(named, context.temp_allocator); got != "" {
+				root = got
+			}
+		}
+	}
+	return root
+}
+
+// within is the path of names below dir, joined as the scan joins them.
+within :: proc(dir: string, names: ..string) -> string {
+	sb := strings.builder_make(context.temp_allocator)
+	strings.write_string(&sb, dir)
+	for name in names {
+		strings.write_string(&sb, scan.SEPARATOR)
+		strings.write_string(&sb, name)
+	}
+	return strings.to_string(sb)
+}
+
+// write_file makes a file of size bytes at path, and fails the story when it
+// cannot.
+write_file :: proc(t: ^testing.T, path: string, size: int) {
+	body := make([]byte, size, context.temp_allocator)
+	slice.fill(body, 'x')
+	testing.expectf(t, os.write_entire_file(path, body) == nil, "could not write %s", path)
+}
+
+// make_folder makes the folder at path, and fails the story when it cannot.
+make_folder :: proc(t: ^testing.T, path: string) {
+	testing.expectf(t, os.make_directory(path) == nil, "could not make %s", path)
 }
