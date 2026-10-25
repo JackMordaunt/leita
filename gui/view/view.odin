@@ -138,6 +138,10 @@ Model :: struct {
 	search_go:        bool,
 	search_move:      bool,
 	search_view:      f32,
+	// The bar's field or the search closed from the keyboard, which was in it:
+	// the magnifier takes the keyboard when next drawn, so it is not left on
+	// the field that has gone.
+	bar_focus:        bool,
 	dark:             bool,
 	scheme:           primer.Scheme,
 	// The directory shown, as an index into the tree of that generation. Each scan
@@ -570,6 +574,14 @@ location_bar :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result) {
 	}
 	if magnifier {
 		search_button(gtx, m)
+		// Not while a dialog is open or one the settings menu chose is about
+		// to: the keyboard is the dialog's.
+		if m.bar_focus && !m.editing && !dialog_open(m) && m.settings_dialog == .None {
+			ui.focus_request(gtx, ui.last_widget(gtx).id)
+		}
+	}
+	if !m.editing {
+		m.bar_focus = false
 	}
 }
 

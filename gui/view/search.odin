@@ -119,6 +119,7 @@ search_field :: proc(gtx: ^ui.Ctx, m: ^Model) {
 		#partial switch e.key {
 		case .Escape:
 			close_search(m)
+			m.bar_focus = true
 			return
 		case .Down:
 			m.search_keys, m.search_move = true, true
@@ -127,7 +128,10 @@ search_field :: proc(gtx: ^ui.Ctx, m: ^Model) {
 	if field.submitted {
 		m.search_go = true // the pick, or the best
 	}
-	if field.action || !field.focused && !m.search_focus && search_term(m) == "" {
+	if field.action {
+		close_search(m)
+		m.bar_focus = true
+	} else if !field.focused && !m.search_focus && search_term(m) == "" {
 		close_search(m)
 	}
 }

@@ -311,6 +311,7 @@ location_field :: proc(gtx: ^ui.Ctx, m: ^Model, have: bool) {
 	for e in ui.events(gtx, field.id) {
 		if e.kind == .Key && e.key == .Escape {
 			m.editing, m.path_long = false, false
+			m.bar_focus = true
 		}
 	}
 	if field.submitted {
@@ -326,8 +327,10 @@ location_field :: proc(gtx: ^ui.Ctx, m: ^Model, have: bool) {
 		case path != "":
 			ui.command(gtx, command.Command(req))
 			m.editing, m.path_long = false, false
+			m.bar_focus = true
 		case:
 			m.editing = false
+			m.bar_focus = true
 		}
 	}
 	if m.editing && !m.edit_focus && !field.focused && have {
