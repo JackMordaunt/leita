@@ -208,18 +208,25 @@ a_release_page_that_cannot_be_reached_fails_with_a_reason :: proc(t: ^testing.T)
 	defer netfault.stop(plain)
 	Unreached :: struct {
 		base, says: string,
+		timeout:    time.Duration,
 	}
 	bases := []Unreached {
-		{strings.trim_suffix(netfault.refused("/"), "/"), "connect"},
-		{"https://" + netfault.UNRESOLVABLE + "/download", "resolve"},
-		{strings.trim_suffix(netfault.url_tls_without_tls(plain, "/"), "/"), "did not answer"},
+		{strings.trim_suffix(netfault.refused("/"), "/"), "connect", netfault.REFUSAL_TIMEOUT},
+		{"https://" + netfault.UNRESOLVABLE + "/download", "resolve", NET_TIMEOUT},
+		{
+			strings.trim_suffix(netfault.url_tls_without_tls(plain, "/"), "/"),
+			"did not answer",
+			NET_TIMEOUT,
+		},
 	}
 	for u in bases {
 		b := u.base
 		f := fixture(t, "old build", "new build", "v1.1.0")
 		cfg := net_config(&f, b)
+		cfg.timeout = u.timeout
 		e := timed_apply(cfg)
-		expect_failed_untouched(t, &f, &e, b, net_bound(1), "sha256sums.txt", u.says)
+		bound := u.timeout + 3 * time.Second
+		expect_failed_untouched(t, &f, &e, b, bound, "sha256sums.txt", u.says)
 		testing.expectf(t, e.r.reason == .Unreachable, "%s: %v", b, e.r.reason)
 		os.remove_all(f.root)
 	}

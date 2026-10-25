@@ -4561,9 +4561,10 @@ an_activation_that_fails_says_so_in_time_and_keeps_nothing :: proc(t: ^testing.T
 	}
 	unreached := [dynamic]Unreached{}
 	defer delete(unreached)
+	refused := netfault.refused("/activate")
 	append(
 		&unreached,
-		Unreached{netfault.refused("/activate"), ACTIVATE_UNREACHABLE},
+		Unreached{refused, ACTIVATE_UNREACHABLE},
 		Unreached{"https://" + netfault.UNRESOLVABLE + "/activate", ACTIVATE_UNREACHABLE},
 		Unreached{netfault.url_tls_without_tls(plain, "/activate"), ACTIVATE_SLOW},
 	)
@@ -4594,6 +4595,7 @@ an_activation_that_fails_says_so_in_time_and_keeps_nothing :: proc(t: ^testing.T
 	}
 	for u in unreached {
 		point_at(&r, u.url)
+		r.h.desk.activate_timeout = netfault.REFUSAL_TIMEOUT if u.url == refused else ACTIVATE_TEST_TIMEOUT
 		took, ok := offer_and_await(t, &r, "LEITA-SOLD", u.says)
 		testing.expectf(t, ok, "%s: the window did not say %q within %v", u.url, u.says, ACTIVATE_BOUND)
 		testing.expectf(t, took < ACTIVATE_BOUND, "%s: took %v", u.url, took)
@@ -4702,6 +4704,8 @@ activate_through_the_proxy :: proc(t: ^testing.T, says: string) {
 	r: Rig
 	open_activation_rig(t, &r, root, data, &s, "https://licence.leita.invalid/activate")
 	defer rig_close(&r)
+	// One proxy is a refused port; the stalling one still ends inside the bound.
+	r.h.desk.activate_timeout = netfault.REFUSAL_TIMEOUT
 	took, ok := offer_and_await(t, &r, "LEITA-SOLD", says)
 	testing.expectf(t, ok, "the window did not say %q within %v", says, ACTIVATE_BOUND)
 	testing.expectf(t, took < ACTIVATE_BOUND, "took %v", took)

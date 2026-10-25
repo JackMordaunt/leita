@@ -73,6 +73,10 @@ PORTAL_PAGE :: `<!doctype html>
 // GAP is how far apart a trickle sends its bytes unless the server is given one.
 GAP :: 50 * time.Millisecond
 
+// REFUSAL_TIMEOUT is a request timeout under which Linux, macOS and Windows say
+// a refused port was refused, twice the 2.01 s Windows took; see refused.
+REFUSAL_TIMEOUT :: 4 * time.Second
+
 // Server is a loopback server with a fault. Read its fields only through the
 // procedures here: each connection runs on a thread of its own.
 Server :: struct {
@@ -196,9 +200,14 @@ accepted :: proc(s: ^Server) -> int {
 
 /*
 refused is a URL with path on 127.0.0.1 at a port nothing listens on, so a
-connection to it is refused at once: a port that was bound and let go. Another
+connection to it is refused: a port that was bound and let go. Another
 test may bind it again in between, which a refusal test then sees as an
 answer it did not want; the window is the few instructions until it dials.
+
+A refusal is not at once on Windows, which sends a refused SYN again, twice,
+half a second apart: CI run 40192004332 saw curl end one after 2.01 s. A
+request to refused should be given REFUSAL_TIMEOUT, or it is said as a timeout
+there and a refusal everywhere else.
 */
 refused :: proc(path := "/", allocator := context.temp_allocator) -> string {
 	port := 1

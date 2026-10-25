@@ -26,10 +26,10 @@ Outcome :: struct {
 @(private = "file", thread_local)
 said_last: string
 
-get :: proc(url: string) -> (g: Outcome) {
+get :: proc(url: string, timeout := TIMEOUT) -> (g: Outcome) {
 	start := time.now()
 	g.res, g.err = http.get(url, {
-			timeout = TIMEOUT,
+			timeout = timeout,
 			on_error = proc(msg: string) {said_last = strings.clone(msg, context.temp_allocator)},
 		}, context.temp_allocator)
 	g.took = time.diff(start, time.now())
@@ -159,7 +159,7 @@ only_the_named_path_is_broken :: proc(t: ^testing.T) {
 @(test)
 nothing_answers_a_refused_port_or_an_invalid_name :: proc(t: ^testing.T) {
 	testing.set_fail_timeout(t, time.Minute)
-	expect_failed(t, get(refused("/")), .Transfer_Failed)
+	expect_failed(t, get(refused("/"), REFUSAL_TIMEOUT), .Transfer_Failed)
 	expect_failed(t, get("http://" + UNRESOLVABLE + "/"), .Transfer_Failed)
 }
 
