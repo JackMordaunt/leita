@@ -27,9 +27,13 @@ import time
 
 TYPED = "Docker.raw"
 FIND_SECONDS = 60
-# Long enough for the scan of the made-up disk to have reached Docker.raw and
-# the search to have answered, under AddressSanitizer on a hosted runner.
-SEARCH_SECONDS = 30
+# The scan of the made-up disk is paced as a real walk: its status line said
+# 9.6 s on the hosted Linux runner (test run 40143753338). Typing after it has
+# finished searches the whole disk once.
+SCAN_SECONDS = 25
+# The search's answer under AddressSanitizer on a hosted runner had not come in
+# 30 s (the same run), so it is given longer.
+SEARCH_SECONDS = 60
 EXIT_SECONDS = 60
 
 
@@ -290,7 +294,7 @@ def main():
                 time.sleep(0.5)
         if not step("appeared", window is not None):
             fail(f"no window of process {proc.pid} in {FIND_SECONDS} s (exit {proc.poll()})")
-        time.sleep(2)  # the first frames draw
+        time.sleep(SCAN_SECONDS)
         result["title"] = driver.title(window)
         driver.focus(window)
         time.sleep(0.5)
