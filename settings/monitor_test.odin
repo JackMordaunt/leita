@@ -1,3 +1,4 @@
+//review:ignore history-coupled-file only the temp folder name changed; the code under test did not
 package leita_settings
 
 import "core:fmt"
@@ -7,6 +8,7 @@ import "core:strings"
 import "core:testing"
 
 import "jm:sqlite3"
+import "../testtmp"
 
 @(test)
 monitoring_is_off_until_turned_on :: proc(t: ^testing.T) {
@@ -82,7 +84,7 @@ runs_are_kept_newest_first_up_to_a_limit :: proc(t: ^testing.T) {
 
 @(test)
 a_store_opened_again_keeps_its_watches :: proc(t: ^testing.T) {
-	dir, derr := os.make_directory_temp("", "leita-settings-*", context.temp_allocator)
+	dir, derr := testtmp.make_dir("", "leita-settings-*", context.temp_allocator)
 	testing.expect(t, derr == nil)
 	defer os.remove_all(dir)
 	path, _ := filepath.join({dir, FILE}, context.temp_allocator)
@@ -108,7 +110,7 @@ a_store_opened_again_keeps_its_watches :: proc(t: ^testing.T) {
 // rows, which read as the column's default; opening it again changes nothing.
 @(test)
 an_older_store_gains_the_columns_it_lacks :: proc(t: ^testing.T) {
-	dir, derr := os.make_directory_temp("", "leita-settings-*", context.temp_allocator)
+	dir, derr := testtmp.make_dir("", "leita-settings-*", context.temp_allocator)
 	testing.expect(t, derr == nil)
 	defer os.remove_all(dir)
 	path, _ := filepath.join({dir, FILE}, context.temp_allocator)

@@ -9,6 +9,7 @@ import "core:strings"
 import "core:testing"
 
 import "../update"
+import "../testtmp"
 
 UPDATE_ASSET :: "leita-test-asset"
 
@@ -33,7 +34,7 @@ sha256 :: proc(body: string) -> string {
 
 @(private = "file")
 release_of :: proc(t: ^testing.T, running, published, version: string) -> (r: Release) {
-	root, err := os.make_directory_temp("", "leita-update-cli-*", context.temp_allocator)
+	root, err := testtmp.make_dir("", "leita-update-cli-*", context.temp_allocator)
 	testing.expect(t, err == nil)
 	r.root = root
 	r.dir = fmt.tprintf("%s/release", root)

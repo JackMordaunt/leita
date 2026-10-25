@@ -6,12 +6,13 @@ import "core:testing"
 import "core:time"
 
 import "../licence"
+import "../testtmp"
 
 // The trial's start is kept in the store as well as the first-use file, so
 // deleting the file gives it back rather than starting the trial again.
 @(test)
 the_store_keeps_the_trial_start_when_the_file_is_deleted :: proc(t: ^testing.T) {
-	dir, derr := os.make_directory_temp("", "leita-trial-*", context.temp_allocator)
+	dir, derr := testtmp.make_dir("", "leita-trial-*", context.temp_allocator)
 	testing.expect(t, derr == nil)
 	defer os.remove_all(dir)
 	kept, _ := filepath.join({dir, "data", "history.db"}, context.temp_allocator)

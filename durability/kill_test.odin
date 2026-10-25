@@ -17,6 +17,7 @@ import "../scan"
 import "../settings"
 import "../survey"
 import "../walk"
+import "../testtmp"
 
 // WAIT is as long as a child is given to finish a case before it is taken as hung.
 WAIT :: 60 * time.Second
@@ -31,7 +32,7 @@ workdir :: proc(t: ^testing.T, name: string) -> string {
 	if info, err := os.stat(parent, context.temp_allocator); err == nil && info.fullpath != "" {
 		parent = info.fullpath
 	}
-	dir, err := os.make_directory_temp(parent, fmt.tprintf("leita-durability-%s-*", name), context.temp_allocator)
+	dir, err := testtmp.make_dir(parent, fmt.tprintf("leita-durability-%s-*", name), context.temp_allocator)
 	testing.expectf(t, err == nil, "no work directory: %v", err)
 	return dir
 }

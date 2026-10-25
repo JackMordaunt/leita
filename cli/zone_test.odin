@@ -25,6 +25,7 @@ import "jm:timefmt"
 
 import "../history"
 import "../report"
+import "../testtmp"
 
 ZONE_CASE :: "LEITA_ZONE_CASE"
 ZONE_ARG :: "LEITA_ZONE_ARG"
@@ -55,7 +56,7 @@ zone_case :: proc(name, arg: string) -> string {
 	case "record":
 		// arg is Unix seconds, comma apart: an action taken at each, the record as
 		// leita history writes it.
-		dir, _ := os.make_directory_temp("", "leita-zone-*", context.temp_allocator)
+		dir, _ := testtmp.make_dir("", "leita-zone-*", context.temp_allocator)
 		defer os.remove_all(dir)
 
 		kept := fmt.tprintf("%s/history.db", dir)

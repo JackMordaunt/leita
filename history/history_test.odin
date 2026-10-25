@@ -10,6 +10,7 @@ import "jm:sqlite3"
 
 import "../scan"
 import "../survey"
+import "../testtmp"
 
 @(test)
 a_snapshot_comes_back_as_it_was_saved :: proc(t: ^testing.T) {
@@ -203,7 +204,7 @@ test_a_baseline_lives_beside_the_store :: proc(t: ^testing.T) {
 // history fuzz suite's store property found this.
 @(test)
 a_one_byte_file_is_refused_not_rewritten :: proc(t: ^testing.T) {
-	dir, dir_err := os.make_directory_temp("", "leita-onebyte-*", context.temp_allocator)
+	dir, dir_err := testtmp.make_dir("", "leita-onebyte-*", context.temp_allocator)
 	testing.expect(t, dir_err == nil, "no temp directory")
 	defer os.remove_all(dir)
 
@@ -225,7 +226,7 @@ a_one_byte_file_is_refused_not_rewritten :: proc(t: ^testing.T) {
 // BASELINE_KEPT, a stopped save's temporary file among them, and keeps the rest.
 @(test)
 test_opening_the_store_prunes_old_baselines :: proc(t: ^testing.T) {
-	dir, dir_err := os.make_directory_temp("", "leita-prune-*", context.temp_allocator)
+	dir, dir_err := testtmp.make_dir("", "leita-prune-*", context.temp_allocator)
 	testing.expect(t, dir_err == nil, "no temp directory")
 	defer os.remove_all(dir)
 	store := filepath.join({dir, "history.db"}, context.temp_allocator) or_else ""
@@ -256,7 +257,7 @@ test_opening_the_store_prunes_old_baselines :: proc(t: ^testing.T) {
 // and opening it again changes nothing.
 @(test)
 a_snapshot_keeps_its_disk_and_an_older_store_gains_it :: proc(t: ^testing.T) {
-	dir, derr := os.make_directory_temp("", "leita-history-*", context.temp_allocator)
+	dir, derr := testtmp.make_dir("", "leita-history-*", context.temp_allocator)
 	testing.expect(t, derr == nil)
 	defer os.remove_all(dir)
 	path, _ := filepath.join({dir, "history.db"}, context.temp_allocator)

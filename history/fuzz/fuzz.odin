@@ -23,6 +23,7 @@ import history ".."
 import "../../changes"
 import "../../scan"
 import "../../survey"
+import "../../testtmp"
 
 // Case holds the well-formed files damage starts from: the one this build
 // writes first, then the ones earlier builds wrote (see seeds.odin).
@@ -71,7 +72,7 @@ check_store :: proc(c: Case, src: ^harness.Source) -> (detail: string, ok: bool)
 	if len(raw) > INPUT_CAP {
 		return fmt.tprintf("drew %d bytes, cap is %d", len(raw), INPUT_CAP), false
 	}
-	dir, err := os.make_directory_temp("", "leita-fuzz-*", context.temp_allocator)
+	dir, err := testtmp.make_dir("", "leita-fuzz-*", context.temp_allocator) //review:ignore odin-allocator-parameter a fuzz test body takes no allocator, as before
 	if err != nil {
 		return "no temp directory", false
 	}
@@ -117,7 +118,7 @@ check_baseline :: proc(c: Case, src: ^harness.Source) -> (detail: string, ok: bo
 	if len(raw) > INPUT_CAP {
 		return fmt.tprintf("drew %d bytes, cap is %d", len(raw), INPUT_CAP), false
 	}
-	dir, err := os.make_directory_temp("", "leita-fuzz-*", context.temp_allocator)
+	dir, err := testtmp.make_dir("", "leita-fuzz-*", context.temp_allocator) //review:ignore odin-allocator-parameter a fuzz test body takes no allocator, as before
 	if err != nil {
 		return "no temp directory", false
 	}
@@ -215,7 +216,7 @@ publish :: proc(w: ^scan.Writer, i, parent: u32, name: string, disk: u64, extra:
 
 @(private)
 fresh_store :: proc() -> []byte {
-	dir, err := os.make_directory_temp("", "leita-fuzz-*", context.temp_allocator)
+	dir, err := testtmp.make_dir("", "leita-fuzz-*", context.temp_allocator) //review:ignore odin-allocator-parameter a fuzz test body takes no allocator, as before
 	if err != nil {
 		return nil
 	}
@@ -236,7 +237,7 @@ fresh_store :: proc() -> []byte {
 
 @(private)
 fresh_baseline :: proc() -> []byte {
-	dir, err := os.make_directory_temp("", "leita-fuzz-*", context.temp_allocator)
+	dir, err := testtmp.make_dir("", "leita-fuzz-*", context.temp_allocator) //review:ignore odin-allocator-parameter a fuzz test body takes no allocator, as before
 	if err != nil {
 		return nil
 	}

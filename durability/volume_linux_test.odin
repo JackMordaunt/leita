@@ -17,6 +17,7 @@ import "../scan"
 import "../settings"
 import "../survey"
 import "../walk"
+import "../testtmp"
 
 /*
 Real volumes that are full or read-only, not the seam's word for it: a tmpfs of a
@@ -113,7 +114,7 @@ make_read_only :: proc(t: ^testing.T, v: Volume) -> bool {
 @(private = "file")
 workdir_for :: proc(t: ^testing.T, name: string) -> string {
 	parent := os.temp_directory(context.temp_allocator) or_else "."
-	dir, err := os.make_directory_temp(parent, fmt.tprintf("leita-durability-%s-*", name), context.temp_allocator)
+	dir, err := testtmp.make_dir(parent, fmt.tprintf("leita-durability-%s-*", name), context.temp_allocator)
 	testing.expectf(t, err == nil, "no work directory: %v", err)
 	return dir
 }

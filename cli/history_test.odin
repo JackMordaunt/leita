@@ -10,12 +10,13 @@ import "jm:timefmt"
 
 import "../history"
 import "../scan"
+import "../testtmp"
 
 // A data folder for one test, and the history store in it, holding done.
 @(private = "file")
 seeded :: proc(t: ^testing.T, done: []history.Action) -> (dir, kept: string) {
 	err: os.Error
-	dir, err = os.make_directory_temp("", "leita-history-cli-*", context.temp_allocator)
+	dir, err = testtmp.make_dir("", "leita-history-cli-*", context.temp_allocator)
 	testing.expect(t, err == nil)
 	kept = fmt.tprintf("%s/data/history.db", dir)
 	st: history.Store

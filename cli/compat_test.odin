@@ -19,6 +19,7 @@ import "../licence"
 import "../scan"
 import "../settings"
 import "../survey"
+import "../testtmp"
 
 /*
 Every earlier on-disk format, read by this build. The fixtures in testdata/compat
@@ -52,7 +53,7 @@ PLACE :: "/compat/place"
 // A folder for one test; the caller removes it.
 @(private = "file")
 folder :: proc(t: ^testing.T) -> string {
-	dir, err := os.make_directory_temp("", "leita-compat-*", context.temp_allocator)
+	dir, err := testtmp.make_dir("", "leita-compat-*", context.temp_allocator)
 	testing.expect(t, err == nil, "could not make a folder")
 	return dir
 }

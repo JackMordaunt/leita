@@ -14,6 +14,7 @@ import sqlite3 "jm:sqlite3"
 import history ".."
 import "../../scan"
 import "../../survey"
+import "../../testtmp"
 
 CASES :: 400
 
@@ -62,7 +63,7 @@ fixtures_reach_the_node_table :: proc(t: ^testing.T) {
 measure :: proc(c: Case, which: int) -> Outcomes {
 	out := make(Outcomes)
 	rand.reset(11)
-	dir, err := os.make_directory_temp("", "leita-fuzz-depth-*", context.temp_allocator)
+	dir, err := testtmp.make_dir("", "leita-fuzz-depth-*", context.temp_allocator)
 	if err != nil {
 		return out
 	}

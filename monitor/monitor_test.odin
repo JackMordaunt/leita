@@ -5,6 +5,7 @@ import "core:os"
 import "core:testing"
 
 import "../settings"
+import "../testtmp"
 
 @(test)
 a_place_is_due_once_its_period_is_nearly_up :: proc(t: ^testing.T) {
@@ -67,7 +68,7 @@ a_daily_and_a_weekly_place_keep_their_period_in_elapsed_time :: proc(t: ^testing
 
 @(test)
 a_run_holds_a_lock_another_run_stands_aside_for :: proc(t: ^testing.T) {
-	dir, err := os.make_directory_temp("", "leita-lock-*", context.temp_allocator)
+	dir, err := testtmp.make_dir("", "leita-lock-*", context.temp_allocator)
 	testing.expect(t, err == nil)
 	defer os.remove_all(dir)
 	path := fmt.tprintf("%s/%s", dir, LOCK_FILE)

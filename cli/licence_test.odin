@@ -13,6 +13,7 @@ import "core:time"
 
 import "../licence"
 import "../monitor"
+import "../testtmp"
 
 // A key pair made for a test, standing in for Librium's.
 @(private = "file")
@@ -55,7 +56,7 @@ TERMS :: #load("../licence/testdata/sample.json", string)
 @(private = "file")
 data_folder :: proc(t: ^testing.T) -> (dir, kept: string) {
 	err: os.Error
-	dir, err = os.make_directory_temp("", "leita-licence-cli-*", context.temp_allocator)
+	dir, err = testtmp.make_dir("", "leita-licence-cli-*", context.temp_allocator)
 	testing.expect(t, err == nil)
 	joined, _ := filepath.join({dir, "data", "history.db"}, context.temp_allocator)
 	return dir, joined

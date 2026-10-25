@@ -45,6 +45,7 @@ import "../command"
 import "../msg"
 import "../query"
 import "../view"
+import "../../testtmp"
 
 // The whole application, less the window: the view runs in a probe, the probe's
 // needs and commands go to the host as the frame loop would send them, and the
@@ -4588,7 +4589,7 @@ an_activation_that_fails_says_so_in_time_and_keeps_nothing :: proc(t: ^testing.T
 		}
 	}
 	if netfault.openssl_found() {
-		dir, _ := os.make_directory_temp("", "leita-certs-*", context.temp_allocator)
+		dir, _ := testtmp.make_dir("", "leita-certs-*", context.temp_allocator)
 		defer os.remove_all(dir)
 		certs, why, made := netfault.make_certs(dir)
 		testing.expect(t, made, why)

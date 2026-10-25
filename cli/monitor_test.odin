@@ -19,6 +19,7 @@ import "../scan"
 import "../schedule"
 import "../settings"
 import "../webhook"
+import "../testtmp"
 
 // A test's machine: a data folder of its own, a place to watch in it, and a
 // scheduler that records what it is asked rather than doing it.
@@ -74,7 +75,7 @@ monitor_record_command :: proc(argv: []string, user: rawptr) -> schedule.Outcome
 
 @(private = "file")
 monitor_bench_open :: proc(t: ^testing.T, b: ^Monitor_Bench) {
-	dir, err := os.make_directory_temp("", "leita-monitor-*", context.temp_allocator)
+	dir, err := testtmp.make_dir("", "leita-monitor-*", context.temp_allocator)
 	testing.expect(t, err == nil)
 	b.dir = dir
 	b.place = monitor_join(dir, "watched")
@@ -388,7 +389,7 @@ monitor_monitoring_is_refused_once_the_trial_is_over_but_can_still_be_turned_off
 // the file does not open monitoring again once the trial is over.
 @(test)
 monitor_monitoring_stays_locked_when_the_first_use_file_is_deleted :: proc(t: ^testing.T) {
-	dir, err := os.make_directory_temp("", "leita-trial-*", context.temp_allocator)
+	dir, err := testtmp.make_dir("", "leita-trial-*", context.temp_allocator)
 	testing.expect(t, err == nil)
 	defer os.remove_all(dir)
 	kept := monitor_join(dir, "data", "history.db")

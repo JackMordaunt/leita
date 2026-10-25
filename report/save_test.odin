@@ -7,13 +7,14 @@ import "core:strings"
 import "core:testing"
 
 import "../faults"
+import "../testtmp"
 
 // Each way the disk can refuse a step of a save: the report says it was not
 // written, the file at the path before is what it holds after, byte for byte, and
 // no partial file is left beside it.
 @(test)
 a_disk_fault_in_a_save_keeps_the_report_before :: proc(t: ^testing.T) {
-	dir, derr := os.make_directory_temp("", "leita-report-faults-*", context.temp_allocator)
+	dir, derr := testtmp.make_dir("", "leita-report-faults-*", context.temp_allocator)
 	testing.expect(t, derr == nil)
 	defer os.remove_all(dir)
 
