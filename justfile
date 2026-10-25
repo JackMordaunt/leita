@@ -470,7 +470,9 @@ fuzz suite="" seed="1" duration="" *extra: sqlite
 # on one thread: on Linux Odin maps arena memory with system calls TSan does not
 # see, so two tests that reuse an address on two threads read as a race. A
 # test's own threads are still watched. tools/tsan.supp lists the reports that
-# are not bugs, each with its reason; TSan fails the binary on any other.
+# are not bugs, each with its reason. Any other report stops the binary at once
+# (halt_on_error): on Linux Odin exits with a system call, so TSan's own exit
+# status at the end of a run never happens and a race would otherwise pass.
 soak sanitizer="address" duration="10m" seed="1" rounds="2" gui="gui": sqlite
     #!/usr/bin/env bash
     set -euo pipefail
@@ -478,7 +480,7 @@ soak sanitizer="address" duration="10m" seed="1" rounds="2" gui="gui": sqlite
     case "{{sanitizer}}" in
     thread)
         export SAN="-sanitize:thread -define:ODIN_TEST_THREADS=1"
-        export TSAN_OPTIONS="suppressions={{root}}/tools/tsan.supp ${TSAN_OPTIONS:-}"
+        export TSAN_OPTIONS="suppressions={{root}}/tools/tsan.supp halt_on_error=1 ${TSAN_OPTIONS:-}"
         for round in $(seq 1 {{rounds}}); do
             echo "soak: thread round $round of {{rounds}}"
             j test
