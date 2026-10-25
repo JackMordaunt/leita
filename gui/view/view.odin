@@ -428,14 +428,38 @@ chart_lost :: proc(prog: ^query.Progress_Result) -> bool {
 	return prog.state == .Failed && prog.nodes == 0
 }
 
-// chart_row is the chart beside its side panel, the grip between them.
+/*
+chart_row is the chart beside its side panel, the grip between them. The chart
+takes what the grip and the side column leave, sized from this frame's width: a
+weighted chart before them would take its share from the frame before
+(ui.flexible), so on the frame a scan first lands in the side column would sit
+past the window, and the Fill column, as wide as its widest row, would widen
+every banner above it for that frame (card 814).
+*/
 @(private)
 chart_row :: proc(gtx: ^ui.Ctx, m: ^Model) {
 	ui.row(gtx, align = .Fill)
-	ui.flexible(gtx, 1)
-	rings_panel(gtx, m)
+	was, was_shown := side_shown(gtx, m)
+	offered := ui.offer(gtx).max.x
+	if ui.is_finite(offered) {
+		chart := max(offered - GRIP - (was if was_shown else 0), 1)
+		if ui.sized(gtx, {min = {chart, 0}, max = {chart, ui.INF}}) {
+			rings_panel(gtx, m)
+		}
+	} else {
+		ui.flexible(gtx, 1)
+		rings_panel(gtx, m)
+	}
+	// A drag moves the column on the frame it lands, as before, and the chart
+	// follows on the next, which it asks for.
 	side_grip(gtx, m)
-	if width, shown := side_shown(gtx, m); shown {
+
+	width, shown := side_shown(gtx, m)
+	if width != was || shown != was_shown {
+		ui.request_frame(gtx)
+	}
+
+	if shown {
 		if ui.sized(gtx, {min = {width, 0}, max = {width, ui.INF}}) {
 			side(gtx, m)
 		}

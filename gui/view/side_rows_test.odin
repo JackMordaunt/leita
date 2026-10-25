@@ -113,3 +113,44 @@ the_side_rows_fit_the_window_on_the_frame_they_land :: proc(t: ^testing.T) {
 		testing.expectf(t, w == "", "the frames after: %s", w)
 	}
 }
+
+// The chart and the side column beside it fit the window on the frame a scan
+// first lands in, before the row they share has been laid out, and hold still
+// after it: the trial banner's Dismiss above them is where a click finds it.
+@(test)
+the_chart_row_fits_the_window_on_its_first_frame :: proc(t: ^testing.T) {
+	for size in SIDE_SIZES {
+		h: render.Headless
+		m: Model
+		model_init(&m, "/top")
+		m.settings_read = true
+		fonts := []ops.Font_Ref {
+			{0, ui.default_font(), 400},
+			{1, ui.default_font(), 500},
+			{2, ui.default_font(), 600},
+			{3, ui.default_font(), 400},
+		}
+		render.headless_init(&h, view, &m, size, fonts)
+		defer {
+			render.headless_destroy(&h)
+			model_destroy(&m)
+		}
+
+		p := &h.p
+		ui.probe_frame(p)
+		testing.expect(t, !ui.probe_tagged(p, "Resize panels"), "no chart before a scan")
+
+		ui.probe_deliver(
+			p,
+			query.Progress{},
+			query.Progress_Result{generation = 1, state = .Done, target = "/top"},
+		)
+		ui.probe_frame(p)
+		testing.expect(t, ui.probe_tagged(p, "Resize panels"), "the chart landed")
+		w := wider_than(p, size)
+		testing.expectf(t, w == "", "the frame the chart lands in, at %v: %s", size, w)
+		grip := ui.probe_bounds(p, "Resize panels")
+		ui.probe_advance(p, 5, 1.0 / 60)
+		testing.expect_value(t, ui.probe_bounds(p, "Resize panels"), grip)
+	}
+}
