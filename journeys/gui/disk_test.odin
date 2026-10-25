@@ -305,10 +305,10 @@ stop_a_scan_half_way :: proc(t: ^testing.T, scenario: Scenario) -> bool {
 
 /*
 lock shuts the folder at path to the user the test runs as: its mode cleared,
-or on Windows its access list cut to SYSTEM's alone. false, and a failure,
-when this process can still list it, as root can; on Windows the failure says
-the process's privileges. A deny entry for everyone left the folder listable on
-the hosted runner (CI run 40189468193).
+or on Windows its access list cut to SYSTEM's alone and this process's backup
+privileges put down until unlock (allow_backup). false, and a failure, when this
+process can still list it, as root can; on Windows the failure says the
+process's privileges.
 */
 lock :: proc(t: ^testing.T, path: string) -> bool {
 	when ODIN_OS == .Windows {
@@ -323,6 +323,7 @@ lock :: proc(t: ^testing.T, path: string) -> bool {
 			path,
 			string(errout),
 		)
+		testing.expect(t, allow_backup(false), "could not put this process's backup privileges down")
 	} else {
 		testing.expect(t, os.chmod(path, {}) == nil, "could not shut the folder")
 	}
@@ -333,10 +334,19 @@ lock :: proc(t: ^testing.T, path: string) -> bool {
 			unlock(path)
 			privileges := ""
 			when ODIN_OS == .Windows {
-				_, out, _, _ := os.process_exec({command = {"whoami", "/priv"}}, context.temp_allocator)
+				_, out, _, _ := os.process_exec(
+					{command = {"whoami", "/priv"}},
+					context.temp_allocator,
+				)
 				privileges = string(out)
 			}
-			testing.expectf(t, false, "%s is listed whatever its permissions say\n%s", path, privileges)
+			testing.expectf(
+				t,
+				false,
+				"%s is listed whatever its permissions say\n%s",
+				path,
+				privileges,
+			)
 			return false
 		}
 	}
@@ -346,6 +356,7 @@ lock :: proc(t: ^testing.T, path: string) -> bool {
 // unlock lets the user in to the folder lock shut, so it can be removed.
 unlock :: proc(path: string) {
 	when ODIN_OS == .Windows {
+		allow_backup(true)
 		_, _, _, _ = os.process_exec(
 			{command = {"icacls", path, "/reset"}},
 			context.temp_allocator,
