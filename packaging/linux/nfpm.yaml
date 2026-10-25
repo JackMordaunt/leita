@@ -64,6 +64,12 @@ contents:
     dst: /usr/share/icons/hicolor/scalable/apps/dev.mordaunt.Leita.svg
     file_info:
       mode: 0644
+  # Owned, as /usr/libexec/leita is, so removing the .rpm removes it too;
+  # rpm leaves a directory no package owns behind, empty.
+  - dst: /usr/share/doc/leita
+    type: dir
+    file_info:
+      mode: 0755
   - src: LICENSE.md
     dst: /usr/share/doc/leita/LICENSE.md
     file_info:
