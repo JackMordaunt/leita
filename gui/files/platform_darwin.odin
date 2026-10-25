@@ -118,6 +118,10 @@ trash_to :: proc(path: string, allocator := context.allocator) -> (to: string, e
 	}
 	posix.close(parent)
 
+	if before_trash != nil {
+		before_trash(path)
+	}
+
 	NS.scoped_autoreleasepool()
 	str := NS.String.alloc()->initWithOdinString(path)
 	defer str->release()

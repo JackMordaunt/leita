@@ -29,3 +29,12 @@ is_read_only :: proc(path: string) -> bool {
 	info, err := os.stat_do_not_follow_links(path, context.temp_allocator)
 	return err == nil && .Write_User not_in info.mode
 }
+
+// lock_file is Windows' alone, and locks nothing elsewhere: a POSIX rename or
+// unlink does not wait for a file's other opens.
+lock_file :: proc(path: string) -> rawptr {
+	_ = path
+	return nil
+}
+
+unlock_file :: proc(lock: rawptr) {}

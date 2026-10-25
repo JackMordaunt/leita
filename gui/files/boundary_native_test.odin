@@ -287,3 +287,97 @@ native_permission_recovery_does_not_follow_a_swapped_link :: proc(t: ^testing.T)
 		testing.expectf(t, err == .Partly && failed == 1, "%v: %v, %d left", kind, err, failed)
 	}
 }
+
+// Where a trash replaces a folder above the entry with a link after the folder is
+// checked and before the entry is moved.
+@(private = "file")
+Trash_Swap :: struct {
+	dir:     string,
+	target:  string,
+	kind:    Link_Kind,
+	fired:   bool,
+	linked:  bool,
+	refused: bool,
+	lock:    rawptr,
+}
+
+@(private = "file", thread_local)
+trash_swap: Trash_Swap
+
+@(private = "file")
+swap_on_trash :: proc(path: string) {
+	s := &trash_swap
+	if s.fired || s.dir == "" {
+		return
+	}
+	s.fired = true
+	if os.rename(s.dir, fmt.tprintf("%s.real", s.dir)) != nil {
+		// The trash holds the folder still. Lock the entry, so the move that follows
+		// fails and nothing reaches the user's Recycle Bin.
+		s.refused = true
+		s.lock = lock_file(path)
+		return
+	}
+	s.linked = link_dir(s.kind, s.target, s.dir)
+}
+
+/*
+A folder above the entry, its own or one higher, replaced with a link to a decoy of
+the same shape after trash checked it, must not have the decoy's entry moved. On
+macOS the swap goes ahead and the real entry is what is trashed; on Windows the swap
+itself is refused.
+
+	root/top/mid/item      what is trashed
+	root/decoy/mid/item    what a link at top or at mid would reach
+*/
+@(test)
+native_a_folder_swapped_before_a_trash_leaves_the_target :: proc(t: ^testing.T) {
+	for kind in KINDS {
+		for swapped in ([]string{"top", "mid"}) {
+			root := native_root(t, fmt.tprintf("trash_swap_%v_%s", kind, swapped))
+			defer os.remove_all(root)
+
+			testing.expect(t, os.make_directory_all(at(root, "top", "mid")) == nil)
+			testing.expect(t, os.make_directory_all(at(root, "decoy", "mid")) == nil)
+			item := at(root, "top", "mid", "item")
+			put(t, item, "real")
+			put(t, at(root, "decoy", "mid", "item"), "decoy")
+			// Where the real item is once its folder is moved aside.
+			aside := at(root, "top.real", "mid", "item")
+			trash_swap = Trash_Swap {
+				dir    = at(root, "top"),
+				target = at(root, "decoy"),
+				kind   = kind,
+			}
+			if swapped == "mid" {
+				aside = at(root, "top", "mid.real", "item")
+				trash_swap.dir = at(root, "top", "mid")
+				trash_swap.target = at(root, "decoy", "mid")
+			}
+
+			before_trash = swap_on_trash
+			when ODIN_OS == .Darwin {
+				landed, err := trash_to(item, context.temp_allocator)
+				if landed != "" {
+					os.remove(landed)
+				}
+			} else {
+				err := trash(item)
+			}
+			before_trash = nil
+			unlock_file(trash_swap.lock)
+			s := trash_swap
+
+			kept := os.exists(at(root, "decoy", "mid", "item"))
+			testing.expectf(t, kept, "%v %s: the trash followed the link into decoy (%v)", kind, swapped, err)
+			when ODIN_OS == .Windows {
+				testing.expectf(t, s.refused && !s.linked, "%v %s: the folder was swapped", kind, swapped)
+				testing.expectf(t, err != .None && os.exists(item), "%v %s: %v, the item moved", kind, swapped, err)
+			} else {
+				testing.expectf(t, s.linked, "%v %s: the folder was not replaced", kind, swapped)
+				testing.expectf(t, err == .None, "%v %s: %v", kind, swapped, err)
+				testing.expectf(t, !os.exists(aside), "%v %s: the real item was not trashed", kind, swapped)
+			}
+		}
+	}
+}

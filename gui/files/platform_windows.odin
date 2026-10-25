@@ -115,6 +115,10 @@ trash :: proc(path: string) -> Error {
 	}
 	win32.CloseHandle(parent)
 
+	if before_trash != nil {
+		before_trash(path)
+	}
+
 	wide := win32.utf8_to_utf16(path, context.temp_allocator)
 	from := make([]u16, len(wide) + 2, context.temp_allocator) // the list ends in two NULs
 	copy(from, wide)

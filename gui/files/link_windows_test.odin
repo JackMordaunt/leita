@@ -82,3 +82,24 @@ junction_directory :: proc(target, path: string) -> bool {
 	returned: win32.DWORD
 	return bool(win32.DeviceIoControl(d, win32.FSCTL_SET_REPARSE_POINT, &buf, total, nil, 0, &returned, nil))
 }
+
+// lock_file opens path sharing nothing, so no one else can open, move or delete it
+// until unlock_file. nil when it could not be opened.
+lock_file :: proc(path: string) -> rawptr {
+	h := win32.CreateFileW(
+		win32.utf8_to_wstring(path, context.temp_allocator),
+		win32.GENERIC_READ,
+		0,
+		nil,
+		win32.OPEN_EXISTING,
+		0,
+		nil,
+	)
+	return nil if h == win32.INVALID_HANDLE_VALUE else rawptr(h)
+}
+
+unlock_file :: proc(lock: rawptr) {
+	if lock != nil {
+		win32.CloseHandle(win32.HANDLE(lock))
+	}
+}

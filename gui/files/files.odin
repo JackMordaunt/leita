@@ -168,6 +168,11 @@ is_device_name :: proc(name: string) -> bool {
 @(private)
 before_enter: proc(name: string)
 
+// Called with the path trash was given once its folder is checked and before the
+// entry is moved, so a test can swap a folder between the two. Nil outside tests.
+@(private)
+before_trash: proc(path: string)
+
 /*
 delete_tree deletes the directory at path and everything in it, for good. It says
 how many entries it could not delete, not counting a folder kept only because it
