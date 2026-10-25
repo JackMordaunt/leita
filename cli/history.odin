@@ -156,13 +156,17 @@ place_given :: proc(place: string) -> string {
 
 // since_date is the start of the day date names, YYYY-MM-DD, in the machine's time
 // zone, in Unix seconds.
-@(private = "file")
+@(private)
 since_date :: proc(date: string) -> (since: i64, ok: bool) {
 	day := timefmt.parse(date, "%Y-%m-%d") or_return
-	// parse reads the day as UTC; the zone's offset at that moment moves it to
-	// local midnight.
-	offset := timefmt.local_parts(day).offset
-	return time.time_to_unix(day) - i64(offset), true
+	// parse reads the day as UTC. The zone's offset at that moment is not the one
+	// at local midnight when the clock changed between the two, as it does on the
+	// day a zone east of UTC changes it, so the offset is asked again at the
+	// midnight the first guess gives.
+	midnight := time.time_to_unix(day)
+	guess := midnight - i64(timefmt.local_parts(day).offset)
+	offset := timefmt.local_parts(time.unix(guess, 0)).offset
+	return midnight - i64(offset), true
 }
 
 // under is the actions whose path is place or beneath it.
