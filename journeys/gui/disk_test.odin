@@ -236,10 +236,13 @@ read_a_folder_that_loses_one :: proc(t: ^testing.T, scenario: Scenario) -> bool 
 	keep(&w, "vanished")
 
 	// The next scan, Rescan in the settings menu, reads only what is there.
+	// Until the host answers Rescan, the window still shows the first scan, whose
+	// listing already says only kept; so the checks below wait for the second.
+	first := w.m.generation
 	testing.expect(t, click(&w, tr(&w, .Settings)))
 	frames(&w, 10)
 	testing.expectf(t, click_top(&w, tr(&w, .Rescan)), "the menu offers Rescan:\n%s", show(&w))
-	frames(&w, 4)
+	testing.expectf(t, settle_scan(&w, first), "Rescan starts a scan:\n%s", show(&w))
 	testing.expectf(
 		t,
 		settle_said(&w, fmt.tprintf(`text "%s"`, trf(&w, .Listing_Summary, 1, "65.5 kB"))),

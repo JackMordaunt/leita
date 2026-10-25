@@ -227,6 +227,26 @@ settle :: proc(w: ^Window, name: string, present := true, seconds := 60) -> bool
 	}
 }
 
+/*
+settle_scan runs frames until the window shows a scan after the one numbered
+first, for at most seconds. Rescan is answered by the host: until it is, the
+window still shows the last scan, Done and listing and all, so a settle on those
+can pass on the scan before (card 780).
+*/
+settle_scan :: proc(w: ^Window, first: type_of(w.m.generation), seconds := 60) -> bool {
+	deadline := time.tick_now()._nsec + i64(seconds) * i64(time.Second)
+	for {
+		if w.m.generation != first {
+			return true
+		}
+		if time.tick_now()._nsec >= deadline {
+			return false
+		}
+		ui.probe_frame(&w.p)
+		time.sleep(2 * time.Millisecond)
+	}
+}
+
 // settle_said is settle on what a screen reader is told: until it holds text.
 settle_said :: proc(w: ^Window, text: string, seconds := 60) -> bool {
 	deadline := time.tick_now()._nsec + i64(seconds) * i64(time.Second)
