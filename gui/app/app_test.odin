@@ -4796,3 +4796,42 @@ activate_through_the_proxy :: proc(t: ^testing.T, says: string) {
 	testing.expectf(t, took < ACTIVATE_BOUND, "took %v", took)
 	expect_nothing_kept(t, &r, data, "through the proxy")
 }
+
+// STOP_BOUND is how soon after the click a Stop must have ended the walk.
+STOP_BOUND :: 300 * time.Millisecond
+
+/*
+Stop ends the walk however busy the desk is. On one CPU a tick took 0.8 s (card
+779), and a Stop queued behind it. The test holds the inbox, as a frame draining
+it does, so the desk stalls at its next answer, mid-tick; the walk must still
+end within STOP_BOUND of the click, and the scan say Stopped, not Done, once the
+desk goes on.
+*/
+@(test)
+stop_ends_the_walk_while_the_desk_is_busy :: proc(t: ^testing.T) {
+	r: Rig
+	rig_open(&r, "/", made_up = 12)
+	defer rig_close(&r)
+
+	testing.expect(t, open_settings(&r))
+	testing.expect(t, settle(&r, "Stop"), "the scan is running")
+	s := r.h.desk.scan
+	if !testing.expect(t, s != nil, "a scan") {
+		return
+	}
+
+	sync.mutex_lock(&r.h.inbox.mutex)
+	// A running scan is answered every tick, so two find the desk stalled.
+	time.sleep(2 * TICK)
+	testing.expect(t, ui.probe_click_top(&r.p, "Stop"))
+	clicked := time.tick_now()
+	hand_on(&r)
+	for sync.atomic_load(&s.fill.scanning) && time.tick_since(clicked) < 30 * time.Second {
+		time.sleep(time.Millisecond)
+	}
+	took := time.tick_since(clicked)
+	sync.mutex_unlock(&r.h.inbox.mutex)
+
+	testing.expectf(t, took < STOP_BOUND, "the walk ended %v after the click", took)
+	testing.expect(t, settle(&r, "Stopped"), "the scan was stopped, not finished")
+}

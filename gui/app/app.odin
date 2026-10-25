@@ -139,7 +139,7 @@ Scan :: struct {
 	started:               time.Tick,
 	begun:                 time.Time, // started, as a date
 	seconds:               f64, // frozen once the scan is over
-	stopped:               bool, // the window called it off
+	stopped:               bool, // atomic: the window called it off (stop_walk)
 	resolved:              bool, // fill.target holds a target to destroy
 	tree:                  scan.Tree,
 	grown:                 bool, // tree was initialised
@@ -269,11 +269,27 @@ Desk :: struct {
 	recordings:          ^stream.Port(Recorder_Change), // recorder_linux.odin's set_recording
 	scratch:             ^search.Scratch,
 	tested:              ^stream.Port(Test_Done), // webhook.odin's test_webhook
+	walking:             ^Walking, // the host's: the scan a Stop may call off without the desk
 	monitoring:          Monitoring, // monitor.odin
 	// LEITA_DESK_TRACE=1 at init: each command's arrival and handling, and each
 	// slow tick, go to stderr, timed from traced_from (trace).
 	trace:               bool,
 	traced_from:         time.Tick,
+}
+
+/*
+Walking is the scan whose walk is running, for a Stop or a Scan to call off from
+the thread that sends it (stop_walk). Either queues behind whatever the desk is
+doing: with one CPU shared, a tick took 0.2 s while the made-up disk was read,
+charging what the reader settled, and 0.8 s as the scan ended (card 779: the
+gui journeys under LEITA_DESK_TRACE on taskset -c 0 with two busy loops). The
+walk is the reader's, and calling it off is two atomic stores, so neither needs
+to wait. The desk sets scan once the reader starts and clears it before the
+reader is joined or the scan freed, under mutex.
+*/
+Walking :: struct {
+	mutex: sync.Mutex,
+	scan:  ^Scan,
 }
 
 Host :: struct {
@@ -287,6 +303,7 @@ Host :: struct {
 	recordings:    stream.Port(Recorder_Change),
 	tested:        stream.Port(Test_Done),
 	errands:       Errands, // errand.odin
+	walking:       Walking,
 	thumbs:        Thumbs, // thumbs.odin
 	workers:       ^stream.Workers,
 	inbox:         ui.Inbox,
@@ -351,6 +368,7 @@ init :: proc(
 		findings      = make(map[ui.Need_Key]^Finding, allocator),
 		passes        = make(map[^search.Pass]^Finding, allocator),
 		workers       = h.workers,
+		walking       = &h.walking,
 		searched      = &h.searched,
 		open_failures = &h.open_failures,
 		errands       = &h.errands,
@@ -544,13 +562,46 @@ on_command :: proc(user: rawptr, c: ui.Command) {
 	}
 }
 
-// send hands a command to the desk, from any thread.
+// send hands a command to the desk, from any thread. A Stop, and a Scan, which
+// replaces the scan running, call off its walk first, without waiting for the
+// desk to reach them.
 send :: proc(h: ^Host, c: command.Command) {
 	sent := Sent_Command{c, time.tick_now()}
 	if h.desk.trace {
 		trace(&h.desk, "arrive", sent)
 	}
+
+	#partial switch _ in c {
+	case command.Stop, command.Scan:
+		if stop_walk(&h.walking) && h.desk.trace {
+			trace(&h.desk, "cancel", sent)
+		}
+	}
+
 	stream.port_send(h.cmd_port, sent)
+}
+
+// stop_walk calls off the walk running, if one is, and says whether one was.
+// The scan it belonged to ends as Stopped (advance).
+stop_walk :: proc(w: ^Walking) -> bool {
+	sync.guard(&w.mutex)
+	s := w.scan
+	if s == nil {
+		return false
+	}
+	sync.atomic_store(&s.stopped, true)
+	scan.cancel(&s.tree)
+	return true
+}
+
+// walking_set says which scan's walk is running, nil for none: the desk's alone
+// to call.
+walking_set :: proc(d: ^Desk, s: ^Scan) {
+	if d.walking == nil {
+		return
+	}
+	sync.guard(&d.walking.mutex)
+	d.walking.scan = s
 }
 
 // --- the threads ---------------------------------------------------------------
@@ -659,7 +710,7 @@ desk_step :: proc(d: ^Desk, v: Desk_In) {
 			answer_all(d)
 		case command.Stop:
 			if s := d.scan; s != nil && s.state == .Scanning {
-				s.stopped = true
+				sync.atomic_store(&s.stopped, true)
 				scan.cancel(&s.tree)
 			}
 		case command.Baseline:
@@ -791,7 +842,7 @@ desk_step :: proc(d: ^Desk, v: Desk_In) {
 
 // trace writes one line of the desk trace: what happened to sent, how long after
 // it was sent, and, once the desk handles it, the scan's state then. The
-// sending thread traces an arrival, and reads only the
+// sending thread traces an arrival and a walk it called off, and reads only the
 // trace's own fields, which init set before any thread started.
 trace :: proc(d: ^Desk, what: string, sent: Sent_Command) {
 	state := "-"
@@ -879,6 +930,7 @@ scan_begin :: proc(d: ^Desk, path: string, cut := false) {
 		return
 	}
 	s.state = .Scanning
+	walking_set(d, s)
 	measure(s)
 }
 
@@ -906,6 +958,7 @@ scan_end :: proc(d: ^Desk) {
 		return
 	}
 	d.scan = nil
+	walking_set(d, nil)
 	if s.reader != nil {
 		if s.grown {
 			scan.cancel(&s.tree)
@@ -951,13 +1004,14 @@ advance :: proc(d: ^Desk) -> bool {
 		s.seconds = time.duration_seconds(synth.clock_override.elapsed())
 	}
 	if finished {
+		walking_set(d, nil)
 		thread.join(s.reader)
 		thread.destroy(s.reader)
 		s.reader = nil
 		// A probe may have settled on the MFT where a walk was chosen.
 		s.engine = s.fill.engine
 		switch {
-		case s.stopped:
+		case sync.atomic_load(&s.stopped):
 			s.state = .Stopped
 		case:
 			s.problem = survey.problem(&s.fill, context.allocator)
