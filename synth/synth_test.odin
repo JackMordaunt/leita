@@ -205,3 +205,95 @@ a_clock_preserves_generated_entries :: proc(t: ^testing.T) {
 		testing.expect_value(t, scan.name_of(&clocked, i), scan.name_of(&plain, i))
 	}
 }
+
+// Names are written without fmt, and each is the one fmt.bprintf wrote for it
+// before: the same day's disk keeps the names it had.
+@(test)
+names_are_those_fmt_wrote :: proc(t: ^testing.T) {
+	words := []string{"notes", "Écrits", "a"}
+	exts := []string{"", "txt", "photoslibrary"}
+	got_buf, want_buf: [192]u8
+	for style in Style {
+		for i in 0 ..< 1100 {
+			for ext in exts {
+				seed := mix(u64(i) * 31 + u64(style))
+				start := int(seed % 997)
+				r1, r2 := Rng{seed}, Rng{seed}
+				got := entry_name(got_buf[:], style, words, start, i, &r1, ext)
+				want := name_by_fmt(want_buf[:], style, words, start, i, &r2, ext)
+				if !testing.expectf(t, got == want, "%v %d %q: %q, want %q", style, i, ext, got, want) {
+					return
+				}
+				testing.expect_value(t, r1.s, r2.s)
+			}
+		}
+	}
+	// What does not fit the buffer is left off, as fmt.bprintf leaves it.
+	small: [6]u8
+	r1, r2 := Rng{7}, Rng{7}
+	testing.expect_value(
+		t,
+		entry_name(small[:], .Crate, words, 0, 0, &r1, "txt"),
+		name_by_fmt(want_buf[:6], .Crate, words, 0, 0, &r2, "txt"),
+	)
+}
+
+// name_by_fmt is entry_name as it was written with fmt.bprintf.
+@(private = "file")
+name_by_fmt :: proc(
+	buf: []u8,
+	style: Style,
+	words: []string,
+	start, i: int,
+	r: ^Rng,
+	ext: string,
+) -> string {
+	dot := "." if ext != "" else ""
+	#partial switch style {
+	case .Track:
+		return fmt.bprintf(buf, "%02d %s%s%s", i + 1, words[(start + i) % len(words)], dot, ext)
+	case .Words, .Crate:
+		word, round := words[(start + i) % len(words)], i / len(words)
+		if style == .Crate {
+			return fmt.bprintf(buf, "lib%s-%016x%s%s", word, next(r), dot, ext)
+		}
+		if round == 0 {
+			return fmt.bprintf(buf, "%s%s%s", word, dot, ext)
+		}
+		return fmt.bprintf(buf, "%s %d%s%s", word, round + 1, dot, ext)
+	}
+	a, b := next(r), next(r)
+	#partial switch style {
+	case .Hex2:
+		return fmt.bprintf(buf, "%02x%s%s", (start + i) % 256, dot, ext)
+	case .Digit:
+		return fmt.bprintf(buf, "%X%s%s", i % 16, dot, ext)
+	case .Uuid:
+		return fmt.bprintf(
+			buf,
+			"%08X-%04X-%04X-%04X-%012X%s%s",
+			u32(a >> 32),
+			u16(a >> 16),
+			u16(a),
+			u16(b >> 48),
+			b & 0xFFFF_FFFF_FFFF,
+			dot,
+			ext,
+		)
+	case .Part:
+		return fmt.bprintf(buf, "%03d-%05d-%03d%s%s", a % 100, b % 100_000, i % 1000, dot, ext)
+	case .Screenshot:
+		return fmt.bprintf(
+			buf,
+			"Screenshot 2026-%02d-%02d at %02d.%02d.%02d%s%s",
+			a % 9 + 1,
+			a / 9 % 28 + 1,
+			b % 24,
+			b / 24 % 60,
+			i % 60,
+			dot,
+			ext,
+		)
+	}
+	return fmt.bprintf(buf, "%016x%s%s", a, dot, ext)
+}
