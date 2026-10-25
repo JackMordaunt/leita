@@ -3,6 +3,7 @@ package history_fuzz
 import "core:fmt"
 import "core:log"
 import "core:math/rand"
+import jm_path "jm:path"
 import "core:os"
 import "core:path/filepath"
 import "core:testing"
@@ -62,7 +63,7 @@ fixtures_reach_the_node_table :: proc(t: ^testing.T) {
 measure :: proc(c: Case, which: int) -> Outcomes {
 	out := make(Outcomes)
 	rand.reset(11)
-	dir, err := os.make_directory_temp("", "leita-fuzz-depth-*", context.temp_allocator)
+	dir, err := jm_path.make_directory_temp("", "leita-fuzz-depth-*", context.temp_allocator)
 	if err != nil {
 		return out
 	}

@@ -1,5 +1,6 @@
 package leita_faults
 
+import jm_path "jm:path"
 import "core:os"
 import "core:path/filepath"
 import "core:testing"
@@ -7,7 +8,7 @@ import "core:testing"
 @(private = "file")
 scratch :: proc(t: ^testing.T, name: string) -> (dir, path: string) {
 	parent := os.temp_directory(context.temp_allocator) or_else "."
-	made, err := os.make_directory_temp(parent, "leita-faults-*", context.temp_allocator)
+	made, err := jm_path.make_directory_temp(parent, "leita-faults-*", context.temp_allocator)
 	testing.expect_value(t, err, nil)
 	path, _ = filepath.join({made, name}, context.temp_allocator)
 	return made, path

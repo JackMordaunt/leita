@@ -1,6 +1,8 @@
 package leita_settings
+//review:ignore history-coupled-file the change renames a temp-folder helper in the test and leaves the source alone
 
 import "core:fmt"
+import jm_path "jm:path"
 import "core:os"
 import "core:path/filepath"
 import "core:strings"
@@ -82,7 +84,7 @@ runs_are_kept_newest_first_up_to_a_limit :: proc(t: ^testing.T) {
 
 @(test)
 a_store_opened_again_keeps_its_watches :: proc(t: ^testing.T) {
-	dir, derr := os.make_directory_temp("", "leita-settings-*", context.temp_allocator)
+	dir, derr := jm_path.make_directory_temp("", "leita-settings-*", context.temp_allocator)
 	testing.expect(t, derr == nil)
 	defer os.remove_all(dir)
 	path, _ := filepath.join({dir, FILE}, context.temp_allocator)
@@ -108,7 +110,7 @@ a_store_opened_again_keeps_its_watches :: proc(t: ^testing.T) {
 // rows, which read as the column's default; opening it again changes nothing.
 @(test)
 an_older_store_gains_the_columns_it_lacks :: proc(t: ^testing.T) {
-	dir, derr := os.make_directory_temp("", "leita-settings-*", context.temp_allocator)
+	dir, derr := jm_path.make_directory_temp("", "leita-settings-*", context.temp_allocator)
 	testing.expect(t, derr == nil)
 	defer os.remove_all(dir)
 	path, _ := filepath.join({dir, FILE}, context.temp_allocator)

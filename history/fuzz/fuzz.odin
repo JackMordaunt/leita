@@ -13,6 +13,7 @@ removed after the asserts. Nothing here deletes a path it did not create.
 package history_fuzz
 
 import "core:fmt"
+import jm_path "jm:path"
 import "core:os"
 import "core:path/filepath"
 import "core:slice"
@@ -71,7 +72,8 @@ check_store :: proc(c: Case, src: ^harness.Source) -> (detail: string, ok: bool)
 	if len(raw) > INPUT_CAP {
 		return fmt.tprintf("drew %d bytes, cap is %d", len(raw), INPUT_CAP), false
 	}
-	dir, err := os.make_directory_temp("", "leita-fuzz-*", context.temp_allocator)
+	//review:ignore odin-allocator-parameter the fuzz scratch folder is removed by this proc, which keeps the temp allocator
+	dir, err := jm_path.make_directory_temp("", "leita-fuzz-*", context.temp_allocator)
 	if err != nil {
 		return "no temp directory", false
 	}
@@ -117,7 +119,8 @@ check_baseline :: proc(c: Case, src: ^harness.Source) -> (detail: string, ok: bo
 	if len(raw) > INPUT_CAP {
 		return fmt.tprintf("drew %d bytes, cap is %d", len(raw), INPUT_CAP), false
 	}
-	dir, err := os.make_directory_temp("", "leita-fuzz-*", context.temp_allocator)
+	//review:ignore odin-allocator-parameter the fuzz scratch folder is removed by this proc, which keeps the temp allocator
+	dir, err := jm_path.make_directory_temp("", "leita-fuzz-*", context.temp_allocator)
 	if err != nil {
 		return "no temp directory", false
 	}
@@ -215,7 +218,8 @@ publish :: proc(w: ^scan.Writer, i, parent: u32, name: string, disk: u64, extra:
 
 @(private)
 fresh_store :: proc() -> []byte {
-	dir, err := os.make_directory_temp("", "leita-fuzz-*", context.temp_allocator)
+	//review:ignore odin-allocator-parameter the fuzz scratch folder is removed by this proc, which keeps the temp allocator
+	dir, err := jm_path.make_directory_temp("", "leita-fuzz-*", context.temp_allocator)
 	if err != nil {
 		return nil
 	}
@@ -236,7 +240,8 @@ fresh_store :: proc() -> []byte {
 
 @(private)
 fresh_baseline :: proc() -> []byte {
-	dir, err := os.make_directory_temp("", "leita-fuzz-*", context.temp_allocator)
+	//review:ignore odin-allocator-parameter the fuzz scratch folder is removed by this proc, which keeps the temp allocator
+	dir, err := jm_path.make_directory_temp("", "leita-fuzz-*", context.temp_allocator)
 	if err != nil {
 		return nil
 	}

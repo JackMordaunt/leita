@@ -1,6 +1,7 @@
 package report
 
 import "core:fmt"
+import jm_path "jm:path"
 import "core:os"
 import "core:path/filepath"
 import "core:strings"
@@ -13,7 +14,7 @@ import "../faults"
 // no partial file is left beside it.
 @(test)
 a_disk_fault_in_a_save_keeps_the_report_before :: proc(t: ^testing.T) {
-	dir, derr := os.make_directory_temp("", "leita-report-faults-*", context.temp_allocator)
+	dir, derr := jm_path.make_directory_temp("", "leita-report-faults-*", context.temp_allocator)
 	testing.expect(t, derr == nil)
 	defer os.remove_all(dir)
 

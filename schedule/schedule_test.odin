@@ -1,6 +1,7 @@
 package leita_schedule
 
 import "core:log"
+import jm_path "jm:path"
 import "core:os"
 import "core:path/filepath"
 import "core:strings"
@@ -86,7 +87,7 @@ from_utf16 :: proc(data: []byte) -> string {
 
 @(private = "file")
 fake_host :: proc(t: ^testing.T, f: ^Fake, system: System) -> Host {
-	dir, err := os.make_directory_temp("", "leita-schedule-*", context.temp_allocator)
+	dir, err := jm_path.make_directory_temp("", "leita-schedule-*", context.temp_allocator)
 	testing.expect(t, err == nil)
 	f.dir = dir
 	f.commands = make([dynamic]string, context.temp_allocator)
@@ -377,7 +378,7 @@ another install earlier on PATH is skipped.
 */
 @(test)
 the_program_recorded_is_the_path_leita_was_started_by :: proc(t: ^testing.T) {
-	dir, err := os.make_directory_temp("", "leita-program-*", context.temp_allocator)
+	dir, err := jm_path.make_directory_temp("", "leita-program-*", context.temp_allocator)
 	testing.expect(t, err == nil)
 	defer os.remove_all(dir)
 	bin, _ := filepath.join({dir, "bin"}, context.temp_allocator)
