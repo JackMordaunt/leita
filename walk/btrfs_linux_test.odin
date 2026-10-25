@@ -137,6 +137,22 @@ test_walk_charges_btrfs_extents_or_says_why :: proc(t: ^testing.T) {
 	}
 	testing.expect_value(t, walked, want)
 
+	// compsize itself, run by tools/btrfs-fixture on the same directory (as root, the
+	// only one that may search extents). It is the other tool this total is held to,
+	// and it differs from the walk in one documented way: it charges an inline extent
+	// once for every path that reaches it, so a hard-linked inline file costs it once
+	// per extra name where the walk charges the file once. The fixture says how many
+	// bytes that is (LEITA_BTRFS_COMPSIZE_EXTRA); any other difference is a bug in one
+	// of the two.
+	compsize, compsize_ok := strconv.parse_u64(
+		os.get_env("LEITA_BTRFS_COMPSIZE", context.temp_allocator),
+	)
+	if searched && compsize_ok {
+		extra, _ := strconv.parse_u64(os.get_env("LEITA_BTRFS_COMPSIZE_EXTRA", context.temp_allocator))
+		log.infof("compsize: %d; walk: %d; inline bytes compsize charges per extra name: %d", compsize, walked, extra)
+		testing.expect_value(t, compsize, walked + extra)
+	}
+
 	// The same generated volume also checks incremental/full parity against the
 	// image's oracle, including compressed and shared extents on native CI.
 	updated: scan.Tree

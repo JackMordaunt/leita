@@ -122,7 +122,11 @@ jobs:
       - name: btrfs-test (linux)
         if: runner.os == 'Linux'
         timeout-minutes: 10
-        run: just btrfs-test --sudo
+        run: |
+          # compsize is the other tool the walk's total is held to
+          # (tools/btrfs-fixture); the fixture compares it where it is installed.
+          sudo apt-get install -y -qq compsize || echo "compsize not installed: its comparison is skipped"
+          just btrfs-test --sudo
       # Warm walk of a seeded tmpfs against the committed baseline. A median
       # past the tolerance fails the job. Ubuntu only; tools/fsbench --ci
       # mounts the tmpfs. The command line, the seed and a few runs stay

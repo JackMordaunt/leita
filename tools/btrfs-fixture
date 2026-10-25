@@ -53,6 +53,8 @@ WORK = REPO / "build" / "btrfs-fixture"
 IMAGE = WORK / "btrfs.img"
 SIZE = 256 * 1024 * 1024  # mkfs.btrfs wants 114 MiB at least for a single device
 WALK_TOTAL = "walk.test_walk_charges_btrfs_extents_or_says_why"
+# The inline file the volume holds two names of (tiny and tiny.link).
+TINY = b"small enough to sit inline in its metadata\n"
 
 
 def say(text: str) -> None:
@@ -208,7 +210,7 @@ def fill(top: Path) -> None:
         f.truncate(1024 * 1024)
         f.seek(512 * 1024)
         f.write(os.urandom(8192))
-    (vol / "plain/tiny").write_bytes(b"small enough to sit inline in its metadata\n")
+    (vol / "plain/tiny").write_bytes(TINY)
     os.link(vol / "plain/tiny", vol / "plain/tiny.link")
     os.link(vol / "plain/random", vol / "comp/random.link")
     run(["sync", "-f", str(top)])
@@ -257,6 +259,21 @@ def oracle(trees: list[int]) -> int:
         seen.update(regular)
         total += sum(inline.values())
     return total + sum(seen.values())
+
+
+def compsize_total(path: Path, how: str) -> int | None:
+    """What compsize -b reports as the disk usage of `path`, or None where it cannot
+    be had: not installed, or no root to search extents with (udisks)."""
+    if not shutil.which("compsize") or how == "udisks":
+        return None
+    prefix = ["sudo", "-n"] if how == "sudo" else []
+    done = subprocess.run(prefix + ["compsize", "-b", str(path)], capture_output=True, text=True)
+    for line in done.stdout.splitlines():
+        fields = line.split()
+        if done.returncode == 0 and len(fields) >= 5 and fields[0] == "TOTAL":
+            return int(fields[2])
+    say(f"compsize gave nothing to compare: {done.stdout.strip()} {done.stderr.strip()}")
+    return None
 
 
 def build(odin: str, flags: list[str], package: str, out: Path, define: str = "") -> None:
@@ -328,9 +345,21 @@ def main() -> int:
         all_disk = oracle([top_tree, vol_tree, snap_tree])
         say(f"oracle: vol {vol_disk} bytes, whole mount {all_disk} bytes")
         scratch = str(top / "scratch")
+        # compsize charges an inline extent once per name; the oracle once per inode
+        # and subvolume. tiny has two names, in one subvolume (vol) or two (the snapshot
+        # holds it too), so it costs compsize one more TINY per subvolume.
+        vol_env: dict[str, str] = {}
+        top_env: dict[str, str] = {}
+        vol_compsize, top_compsize = compsize_total(top / "vol", how), compsize_total(top, how)
+        if vol_compsize is not None:
+            vol_env = {"LEITA_BTRFS_COMPSIZE": str(vol_compsize), "LEITA_BTRFS_COMPSIZE_EXTRA": str(len(TINY))}
+            say(f"compsize: vol {vol_compsize} bytes, oracle {vol_disk} + {len(TINY)} inline")
+        if top_compsize is not None:
+            top_env = {"LEITA_BTRFS_COMPSIZE": str(top_compsize), "LEITA_BTRFS_COMPSIZE_EXTRA": str(2 * len(TINY))}
+            say(f"compsize: whole mount {top_compsize} bytes, oracle {all_disk} + {2 * len(TINY)} inline")
         runs = [
-            (walk_all, {"LEITA_BTRFS_DIR": str(top / "vol"), "LEITA_BTRFS_DISK": str(vol_disk), "LEITA_BTRFS_SCRATCH": scratch}),
-            (walk_total, {"LEITA_BTRFS_DIR": str(top), "LEITA_BTRFS_DISK": str(all_disk)}),
+            (walk_all, {"LEITA_BTRFS_DIR": str(top / "vol"), "LEITA_BTRFS_DISK": str(vol_disk), "LEITA_BTRFS_SCRATCH": scratch, **vol_env}),
+            (walk_total, {"LEITA_BTRFS_DIR": str(top), "LEITA_BTRFS_DISK": str(all_disk), **top_env}),
             (btrfs_all, {"LEITA_BTRFS_SCRATCH": scratch}),
         ]
         privileges = {"root": [True], "sudo": [False, True], "udisks": [False]}[how]
