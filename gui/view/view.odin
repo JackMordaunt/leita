@@ -920,7 +920,10 @@ listing :: proc(gtx: ^ui.Ctx, m: ^Model) {
 
 // entry is one row of a listing: its name, its share of the directory as a bar,
 // and its size. A directory's name opens it, and reports so; a right click on
-// any name opens the entry's menu.
+// any name opens the entry's menu. The name and the bar share what the size
+// leaves, 3 to 2, sized from this frame's width: a weighted child before the
+// size would take its share from the frame before, so the frame a listing
+// lands in would lay the row out wider than the column (ui.flexible).
 @(private)
 entry :: proc(
 	gtx: ^ui.Ctx,
@@ -933,22 +936,30 @@ entry :: proc(
 ) {
 	s := ui.scope_open(gtx, e.node)
 	defer ui.scope_close(&s)
-	ui.row(gtx, gap = 12, align = .Center)
-	ui.flexible(gtx, 3)
+	GAP :: 12
+	ui.row(gtx, gap = GAP, align = .Center)
+	width := ui.offer(gtx).max.x
+	// A size limit of 0 is none: an unbounded width leaves the cells natural.
+	free := max(width - SIZE_WIDTH - 2 * GAP, 1) if ui.is_finite(width) else 0
+
+	name_cell := ui.sized_open(gtx, {min = {free * 3 / 5, 0}, max = {free * 3 / 5, ui.INF}})
 	clicked, name := name_button(gtx, e.name, e.directory ? .File_Directory_Fill : .File)
+	ui.close(&name_cell)
+
 	opened = clicked && e.directory
 	row_menu(gtx, m, .Contents, name, {node = e.node, name = e.name, directory = e.directory})
 	if ui.widget_state(gtx, name.id).hovered {
 		m.row_hover_next = hover_of(e.node)
 	}
 	share := total > 0 ? 100 * f32(f64(e.bytes) / f64(total)) : 0
-	ui.flexible(gtx, 2)
-	primer.progress_bar(
-		gtx,
-		share,
-		bg = e.directory ? .Bg_Color_Accent_Emphasis : .Bg_Color_Neutral_Emphasis,
-		label = trf(gtx, .Share_Of, safe(gtx, e.name)),
-	)
+	if ui.sized(gtx, {min = {free * 2 / 5, 0}, max = {free * 2 / 5, ui.INF}}) {
+		primer.progress_bar(
+			gtx,
+			share,
+			bg = e.directory ? .Bg_Color_Accent_Emphasis : .Bg_Color_Neutral_Emphasis,
+			label = trf(gtx, .Share_Of, safe(gtx, e.name)),
+		)
+	}
 	if ui.sized(gtx, {min = {SIZE_WIDTH, 0}, max = {SIZE_WIDTH, ui.INF}}) {
 		if ui.column(gtx, align = .End) {
 			primer.text(gtx, human.bytes(e.bytes), .Small)
@@ -1004,37 +1015,79 @@ largest :: proc(gtx: ^ui.Ctx, m: ^Model) {
 					// The path starts under the icon, where the name's button
 					// starts its contents, not at the button's edge.
 					ui.inset(gtx, {left = tok.CONTROL_SMALL_PADDING_INLINE_CONDENSED})
-					if ui.row(gtx, gap = 8, align = .Center) {
-						ui.flexible(gtx, 1)
-						{
-							stack := ui.stack_open(gtx)
-							defer ui.close(&stack)
-							primer.truncate(
-								gtx,
-								safe(gtx, f.path),
-								title = raw_tip_text(gtx, f.path),
-								max_width = ui.INF,
-								size = .Small,
-								color = primer.color(.Fg_Color_Muted),
-							)
-							show_raw_tip(gtx, f.path, ui.last_widget(gtx))
-						}
-						primer.text(gtx, human.bytes(f.bytes), .Small)
-						size_notes(gtx, f.bytes, f.logical, f.logical_known, f.frees, f.frees_known)
-						if m.colour == .Change {
-							if d := delta_text(f.bytes, f.was, r.compared, gtx.allocator);
-							   d != "" {
-								primer.text(gtx, d, .Small, color = primer.color(.Fg_Color_Muted))
-							}
-						}
-					}
+					file_line(gtx, m, f, r.compared)
 				}
 			}
 		}
 	}
 }
 
+/*
+file_line is a largest file's line under its name: its path, then its size and
+notes. The sizes are recorded first and the path takes the width they leave, so
+the line fits on the frame it lands in, where a weighted path before them would
+take its share from the frame before (ui.flexible). Sizes that would leave the
+path less than half the line go on lines of their own under it, wrapping.
+*/
+@(private)
+file_line :: proc(gtx: ^ui.Ctx, m: ^Model, f: query.File, compared: bool) {
+	GAP :: 8
+	width := ui.offer(gtx).max.x
+	finite := ui.is_finite(width)
+	rec := ui.record_open(gtx, {max = {width if finite else ui.INF, ui.INF}})
+	if ui.wrap(gtx, gap = GAP, line_gap = 0, align = .Center) {
+		primer.text(gtx, human.bytes(f.bytes), .Small)
+		size_notes(gtx, f.bytes, f.logical, f.logical_known, f.frees, f.frees_known)
+		if m.colour == .Change {
+			if d := delta_text(f.bytes, f.was, compared, gtx.allocator); d != "" {
+				primer.text(gtx, d, .Small, color = primer.color(.Fg_Color_Muted))
+			}
+		}
+	}
+	sizes, dims := ui.record_close(&rec)
+
+	if !finite || dims.size.x + GAP <= width / 2 {
+		ui.row(gtx, gap = GAP, align = .Center)
+		// A size limit of 0 is none, so an unbounded width leaves the path natural.
+		path := width - dims.size.x - GAP if finite else 0
+		if ui.sized(gtx, {min = {path, 0}, max = {path, ui.INF}}) {
+			file_path(gtx, f.path)
+		}
+		place_recording(gtx, sizes, dims)
+	} else {
+		ui.column(gtx, align = .Fill)
+		file_path(gtx, f.path)
+		place_recording(gtx, sizes, dims)
+	}
+}
+
+// file_path is a largest file's path, cut to its width, the raw path in its tip.
+@(private)
+file_path :: proc(gtx: ^ui.Ctx, path: string) {
+	stack := ui.stack_open(gtx)
+	defer ui.close(&stack)
+
+	primer.truncate(
+		gtx,
+		safe(gtx, path),
+		title = raw_tip_text(gtx, path),
+		max_width = ui.INF,
+		size = .Small,
+		color = primer.color(.Fg_Color_Muted),
+	)
+	show_raw_tip(gtx, path, ui.last_widget(gtx))
+}
+
 // --- small parts ---------------------------------------------------------------
+
+// place_recording is a widget the size of a recorded run (ui.record_open) that
+// draws it.
+@(private)
+place_recording :: proc(gtx: ^ui.Ctx, run: ops.Macro_Id, dims: ui.Dims, loc := #caller_location) {
+	p := ui.widget_open(gtx, loc = loc)
+	ops.call(gtx.scene, run)
+	ui.widget_close(gtx, &p, dims)
+}
 
 // TITLE is the window's name in the toolbar: Primer's semibold title face at 24px,
 // between its medium (20px) and large (32px) steps, a brand rather than a page
