@@ -305,19 +305,21 @@ stop_a_scan_half_way :: proc(t: ^testing.T, scenario: Scenario) -> bool {
 
 /*
 lock shuts the folder at path to the user the test runs as: its mode cleared,
-or on Windows its listing denied to everyone. false, and a failure, when the
-user is let in whatever it says, as root is.
+or on Windows its access list cut to SYSTEM's alone. false, and a failure,
+when this process can still list it, as root can; on Windows the failure says
+the process's privileges. A deny entry for everyone left the folder listable on
+the hosted runner (CI run 40189468193).
 */
 lock :: proc(t: ^testing.T, path: string) -> bool {
 	when ODIN_OS == .Windows {
 		state, _, errout, exec_err := os.process_exec(
-			{command = {"icacls", path, "/deny", "*S-1-1-0:(RD)"}},
+			{command = {"icacls", path, "/inheritance:r", "/grant:r", "*S-1-5-18:(OI)(CI)F"}},
 			context.temp_allocator,
 		)
 		testing.expectf(
 			t,
 			exec_err == nil && state.exit_code == 0,
-			"icacls could not deny %s: %s",
+			"icacls could not shut %s: %s",
 			path,
 			string(errout),
 		)
@@ -329,7 +331,12 @@ lock :: proc(t: ^testing.T, path: string) -> bool {
 
 		if _, read_err := os.read_dir(dir, -1, context.temp_allocator); read_err == nil {
 			unlock(path)
-			testing.expectf(t, false, "%s is listed whatever its permissions say", path)
+			privileges := ""
+			when ODIN_OS == .Windows {
+				_, out, _, _ := os.process_exec({command = {"whoami", "/priv"}}, context.temp_allocator)
+				privileges = string(out)
+			}
+			testing.expectf(t, false, "%s is listed whatever its permissions say\n%s", path, privileges)
 			return false
 		}
 	}
@@ -340,7 +347,7 @@ lock :: proc(t: ^testing.T, path: string) -> bool {
 unlock :: proc(path: string) {
 	when ODIN_OS == .Windows {
 		_, _, _, _ = os.process_exec(
-			{command = {"icacls", path, "/remove:d", "*S-1-1-0"}},
+			{command = {"icacls", path, "/reset"}},
 			context.temp_allocator,
 		)
 	} else {
