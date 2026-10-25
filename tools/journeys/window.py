@@ -252,12 +252,31 @@ class Mac:
         self.script(f'tell application "System Events" to keystroke "{text}"')
 
     def close(self, _):
+        # On macOS the close button hides the window and Leita stays open, in
+        # the Dock (jm/ui/shell/close_darwin.odin); Cmd+Q quits it.
         got = self.script(
             'tell application "System Events" to click (first button whose subrole is "AXCloseButton") '
             f"of window 1 of {self.process(self.pid)}"
         )
         if got.returncode != 0:
             print(f"window: close button: {got.stderr.strip()}", file=sys.stderr)
+        self.kept = False
+        for _ in range(20):
+            if self.find(self.pid) is None:
+                self.kept = alive(self.pid)
+                break
+            time.sleep(0.5)
+        self.focus(None)
+        self.script('tell application "System Events" to keystroke "q" using command down')
+
+
+def alive(pid):
+    """Whether process pid is still running."""
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
 
 
 def main():
@@ -305,6 +324,8 @@ def main():
         step("typed", True)
         time.sleep(SEARCH_SECONDS)
         driver.close(window)
+        if hasattr(driver, "kept"):
+            step("hidden on close, still running", driver.kept)
         try:
             code = proc.wait(timeout=EXIT_SECONDS)
         except subprocess.TimeoutExpired:
