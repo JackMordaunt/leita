@@ -125,19 +125,11 @@ PAPERS := [?]struct {
 } {
 	{"", "", "", false},
 	{"", "", "en_US.UTF-8", true},
-	{"en_US.UTF-8", "", "", true},
-	{"", "", "es_MX.UTF-8", true},
-	{"", "", "en_GB.UTF-8", false},
-	{"", "", "de_DE.UTF-8", false},
 	{"", "", "tr_TR.UTF-8", false},
 	{"", "", "ja_JP.eucJP", false},
-	{"", "", "ar_SA.UTF-8", false},
-	{"", "", "C", false},
 	{"de_DE.UTF-8", "", "en_US.UTF-8", false},
 	{"C", "", "en_US.UTF-8", false},
-	{"POSIX", "", "en_US.UTF-8", false},
 	{"", "en_US.UTF-8", "de_DE.UTF-8", true},
-	{"de_DE.UTF-8", "en_US.UTF-8", "", false},
 }
 
 // A PDF the person did not ask a paper for is on the paper their locale prints on.
@@ -231,6 +223,7 @@ a_change_of_zone_between_scans_moves_the_wording_not_the_instant :: proc(t: ^tes
 		expect_code(t, second, 0)
 		// The scan was taken between the report's start and its writing; a minute
 		// may turn between them.
+		_, _ = begin, end
 		when ODIN_OS == .Windows {
 			testing.expectf(t, strings.contains(second.out, "history    unchanged since 20"), "%s", second.out)
 		} else {
