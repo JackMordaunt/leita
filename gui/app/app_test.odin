@@ -3500,9 +3500,11 @@ a_search_typed_during_a_scan_refines_until_it_is_done :: proc(t: ^testing.T) {
 	ui.probe_frame(&r.p)
 	hand_on(&r)
 	testing.expect(t, settle(&r, "cache"), "hits arrive")
+	// The first hits can come from so little of the disk, on a starved core,
+	// that every match is sent; a later pass finds more than are sent.
+	during := await_summary(&r, more_than_sent)
 	said := ui.probe_semantics(&r.p, context.temp_allocator)
 	testing.expectf(t, strings.contains(said, `"Scanning"`), "while the scan runs:\n%s", said)
-	during := summary_of(&r)
 	testing.expectf(t, strings.has_prefix(during, "The best 500 of "), "a total: %q", during)
 	// The hits come best first: a folder that is the term heads the list.
 	testing.expect_value(t, first_hit(&r), "cache")
@@ -3512,11 +3514,8 @@ a_search_typed_during_a_scan_refines_until_it_is_done :: proc(t: ^testing.T) {
 
 	testing.expect(t, settle(&r, "Done"), "the scan finished")
 	// Once complete, the total is what the whole disk holds: more than during.
-	deadline := time.tick_now()._nsec + i64(30 * time.Second)
-	for summary_of(&r) == during && time.tick_now()._nsec < deadline {
-		settle(&r, "never there")
-	}
-	after := summary_of(&r)
+	// The last pass starts once the scan is done, so it can land after "Done".
+	after := await_summary(&r, moved_on, during)
 	testing.expectf(t, after != during, "the total grew from %q", during)
 	testing.expect_value(t, first_hit(&r), "cache")
 
@@ -3531,7 +3530,39 @@ a_search_typed_during_a_scan_refines_until_it_is_done :: proc(t: ^testing.T) {
 	)
 }
 
-// summary_of is the search's summary as the frame shows it, "" for none.
+/*
+await_summary drains the host's answers into the probe, as settle does, until
+the search's summary passes ok against was, or 30 s pass, and returns it.
+settle waits for a tag it can name, and a miss logs an error, which fails the
+test: the wait this replaced was settle on a name never there, so a last pass
+landing after "Done" cost 30 s and failed the test.
+*/
+@(private = "file")
+await_summary :: proc(r: ^Rig, ok: proc(summary, was: string) -> bool, was := "") -> string {
+	deadline := time.tick_now()._nsec + i64(30 * time.Second)
+	for !ok(summary_of(r), was) && time.tick_now()._nsec < deadline {
+		if ui.inbox_pending(&r.h.inbox) {
+			take_answers(r)
+		} else {
+			time.sleep(time.Millisecond)
+		}
+	}
+	return summary_of(r)
+}
+
+// more_than_sent is whether the summary counts more matches than are sent.
+@(private = "file")
+more_than_sent :: proc(summary, _: string) -> bool {
+	return summary != ""
+}
+
+@(private = "file")
+moved_on :: proc(summary, was: string) -> bool {
+	return summary != was
+}
+
+// summary_of is the search's summary as the frame shows it when there are more
+// matches than are sent ("The best 500 of ..."), "" otherwise.
 @(private = "file")
 summary_of :: proc(r: ^Rig) -> string {
 	for tag in ui.probe_current(&r.p).tags {
