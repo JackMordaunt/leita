@@ -180,23 +180,13 @@ hand_on :: proc(r: ^Rig) {
 	ui.data_after_frame(&r.data, &r.needs, &r.p.router)
 }
 
-/*
-take_answers drains the host's answers into the probe and lays out two frames
-on them. A flex jm:ui has not laid out before shares its weighted children out
-from the previous frame's totals, so its first frame is exact only when every
-weighted child comes after every unweighted one (ui.flexible, jm/ui/layout.odin).
-A listing's rows put the size after the weighted name and bar, so the frame
-they land in lays them out wider than the side column, and the window's
-column, which fills to its widest child, widens every banner with them. In
-diag run 40188105131 the trial banner's Dismiss was at x 1079 in that frame and
-1043 in the next, so the click aimed from the first missed. After the second
-frame, what a test finds is where a hand would find it.
-*/
+// take_answers drains the host's answers into the probe and lays out a frame on
+// them. The side column's rows fit the frame they land in
+// (the_side_rows_fit_the_window_on_the_frame_they_land), so what a test finds
+// there is where a hand would find it.
 @(private = "file")
 take_answers :: proc(r: ^Rig) {
 	ui.inbox_drain(&r.h.inbox, &r.p.layout)
-	ui.probe_frame(&r.p)
-	hand_on(r)
 	ui.probe_frame(&r.p)
 	hand_on(r)
 }
