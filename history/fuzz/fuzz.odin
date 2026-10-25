@@ -24,9 +24,11 @@ import "../../changes"
 import "../../scan"
 import "../../survey"
 
+// Case holds the well-formed files damage starts from: the one this build
+// writes first, then the ones earlier builds wrote (see seeds.odin).
 Case :: struct {
-	store:    []byte,
-	baseline: []byte,
+	stores:    [][]byte,
+	baselines: [][]byte,
 }
 
 properties := []harness.Property(Case) {
@@ -56,7 +58,7 @@ setup :: proc() -> (Case, bool) {
 	if store == nil || base == nil {
 		return {}, false
 	}
-	return Case{store, base}, true
+	return seeded(store, base), true
 }
 
 teardown :: proc(_: ^Case) {}
@@ -65,7 +67,7 @@ teardown :: proc(_: ^Case) {}
 // still there afterwards. A refused open leaves the bytes alone. A successful
 // open may rewrite them only when they were already a database, or empty.
 check_store :: proc(c: Case, src: ^harness.Source) -> (detail: string, ok: bool) {
-	raw, _ := harness.damage(src, {c.store})
+	raw, _ := harness.damage(src, c.stores)
 	if len(raw) > INPUT_CAP {
 		return fmt.tprintf("drew %d bytes, cap is %d", len(raw), INPUT_CAP), false
 	}
@@ -111,7 +113,7 @@ check_store :: proc(c: Case, src: ^harness.Source) -> (detail: string, ok: bool)
 // check_baseline loads one damaged file. The reader only reads, so the file
 // and a sibling canary stay byte for byte what was written.
 check_baseline :: proc(c: Case, src: ^harness.Source) -> (detail: string, ok: bool) {
-	raw, _ := harness.damage(src, {c.baseline})
+	raw, _ := harness.damage(src, c.baselines)
 	if len(raw) > INPUT_CAP {
 		return fmt.tprintf("drew %d bytes, cap is %d", len(raw), INPUT_CAP), false
 	}
@@ -127,9 +129,18 @@ check_baseline :: proc(c: Case, src: ^harness.Source) -> (detail: string, ok: bo
 		return "could not write the baseline", false
 	}
 	before := read_file(path)
-	tree: scan.Tree
-	_, _, loaded := survey.baseline_load(path, "/place", &tree)
-	defer scan.tree_destroy(&tree)
+	// The place is part of what a baseline holds, so each file is read as
+	// the place this build wrote it for and as the one the fixtures are of.
+	for place in PLACES {
+		tree: scan.Tree
+		_, _, loaded := survey.baseline_load(path, place, &tree)
+		nodes := scan.slots(&tree)
+		scan.tree_destroy(&tree)
+		if loaded && nodes == 0 {
+			return "a baseline that loaded has no nodes", false
+		}
+	}
+
 	if !os.exists(path) {
 		return "the baseline was deleted", false
 	}
@@ -138,9 +149,6 @@ check_baseline :: proc(c: Case, src: ^harness.Source) -> (detail: string, ok: bo
 	}
 	if !slice.equal(read_file(canary), []byte{1, 2, 3, 4}) {
 		return "a sibling of the baseline was changed", false
-	}
-	if loaded && scan.slots(&tree) == 0 {
-		return "a baseline that loaded has no nodes", false
 	}
 	return "", true
 }
