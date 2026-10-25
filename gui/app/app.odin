@@ -1331,10 +1331,24 @@ largest :: proc(
 	files := make([]query.File, count, allocator)
 	for i in 0 ..< count {
 		files[i] = top[i]
-		files[i].path = scan.path(&s.tree, top[i].node, allocator)
+		files[i].path = shown_path(s, scan.path(&s.tree, top[i].node, allocator), allocator)
 		files[i].within = ancestors(s, top[i].node, allocator)
 		files[i].was = was_of(d, top[i].node)
 		files[i].logical, files[i].logical_known, files[i].frees, files[i].frees_known = node_measures(&s.tree, top[i].node)
 	}
 	return {files = files, compared = d.compared.id != 0}
+}
+
+/*
+shown_path is path, which scan.path built in allocator, as the window shows it:
+a made-up disk's is the Mac's, written with / alone (synth.mac_path), where a
+Windows host joined it with \. path is freed when a new one replaces it.
+*/
+shown_path :: proc(s: ^Scan, path: string, allocator := context.allocator) -> string {
+	if s.engine != .Synthetic {
+		return path
+	}
+	defer delete(path, allocator)
+
+	return synth.mac_path(path, allocator)
 }

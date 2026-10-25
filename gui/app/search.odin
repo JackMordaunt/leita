@@ -240,9 +240,15 @@ find_answer :: proc(
 		n := scan.node(&s.tree, h.node)
 		directory := .Directory in scan.node_flags(n)
 		found := search.describe(&f.s, h.node, d.scratch, allocator)
+		// A made-up disk's path is shown as the Mac writes it, which drops a
+		// separator after the root on Windows: the name and the marks in it
+		// move back by as many bytes.
+		full := len(found.path)
+		found.path = shown_path(s, found.path, allocator)
+		dropped := full - len(found.path)
 		marks := make([]query.Mark, len(found.spans), allocator)
 		for sp, i in found.spans {
-			marks[i] = {u32(sp.from), u32(sp.to)}
+			marks[i] = {u32(sp.from - dropped), u32(sp.to - dropped)}
 		}
 		append(
 			&hits,
@@ -250,7 +256,7 @@ find_answer :: proc(
 				node = h.node,
 				parent = n.parent,
 				path = found.path,
-				name_at = u32(found.name_at),
+				name_at = u32(found.name_at - dropped),
 				marks = marks,
 				bytes = directory ? survey.total(&s.roll, h.node) : n.disk,
 				directory = directory,

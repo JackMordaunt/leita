@@ -46,8 +46,12 @@ read_what_fills_the_disk :: proc(t: ^testing.T, scenario: Scenario) {
 	testing.expectf(
 		t,
 		strings.contains(said(&w), `button "Docker.raw" at`) &&
-		strings.contains(said(&w), `text "32.7 GB"`),
-		"the largest file is Docker.raw, 32.7 GB:\n%s",
+		strings.contains(said(&w), `text "32.7 GB"`) &&
+		strings.contains(
+			said(&w),
+			`desc "/Users/alex/Users/alex/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw"`,
+		),
+		"the largest file is Docker.raw, 32.7 GB, at its path as the Mac writes it:\n%s",
 		show(&w),
 	)
 	keep(&w, "sunburst")
