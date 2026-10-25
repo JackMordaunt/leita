@@ -388,6 +388,13 @@ real_folder :: proc(t: ^testing.T, name: string) -> string {
 	return root
 }
 
+// escaped is s as the accessibility tree quotes it: each backslash doubled, as
+// a Windows path's are.
+escaped :: proc(s: string) -> string {
+	out, _ := strings.replace_all(s, `\`, `\\`, context.temp_allocator)
+	return out
+}
+
 // within is the path of names below dir, joined as the scan joins them.
 within :: proc(dir: string, names: ..string) -> string {
 	sb := strings.builder_make(context.temp_allocator)

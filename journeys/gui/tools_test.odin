@@ -158,7 +158,7 @@ clean_real_projects :: proc(t: ^testing.T, scenario: Scenario) -> bool {
 		show(&w),
 	)
 	said_now := said(&w)
-	for line in ([]string{fmt.tprintf(`checkbox "%s" desc "`, modules), fmt.tprintf(`checkbox "%s" desc "`, target)}) {
+	for line in ([]string{fmt.tprintf(`checkbox "%s" desc "`, escaped(modules)), fmt.tprintf(`checkbox "%s" desc "`, escaped(target))}) {
 		testing.expectf(
 			t,
 			strings.contains(said_now, line),
@@ -169,7 +169,7 @@ clean_real_projects :: proc(t: ^testing.T, scenario: Scenario) -> bool {
 	}
 	testing.expectf(
 		t,
-		!strings.contains(said_now, fmt.tprintf(`checkbox "%s"`, within("plain", "build"))),
+		!strings.contains(said_now, fmt.tprintf(`checkbox "%s"`, escaped(within("plain", "build")))),
 		"a build folder of no project is not offered:\n%s",
 		said_now,
 	)
