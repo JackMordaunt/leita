@@ -23,6 +23,7 @@ import "core:time"
 import harness "jm:fuzz"
 
 import btrfs_fuzz "../../btrfs/fuzz"
+import gui_fuzz "../../gui/fuzz"
 import history_fuzz "../../history/fuzz"
 import ntfs_fuzz "../../ntfs/fuzz"
 import scan_fuzz "../../scan/fuzz"
@@ -40,10 +41,21 @@ Runner :: struct {
 	skip_reason: proc() -> string,
 	// How long a child may take, 0 for the harness's own limit.
 	limit:   time.Duration,
+	// How many smaller cases shrinking tries, 0 for the harness's own count;
+	// -shrink= and -no-shrink win. A suite whose case takes seconds tries fewer.
+	shrink:  int,
 }
 
 runners := []Runner {
 	{name = "btrfs", corpus = btrfs_fuzz.CORPUS, run = btrfs_fuzz.run},
+	{
+		name = "gui",
+		corpus = gui_fuzz.CORPUS,
+		run = gui_fuzz.run,
+		isolate = true,
+		limit = gui_fuzz.CASE_TIMEOUT,
+		shrink = gui_fuzz.SHRINK_TRIES,
+	},
 	{name = "history", corpus = history_fuzz.CORPUS, run = history_fuzz.run},
 	{name = "ntfs", corpus = ntfs_fuzz.CORPUS, run = ntfs_fuzz.run},
 	{name = "scan", corpus = scan_fuzz.CORPUS, run = scan_fuzz.run},
@@ -161,6 +173,9 @@ run_suites :: proc(allocator := context.allocator) -> int {
 		if r.limit > 0 {
 			suite_opts.case_timeout = r.limit
 		}
+		if r.shrink > 0 && opts.shrink == 0 {
+			suite_opts.shrink = r.shrink
+		}
 		if r.skip_reason != nil {
 			if why := r.skip_reason(); why != "" {
 				fmt.eprintfln("%s: skipped what needs a mount: %s", r.name, why)
@@ -269,7 +284,7 @@ USAGE :: `usage: just fuzz [suite] [seed] [duration] [flags...]
                [-shrink=N] [-no-shrink] [-corpus=DIR] [-no-corpus]
                [-isolate] [-stop] [-quiet]
 
-suites: btrfs, history, ntfs, scan, search, tree. With none named, every suite runs.
+suites: btrfs, gui, history, ntfs, scan, search, tree. With none named, every suite runs.
 Each suite keeps its regressions beside its source and replays them first.
--corpus=DIR uses DIR/<suite> instead. -isolate runs each case in a child; tree
-always does, and needs a mount namespace, which just fuzz enters.`
+-corpus=DIR uses DIR/<suite> instead. -isolate runs each case in a child; gui and
+tree always do, and tree needs a mount namespace, which just fuzz enters.`

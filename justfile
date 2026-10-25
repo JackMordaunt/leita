@@ -439,8 +439,10 @@ test: sqlite
 # directories and mounts under the temp directory: on Linux in a user and mount
 # namespace this recipe enters where it can, on macOS on APFS disk images that
 # hdiutil attaches, on Windows on NTFS volumes of a VHDX; where it cannot, that
-# suite runs what needs no mount and says what it left out.
-fuzz suite="" seed="1" duration="" *extra: sqlite
+# suite runs what needs no mount and says what it left out. The gui suite drives
+# the window on the made-up disk, so it needs the libraries the window draws
+# with (deps), and takes seconds a case: just fuzz gui 1 0 -iters=4.
+fuzz suite="" seed="1" duration="" *extra: deps
     #!/usr/bin/env bash
     set -euo pipefail
     mkdir -p build/debug
@@ -764,6 +766,8 @@ gui-test: deps
     {{odin}} test settings -debug {{san}} {{flags}} -out:build/test/app/{{gui}}-settings{{exe}}
     {{odin}} test licence -debug {{san}} {{flags}} -out:build/test/app/{{gui}}-licence{{exe}}
     {{odin}} test search -debug {{san}} {{flags}} -out:build/test/app/{{gui}}-search{{exe}}
+    # The window's fuzz suite on a fixed seed, its corpus first; just fuzz gui runs it longer.
+    {{odin}} test gui/fuzz -debug {{san}} {{flags}} {{curl_open}} -define:ODIN_TEST_THREADS=1 -out:build/test/app/{{gui}}-fuzz{{exe}}
 
 # The tools package fetches into build/tools, each pinned by its SHA-256 for
 # both architectures a release builds Linux on: nfpm builds the .deb and the
