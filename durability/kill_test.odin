@@ -25,6 +25,12 @@ WAIT :: 60 * time.Second
 @(private = "file")
 workdir :: proc(t: ^testing.T, name: string) -> string {
 	parent := os.temp_directory(context.temp_allocator) or_else "."
+	// macOS names its temp directory under /var, a link, and a delete refuses a
+	// path through one (files.open_directory; Delete_Tree said "it is not a
+	// directory" on macos-latest, run 40145355033): it is named link-free.
+	if info, err := os.stat(parent, context.temp_allocator); err == nil && info.fullpath != "" {
+		parent = info.fullpath
+	}
 	dir, err := os.make_directory_temp(parent, fmt.tprintf("leita-durability-%s-*", name), context.temp_allocator)
 	testing.expectf(t, err == nil, "no work directory: %v", err)
 	return dir
