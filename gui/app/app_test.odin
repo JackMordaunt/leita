@@ -130,9 +130,7 @@ await_licence :: proc(r: ^Rig) {
 			return
 		}
 		if ui.inbox_pending(&r.h.inbox) {
-			ui.inbox_drain(&r.h.inbox, &r.p.layout)
-			ui.probe_frame(&r.p)
-			hand_on(r)
+			take_answers(r)
 		}
 		time.sleep(time.Millisecond)
 	}
@@ -182,6 +180,27 @@ hand_on :: proc(r: ^Rig) {
 	ui.data_after_frame(&r.data, &r.needs, &r.p.router)
 }
 
+/*
+take_answers drains the host's answers into the probe and lays out two frames
+on them. A flex jm:ui has not laid out before shares its weighted children out
+from the previous frame's totals, so its first frame is exact only when every
+weighted child comes after every unweighted one (ui.flexible, jm/ui/layout.odin).
+A listing's rows put the size after the weighted name and bar, so the frame
+they land in lays them out wider than the side column, and the window's
+column, which fills to its widest child, widens every banner with them. In
+diag run 40188105131 the trial banner's Dismiss was at x 1079 in that frame and
+1043 in the next, so the click aimed from the first missed. After the second
+frame, what a test finds is where a hand would find it.
+*/
+@(private = "file")
+take_answers :: proc(r: ^Rig) {
+	ui.inbox_drain(&r.h.inbox, &r.p.layout)
+	ui.probe_frame(&r.p)
+	hand_on(r)
+	ui.probe_frame(&r.p)
+	hand_on(r)
+}
+
 // settle drains the host's answers into the probe and runs a frame, until a
 // frame finds the name tagged (or not), or the deadline passes. A finished scan
 // sends nothing more, so the frame already drawn is looked at first.
@@ -193,9 +212,7 @@ settle :: proc(r: ^Rig, name: string, present := true) -> bool {
 			return true
 		}
 		if ui.inbox_pending(&r.h.inbox) {
-			ui.inbox_drain(&r.h.inbox, &r.p.layout)
-			ui.probe_frame(&r.p)
-			hand_on(r)
+			take_answers(r)
 			if ui.probe_tagged(&r.p, name) == present {
 				return true
 			}
@@ -230,9 +247,7 @@ settle_either :: proc(r: ^Rig, names: []string) -> string {
 			}
 		}
 		if ui.inbox_pending(&r.h.inbox) {
-			ui.inbox_drain(&r.h.inbox, &r.p.layout)
-			ui.probe_frame(&r.p)
-			hand_on(r)
+			take_answers(r)
 			for name in names {
 				if ui.probe_tagged(&r.p, name) {
 					return name
@@ -255,9 +270,7 @@ await_rescan :: proc(r: ^Rig, first: u32) -> bool {
 			return true
 		}
 		if ui.inbox_pending(&r.h.inbox) {
-			ui.inbox_drain(&r.h.inbox, &r.p.layout)
-			ui.probe_frame(&r.p)
-			hand_on(r)
+			take_answers(r)
 		}
 		time.sleep(time.Millisecond)
 	}
