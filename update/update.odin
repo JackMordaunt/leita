@@ -927,25 +927,49 @@ fail_fetch :: proc(r: ^Result, got: Fetch, name: string) {
 			"libcurl is needed to reach the release and this system has none; install it (libcurl4 on Debian and Ubuntu, libcurl on Fedora), or download from %s",
 			RELEASE_PAGE,
 		)
-	case .Unreachable:
-		finish(r, .Failed, .Unreachable, "cannot reach %s", name)
+	case .Unreachable, .Answered:
+		finish(r, .Failed, .Unreachable, "cannot fetch %s: %s", name, fetch_note())
 	case .Missing:
 		finish(r, .Failed, .Not_Published, "the release has no %s", name)
 	}
 }
 
-// Fetch is how a request for one of the release's files ended.
+// Fetch is how a request for one of the release's files ended. fetch_note
+// says why one that was not Ok ended as it did.
 Fetch :: enum {
 	Ok,
-	// The file is not there: an HTTP error status, or no such file on disk.
+	// The file is not there: 404 or 410, or no such file on disk.
 	Missing,
+	// Another status: the page is there and failed, or something in the way
+	// answered for it.
+	Answered,
 	Unreachable,
 	No_Library,
+}
+
+// note_buf is why this thread's last fetch failed, for fail_fetch and obtain:
+// curl's own account of a transfer that failed, or what answered instead.
+@(private, thread_local)
+note_buf: [192]byte
+@(private, thread_local)
+note_len: int
+
+// fetch_note is why this thread's last fetch was not Ok.
+@(private)
+fetch_note :: proc() -> string {
+	return string(note_buf[:note_len])
+}
+
+@(private)
+set_note :: proc(format: string, args: ..any) {
+	scratch: [len(note_buf)]byte
+	note_len = copy(note_buf[:], fmt.bprintf(scratch[:], format, ..args))
 }
 
 // fetch writes the release's file name into dst.
 @(private)
 fetch :: proc(cfg: Config, name: string, dst: io.Writer) -> Fetch {
+	note_len = 0
 	base := strings.trim_suffix(cfg.base, "/")
 	path: [selfupdate.PATH_CAP]byte
 	if !strings.contains(base, "://") {
@@ -953,24 +977,49 @@ fetch :: proc(cfg: Config, name: string, dst: io.Writer) -> Fetch {
 			fmt.bprintf(path[:], "%s%c%s", base, selfupdate.SEPARATOR, name),
 			dst,
 		)
+		if !ok {
+			set_note("%s is not in %s", name, base)
+		}
 		return .Ok if ok else .Missing
 	}
+	url := fmt.bprintf(path[:], "%s/%s", base, name)
+	timeout := cfg.timeout if cfg.timeout != 0 else DEFAULT_TIMEOUT
 	res, err := http.stream(
 		"GET",
-		fmt.bprintf(path[:], "%s/%s", base, name),
+		url,
 		dst,
 		{
-			timeout = cfg.timeout if cfg.timeout != 0 else DEFAULT_TIMEOUT,
+			timeout = timeout,
 			user_agent = cfg.user_agent,
+			on_error = proc(msg: string) {set_note("%s", msg)},
 		},
 	)
 	switch {
 	case err == .No_Library:
 		return .No_Library
-	case err != .None:
+	case err == .Timed_Out:
+		set_note("%s did not answer within %v", url, timeout)
 		return .Unreachable
-	case !res.ok:
+	case err == .Write_Failed || err == .Too_Large:
+		// A file of the release that does not fit where it goes is not that
+		// file: a sign-in page of the network, or a proxy's, in its place.
+		set_note(
+			"%s answered with something else; a network that asks you to sign in first, or a proxy, may be in the way",
+			url,
+		)
+		return .Unreachable
+	case err != .None:
+		if note_len == 0 {
+			set_note("%v", err)
+		}
+		set_note("%s: %s", url, fetch_note())
+		return .Unreachable
+	case res.status == 404 || res.status == 410:
+		set_note("%s answered HTTP %d", url, res.status)
 		return .Missing
+	case !res.ok:
+		set_note("%s answered HTTP %d; try again later", url, res.status)
+		return .Answered
 	}
 	return .Ok
 }
@@ -1020,7 +1069,7 @@ obtain :: proc(cfg: Config, rel: Release, fresh: string) -> (route: Route) {
 	case got == .No_Library:
 		route.reason, route.note = .No_Library, "libcurl is not on this system"
 	case got != .Ok:
-		route.reason, route.note = .Unreachable, "the download failed"
+		route.reason, route.note = .Unreachable, fetch_note()
 	case !selfupdate.hash_matches(fresh, rel.want):
 		route.reason, route.note = .Bad_Download, "the file does not match its published hash"
 	case:
