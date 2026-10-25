@@ -19,6 +19,7 @@ package synth
 import "core:fmt"
 import "core:math"
 import "core:strings"
+import "core:sync"
 import "core:time"
 
 import "../scan"
@@ -136,7 +137,7 @@ read :: proc(root: string, t: ^scan.Tree, cfg: Config) -> Error {
 	n.parent = first // a root holds itself
 	n.name = scan.intern(&g.w, root)
 	scan.node_publish(n, {.Used, .Settled, .Directory})
-	t.root = first
+	sync.atomic_store(&t.root, first)
 	append(&g.queue, Dir{index = first, seed = ROOT_SEED, kind = .Layout, n = u16(Layout.Root)})
 
 	for head := 0; head < len(g.queue); head += 1 {

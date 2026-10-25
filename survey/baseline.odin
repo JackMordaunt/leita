@@ -305,7 +305,7 @@ baseline_load :: proc(
 		scan.tree_destroy(t)
 		return {}, "the scan kept of this place loops", false
 	}
-	t.root = root
+	sync.atomic_store(&t.root, root)
 	return cursor, "", true
 }
 

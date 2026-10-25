@@ -1,6 +1,7 @@
 package ntfs
 
 import "core:mem"
+import "core:sync"
 
 import "../scan"
 
@@ -233,12 +234,12 @@ to_tree :: proc(m: ^Mft, t: ^scan.Tree, p: ^Projection) -> scan.Error {
 	}
 	p.links_done = links
 
-	t.root = root
+	sync.atomic_store(&t.root, root)
 	if p.root_name != "" {
 		scan.node(t, root).name = p.root
 	}
-	t.nodes_done = used
-	t.bytes_done = bytes
+	sync.atomic_store(&t.nodes_done, used)
+	sync.atomic_store(&t.bytes_done, bytes)
 	return .None
 }
 
