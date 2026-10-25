@@ -94,6 +94,15 @@ run :: proc(t: ^testing.T, h: Home, day: int, args: ..string, extra: []string = 
 	parent, _ := os.environ(context.temp_allocator)
 	for kv in parent {
 		key, _, _ := strings.partition(kv, "=")
+		// A journey's own setting replaces the machine's, as TZ and LANG do.
+		overridden := false
+		for own in extra {
+			name, _, _ := strings.partition(own, "=")
+			overridden ||= name == key
+		}
+		if overridden {
+			continue
+		}
 		switch key {
 		case "HOME",
 		     "USERPROFILE",
