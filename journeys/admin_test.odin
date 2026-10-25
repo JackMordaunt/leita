@@ -12,8 +12,9 @@ Story: an admin watches a server's disk and is warned before it fills. They
 watch two places, one with a warning at 60% used and one at 80%, and send alerts
 to a webhook. A monitoring run, the one the scheduler starts each hour, finds the
 disk 69% used: the first place raises an alert, shown in the list and sent to the
-webhook, signed and naming the place and its measure; the second stays quiet. A
-second run raises the same alert no more.
+webhook, signed and naming the place and its measure; the second stays quiet.
+That an alert is raised once is cli/monitor_test.odin's: each run here scans
+the made-up disk once a place, and the journeys share the runner's CPUs.
 
 Each place is scanned as the made-up disk (LEITA_SYNTHETIC), whose use is known.
 Monitoring is turned on in the settings store directly: monitor on hands the run
@@ -92,12 +93,6 @@ a_server_is_watched_and_warned_before_it_fills :: proc(t: ^testing.T) {
 		summary := member(event, "summary")
 		testing.expect_value(t, whole(member(summary, "totals"), "bytes"), 320838590464)
 	}
-
-	// The next hour's run scans again, and raises the same alert no more.
-	r = run(t, h, 0, "monitor", "run", "--all")
-	expect_code(t, r, 0)
-	testing.expectf(t, !strings.contains(r.out, "alert:"), "nothing new is raised:\n%s", r.out)
-	testing.expect_value(t, len(requests(server)), 1)
 }
 
 // turn_monitoring_on keeps monitoring on in h's settings, as monitor on does
