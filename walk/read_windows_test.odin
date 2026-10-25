@@ -5,6 +5,7 @@ import "core:fmt"
 import "core:log"
 import "core:os"
 import "core:slice"
+import "core:strconv"
 import "core:strings"
 import win "core:sys/windows"
 import "core:testing"
@@ -552,8 +553,12 @@ file. It counts each name of a hard-linked file, as du -l does, where leita coun
 file once: the test adds the further names' lengths to leita's total, and that is the
 only difference it allows. A directory has no Length, and leita charges it nothing.
 
-The allocated total is printed beside what `compact /s` says the files are stored in,
-so a disagreement can be read off the CI output; it is not asserted.
+`compact /s` is the second tool. Its "stored in" total is the same sum: for a file that
+is not compressed it is the file's length, a sparse file's hole included (CI listed the
+8 MiB hole as 8388608 : 8388608), and a hard link's names each. So neither tool says
+what the volume allocated, and leita's allocated total, which charges the hole nothing
+and rounds a file to its clusters, is printed beside them and not compared to them. The
+Win32 allocation is what walk/fuzz's oracle holds the walk to.
 */
 @(test)
 test_totals_agree_with_powershell :: proc(t: ^testing.T) {
@@ -611,6 +616,8 @@ test_totals_agree_with_powershell :: proc(t: ^testing.T) {
 	apparent, text, ok := run_tool({"powershell", "-NoProfile", "-NonInteractive", "-Command", script})
 	testing.expectf(t, ok, "Get-ChildItem failed: %s", text)
 	_, compact_text, _ := run_tool({"compact", fmt.tprintf("/s:%s", root), "/a"})
+	stored, stored_ok := compact_stored(compact_text)
+	testing.expectf(t, stored_ok, "compact said no total: %s", compact_text)
 	log.infof(
 		"leita: apparent %d, allocated %d, %d files; Get-ChildItem: %d (+%d for further names); compact: %s",
 		sum.apparent,
@@ -622,4 +629,15 @@ test_totals_agree_with_powershell :: proc(t: ^testing.T) {
 	)
 	testing.expect_value(t, tree.bytes_done, sum.allocated)
 	testing.expect_value(t, apparent, sum.apparent + names)
+	testing.expect_value(t, stored, apparent)
+}
+
+// compact_stored is the bytes `compact /s` says the files it listed are stored in,
+// from its line "9,837,866 total bytes of data are stored in 9,837,866 bytes."
+@(private = "file")
+compact_stored :: proc(text: string) -> (bytes: u64, ok: bool) {
+	_, _, after := strings.partition(text, "are stored in ")
+	number, _, _ := strings.partition(after, " bytes")
+	digits, _ := strings.remove_all(number, ",", context.temp_allocator)
+	return strconv.parse_u64(strings.trim_space(digits))
 }
