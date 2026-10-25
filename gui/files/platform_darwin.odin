@@ -2,13 +2,17 @@
 package leita_files
 
 import "base:intrinsics"
+import "base:runtime"
 
 import "core:c"
+import "core:fmt"
 import "core:os"
 import "core:path/filepath"
 import "core:strings"
 import NS "core:sys/darwin/Foundation"
 import "core:sys/posix"
+
+import "../../scan"
 
 foreign import libc "system:System"
 
@@ -18,14 +22,26 @@ SEPARATORS :: "/"
 @(private = "file")
 RENAME_EXCL :: 0x00000004
 
-@(private = "file", default_calling_convention = "c")
-foreign libc {
-	renameatx_np :: proc(from_dir: posix.FD, from: cstring, to_dir: posix.FD, to: cstring, flags: c.uint) -> c.int ---
-}
-
 @(private = "file", objc_class = "NSFileManager")
 File_Manager :: struct {
 	using _: NS.Object,
+}
+
+@(private = "file", default_calling_convention = "c")
+foreign libc {
+	renameatx_np :: proc(from_dir: posix.FD, from: cstring, to_dir: posix.FD, to: cstring, flags: c.uint) -> c.int ---
+	@(link_name = FSTATFS)
+	fstatfs :: proc(fd: posix.FD, buf: ^scan.Stat_FS) -> c.int ---
+}
+
+// fstatfs takes struct statfs as scan.Stat_FS lays it out, statfs64's: the fstatfs
+// symbol on arm64, fstatfs$INODE64 on x86_64.
+when ODIN_ARCH == .amd64 {
+	@(private = "file")
+	FSTATFS :: "fstatfs$INODE64"
+} else {
+	@(private = "file")
+	FSTATFS :: "fstatfs"
 }
 
 /*
@@ -91,7 +107,7 @@ plain_name :: proc(name: string) -> bool {
 	return name != "" && name != "." && name != ".." && !strings.contains_rune(name, '/')
 }
 
-// trash moves path to the Trash through NSFileManager, as the Finder does.
+// trash moves path to the Trash, where the Finder keeps it.
 trash :: proc(path: string) -> Error {
 	_, err := trash_to(path, context.temp_allocator)
 	return err
@@ -101,32 +117,91 @@ trash :: proc(path: string) -> Error {
 trash_to is trash, saying where in the Trash the entry went, which need not be
 under its old name.
 
-The folder holding path is first opened without following a link (open_directory),
-so a path reaching the entry through a symbolic link is refused as Not_Directory.
-NSFileManager takes a path, not a descriptor, so a folder swapped for a link after
-that check and before the move is not caught.
+The folder holding path is opened without following a link (open_directory), so a
+path reaching the entry through a symbolic link is Not_Directory. A folder swapped
+for a link after that check must not redirect the move either, so the move never
+looks the folder up by its path again:
+
+  - NSFileManager moves it, as the Finder does, and records where it came from for
+    Put Back. It is given the entry under /.vol/<device>/<folder's inode>, which the
+    kernel resolves by the folder's id, not its path: the entry that leaves is the
+    one in the folder that was checked, wherever that folder is by then, and Put
+    Back names where that is (seen on macos-latest, CI run 40183550843).
+  - On a volume without those ids (/.vol does not reach the folder: FAT, exFAT,
+    most network filesystems), the entry is renamed out of the folder's descriptor
+    into the Trash by rename_to_trash. That keeps no Put Back record.
 */
 @(private)
 trash_to :: proc(path: string, allocator := context.allocator) -> (to: string, err: Error) {
 	dir, name := filepath.split(path)
+	// A name is at most NAME_MAX, 255 bytes, so this buffer holds one and its NUL.
+	from: [256]u8
 	if !plain_name(name) {
 		return "", .Not_Directory
 	}
+	if len(name) >= len(from) {
+		return "", .Bad_Name
+	}
+	copy(from[:], name)
+
 	parent, perr := open_directory(dir)
 	if perr != .None {
 		return "", perr
 	}
-	posix.close(parent)
+	defer posix.close(parent)
 
 	if before_trash != nil {
 		before_trash(path)
 	}
 
+	st: posix.stat_t
+	if posix.fstatat(parent, cstring(&from[0]), &st, {.SYMLINK_NOFOLLOW}) != .OK {
+		return "", errno_error(posix.errno())
+	}
+
+	if by_id, ok := volfs_path(parent, name); ok {
+		return trash_item(by_id, allocator)
+	}
+	return rename_to_trash(parent, name, u64(st.st_dev), allocator)
+}
+
+/*
+volfs_path is the entry name of the folder open as parent, named under /.vol by the
+folder's device and inode, so the name reaches that folder whatever is done to its
+path. ok is false when /.vol does not reach that very folder on this volume.
+*/
+@(private = "file")
+volfs_path :: proc(
+	parent: posix.FD,
+	name: string,
+	allocator := context.temp_allocator,
+) -> (
+	path: string,
+	ok: bool,
+) {
+	dir: posix.stat_t
+	if posix.fstat(parent, &dir) != .OK {
+		return "", false
+	}
+
+	folder := fmt.tprintf("/.vol/%d/%d", u64(dir.st_dev), u64(dir.st_ino))
+	seen: posix.stat_t
+	cfolder := strings.clone_to_cstring(folder, context.temp_allocator)
+	if posix.lstat(cfolder, &seen) != .OK || seen.st_dev != dir.st_dev || seen.st_ino != dir.st_ino {
+		return "", false
+	}
+	return strings.concatenate({folder, "/", name}, allocator), true
+}
+
+// trash_item moves path to the Trash through NSFileManager, saying where it went.
+@(private = "file")
+trash_item :: proc(path: string, allocator: runtime.Allocator) -> (to: string, err: Error) {
 	NS.scoped_autoreleasepool()
 	str := NS.String.alloc()->initWithOdinString(path)
 	defer str->release()
 	url := NS.URL.alloc()->initFileURLWithPath(str)
 	defer url->release()
+
 	fm := intrinsics.objc_send(^File_Manager, File_Manager, "defaultManager")
 	landed: ^NS.URL
 	failure: ^NS.Error
@@ -138,6 +213,7 @@ trash_to :: proc(path: string, allocator := context.allocator) -> (to: string, e
 		&landed,
 		&failure,
 	)
+
 	switch {
 	case ok && landed != nil:
 		return strings.clone_from_cstring(landed->fileSystemRepresentation(), allocator), .None
@@ -147,12 +223,6 @@ trash_to :: proc(path: string, allocator := context.allocator) -> (to: string, e
 		return "", .Other
 	}
 	return "", cocoa_error(failure->code())
-}
-
-// reveal asks the Finder to show path selected.
-@(private)
-reveal :: proc(path: string) {
-	run({"open", "-R", path})
 }
 
 // cocoa_error maps the NSCocoaErrorDomain codes NSFileManager reports.
@@ -173,6 +243,168 @@ cocoa_error :: proc(code: NS.Integer) -> Error {
 		return .Unsupported
 	}
 	return .Other
+}
+
+/*
+rename_to_trash moves the entry name out of the folder open as parent, on device,
+into the Trash where the Finder looks: ~/.Trash when it is on the home folder's
+volume, otherwise the volume's .Trashes/<uid> (trash_folder). renameatx_np(2) renames
+it out of the descriptor, so what leaves is the entry in that folder.
+RENAME_EXCL keeps whatever already has the name in the Trash; the entry then takes
+"name 2.ext", "name 3.ext" and so on.
+*/
+@(private)
+rename_to_trash :: proc(
+	parent: posix.FD,
+	name: string,
+	device: u64,
+	allocator := context.allocator,
+) -> (
+	to: string,
+	err: Error,
+) {
+	from: [256]u8
+	if len(name) >= len(from) {
+		return "", .Bad_Name
+	}
+	copy(from[:], name)
+
+	bin, bin_fd, berr := trash_folder(parent, device)
+	if berr != .None {
+		return "", berr
+	}
+	defer if bin_fd != posix.AT_FDCWD {
+		posix.close(bin_fd)
+	}
+
+	for n := 1; n < 10_000; n += 1 {
+		// What one try takes is let go before the next, unless it is the answer's.
+		runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD(ignore = allocator == context.temp_allocator)
+		landed := trash_name(name, n)
+		if len(landed) >= len(from) {
+			break
+		}
+		whole := strings.concatenate({bin, "/", landed}, context.temp_allocator)
+		// By name inside the Trash's descriptor, or by its whole path when it has none.
+		target := strings.clone_to_cstring(whole if bin_fd == posix.AT_FDCWD else landed, context.temp_allocator)
+		if renameatx_np(parent, cstring(&from[0]), bin_fd, target, RENAME_EXCL) == 0 {
+			return strings.clone(whole, allocator), .None
+		}
+		if e := posix.errno(); e != .EEXIST {
+			return "", errno_error(e)
+		}
+	}
+	return "", .Exists
+}
+
+/*
+trash_folder is the Trash for an entry on device: its path, and its descriptor
+opened without following a link, or AT_FDCWD to rename by that path.
+
+~/.Trash, made if missing, serves the home folder's volume. Should opening it be
+Denied (a privacy setting that guards the Trash's listing could; CI runners have not
+shown it), the entry is renamed into it by path, after a look shows it is a
+directory on the same volume and not a link. Only the folder the entry leaves is
+held by descriptor then: the Trash is the user's own, and a link put in its place would take the entry
+somewhere else of theirs, not reach anything else.
+
+Another volume's Trash is <mount>/.Trashes/<uid>, as the Finder makes it: .Trashes
+sticky and writable by all, the user's folder in it 0700 and theirs. A folder there
+that some other user made is refused as Not_Yours, so it cannot catch what is
+trashed. A volume with no Trash and no way to make one is Unsupported.
+*/
+@(private = "file")
+trash_folder :: proc(
+	parent: posix.FD,
+	device: u64,
+	allocator := context.temp_allocator,
+) -> (
+	bin: string,
+	fd: posix.FD,
+	err: Error,
+) {
+	if home := os.get_env("HOME", context.temp_allocator); home != "" {
+		bin = strings.concatenate({home, "/.Trash"}, allocator)
+		cbin := strings.clone_to_cstring(bin, context.temp_allocator)
+		fd, err = open_directory(bin)
+		if err == .Missing && posix.mkdir(cbin, {.IRUSR, .IWUSR, .IXUSR}) == .OK {
+			fd, err = open_directory(bin)
+		}
+		#partial switch err {
+		case .None:
+			if at, lerr := look_self(fd); lerr == .NONE && at.device == device {
+				return bin, fd, .None
+			}
+			posix.close(fd)
+		case .Denied:
+			st: posix.stat_t
+			if posix.lstat(cbin, &st) == .OK && posix.S_ISDIR(st.st_mode) && u64(st.st_dev) == device {
+				return bin, posix.AT_FDCWD, .None
+			}
+		}
+	}
+
+	fs: scan.Stat_FS
+	if fstatfs(parent, &fs) != 0 {
+		return "", -1, .Unsupported
+	}
+	mount := string(cstring(&fs.mntonname[0]))
+	trashes := strings.concatenate({strings.trim_right(mount, "/"), "/.Trashes"}, context.temp_allocator)
+	vol, verr := open_directory(trashes)
+	if verr == .Missing {
+		// Sticky, and writable and searchable by all, as the Finder leaves it.
+		ctrashes := strings.clone_to_cstring(trashes, context.temp_allocator)
+		mode: posix.mode_t = {.IRUSR, .IWUSR, .IXUSR, .IWGRP, .IXGRP, .IWOTH, .IXOTH, .ISVXT}
+		if posix.mkdir(ctrashes, mode) == .OK {
+			_ = posix.chmod(ctrashes, mode)
+		}
+		vol, verr = open_directory(trashes)
+	}
+	if verr != .None {
+		return "", -1, .Unsupported
+	}
+	defer posix.close(vol)
+
+	uid := posix.getuid()
+	mine := fmt.tprintf("%d", uid)
+	cmine := strings.clone_to_cstring(mine, context.temp_allocator)
+	_ = posix.mkdirat(vol, cmine, {.IRUSR, .IWUSR, .IXUSR})
+	ofd, oerr := open_dir_at(vol, cmine)
+	if ofd == -1 {
+		return "", -1, .Not_Directory if oerr == .ELOOP || oerr == .ENOTDIR else .Unsupported
+	}
+	st: posix.stat_t
+	switch {
+	case posix.fstat(ofd, &st) != .OK:
+		posix.close(ofd)
+		return "", -1, .Unsupported
+	case st.st_uid != uid:
+		posix.close(ofd)
+		return "", -1, .Not_Yours
+	case u64(st.st_dev) != device:
+		posix.close(ofd)
+		return "", -1, .Cross_Device
+	}
+	return strings.concatenate({trashes, "/", mine}, allocator), ofd, .None
+}
+
+// trash_name is the nth name tried for name in the Trash: name itself first, then
+// "name 2.ext", keeping an extension after the number.
+@(private = "file")
+trash_name :: proc(name: string, n: int, allocator := context.temp_allocator) -> string {
+	if n == 1 {
+		return name
+	}
+	if dot := strings.last_index_byte(name, '.'); dot > 0 {
+		return fmt.aprintf("%s %d%s", name[:dot], n, name[dot:], allocator = allocator)
+	}
+	return fmt.aprintf("%s %d", name, n, allocator = allocator)
+}
+
+// reveal asks the Finder to show path selected.
+@(private)
+reveal :: proc(path: string) {
+	run({"open", "-R", path})
 }
 
 @(private = "file")
