@@ -26,6 +26,13 @@ for every finding without one running, so results refine at the rate the rest of
 the window does. Once the scan is over a last pass makes the search complete,
 and nothing more runs for it.
 
+A search is answered when its pass comes in, and the tick that starts the next
+does not answer it again: its hit sizes move between passes, but sending 500
+hits and the window decoding them cost more than the scan's own reading did (card
+775). Answering every tick, on a starved core, took the time the scan needed and
+the scan fell behind its walk's pace. A pass a tick is the same rate while passes
+are quick, and slows as they do.
+
 A need that goes calls off its pass. Anything that changes the tree under a pass
 (a new scan, a rename, the window closing) halts every pass first: each is called
 off, and the desk waits the moment until its chunks have stopped.

@@ -734,7 +734,7 @@ desk_step :: proc(d: ^Desk, v: Desk_In) {
 			changed = true
 		}
 		if changed {
-			answer_all(d)
+			answer_all(d, searches = false)
 		}
 		find_tick(d)
 		monitor_refresh(d)
@@ -905,8 +905,13 @@ advance :: proc(d: ^Desk) -> bool {
 
 // --- answers -------------------------------------------------------------------
 
-answer_all :: proc(d: ^Desk) {
+// answer_all answers every live need, or every one but the searches, which a
+// tick leaves to their passes (search.odin).
+answer_all :: proc(d: ^Desk, searches := true) {
 	for key, q in d.live {
+		if _, is := q.(query.Search); is && !searches {
+			continue
+		}
 		answer(d, key, q)
 	}
 	notify(d)
