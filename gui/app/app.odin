@@ -43,6 +43,7 @@ import "base:runtime"
 import "core:encoding/cbor"
 import "core:fmt"
 import "core:os"
+import "core:reflect"
 import "core:slice"
 import "core:strings"
 import "core:sync"
@@ -69,6 +70,13 @@ import "../command"
 import "../files"
 import "../msg"
 import "../query"
+
+// TRACE_ENV, set to 1, has the desk say on stderr when each command arrived, when
+// it was handled and what the scan was doing then, and which ticks were slow.
+TRACE_ENV :: "LEITA_DESK_TRACE"
+
+// TRACE_SLOW is how long a tick may take before the trace names it.
+TRACE_SLOW :: 50 * time.Millisecond
 
 // TICK is how often a running scan is folded and its answers sent: often enough
 // to look live. Each tick ranks the whole tree for the largest files, which is why
@@ -100,10 +108,17 @@ Need_Event :: struct {
 
 Tick :: struct {}
 
+// Sent_Command is a command and when it was sent, so the desk trace can say how
+// long it waited in the desk's queue.
+Sent_Command :: struct {
+	c:  command.Command,
+	at: time.Tick,
+}
+
 // Desk_In is everything the desk stage takes.
 Desk_In :: union {
 	Need_Event,
-	command.Command,
+	Sent_Command,
 	Tick,
 	Activated,
 	Updated,
@@ -255,11 +270,15 @@ Desk :: struct {
 	scratch:             ^search.Scratch,
 	tested:              ^stream.Port(Test_Done), // webhook.odin's test_webhook
 	monitoring:          Monitoring, // monitor.odin
+	// LEITA_DESK_TRACE=1 at init: each command's arrival and handling, and each
+	// slow tick, go to stderr, timed from traced_from (trace).
+	trace:               bool,
+	traced_from:         time.Tick,
 }
 
 Host :: struct {
 	p:             ^stream.Pipeline,
-	cmd_port:      stream.Port(command.Command),
+	cmd_port:      stream.Port(Sent_Command),
 	need_port:     stream.Port(Need_Event),
 	act_port:      stream.Port(Activated),
 	update_port:   stream.Port(Updated),
@@ -348,6 +367,10 @@ init :: proc(
 	h.desk.after_list = after_list
 	h.desk.after_list_data = after_list_data
 	h.desk.update_time = update_time
+	if v, _ := os.lookup_env(TRACE_ENV, context.temp_allocator); v == "1" {
+		h.desk.trace = true
+		h.desk.traced_from = time.tick_now()
+	}
 	msg.init(h.desk.words, .English)
 	history_open(&h.desk, kept)
 	settings_open(&h.desk, licence.path_beside(kept, context.temp_allocator, settings.FILE))
@@ -365,8 +388,8 @@ init :: proc(
 	p.wake = desk_wake
 	p.wake_data = h
 
-	commands: stream.Stream(command.Command)
-	commands, h.cmd_port = stream.port(p, command.Command, name = "commands")
+	commands: stream.Stream(Sent_Command)
+	commands, h.cmd_port = stream.port(p, Sent_Command, name = "commands")
 	needs: stream.Stream(Need_Event)
 	needs, h.need_port = stream.port(p, Need_Event, name = "needs")
 	clock := stream.interval(p, TICK, name = "clock")
@@ -405,7 +428,7 @@ init :: proc(
 	stream.pin(p, desk)
 
 	if path != "" {
-		stream.port_send(h.cmd_port, command.Command(command.Scan{path = command.text_make(path)}))
+		send(h, command.Command(command.Scan{path = command.text_make(path)}))
 	}
 
 	h.desk_main = thread.create_and_start_with_poly_data(h, desk_main, init_context = context)
@@ -517,8 +540,17 @@ on_need :: proc(user: rawptr, need: ui.Need, added: bool) {
 on_command :: proc(user: rawptr, c: ui.Command) {
 	h := (^Host)(user)
 	if cmd, ok := ui.command_as(c, command.Command); ok {
-		stream.port_send(h.cmd_port, cmd)
+		send(h, cmd)
 	}
+}
+
+// send hands a command to the desk, from any thread.
+send :: proc(h: ^Host, c: command.Command) {
+	sent := Sent_Command{c, time.tick_now()}
+	if h.desk.trace {
+		trace(&h.desk, "arrive", sent)
+	}
+	stream.port_send(h.cmd_port, sent)
 }
 
 // --- the threads ---------------------------------------------------------------
@@ -577,7 +609,7 @@ need_in :: proc(e: Need_Event) -> Desk_In {
 	return e
 }
 
-command_in :: proc(c: command.Command) -> Desk_In {
+command_in :: proc(c: Sent_Command) -> Desk_In {
 	return c
 }
 
@@ -615,8 +647,11 @@ desk_step :: proc(d: ^Desk, v: Desk_In) {
 		}
 		answer(d, e.key, e.q)
 		notify(d)
-	case command.Command:
-		switch &c in e {
+	case Sent_Command:
+		if d.trace {
+			trace(d, "handle", e)
+		}
+		switch &c in e.c {
 		case command.Scan:
 			find_forget(d)
 			scan_end(d)
@@ -700,7 +735,7 @@ desk_step :: proc(d: ^Desk, v: Desk_In) {
 			if renaming {
 				find_halt(d)
 			}
-			act(d, &e)
+			act(d, &e.c)
 			if renaming {
 				find_restart(d)
 			}
@@ -727,18 +762,51 @@ desk_step :: proc(d: ^Desk, v: Desk_In) {
 		finish_recording(d, &e)
 		answer_all(d)
 	case Tick:
+		began := time.tick_now()
 		// A check is due or not on its own. The scan moving is a separate
 		// reason to answer, and neither waits on the other.
 		changed := advance(d)
+		advanced := time.tick_now()
 		if update_consider(d) {
 			changed = true
 		}
 		if changed {
 			answer_all(d, searches = false)
 		}
+		answered := time.tick_now()
 		find_tick(d)
 		monitor_refresh(d)
+
+		if d.trace && time.tick_since(began) >= TRACE_SLOW {
+			fmt.eprintfln(
+				"desk-trace %.1fms tick took %.1fms: advance %.1fms, answers %.1fms",
+				time.duration_milliseconds(time.tick_since(d.traced_from)),
+				time.duration_milliseconds(time.tick_since(began)),
+				time.duration_milliseconds(time.tick_diff(began, advanced)),
+				time.duration_milliseconds(time.tick_diff(advanced, answered)),
+			)
+		}
 	}
+}
+
+// trace writes one line of the desk trace: what happened to sent, how long after
+// it was sent, and, once the desk handles it, the scan's state then. The
+// sending thread traces an arrival, and reads only the
+// trace's own fields, which init set before any thread started.
+trace :: proc(d: ^Desk, what: string, sent: Sent_Command) {
+	state := "-"
+	if what == "handle" {
+		state = d.scan == nil ? "none" : fmt.tprint(d.scan.state)
+	}
+
+	fmt.eprintfln(
+		"desk-trace %.1fms %s %v waited %.1fms scan %s",
+		time.duration_milliseconds(time.tick_since(d.traced_from)),
+		what,
+		reflect.union_variant_typeid(sent.c),
+		time.duration_milliseconds(time.tick_since(sent.at)),
+		state,
+	)
 }
 
 // --- the scan ------------------------------------------------------------------
@@ -898,6 +966,13 @@ advance :: proc(d: ^Desk) -> bool {
 		measure(s)
 		if s.state == .Done {
 			keep(d)
+		}
+		if d.trace {
+			fmt.eprintfln(
+				"desk-trace %.1fms scan over %v",
+				time.duration_milliseconds(time.tick_since(d.traced_from)),
+				s.state,
+			)
 		}
 	}
 	return true

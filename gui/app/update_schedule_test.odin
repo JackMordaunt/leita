@@ -243,12 +243,12 @@ automatic_checks_once_at_startup_and_once_a_day :: proc(t: ^testing.T) {
 	_, found := settings.get(first.settings, settings.UPDATES, context.temp_allocator)
 	testing.expect(t, !found, "automatic checks are absent until chosen")
 
-	desk_step(first, command.Command(command.Check_Update{}))
+	desk_step(first, Sent_Command{c = command.Command(command.Check_Update{})})
 	testing.expect_value(t, sync.atomic_load(&first.update_manual_count), 1)
 	testing.expect_value(t, schedule_count(first), 0)
 	testing.expect(t, first.update_thread == nil, "a manual check with no port does not install")
 
-	desk_step(first, command.Command(command.Automatic_Checks{on = true}))
+	desk_step(first, Sent_Command{c = command.Command(command.Automatic_Checks{on = true})})
 	opted, opted_ok := settings.get(first.settings, settings.UPDATES, context.temp_allocator)
 	testing.expect(t, opted_ok && opted == "on", "the choice is kept")
 	desk_step(first, Tick{})
@@ -308,7 +308,12 @@ automatic_checks_once_at_startup_and_once_a_day :: proc(t: ^testing.T) {
 	testing.expect_value(t, schedule_count(first), 5)
 	testing.expect_value(t, first.update_state, query.Update_State.Idle)
 
-	desk_step(first, command.Command(command.Dismiss_Update{version = command.text_make("v1")}))
+	desk_step(
+		first,
+		Sent_Command {
+			c = command.Command(command.Dismiss_Update{version = command.text_make("v1")}),
+		},
+	)
 	again := schedule_open(t, path)
 	defer schedule_close(again)
 	set_schedule_latest(again, "v1")

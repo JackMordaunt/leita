@@ -24,7 +24,6 @@ import "jm:debug"
 import "jm:http/loopback"
 import "jm:i18n"
 import "jm:sqlite3"
-import "jm:stream"
 
 import "jm:ui"
 import bl "jm:ui/blend2d"
@@ -469,7 +468,7 @@ a_path_longer_than_a_command_carries_is_refused :: proc(t: ^testing.T) {
 	}
 	testing.expect(t, scan_command.path.cut, "the command was cut")
 	first := r.m.generation
-	stream.port_send(r.h.cmd_port, command.Command(scan_command))
+	send(&r.h, command.Command(scan_command))
 	// The first scan's failure is still said, so the second is waited for by its
 	// number: until then the desk may be swapping in the scan the test reads.
 	testing.expect(t, await_rescan(&r, first), "the command scans again")
@@ -1745,7 +1744,7 @@ reclaim_offers_only_what_rebuilds_and_deletes_what_is_chosen :: proc(t: ^testing
 		generation = r.m.generation,
 		count      = 1,
 	}
-	stream.port_send(r.h.cmd_port, command.Command(forged))
+	send(&r.h, command.Command(forged))
 	testing.expect(t, settle(&r, "Deleted 0 folders; 1 could not be deleted in full. How much disk space that frees is unknown."))
 	testing.expect(t, os.exists(fmt.tprintf("%s/plain/build/out.o", root)), "nothing went")
 }
@@ -2407,8 +2406,8 @@ export_writes_a_report_of_each_format :: proc(t: ^testing.T) {
 		.Pdf  = ".pdf",
 	}
 	for format in command.Export_Format {
-		stream.port_send(
-			r.h.cmd_port,
+		send(
+			&r.h,
 			command.Command(
 				command.Export{generation = r.m.generation, format = format, reclaim = true},
 			),
@@ -2461,8 +2460,8 @@ export_writes_a_report_of_each_format :: proc(t: ^testing.T) {
 	// Another PDF: in the same minute it is named -2, in the next one a name of
 	// its own; either way one more file, none replaced.
 	before, _ := os.read_all_directory_by_path(reports, context.temp_allocator)
-	stream.port_send(
-		r.h.cmd_port,
+	send(
+		&r.h,
 		command.Command(command.Export{generation = r.m.generation, format = .Pdf}),
 	)
 	ui.probe_advance(&r.p, 400, 1.0 / 60) // the earlier toasts time out
@@ -2690,7 +2689,7 @@ an_export_compares_with_the_scan_before :: proc(t: ^testing.T) {
 		testing.expect(t, named_within(root, cursor, 5 * time.Second), "no replay named root")
 	}
 
-	stream.port_send(r.h.cmd_port, command.Command(command.Scan{path = command.text_make(root)}))
+	send(&r.h, command.Command(command.Scan{path = command.text_make(root)}))
 	deadline := time.tick_now()._nsec + i64(30 * time.Second)
 	for r.m.generation == first && time.tick_now()._nsec < deadline {
 		if ui.inbox_pending(&r.h.inbox) {
@@ -2701,8 +2700,8 @@ an_export_compares_with_the_scan_before :: proc(t: ^testing.T) {
 		time.sleep(time.Millisecond)
 	}
 	testing.expect(t, settle(&r, "Done"), "the rescan finished")
-	stream.port_send(
-		r.h.cmd_port,
+	send(
+		&r.h,
 		command.Command(command.Export{generation = r.m.generation, format = .Json}),
 	)
 	path := saved_as(&r, ".json")
@@ -3264,8 +3263,8 @@ reports_and_change_tracking_need_a_licence_after_the_trial :: proc(t: ^testing.T
 		ui.probe_advance(&r.p, 10, 1.0 / 60)
 		pdf_during := fmt.tprintf("%s-during.pdf", root)
 		defer os.remove(pdf_during)
-		stream.port_send(
-			r.h.cmd_port,
+		send(
+			&r.h,
 			command.Command(
 				command.Export {
 					generation = r.m.generation,
@@ -3324,8 +3323,8 @@ reports_and_change_tracking_need_a_licence_after_the_trial :: proc(t: ^testing.T
 		pdf_path := fmt.tprintf("%s.pdf", reports)
 		defer os.remove(json_path)
 		defer os.remove(pdf_path)
-		stream.port_send(
-			r.h.cmd_port,
+		send(
+			&r.h,
 			command.Command(
 				command.Export {
 					generation = r.m.generation,
@@ -3345,8 +3344,8 @@ reports_and_change_tracking_need_a_licence_after_the_trial :: proc(t: ^testing.T
 		)
 		testing.expect(t, strings.contains(string(written), "\"compared\": null"), string(written))
 
-		stream.port_send(
-			r.h.cmd_port,
+		send(
+			&r.h,
 			command.Command(
 				command.Export {
 					generation = r.m.generation,
@@ -3376,8 +3375,8 @@ reports_and_change_tracking_need_a_licence_after_the_trial :: proc(t: ^testing.T
 	testing.expect_value(t, r.m.colour, view.Colouring.Folder)
 	pdf_licensed := fmt.tprintf("%s-licensed.pdf", root)
 	defer os.remove(pdf_licensed)
-	stream.port_send(
-		r.h.cmd_port,
+	send(
+		&r.h,
 		command.Command(
 			command.Export {
 				generation = r.m.generation,
@@ -4103,7 +4102,7 @@ closing_during_an_update_waits_without_racing_the_desk :: proc(t: ^testing.T) {
 	}
 	defer loopback.stop(srv)
 	rig_open(&r, root, release_base = loopback.url(srv, ""))
-	stream.port_send(r.h.cmd_port, command.Command(command.Check_Update{}))
+	send(&r.h, command.Command(command.Check_Update{}))
 	deadline := time.tick_now()._nsec + i64(30 * time.Second)
 	for !sync.atomic_load(&f.started) && time.tick_now()._nsec < deadline {
 		time.sleep(time.Millisecond)
@@ -4208,7 +4207,7 @@ the_recorder_toggle_does_not_hold_the_desk_while_pkexec_asks :: proc(t: ^testing
 	testing.expect(t, ui.probe_click_top(&r.p, "Record changes as they happen"), "the switch")
 	hand_on(&r)
 	first := r.m.generation
-	stream.port_send(r.h.cmd_port, command.Command(command.Scan{path = command.text_make(root)}))
+	send(&r.h, command.Command(command.Scan{path = command.text_make(root)}))
 	testing.expect(t, await_rescan(&r, first), "the desk starts a scan while pkexec asks")
 	asked := time.tick_since(began)
 	testing.expectf(
