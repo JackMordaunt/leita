@@ -13,7 +13,7 @@ from pathlib import Path
 
 # Same pinned Ubuntu image and container/getty isolation as test-install/linux.
 IMAGE = "ubuntu@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac"
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parent.parent.parent
 BOUNDS = dict(rss_bytes=256 * 1024**2, fds=128, threads=32,
               rss_growth_bytes=64 * 1024**2, fd_growth=16, thread_growth=4,
               log_base_bytes=8 * 1024**2, log_bytes_per_second=4096,

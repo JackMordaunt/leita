@@ -2,6 +2,7 @@
 from contextlib import closing
 import json
 import os
+import runpy
 import sqlite3
 import tempfile
 import unittest
@@ -75,6 +76,13 @@ class Bounds(unittest.TestCase):
         self.assertGreater(row["fds"], 0)
         self.assertGreater(row["threads"], 0)
         self.assertIsNone(h.resources(999999999))
+
+    def test_module_imports_from_the_shallow_guest_mount(self):
+        source = h.Path(h.__file__).resolve()
+        self.assertEqual(h.ROOT / "tools/test-endurance/harness.py", source)
+        with patch.object(h.Path, "resolve", return_value=Path("/harness/harness.py")):
+            module = runpy.run_path(str(source), run_name="endurance_guest_import")
+        self.assertEqual(module["ROOT"], Path("/"))
 
     def test_host_rejects_desktop_before_docker(self):
         class Args:
