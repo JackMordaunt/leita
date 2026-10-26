@@ -12,6 +12,13 @@ the person's host. Linux fanotify (kernel >= 5.9), root capabilities, loop
 mounts and Docker are required; missing prerequisites fail with their command
 output rather than passing a mock or silently skipping the recorder.
 
+The root controller starts the recorder and mounts the workload. A disposable
+non-root user runs the monitor through its own systemd user manager and bus.
+Its writable data and measurements live under `user/` in the evidence folder;
+host metadata and container logs stay in the parent folder. Startup retains
+observed UID/home/bus/data in `person.json` and both original and configured
+units before starting the timer, including its cadence override.
+
 The container mounts a disposable 256 MiB ext4 image. Its watched directory
 contains 512 directories and 2048 files. Every second the workload overwrites
 a fixed file, creates another, renames it and unlinks it. It stops changing the
@@ -37,6 +44,9 @@ within 64 MiB, 16 descriptors and 4 threads. Journal plus monitor logs may
 use 8 MiB plus 4096 B/s; the journal intentionally retains up to 30 days, so
 zero growth would be an incorrect assertion. Monitor runs must finish within
 10 s and keep a 15 s cadence within 5 s, including first/last-run checks.
+Per-gap and first/last coverage bound run density while allowing relative-timer
+jitter to accumulate. At the deadline the timer stops and any in-flight oneshot gets a bounded 12 s drain
+while the recorder stays alive; cleanup cancels a run that remains stuck.
 
 Each scheduled invocation must commit a new run and matching history snapshot,
 so retention cannot hide an earlier skipped scan. The final gate checks SQLite integrity, foreign keys, bounded 50-run/30-snapshot

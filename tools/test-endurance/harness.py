@@ -14,10 +14,13 @@ from pathlib import Path
 # Same pinned Ubuntu image and container/getty isolation as test-install/linux.
 IMAGE = "ubuntu@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac"
 ROOT = Path(__file__).resolve().parent.parent.parent
+PERSON = "endurance"
+PERSON_UID = 12345
+PERSON_HOME = Path("/home") / PERSON
 BOUNDS = dict(rss_bytes=256 * 1024**2, fds=128, threads=32,
               rss_growth_bytes=64 * 1024**2, fd_growth=16, thread_growth=4,
               log_base_bytes=8 * 1024**2, log_bytes_per_second=4096,
-              cadence_slack_seconds=5, monitor_seconds=10)
+              cadence_slack_seconds=5, monitor_seconds=10, monitor_drain_grace_seconds=2)
 
 
 def require(ok, message):
@@ -69,7 +72,8 @@ def check_resources(rows, bounds=BOUNDS):
 
 
 def check_cadence(rows, duration, interval, bounds=BOUNDS):
-    require(len(rows) >= max(2, int(duration / interval) - 1), "scheduled monitor runs were missed")
+    # Gap and endpoint bounds imply density while allowing relative-timer jitter.
+    require(len(rows) >= 2, "scheduled monitor produced fewer than 2 observations")
     require(all(r["code"] == 0 and r["samples"] > 0 for r in rows), "monitor failed or escaped sampling")
     require(all(r["seconds"] <= bounds["monitor_seconds"] for r in rows), "monitor run exceeded timeout")
 
@@ -186,16 +190,65 @@ def systemctl(*args):
     return run(["systemctl", *args], capture_output=True).stdout.strip()
 
 
+
+def person_argv(directory, argv):
+    """Use a real non-root uid and its private home, bus and data directory."""
+    runtime = f"/run/user/{PERSON_UID}"
+    return ["runuser", "-u", PERSON, "--", "env", f"HOME={PERSON_HOME}",
+            f"USER={PERSON}", f"LOGNAME={PERSON}", f"XDG_RUNTIME_DIR={runtime}",
+            f"DBUS_SESSION_BUS_ADDRESS=unix:path={runtime}/bus",
+            f"XDG_DATA_HOME={directory / 'data'}", "LEITA_COLOR=never", *map(str, argv)]
+
+
+def run_person(directory, argv, **kwargs):
+    return run(person_argv(directory, argv), **kwargs)
+
+
+def user_systemctl(directory, *args):
+    return run_person(directory, ["systemctl", "--user", *args], capture_output=True).stdout.strip()
+
+
+
+def drain_monitor(directory, clock=time.monotonic, pause=time.sleep):
+    """Let an in-flight oneshot finish while the recorder is still recording."""
+    deadline = clock() + BOUNDS["monitor_seconds"] + BOUNDS["monitor_drain_grace_seconds"]
+    while True:
+        state = user_systemctl(directory, "show", "leita-monitor.service", "--property=ActiveState", "--value")
+        if state == "inactive":
+            return
+        require(state != "failed", "scheduled monitor service failed while draining")
+        require(state in ("activating", "active", "deactivating", "reloading"),
+                f"unexpected monitor service state while draining: {state}")
+        remaining = deadline - clock()
+        require(remaining > 0, "scheduled monitor did not finish within drain budget")
+        pause(min(0.1, remaining))
+
+
+def prepare_person(directory):
+    run(["useradd", "--create-home", "--uid", PERSON_UID, PERSON])
+    os.chown(directory, PERSON_UID, -1)
+
+    code = ("import json, os; print(json.dumps({'uid': os.getuid(), 'euid': os.geteuid(), "
+            "'home': os.environ.get('HOME'), 'runtime': os.environ.get('XDG_RUNTIME_DIR'), "
+            "'bus': os.environ.get('DBUS_SESSION_BUS_ADDRESS'), 'data': os.environ.get('XDG_DATA_HOME')}))")
+    profile = json.loads(run_person(directory, ["python3", "-c", code], capture_output=True).stdout)
+    write_json(directory / "person.json", profile)
+    require(profile["uid"] == PERSON_UID and profile["euid"] == PERSON_UID,
+            f"monitor identity {profile['uid']}/{profile['euid']} is not {PERSON_UID}")
+    require(profile["home"] == str(PERSON_HOME) and profile["data"] == str(directory / "data"),
+            "monitor home or data directory differs from its private profile")
+
+    run(["loginctl", "enable-linger", PERSON])
+    systemctl("start", f"user@{PERSON_UID}.service")
+    user_systemctl(directory, "import-environment", "XDG_DATA_HOME", "LEITA_COLOR")
+
+
 def guest(args):
     directory = args.output
     require(os.geteuid() == 0 and Path("/run/systemd/system").exists(), "guest needs root and systemd PID 1")
     # The host launches this guest only in a disposable privileged CI container.
     require(Path("/.dockerenv").exists(), "guest refuses a host root session")
-    env = dict(os.environ, XDG_RUNTIME_DIR="/run/user/0", DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/0/bus",
-               XDG_DATA_HOME=str(directory / "data"), LEITA_COLOR="never")
-    os.environ.update(env)
-    systemctl("start", "user@0.service")
-    systemctl("--user", "import-environment", "XDG_DATA_HOME", "LEITA_COLOR")
+    prepare_person(directory)
     image = directory / "workload.ext4"
     with image.open("wb") as f:
         f.truncate(256 * 1024**2)
@@ -215,11 +268,11 @@ def guest(args):
     recorder_pid = int(systemctl("show", "leita-journal.service", "-p", "MainPID", "--value"))
     require(recorder_pid > 0, "recorder did not start")
     # No thresholds and no webhooks: this fixture cannot send alerts.
-    run([args.binary, "monitor", "add", place, "--every", "hourly"])
-    run([args.binary, "monitor", "on"])
-    units = Path("/root/.config/systemd/user")
+    run_person(directory, [args.binary, "monitor", "add", place, "--every", "hourly"])
+    run_person(directory, [args.binary, "monitor", "on"])
+    units = PERSON_HOME / ".config/systemd/user"
     shutil.copytree(units, directory / "production-units")
-    systemctl("--user", "stop", "leita-monitor.timer")
+    user_systemctl(directory, "stop", "leita-monitor.timer")
     # Exercise the real installed timer with a shorter period and --all; preserve
     # its original hourly unit above so this is explicit test configuration.
     drop = units / "leita-monitor.timer.d"
@@ -228,10 +281,11 @@ def guest(args):
     drop = units / "leita-monitor.service.d"
     drop.mkdir()
     (drop / "endurance.conf").write_text(f"[Service]\nExecStart=\nExecStart=/usr/bin/python3 /harness/harness.py --measure --output {directory} --binary {args.binary}\n")
-    systemctl("--user", "daemon-reload")
+    shutil.copytree(units, directory / "configured-units")
+    user_systemctl(directory, "daemon-reload")
     epoch = time.monotonic()
     (directory / "epoch").write_text(str(epoch))
-    systemctl("--user", "start", "leita-monitor.timer")
+    user_systemctl(directory, "start", "leita-monitor.timer")
     rows = []
     try:
         while time.monotonic() - epoch < args.duration:
@@ -253,9 +307,9 @@ def guest(args):
                 f.write(json.dumps(row) + "\n")
             time.sleep(min(1, max(0, args.duration - (time.monotonic()-epoch))))
 
-        systemctl("--user", "stop", "leita-monitor.timer")
-        # Stop both services before consistency checks.
-        systemctl("--user", "stop", "leita-monitor.service")
+        user_systemctl(directory, "stop", "leita-monitor.timer")
+        # Stop new invocations, then let any last oneshot finish before the recorder.
+        drain_monitor(directory)
         systemctl("stop", "leita-journal.service")
 
         runs = [json.loads(line) for line in (directory / "runs.jsonl").read_text().splitlines()]
@@ -263,7 +317,7 @@ def guest(args):
         check_resources(runs)
         check_cadence(runs, args.duration, args.interval)
         history = check_database(directory, len(runs))
-        full = json.loads(run([args.binary, place, "--whole", "--no-history", "--report", "-", "--format", "json"], capture_output=True).stdout)
+        full = json.loads(run_person(directory, [args.binary, place, "--whole", "--no-history", "--report", "-", "--format", "json"], capture_output=True).stdout)
         write_json(directory / "full-scan.json", full)
         require(full["totals"]["unread"] == 0, "full scan had unread directories")
         require(full["totals"]["bytes"] == history["latest_bytes"], "incremental history disagrees with final whole scan")
@@ -274,11 +328,14 @@ def guest(args):
                            for kind, series in (("monitor", runs), ("recorder", rows))},
                    history=history, journal=journal))
     finally:
-        systemctl("--user", "stop", "leita-monitor.timer")
+        user_systemctl(directory, "stop", "leita-monitor.timer")
+        state = user_systemctl(directory, "show", "leita-monitor.service", "--property=ActiveState", "--value")
+        if state not in ("inactive", "failed"):
+            user_systemctl(directory, "stop", "leita-monitor.service")
         systemctl("stop", "leita-journal.service")
         shutil.copytree("/var/lib/leita", directory / "recorder-state", dirs_exist_ok=True)
         (directory / "systemd.log").write_text(run(["journalctl", "--no-pager"], capture_output=True).stdout)
-        (directory / "timer.txt").write_text(systemctl("--user", "cat", "leita-monitor.timer", "leita-monitor.service"))
+        (directory / "timer.txt").write_text(user_systemctl(directory, "cat", "leita-monitor.timer", "leita-monitor.service"))
         run(["umount", target])
         image.unlink()
 
@@ -299,6 +356,8 @@ def host(args):
     require(not any(args.output.iterdir()), "output directory must be empty")
     write_json(args.output / "config.json", dict(duration_seconds=args.duration, interval_seconds=args.interval,
                bounds=BOUNDS, image=IMAGE, sha=run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True).stdout.strip()))
+    (args.output / "user").mkdir()
+    # Keep host metadata outside the guest-owned runtime directory.
     # Reuse test-install/linux's systemd container setup, with no host service installation.
     prepare = "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends systemd systemd-sysv libpam-systemd dbus dbus-user-session python3 util-linux e2fsprogs >/dev/null && for u in getty.target console-getty.service getty@.service serial-getty@.service; do ln -sf /dev/null /etc/systemd/system/$u; done && exec /sbin/init"
     container = run(["docker", "run", "-d", "--privileged", "--cgroupns=private", "-e", "container=docker",
@@ -315,7 +374,7 @@ def host(args):
             time.sleep(1)
 
         run(["docker", "exec", container, "python3", "/harness/harness.py", "--guest", "--binary", "/leita",
-             "--output", "/evidence", "--duration", args.duration, "--interval", args.interval], timeout=args.duration+120)
+             "--output", "/evidence/user", "--duration", args.duration, "--interval", args.interval], timeout=args.duration+120)
     finally:
         logs = run(["docker", "logs", container], capture_output=True)
         (args.output / "container.log").write_text(logs.stdout + logs.stderr)
