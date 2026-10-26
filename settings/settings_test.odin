@@ -1,5 +1,6 @@
 package leita_settings
 
+import jm_path "jm:path"
 import "core:os"
 import "core:path/filepath"
 import "core:testing"
@@ -38,7 +39,7 @@ a_setting_set_again_replaces_the_one_before :: proc(t: ^testing.T) {
 
 @(test)
 settings_outlast_the_connection_that_wrote_them :: proc(t: ^testing.T) {
-	dir, derr := os.make_directory_temp("", "leita-settings-*", context.temp_allocator)
+	dir, derr := jm_path.make_directory_temp("", "leita-settings-*", context.temp_allocator)
 	testing.expect(t, derr == nil)
 	defer os.remove_all(dir)
 	path, _ := filepath.join({dir, "data", FILE}, context.temp_allocator)
@@ -61,7 +62,7 @@ settings_outlast_the_connection_that_wrote_them :: proc(t: ^testing.T) {
 // connections cannot both claim the same check.
 @(test)
 one_of_two_stores_claims_the_check :: proc(t: ^testing.T) {
-	dir, derr := os.make_directory_temp("", "leita-settings-*", context.temp_allocator)
+	dir, derr := jm_path.make_directory_temp("", "leita-settings-*", context.temp_allocator)
 	testing.expect(t, derr == nil)
 	defer os.remove_all(dir)
 	path, _ := filepath.join({dir, FILE}, context.temp_allocator)

@@ -3,6 +3,7 @@ package leita_cli
 import "core:crypto/ed25519"
 import "core:encoding/hex"
 import "core:fmt"
+import jm_path "jm:path"
 import "core:os"
 import "core:path/filepath"
 import "core:slice"
@@ -52,7 +53,7 @@ PLACE :: "/compat/place"
 // A folder for one test; the caller removes it.
 @(private = "file")
 folder :: proc(t: ^testing.T) -> string {
-	dir, err := os.make_directory_temp("", "leita-compat-*", context.temp_allocator)
+	dir, err := jm_path.make_directory_temp("", "leita-compat-*", context.temp_allocator)
 	testing.expect(t, err == nil, "could not make a folder")
 	return dir
 }

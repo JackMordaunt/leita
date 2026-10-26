@@ -1,6 +1,7 @@
 package leita_cli
 
 import "core:fmt"
+import jm_path "jm:path"
 import "core:os"
 import "core:strings"
 import "core:testing"
@@ -15,7 +16,7 @@ import "../scan"
 @(private = "file")
 seeded :: proc(t: ^testing.T, done: []history.Action) -> (dir, kept: string) {
 	err: os.Error
-	dir, err = os.make_directory_temp("", "leita-history-cli-*", context.temp_allocator)
+	dir, err = jm_path.make_directory_temp("", "leita-history-cli-*", context.temp_allocator)
 	testing.expect(t, err == nil)
 	kept = fmt.tprintf("%s/data/history.db", dir)
 	st: history.Store

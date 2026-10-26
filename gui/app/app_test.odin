@@ -12,6 +12,7 @@ import "core:encoding/json"
 import "core:fmt"
 import "core:log"
 import "core:math"
+import jm_path "jm:path"
 import "core:os"
 import "core:path/filepath"
 import "core:slice"
@@ -4671,7 +4672,7 @@ an_activation_that_fails_says_so_in_time_and_keeps_nothing :: proc(t: ^testing.T
 		}
 	}
 	if netfault.openssl_found() {
-		dir, _ := os.make_directory_temp("", "leita-certs-*", context.temp_allocator)
+		dir, _ := jm_path.make_directory_temp("", "leita-certs-*", context.temp_allocator)
 		defer os.remove_all(dir)
 		certs, why, made := netfault.make_certs(dir)
 		testing.expect(t, made, why)

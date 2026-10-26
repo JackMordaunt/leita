@@ -4,6 +4,7 @@ import "core:crypto/ed25519"
 import "core:crypto/hash"
 import "core:encoding/hex"
 import "core:fmt"
+import jm_path "jm:path"
 import "core:os"
 import "core:strings"
 import "core:testing"
@@ -33,7 +34,7 @@ sha256 :: proc(body: string) -> string {
 
 @(private = "file")
 release_of :: proc(t: ^testing.T, running, published, version: string) -> (r: Release) {
-	root, err := os.make_directory_temp("", "leita-update-cli-*", context.temp_allocator)
+	root, err := jm_path.make_directory_temp("", "leita-update-cli-*", context.temp_allocator)
 	testing.expect(t, err == nil)
 	r.root = root
 	r.dir = fmt.tprintf("%s/release", root)

@@ -1,6 +1,7 @@
 package leita_cli
 
 import "core:fmt"
+import jm_path "jm:path"
 import "core:os"
 import "core:strings"
 import "core:sync"
@@ -88,7 +89,7 @@ a_reclaim_report_and_the_deletion_log_stay_free :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(text, "Installed dependencies"), text)
 
 	// The deletion log is not a Pro action. leita history never asks for a licence.
-	log_dir, mk := os.make_directory_temp("", "leita-free-log-", context.temp_allocator)
+	log_dir, mk := jm_path.make_directory_temp("", "leita-free-log-", context.temp_allocator)
 	testing.expect(t, mk == nil)
 	defer os.remove_all(log_dir)
 	kept := fmt.tprintf("%s/history.db", log_dir)
@@ -147,7 +148,7 @@ an_earlier_scan_is_kept_but_not_compared_after_the_trial :: proc(t: ^testing.T) 
 // scratch is an empty directory for one test, removed by the caller.
 @(private)
 scratch :: proc(t: ^testing.T, name: string) -> string {
-	root, err := os.make_directory_temp(
+	root, err := jm_path.make_directory_temp(
 		"",
 		fmt.tprintf("leita-free-%s-", name),
 		context.temp_allocator,
@@ -190,7 +191,7 @@ capture :: proc(
 ) {
 	sync.rw_mutex_lock(&stdio_rw)
 	defer sync.rw_mutex_unlock(&stdio_rw)
-	dir, mk := os.make_directory_temp("", "leita-capture-*", context.temp_allocator)
+	dir, mk := jm_path.make_directory_temp("", "leita-capture-*", context.temp_allocator)
 	if !testing.expect(t, mk == nil, "no temp directory") {
 		return
 	}

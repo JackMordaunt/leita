@@ -2,6 +2,7 @@ package durability
 
 import "core:fmt"
 import "core:math/rand"
+import jm_path "jm:path"
 import "core:os"
 import "core:strconv"
 import "core:strings"
@@ -31,7 +32,7 @@ workdir :: proc(t: ^testing.T, name: string) -> string {
 	if info, err := os.stat(parent, context.temp_allocator); err == nil && info.fullpath != "" {
 		parent = info.fullpath
 	}
-	dir, err := os.make_directory_temp(parent, fmt.tprintf("leita-durability-%s-*", name), context.temp_allocator)
+	dir, err := jm_path.make_directory_temp(parent, fmt.tprintf("leita-durability-%s-*", name), context.temp_allocator)
 	testing.expectf(t, err == nil, "no work directory: %v", err)
 	return dir
 }

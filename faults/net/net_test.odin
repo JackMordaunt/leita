@@ -1,6 +1,7 @@
 package netfault
 
 import "core:fmt"
+import jm_path "jm:path"
 import "core:os"
 import "core:strings"
 import "core:testing"
@@ -133,7 +134,7 @@ statuses_portals_and_redirects_answer :: proc(t: ^testing.T) {
 
 @(test)
 only_the_named_path_is_broken :: proc(t: ^testing.T) {
-	dir, _ := os.make_directory_temp("", "leita-netfault-*", context.temp_allocator)
+	dir, _ := jm_path.make_directory_temp("", "leita-netfault-*", context.temp_allocator)
 	defer os.remove_all(dir)
 	testing.expect(
 		t,
@@ -187,7 +188,7 @@ a_certificate_no_one_vouches_for_is_refused :: proc(t: ^testing.T) {
 		testing.expect(t, !in_ci(), "openssl is on every runner")
 		return
 	}
-	dir, _ := os.make_directory_temp("", "leita-certs-*", context.temp_allocator)
+	dir, _ := jm_path.make_directory_temp("", "leita-certs-*", context.temp_allocator)
 	defer os.remove_all(dir)
 	certs, why, ok := make_certs(dir)
 	if !testing.expect(t, ok, why) {
