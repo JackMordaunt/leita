@@ -1,6 +1,7 @@
 package leita_monitor
 
 import "core:fmt"
+import jm_path "jm:path"
 import "core:os"
 import "core:testing"
 
@@ -67,7 +68,7 @@ a_daily_and_a_weekly_place_keep_their_period_in_elapsed_time :: proc(t: ^testing
 
 @(test)
 a_run_holds_a_lock_another_run_stands_aside_for :: proc(t: ^testing.T) {
-	dir, err := os.make_directory_temp("", "leita-lock-*", context.temp_allocator)
+	dir, err := jm_path.make_directory_temp("", "leita-lock-*", context.temp_allocator)
 	testing.expect(t, err == nil)
 	defer os.remove_all(dir)
 	path := fmt.tprintf("%s/%s", dir, LOCK_FILE)

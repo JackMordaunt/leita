@@ -1,6 +1,7 @@
 package leita_app
 
 import "core:fmt"
+import jm_path "jm:path"
 import "core:os"
 import "core:sync"
 import "core:testing"
@@ -206,7 +207,7 @@ remove_schedule_dir :: proc(t: ^testing.T, dir: string) {
 
 @(test)
 schedule_fixture_removal_deletes_the_database_and_the_directory :: proc(t: ^testing.T) {
-	dir, derr := os.make_directory_temp("", "leita-schedule-rm-*", context.temp_allocator)
+	dir, derr := jm_path.make_directory_temp("", "leita-schedule-rm-*", context.temp_allocator)
 	testing.expect(t, derr == nil, "a temp directory")
 	db := fmt.tprintf("%s/%s", dir, settings.FILE)
 	wal := fmt.tprintf("%s-wal", db)
@@ -226,7 +227,7 @@ schedule_fixture_removal_deletes_the_database_and_the_directory :: proc(t: ^test
 // jump is one check. Nothing in this test installs or asks the network.
 @(test)
 automatic_checks_once_at_startup_and_once_a_day :: proc(t: ^testing.T) {
-	dir, derr := os.make_directory_temp("", "leita-schedule-*", context.temp_allocator)
+	dir, derr := jm_path.make_directory_temp("", "leita-schedule-*", context.temp_allocator)
 	testing.expect(t, derr == nil, "a temp directory")
 	defer remove_schedule_dir(t, dir)
 	path := fmt.tprintf("%s/%s", dir, settings.FILE)
@@ -367,7 +368,7 @@ set_query_only :: proc(t: ^testing.T, d: ^Desk, on: bool) {
 // A later write that succeeds clears the flag and follows the choice.
 @(test)
 a_failed_update_choice_checks_nothing_until_it_is_saved :: proc(t: ^testing.T) {
-	dir, derr := os.make_directory_temp("", "leita-schedule-ro-*", context.temp_allocator)
+	dir, derr := jm_path.make_directory_temp("", "leita-schedule-ro-*", context.temp_allocator)
 	testing.expect(t, derr == nil, "a temp directory")
 	defer remove_schedule_dir(t, dir)
 	path := fmt.tprintf("%s/%s", dir, settings.FILE)

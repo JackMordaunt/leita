@@ -5,6 +5,7 @@ import "core:crypto/ed25519"
 import "core:encoding/base64"
 import "core:encoding/hex"
 import "core:fmt"
+import jm_path "jm:path"
 import "core:os"
 import "core:path/filepath"
 import "core:strings"
@@ -134,7 +135,7 @@ no_key_checks_no_licence :: proc(t: ^testing.T) {
 @(test)
 a_saved_licence_reads_back :: proc(t: ^testing.T) {
 	s := signer()
-	dir, derr := os.make_directory_temp("", "leita-licence-*", context.temp_allocator)
+	dir, derr := jm_path.make_directory_temp("", "leita-licence-*", context.temp_allocator)
 	testing.expect(t, derr == nil)
 	defer os.remove_all(dir)
 	kept, _ := filepath.join({dir, "data", "history.db"}, context.temp_allocator)
@@ -259,7 +260,7 @@ a_key_set_is_comma_separated_hex :: proc(t: ^testing.T) {
 @(test)
 a_failed_replacement_keeps_the_line_and_the_receipt :: proc(t: ^testing.T) {
 	s := signer()
-	dir, derr := os.make_directory_temp("", "leita-licence-replace-*", context.temp_allocator)
+	dir, derr := jm_path.make_directory_temp("", "leita-licence-replace-*", context.temp_allocator)
 	testing.expect(t, derr == nil)
 	defer os.remove_all(dir)
 	path, _ := filepath.join({dir, "licence"}, context.temp_allocator)
@@ -329,7 +330,7 @@ other_terms :: proc(t: ^testing.T) -> string {
 @(test)
 the_receipt_key_keeps_the_lines_permissions :: proc(t: ^testing.T) {
 	s := signer()
-	dir, derr := os.make_directory_temp("", "leita-licence-*", context.temp_allocator)
+	dir, derr := jm_path.make_directory_temp("", "leita-licence-*", context.temp_allocator)
 	testing.expect(t, derr == nil)
 	defer os.remove_all(dir)
 	kept, _ := filepath.join({dir, "data", "history.db"}, context.temp_allocator)
@@ -400,7 +401,7 @@ memo_ledger :: proc(m: ^Memo) -> Ledger {
 // trial_dir is a folder for one test's first-use file, and the file's path.
 trial_dir :: proc(t: ^testing.T) -> (dir, path: string) {
 	err: os.Error
-	dir, err = os.make_directory_temp("", "leita-first-*", context.temp_allocator)
+	dir, err = jm_path.make_directory_temp("", "leita-first-*", context.temp_allocator)
 	testing.expect(t, err == nil)
 	path, _ = filepath.join({dir, "data", FIRST_USE}, context.temp_allocator)
 	return
@@ -554,7 +555,7 @@ nowhere_to_keep_the_start_ends_the_trial :: proc(t: ^testing.T) {
 @(test)
 the_licence_in_use_is_the_one_given_or_else_the_one_kept :: proc(t: ^testing.T) {
 	s := signer()
-	dir, derr := os.make_directory_temp("", "leita-licence-*", context.temp_allocator)
+	dir, derr := jm_path.make_directory_temp("", "leita-licence-*", context.temp_allocator)
 	testing.expect(t, derr == nil)
 	defer os.remove_all(dir)
 	kept, _ := filepath.join({dir, "data", "history.db"}, context.temp_allocator)
@@ -790,7 +791,7 @@ a_kept_file_gives_its_mode_and_a_missing_one_gives_none :: proc(t: ^testing.T) {
 @(test)
 a_disk_fault_in_a_save_keeps_the_line_before :: proc(t: ^testing.T) {
 	s := signer()
-	dir, derr := os.make_directory_temp("", "leita-licence-faults-*", context.temp_allocator)
+	dir, derr := jm_path.make_directory_temp("", "leita-licence-faults-*", context.temp_allocator)
 	testing.expect(t, derr == nil)
 	defer os.remove_all(dir)
 
@@ -843,7 +844,7 @@ a_disk_fault_in_a_save_keeps_the_line_before :: proc(t: ^testing.T) {
 @(test)
 a_disk_fault_in_forget_keeps_the_line :: proc(t: ^testing.T) {
 	s := signer()
-	dir, derr := os.make_directory_temp("", "leita-licence-faults-*", context.temp_allocator)
+	dir, derr := jm_path.make_directory_temp("", "leita-licence-faults-*", context.temp_allocator)
 	testing.expect(t, derr == nil)
 	defer os.remove_all(dir)
 

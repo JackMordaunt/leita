@@ -5,6 +5,7 @@ import "core:crypto/ed25519"
 import "core:encoding/base64"
 import "core:encoding/hex"
 import "core:fmt"
+import jm_path "jm:path"
 import "core:os"
 import "core:path/filepath"
 import "core:strings"
@@ -55,7 +56,7 @@ TERMS :: #load("../licence/testdata/sample.json", string)
 @(private = "file")
 data_folder :: proc(t: ^testing.T) -> (dir, kept: string) {
 	err: os.Error
-	dir, err = os.make_directory_temp("", "leita-licence-cli-*", context.temp_allocator)
+	dir, err = jm_path.make_directory_temp("", "leita-licence-cli-*", context.temp_allocator)
 	testing.expect(t, err == nil)
 	joined, _ := filepath.join({dir, "data", "history.db"}, context.temp_allocator)
 	return dir, joined

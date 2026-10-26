@@ -13,6 +13,7 @@ removed after the asserts. Nothing here deletes a path it did not create.
 package history_fuzz
 
 import "core:fmt"
+import jm_path "jm:path"
 import "core:os"
 import "core:path/filepath"
 import "core:slice"
@@ -67,17 +68,26 @@ teardown :: proc(_: ^Case) {}
 // still there afterwards. A refused open leaves the bytes alone. A successful
 // open may rewrite them only when they were already a database, or empty.
 check_store :: proc(c: Case, src: ^harness.Source) -> (detail: string, ok: bool) {
+	return check_store_with_allocator(c, src)
+}
+
+@(private)
+check_store_with_allocator :: proc(
+	c: Case,
+	src: ^harness.Source,
+	allocator := context.temp_allocator,
+) -> (detail: string, ok: bool) {
 	raw, _ := harness.damage(src, c.stores)
 	if len(raw) > INPUT_CAP {
 		return fmt.tprintf("drew %d bytes, cap is %d", len(raw), INPUT_CAP), false
 	}
-	dir, err := os.make_directory_temp("", "leita-fuzz-*", context.temp_allocator)
+	dir, err := jm_path.make_directory_temp("", "leita-fuzz-*", allocator)
 	if err != nil {
 		return "no temp directory", false
 	}
 	defer os.remove_all(dir)
-	path := filepath.join({dir, "history.db"}, context.temp_allocator) or_else ""
-	canary := filepath.join({dir, "canary"}, context.temp_allocator) or_else ""
+	path := filepath.join({dir, "history.db"}, allocator) or_else ""
+	canary := filepath.join({dir, "canary"}, allocator) or_else ""
 	if os.write_entire_file(path, raw) != nil ||
 	   os.write_entire_file(canary, []byte{1, 2, 3, 4}) != nil {
 		return "could not write the store", false
@@ -113,17 +123,26 @@ check_store :: proc(c: Case, src: ^harness.Source) -> (detail: string, ok: bool)
 // check_baseline loads one damaged file. The reader only reads, so the file
 // and a sibling canary stay byte for byte what was written.
 check_baseline :: proc(c: Case, src: ^harness.Source) -> (detail: string, ok: bool) {
+	return check_baseline_with_allocator(c, src)
+}
+
+@(private)
+check_baseline_with_allocator :: proc(
+	c: Case,
+	src: ^harness.Source,
+	allocator := context.temp_allocator,
+) -> (detail: string, ok: bool) {
 	raw, _ := harness.damage(src, c.baselines)
 	if len(raw) > INPUT_CAP {
 		return fmt.tprintf("drew %d bytes, cap is %d", len(raw), INPUT_CAP), false
 	}
-	dir, err := os.make_directory_temp("", "leita-fuzz-*", context.temp_allocator)
+	dir, err := jm_path.make_directory_temp("", "leita-fuzz-*", allocator)
 	if err != nil {
 		return "no temp directory", false
 	}
 	defer os.remove_all(dir)
-	path := filepath.join({dir, "place.tree"}, context.temp_allocator) or_else ""
-	canary := filepath.join({dir, "canary"}, context.temp_allocator) or_else ""
+	path := filepath.join({dir, "place.tree"}, allocator) or_else ""
+	canary := filepath.join({dir, "canary"}, allocator) or_else ""
 	if os.write_entire_file(path, raw) != nil ||
 	   os.write_entire_file(canary, []byte{1, 2, 3, 4}) != nil {
 		return "could not write the baseline", false
@@ -214,13 +233,13 @@ publish :: proc(w: ^scan.Writer, i, parent: u32, name: string, disk: u64, extra:
 }
 
 @(private)
-fresh_store :: proc() -> []byte {
-	dir, err := os.make_directory_temp("", "leita-fuzz-*", context.temp_allocator)
+fresh_store :: proc(allocator := context.temp_allocator) -> []byte {
+	dir, err := jm_path.make_directory_temp("", "leita-fuzz-*", allocator)
 	if err != nil {
 		return nil
 	}
 	defer os.remove_all(dir)
-	path := filepath.join({dir, "history.db"}, context.temp_allocator) or_else ""
+	path := filepath.join({dir, "history.db"}, allocator) or_else ""
 	st: history.Store
 	if history.open(&st, path) != nil {
 		return nil
@@ -235,13 +254,13 @@ fresh_store :: proc() -> []byte {
 }
 
 @(private)
-fresh_baseline :: proc() -> []byte {
-	dir, err := os.make_directory_temp("", "leita-fuzz-*", context.temp_allocator)
+fresh_baseline :: proc(allocator := context.temp_allocator) -> []byte {
+	dir, err := jm_path.make_directory_temp("", "leita-fuzz-*", allocator)
 	if err != nil {
 		return nil
 	}
 	defer os.remove_all(dir)
-	path := filepath.join({dir, "place.tree"}, context.temp_allocator) or_else ""
+	path := filepath.join({dir, "place.tree"}, allocator) or_else ""
 	tree: scan.Tree
 	if scan.tree_init(&tree) != nil {
 		return nil

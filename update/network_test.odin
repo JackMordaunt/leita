@@ -245,7 +245,7 @@ a_release_page_with_a_bad_certificate_is_refused :: proc(t: ^testing.T) {
 		)
 		return
 	}
-	dir, _ := os.make_directory_temp("", "leita-certs-*", context.temp_allocator)
+	dir, _ := path.make_directory_temp("", "leita-certs-*", context.temp_allocator)
 	defer os.remove_all(dir)
 	certs, why, ok := netfault.make_certs(dir)
 	if !testing.expect(t, ok, why) {

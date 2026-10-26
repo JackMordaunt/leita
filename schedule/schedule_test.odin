@@ -1,11 +1,10 @@
 package leita_schedule
 
-import "core:fmt"
 import "core:log"
+import jm_path "jm:path"
 import "core:os"
 import "core:path/filepath"
 import "core:strings"
-import "core:sync"
 import "core:testing"
 import "core:unicode/utf16"
 
@@ -86,24 +85,9 @@ from_utf16 :: proc(data: []byte) -> string {
 	return string(out[:n])
 }
 
-/*
-fakes_made numbers each fake's folder, so tests side by side never share one.
-core:testing resets each test's random state to the one seed it logs at the
-start (runner.odin, rand.reset(data.t.seed)), so make_directory_temp draws the
-same first name in every test. It draws again only on .Exist (temp_file.odin).
-On Windows a folder another test is still removing is delete pending, and
-making it again is access denied, not .Exist. fake_host failed on
-windows-latest in run 40122280682, which logged no error, and that is the
-failure the shared name allows.
-*/
-@(private = "file")
-fakes_made: int
-
 @(private = "file")
 fake_host :: proc(t: ^testing.T, f: ^Fake, system: System) -> Host {
-	n := sync.atomic_add(&fakes_made, 1)
-	pattern := fmt.tprintf("leita-schedule-%d-*", n)
-	dir, err := os.make_directory_temp("", pattern, context.temp_allocator)
+	dir, err := jm_path.make_directory_temp("", "leita-schedule-*", context.temp_allocator)
 	testing.expectf(t, err == nil, "make_directory_temp: %v", err)
 
 	f.dir = dir
@@ -395,7 +379,7 @@ another install earlier on PATH is skipped.
 */
 @(test)
 the_program_recorded_is_the_path_leita_was_started_by :: proc(t: ^testing.T) {
-	dir, err := os.make_directory_temp("", "leita-program-*", context.temp_allocator)
+	dir, err := jm_path.make_directory_temp("", "leita-program-*", context.temp_allocator)
 	testing.expect(t, err == nil)
 	defer os.remove_all(dir)
 	bin, _ := filepath.join({dir, "bin"}, context.temp_allocator)

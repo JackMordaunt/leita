@@ -3,6 +3,7 @@ package durability
 
 import "core:fmt"
 import "core:log"
+import jm_path "jm:path"
 import "core:os"
 import "core:strings"
 import "core:sys/linux"
@@ -113,7 +114,7 @@ make_read_only :: proc(t: ^testing.T, v: Volume) -> bool {
 @(private = "file")
 workdir_for :: proc(t: ^testing.T, name: string) -> string {
 	parent := os.temp_directory(context.temp_allocator) or_else "."
-	dir, err := os.make_directory_temp(parent, fmt.tprintf("leita-durability-%s-*", name), context.temp_allocator)
+	dir, err := jm_path.make_directory_temp(parent, fmt.tprintf("leita-durability-%s-*", name), context.temp_allocator)
 	testing.expectf(t, err == nil, "no work directory: %v", err)
 	return dir
 }
