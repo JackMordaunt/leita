@@ -21,9 +21,19 @@ on:
       seed:
         description: "The first seed; rounds seeds run from here"
         default: "1"
+      mode:
+        description: "Sanitizer soak, or real monitor/recorder endurance"
+        type: choice
+        options: [sanitizers, endurance]
+        default: sanitizers
+      endurance_seconds:
+        description: "Endurance wall time in seconds (60..14400; nightly uses 7200)"
+        default: "7200"
       rounds:
         description: "How many times the tests run, and how many seeds the fuzzers take"
         default: "3"
+  schedule:
+    - cron: "23 2 * * *"
   push:
     branches: ["ci/*soak*"]
 
@@ -41,6 +51,7 @@ env:
 
 jobs:
   thread:
+    if: github.event_name != 'schedule' && inputs.mode != 'endurance'
     strategy:
       fail-fast: false
       matrix:
@@ -71,6 +82,7 @@ jobs:
           if-no-files-found: ignore
 
   address:
+    if: github.event_name != 'schedule' && inputs.mode != 'endurance'
     strategy:
       fail-fast: false
       matrix:
@@ -106,3 +118,34 @@ jobs:
           name: soak-address-cases-${{ matrix.os }}
           path: "*/fuzz/corpus/*.case"
           if-no-files-found: ignore
+
+  endurance:
+    if: github.event_name == 'schedule' || inputs.mode == 'endurance'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 270
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          submodules: true
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: endurance gate self-tests
+        run: python3 -m unittest discover -s tools/test-endurance -v
+      - name: build the real CLI
+        run: SAN='' just cli
+      - name: real service smoke before the long run
+        run: python3 tools/test-endurance/harness.py --duration 60 --output build/endurance-smoke
+      - name: monitor and recorder endurance
+        env:
+          ENDURANCE_SECONDS: ${{ inputs.endurance_seconds || '7200' }}
+        run: python3 tools/test-endurance/harness.py --duration "$ENDURANCE_SECONDS" --output build/endurance
+      - name: retain resource samples, stores, units and service logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: endurance-linux-${{ github.sha }}
+          path: |
+            build/endurance-smoke
+            build/endurance
+          retention-days: 14
+          if-no-files-found: warn
