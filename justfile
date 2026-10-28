@@ -79,10 +79,11 @@ floor_dir  := root / "build/floor-" + floor + "-" + floor_arch
 floor_env  := ". \"" + root + "/tools/linux/floor-env\" \"" + root + "\" \"" + floor + "\" \"" + floor_arch + "\""
 odin_target := if floor == "" { "" } else if floor_arch == arch() { "" } else if floor_arch == "aarch64" { "-target:linux_arm64" } else { "-target:linux_amd64" }
 jm    := env("JM", if floor == "" { root / "jm" } else { floor_dir / "jm" })
-# Which leita a build is, the one place either binary learns it: the tag
-# described, or a bare commit as git describe names one, g and its hash, so Odin
-# never reads it as a number; dev without git. LEITA_VERSION=<v> sets it instead.
-version := env("LEITA_VERSION", `git describe --tags --dirty 2>/dev/null || { h=$(git describe --always --dirty 2>/dev/null) && echo "g$h"; } || echo dev`)
+# Which leita a build is, the one place either binary learns it: a v* release
+# tag, or a bare commit as git describe names one, g and its hash, so Odin
+# never reads it as a number; dev without git. A retired/* tag is not a
+# release, so it is not a version. LEITA_VERSION=<v> sets it instead.
+version := env("LEITA_VERSION", `git describe --tags --match 'v*' --dirty 2>/dev/null || { h=$(git describe --always --match 'v*' --dirty 2>/dev/null) && echo "g$h"; } || echo dev`)
 # The year of this build, for the copyright line. LEITA_YEAR=<n> sets it.
 year := env("LEITA_YEAR", `date +%Y`)
 # This build's authenticated release instant, YYYY-MM-DDTHH:MM:SSZ, the same
