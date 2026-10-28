@@ -1,9 +1,13 @@
 package leita_settings
 
-import jm_path "jm:path"
+import "core:fmt"
 import "core:os"
 import "core:path/filepath"
+import "core:slice"
 import "core:testing"
+import jm_path "jm:path"
+
+import "jm:sqlite3"
 
 @(test)
 a_setting_never_written_reads_as_absent :: proc(t: ^testing.T) {
@@ -90,4 +94,83 @@ one_of_two_stores_claims_the_check :: proc(t: ^testing.T) {
 	won_c, err_c := replace_if(&second, UPDATE_CHECKED, "1700000000", "1700086400")
 	testing.expect(t, err_c == nil)
 	testing.expect(t, won_c)
+}
+
+// COMPAT is card 749's on-disk fixtures, the files earlier builds wrote.
+@(private)
+COMPAT :: #directory + "/../cli/testdata/compat"
+
+@(private)
+copy_fixture :: proc(t: ^testing.T, dir, rel, name: string) -> (path: string, data: []u8) {
+	src, _ := filepath.join({COMPAT, rel}, context.temp_allocator)
+	read, err := os.read_entire_file(src, context.temp_allocator)
+	testing.expectf(t, err == nil, "fixture %s is missing", rel)
+	path, _ = filepath.join({dir, name}, context.temp_allocator)
+	testing.expect(t, os.write_entire_file(path, read) == nil, "could not copy the fixture")
+	data = read
+	return
+}
+
+@(private)
+version_of :: proc(t: ^testing.T, st: ^Store) -> i64 {
+	rows, err := sqlite3.query(st.db, "PRAGMA user_version", allocator = context.temp_allocator)
+	testing.expect(t, err == nil)
+	defer sqlite3.finish(&rows)
+	testing.expect(t, sqlite3.next(&rows), "user_version returned no row")
+	return sqlite3.integer(rows, 0)
+}
+
+// A store written before user_version was stamped is this schema: it opens and
+// keeps its rows, and opening it stamps this build. A new store is stamped too.
+// Card 749's s7.db is that unversioned store.
+@(test)
+an_unversioned_store_opens_and_is_stamped :: proc(t: ^testing.T) {
+	dir, derr := jm_path.make_directory_temp("", "leita-settings-*", context.temp_allocator)
+	testing.expect(t, derr == nil)
+	defer os.remove_all(dir)
+
+	path, _ := copy_fixture(t, dir, "settings/s7.db", FILE)
+	st: Store
+	testing.expect(t, open(&st, path) == nil, "a store with no user_version was refused")
+	language, found := get(&st, LANGUAGE, context.temp_allocator)
+	testing.expect(t, found)
+	testing.expect_value(t, language, "de")
+	testing.expect_value(t, version_of(t, &st), i64(SCHEMA_VERSION))
+	close(&st)
+
+	fresh, _ := filepath.join({dir, "new.db"}, context.temp_allocator)
+	testing.expect(t, open(&st, fresh) == nil, "a new store did not open")
+	testing.expect_value(t, version_of(t, &st), i64(SCHEMA_VERSION))
+	close(&st)
+}
+
+// A store a newer build stamped is refused, naming both versions, and is not
+// rewritten. Card 749's s-future.db is that store: user_version 99, plus a
+// column and a table this build does not know.
+@(test)
+a_newer_store_is_refused :: proc(t: ^testing.T) {
+	dir, derr := jm_path.make_directory_temp("", "leita-settings-*", context.temp_allocator)
+	testing.expect(t, derr == nil)
+	defer os.remove_all(dir)
+
+	path, before := copy_fixture(t, dir, "settings/s-future.db", FILE)
+	st: Store
+	err := open(&st, path)
+	testing.expect(t, err != nil, "a newer store opened")
+	if err == nil {
+		close(&st)
+		return
+	}
+	fault := err.(sqlite3.Fault) or_else sqlite3.Fault{}
+	defer delete(fault.text)
+	want := fmt.tprintf(
+		"schema version 99 is newer than schema version %d, which this build reads",
+		SCHEMA_VERSION,
+	)
+	testing.expect_value(t, fault.text, want)
+	after, rerr := os.read_entire_file(path, context.temp_allocator)
+	testing.expect(t, rerr == nil)
+	testing.expect(t, slice.equal(after, before), "a newer store was rewritten")
+	testing.expect(t, !os.exists(fmt.tprintf("%s-wal", path)), "a newer store was put in WAL")
+	testing.expect(t, !os.exists(fmt.tprintf("%s-shm", path)), "a newer store was put in WAL")
 }

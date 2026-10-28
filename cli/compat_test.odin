@@ -3,13 +3,13 @@ package leita_cli
 import "core:crypto/ed25519"
 import "core:encoding/hex"
 import "core:fmt"
-import jm_path "jm:path"
 import "core:os"
 import "core:path/filepath"
 import "core:slice"
 import "core:strings"
 import "core:testing"
 import "core:time"
+import jm_path "jm:path"
 
 import "jm:sqlite3"
 
@@ -286,7 +286,12 @@ compat_history_earlier_stores_open_and_keep_their_rows :: proc(t: ^testing.T) {
 		// them. Opening prunes by age alone, and these are new.
 		bases := make([dynamic]string, context.temp_allocator)
 		for b in ([]string{"bl1", "bl2", "bl3", "bl4"}) {
-			p, _ := copy_of(t, dir, fmt.tprintf("baseline/%s.tree", b), fmt.tprintf("baselines/%s.tree", b))
+			p, _ := copy_of(
+				t,
+				dir,
+				fmt.tprintf("baseline/%s.tree", b),
+				fmt.tprintf("baselines/%s.tree", b),
+			)
 			append(&bases, p)
 		}
 		for _ in 0 ..< 2 {
@@ -301,7 +306,15 @@ compat_history_earlier_stores_open_and_keep_their_rows :: proc(t: ^testing.T) {
 		}
 		st: history.Store
 		testing.expect(t, history.open(&st, path) == nil)
-		_, serr := history.save(&st, PLACE, 1_700_172_800, 9, 1, {{"docs", 9}}, history.Disk{100, 40})
+		_, serr := history.save(
+			&st,
+			PLACE,
+			1_700_172_800,
+			9,
+			1,
+			{{"docs", 9}},
+			history.Disk{100, 40},
+		)
 		testing.expectf(t, serr == nil, "%s: save: %v", rel, serr)
 		snaps, _ := history.list(&st, PLACE)
 		testing.expect_value(t, len(snaps), 3)
@@ -313,29 +326,28 @@ compat_history_earlier_stores_open_and_keep_their_rows :: proc(t: ^testing.T) {
 	}
 }
 
-// A store a newer leita made, with a column and a table this one does not know,
-// opens and reads what it knows, and still holds what it does not.
+// A store a newer leita made is stamped with a user_version this build does not
+// read. It is refused, naming both versions, and left byte for byte: not
+// migrated and not used.
 @(test)
-compat_history_future_store_is_read_and_left_whole :: proc(t: ^testing.T) {
+compat_history_future_store_is_refused :: proc(t: ^testing.T) {
 	dir := folder(t)
 	defer os.remove_all(dir)
 
-	path, _ := copy_of(t, dir, "history/h-future.db", "history.db")
+	path, data := copy_of(t, dir, "history/h-future.db", "history.db")
 	st: history.Store
 	err := history.open(&st, path)
-	if !testing.expectf(t, err == nil, "open: %v", err) {
+	testing.expect(t, err != nil, "a newer store opened")
+	if err == nil {
+		history.close(&st)
 		return
 	}
-	defer history.close(&st)
-
-	expect_history_rows(t, &st, {7, 7}, "h-future")
-	_, serr := history.save(&st, PLACE, 1_700_172_800, 9, 1, {{"docs", 9}}, history.Disk{})
-	testing.expectf(t, serr == nil, "save into a newer store: %v", serr)
-	rows, qerr := sqlite3.query(st.db, "SELECT v FROM tomorrow", allocator = context.temp_allocator)
-	testing.expect(t, qerr == nil)
-	testing.expect(t, sqlite3.next(&rows), "the newer store's table lost its row")
-	testing.expect_value(t, sqlite3.text(rows, 0), "yes")
-	_ = sqlite3.finish(&rows)
+	fault := err.(sqlite3.Fault) or_else sqlite3.Fault{}
+	defer delete(fault.text)
+	why := history.describe(err)
+	testing.expect(t, strings.contains(why, "schema version 99"), why)
+	testing.expect(t, strings.contains(why, "schema version 1"), why)
+	expect_unchanged(t, path, data, "h-future")
 }
 
 // A damaged store is reported or read as far as it reads: the open or a read says
@@ -435,7 +447,15 @@ compat_settings_earlier_stores_open_and_keep_their_rows :: proc(t: ^testing.T) {
 		}
 		st: settings.Store
 		testing.expect(t, settings.open(&st, path) == nil)
-		werr := settings.watch(&st, settings.Watch{place = "/compat/other", every = .Weekly, added = 1_700_100_000, limits = {warn_used = 80, growth = true}})
+		werr := settings.watch(
+			&st,
+			settings.Watch {
+				place = "/compat/other",
+				every = .Weekly,
+				added = 1_700_100_000,
+				limits = {warn_used = 80, growth = true},
+			},
+		)
 		testing.expectf(t, werr == nil, "%s: watch: %v", rel, werr)
 		watches, _ := settings.watches(&st, context.temp_allocator)
 		testing.expect_value(t, len(watches), 2 if version >= 2 else 1)
@@ -443,24 +463,27 @@ compat_settings_earlier_stores_open_and_keep_their_rows :: proc(t: ^testing.T) {
 	}
 }
 
-// A newer leita's settings.db, with a column on watch this one does not know,
-// still reads and takes a new watch beside its own.
+// A newer leita's settings.db is stamped with a user_version this build does
+// not read. It is refused, naming both versions, and left byte for byte.
 @(test)
-compat_settings_future_store_is_read_and_takes_a_watch :: proc(t: ^testing.T) {
+compat_settings_future_store_is_refused :: proc(t: ^testing.T) {
 	dir := folder(t)
 	defer os.remove_all(dir)
 
-	path, _ := copy_of(t, dir, "settings/s-future.db", "settings.db")
+	path, data := copy_of(t, dir, "settings/s-future.db", "settings.db")
 	st: settings.Store
 	err := settings.open(&st, path)
-	if !testing.expectf(t, err == nil, "open: %v", err) {
+	testing.expect(t, err != nil, "a newer store opened")
+	if err == nil {
+		settings.close(&st)
 		return
 	}
-	defer settings.close(&st)
-
-	expect_settings_rows(t, &st, 7, "s-future")
-	werr := settings.watch(&st, settings.Watch{place = "/compat/other", every = .Hourly, added = 1_700_100_000})
-	testing.expectf(t, werr == nil, "watch into a newer store: %v", werr)
+	fault := err.(sqlite3.Fault) or_else sqlite3.Fault{}
+	defer delete(fault.text)
+	why := history.describe(err)
+	testing.expect(t, strings.contains(why, "schema version 99"), why)
+	testing.expect(t, strings.contains(why, "schema version 1"), why)
+	expect_unchanged(t, path, data, "s-future")
 }
 
 // A damaged settings.db is reported or read as far as it reads, never fatal, and
