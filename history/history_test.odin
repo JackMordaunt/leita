@@ -1,11 +1,12 @@
 package leita_history
 
 import "core:fmt"
-import jm_path "jm:path"
 import "core:os"
 import "core:path/filepath"
+import "core:slice"
 import "core:testing"
 import "core:time"
+import jm_path "jm:path"
 
 import "jm:sqlite3"
 
@@ -303,7 +304,11 @@ old_baselines_are_pruned_and_recent_ones_kept :: proc(t: ^testing.T) {
 	root := fmt.tprintf("%s/leita_history_prune_%d", base, os.get_pid())
 	os.remove_all(root)
 	baselines := fmt.tprintf("%s/baselines", root)
-	testing.expect(t, os.make_directory_all(baselines) == nil || os.exists(baselines), "could not make the folder")
+	testing.expect(
+		t,
+		os.make_directory_all(baselines) == nil || os.exists(baselines),
+		"could not make the folder",
+	)
 	defer os.remove_all(root)
 	old := fmt.tprintf("%s/old.tree", baselines)
 	recent := fmt.tprintf("%s/recent.tree", baselines)
@@ -326,7 +331,11 @@ a_stopped_saves_temporary_file_is_pruned_within_the_hour :: proc(t: ^testing.T) 
 	root := fmt.tprintf("%s/leita_history_stage_%d", base, os.get_pid())
 	os.remove_all(root)
 	baselines := fmt.tprintf("%s/baselines", root)
-	testing.expect(t, os.make_directory_all(baselines) == nil || os.exists(baselines), "could not make the folder")
+	testing.expect(
+		t,
+		os.make_directory_all(baselines) == nil || os.exists(baselines),
+		"could not make the folder",
+	)
 	defer os.remove_all(root)
 
 	stopped := fmt.tprintf("%s/0123456789abcdef.tree.41-1.new", baselines)
@@ -336,11 +345,94 @@ a_stopped_saves_temporary_file_is_pruned_within_the_hour :: proc(t: ^testing.T) 
 		testing.expect(t, os.write_entire_file(path, []byte{'x'}) == nil, "could not write a file")
 	}
 	ago := time.time_add(time.now(), -2 * STAGE_KEPT)
-	testing.expect(t, os.change_times(stopped, ago, ago) == nil, "could not age the stopped save's file")
+	testing.expect(
+		t,
+		os.change_times(stopped, ago, ago) == nil,
+		"could not age the stopped save's file",
+	)
 	testing.expect(t, os.change_times(kept, ago, ago) == nil, "could not age the baseline")
 
 	prune_baselines(fmt.tprintf("%s/store.db", root), time.now())
 	testing.expect(t, !os.exists(stopped), "a stopped save's temporary file was kept")
 	testing.expect(t, os.exists(writing), "a save's fresh temporary file was deleted")
 	testing.expect(t, os.exists(kept), "a baseline younger than BASELINE_KEPT was deleted")
+}
+
+// COMPAT is card 749's on-disk fixtures, the files earlier builds wrote.
+@(private)
+COMPAT :: #directory + "/../cli/testdata/compat"
+
+@(private)
+copy_fixture :: proc(t: ^testing.T, dir, rel, name: string) -> (path: string, data: []u8) {
+	src, _ := filepath.join({COMPAT, rel}, context.temp_allocator)
+	read, err := os.read_entire_file(src, context.temp_allocator)
+	testing.expectf(t, err == nil, "fixture %s is missing", rel)
+	path, _ = filepath.join({dir, name}, context.temp_allocator)
+	testing.expect(t, os.write_entire_file(path, read) == nil, "could not copy the fixture")
+	data = read
+	return
+}
+
+@(private)
+version_of :: proc(t: ^testing.T, st: ^Store) -> i64 {
+	rows, err := sqlite3.query(st.db, "PRAGMA user_version", allocator = context.temp_allocator)
+	testing.expect(t, err == nil)
+	defer sqlite3.finish(&rows)
+	testing.expect(t, sqlite3.next(&rows), "user_version returned no row")
+	return sqlite3.integer(rows, 0)
+}
+
+// A store written before user_version was stamped is this schema: it opens and
+// keeps its rows, and opening it stamps this build. A new store is stamped too.
+// Card 749's h2.db is that unversioned store.
+@(test)
+an_unversioned_store_opens_and_is_stamped :: proc(t: ^testing.T) {
+	dir, derr := jm_path.make_directory_temp("", "leita-history-*", context.temp_allocator)
+	testing.expect(t, derr == nil)
+	defer os.remove_all(dir)
+
+	path, _ := copy_fixture(t, dir, "history/h2.db", "history.db")
+	st: Store
+	testing.expect(t, open(&st, path) == nil, "a store with no user_version was refused")
+	snaps, lerr := list(&st, "/compat/place")
+	testing.expect(t, lerr == nil)
+	testing.expect_value(t, len(snaps), 2)
+	testing.expect_value(t, version_of(t, &st), i64(SCHEMA_VERSION))
+	close(&st)
+
+	fresh, _ := filepath.join({dir, "new.db"}, context.temp_allocator)
+	testing.expect(t, open(&st, fresh) == nil, "a new store did not open")
+	testing.expect_value(t, version_of(t, &st), i64(SCHEMA_VERSION))
+	close(&st)
+}
+
+// A store a newer build stamped is refused, naming both versions, and is not
+// rewritten. Card 749's h-future.db is that store: user_version 99, plus a
+// column and a table this build does not know.
+@(test)
+a_newer_store_is_refused :: proc(t: ^testing.T) {
+	dir, derr := jm_path.make_directory_temp("", "leita-history-*", context.temp_allocator)
+	testing.expect(t, derr == nil)
+	defer os.remove_all(dir)
+
+	path, before := copy_fixture(t, dir, "history/h-future.db", "history.db")
+	st: Store
+	err := open(&st, path)
+	testing.expect(t, err != nil, "a newer store opened")
+	if err == nil {
+		close(&st)
+		return
+	}
+	fault := err.(sqlite3.Fault) or_else sqlite3.Fault{}
+	defer delete(fault.text)
+	want := fmt.tprintf(
+		"schema version 99 is newer than schema version %d, which this build reads",
+		SCHEMA_VERSION,
+	)
+	testing.expect_value(t, fault.text, want)
+	after, rerr := os.read_entire_file(path, context.temp_allocator)
+	testing.expect(t, rerr == nil)
+	testing.expect(t, slice.equal(after, before), "a newer store was rewritten")
+	testing.expect(t, !os.exists(fmt.tprintf("%s-wal", path)), "a newer store was put in WAL")
+	testing.expect(t, !os.exists(fmt.tprintf("%s-shm", path)), "a newer store was put in WAL")
 }

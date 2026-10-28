@@ -29,6 +29,7 @@ import "core:time"
 import "jm:sqlite3"
 
 import "../gui/query"
+import "../schema"
 
 // KEPT_MIN is the least an entry holds to be kept in a snapshot, as the window
 // is told it is.
@@ -127,9 +128,17 @@ SCHEMA :: `
 		failed INTEGER NOT NULL);
 	CREATE INDEX IF NOT EXISTS action_taken ON action(taken);`
 
+// SCHEMA_VERSION is the on-disk schema this build writes, stored in SQLite's
+// user_version. Zero means a store from before versions were stamped: it is
+// this schema, and opening it stamps this version. A greater version was
+// written by a newer build. open refuses it and does not migrate or use it.
+@(private)
+SCHEMA_VERSION :: 1
+
 // open opens the store at path, making it and its folder if they are missing, and
 // deletes the baselines beside it no scan has rewritten in BASELINE_KEPT.
-// ":memory:" opens one that lasts as long as the connection.
+// ":memory:" opens one that lasts as long as the connection. A store whose
+// user_version is newer than SCHEMA_VERSION is refused and left as it was.
 open :: proc(st: ^Store, path: string) -> sqlite3.Error {
 	if path != ":memory:" {
 		if dir := filepath.dir(path); dir != "" {
@@ -148,19 +157,52 @@ open :: proc(st: ^Store, path: string) -> sqlite3.Error {
 	// other's write, a short transaction, rather than failing at once.
 	db := sqlite3.open(
 		path,
-		{wal = true, busy_timeout = BUSY_WAIT, on_open = "PRAGMA foreign_keys = ON"},
-		context.allocator,
+		{busy_timeout = BUSY_WAIT, on_open = "PRAGMA foreign_keys = ON"},
 	) or_return
-	if err := sqlite3.exec(db, SCHEMA); err != nil {
-		sqlite3.close(&db)
-		return err
-	}
-	if err := migrate(db); err != nil {
+	if err := adopt(db); err != nil {
 		sqlite3.close(&db)
 		return err
 	}
 	st.db = db
 	return nil
+}
+
+// adopt refuses a newer schema, then migrates and stamps a store this build
+// understands. The journal mode is set after that, so a refusal leaves the
+// file as it was.
+@(private)
+adopt :: proc(db: sqlite3.Db) -> sqlite3.Error {
+	version := schema.user_version(db) or_return
+	if version > SCHEMA_VERSION {
+		return newer_schema(version)
+	}
+	sqlite3.exec(db, SCHEMA) or_return
+	migrate(db) or_return
+	if version < SCHEMA_VERSION {
+		stamp_schema(db) or_return
+	}
+	_ = sqlite3.exec(db, "PRAGMA journal_mode = WAL")
+	return nil
+}
+
+// newer_schema is the refusal for a store a newer build wrote. The text names
+// both versions. The caller closes the connection without migrating.
+@(private)
+newer_schema :: proc(version: i64) -> sqlite3.Error {
+	return sqlite3.Fault {
+		code = .Error,
+		text = fmt.aprintf(
+			"schema version %d is newer than schema version %d, which this build reads",
+			version,
+			SCHEMA_VERSION,
+		),
+	}
+}
+
+// stamp_schema records SCHEMA_VERSION. The caller skips a store already there.
+@(private)
+stamp_schema :: proc(db: sqlite3.Db) -> sqlite3.Error {
+	return sqlite3.exec(db, fmt.tprintf("PRAGMA user_version = %d", SCHEMA_VERSION))
 }
 
 // SQLITE_HEADER is the first 16 bytes of every SQLite database file.
