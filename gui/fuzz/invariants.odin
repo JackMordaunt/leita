@@ -278,10 +278,9 @@ focus_visible :: proc(w: ^Window, allocator := context.temp_allocator) -> string
 }
 
 /*
-LOST_FOCUS_KNOWN leaves out the half of the focus invariant that the window does
-not keep yet: an action that takes away what has the keyboard, a Contents row
-that opens its folder, leaves the keyboard on the row that has gone, and jm:ui
-does not move it on (card 767). The modal half holds and is checked.
-Set it false once that card is done.
+LOST_FOCUS_KNOWN, when true, leaves out the half of the focus invariant an
+action that takes away the focused area used to break: the keyboard stayed on
+the area the frame no longer drew (card 767). The router moves it on, so the
+check runs.
 */
-LOST_FOCUS_KNOWN :: true
+LOST_FOCUS_KNOWN :: false
