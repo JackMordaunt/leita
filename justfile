@@ -59,6 +59,12 @@
 # `SAN= just build`. The hot-reload window alone builds without it, hot_opt
 # below. Odin does not create output directories, hence the mkdir.
 
+# Shebangs are `/bin/bash`. On Windows just maps that through cygpath to Git's
+# bash.exe. `bash` on PATH is the WSL launcher. That bash is not a login
+# shell, so System32 stays ahead of Git's coreutils and `sort` is Windows
+# sort.exe. Prepend Git's usr\bin. The branch is lazy, so a non-Windows
+# parse never runs cygpath.
+export PATH := if os() == "windows" { `cygpath -w /usr/bin` + ";" + env("PATH", "") } else { env("PATH", "") }
 odin  := env("ODIN", "odin")
 # Forward slashes throughout: justfile_directory() on Windows returns
 # backslashes, and passing those mixed with the "/" below straight to a
@@ -175,7 +181,7 @@ build mode="debug": (cli mode) (gui mode)
 #
 # Build the command line -> build/<mode>/leita: just cli [release]
 cli mode="debug": sqlite
-    #!/usr/bin/env bash
+    #!/bin/bash
     set -euo pipefail
     if [ -n "{{floor}}" ]; then {{floor_env}}; fi
     case "{{mode}}" in
@@ -190,7 +196,7 @@ cli mode="debug": sqlite
 [private]
 [linux]
 _baseline-stage arch floor:
-    #!/usr/bin/env bash
+    #!/bin/bash
     set -euo pipefail
     command -v "${ZIG:-zig}" >/dev/null || { echo "baseline: zig is missing; install it or set ZIG=<path>" >&2; exit 1; }
     stage=build/baseline/{{arch}}
@@ -225,7 +231,7 @@ _baseline-stage arch floor:
 # Build the command line at a glibc floor: just cli-baseline [arch] [floor]
 [linux]
 cli-baseline arch="amd64" floor="2.26": (_baseline-stage arch floor)
-    #!/usr/bin/env bash
+    #!/bin/bash
     set -euo pipefail
     case "{{arch}}" in
     amd64) target=linux_amd64; march="-microarch:x86-64" ;;
@@ -246,7 +252,7 @@ cli-baseline arch="amd64" floor="2.26": (_baseline-stage arch floor)
 # process may mount; tools/linux-baseline/probe runs this and the command line.
 [linux]
 baseline-test arch="amd64" floor="2.26": (_baseline-stage arch floor)
-    #!/usr/bin/env bash
+    #!/bin/bash
     set -euo pipefail
     case "{{arch}}" in
     amd64) target=linux_amd64; march="-microarch:x86-64" ;;
@@ -262,7 +268,7 @@ baseline-test arch="amd64" floor="2.26": (_baseline-stage arch floor)
 #
 # Build the window -> build/<mode>/app/Leita: just gui [release]
 gui mode="debug": deps
-    #!/usr/bin/env bash
+    #!/bin/bash
     set -euo pipefail
     if [ -n "{{floor}}" ]; then {{floor_env}}; fi
     case "{{mode}}" in
@@ -308,7 +314,7 @@ gui mode="debug": deps
 #
 # Build Leita.app -> build/release/Leita.app: just bundle [window cli]
 bundle window="" cli="":
-    #!/usr/bin/env bash
+    #!/bin/bash
     set -euo pipefail
     if [ "{{os()}}" != macos ]; then echo "bundle: skipped: Leita.app is built on macOS, with Apple's iconutil and sips"; exit 0; fi
     window='{{window}}'
@@ -352,7 +358,7 @@ bundle window="" cli="":
 # argument.
 [private]
 release-key:
-    #!/usr/bin/env bash
+    #!/bin/bash
     set -euo pipefail
     key="${LEITA_LICENCE_KEY:-}"
     key="${key//[[:space:]]/}"
@@ -366,7 +372,7 @@ release-key:
 # one 64-hex key, no commas. It fails when the value is empty or not one key.
 [private]
 update-key:
-    #!/usr/bin/env bash
+    #!/bin/bash
     set -euo pipefail
     key="${LEITA_UPDATE_KEY:-}"
     key="${key//[[:space:]]/}"
@@ -382,7 +388,7 @@ update-key:
 #
 # Native lifecycle evidence for this OS, then the release gate.
 lifecycle:
-    #!/usr/bin/env bash
+    #!/bin/bash
     set -euo pipefail
     if command -v python3 >/dev/null 2>&1; then py=python3; else py=python; fi
     dir="${LIFECYCLE_DIR:-build/lifecycle}"
@@ -395,7 +401,7 @@ lifecycle:
 # Build the window, then open it on a directory: just run [release] [dir]
 [positional-arguments]
 run *args:
-    #!/usr/bin/env bash
+    #!/bin/bash
     set -euo pipefail
     mode=debug
     if [ "${1:-}" = release ] || [ "${1:-}" = debug ]; then mode=$1; shift; fi
@@ -445,7 +451,7 @@ test: sqlite
 # the window on the made-up disk, so it needs the libraries the window draws
 # with (deps), and takes seconds a case: just fuzz gui 1 0 -iters=4.
 fuzz suite="" seed="1" duration="" *extra: deps
-    #!/usr/bin/env bash
+    #!/bin/bash
     set -euo pipefail
     mkdir -p build/debug
     {{odin}} build tools/leita-fuzz -debug {{san}} {{flags}} {{curl_open}} -out:build/debug/leita-fuzz{{exe}}
@@ -478,7 +484,7 @@ fuzz suite="" seed="1" duration="" *extra: deps
 # (halt_on_error): on Linux Odin exits with a system call, so TSan's own exit
 # status at the end of a run never happens and a race would otherwise pass.
 soak sanitizer="address" duration="10m" seed="1" rounds="2" gui="gui": sqlite
-    #!/usr/bin/env bash
+    #!/bin/bash
     set -euo pipefail
     j() { just --justfile "{{justfile()}}" "$@"; }
     case "{{sanitizer}}" in
@@ -512,7 +518,7 @@ btrfs-test *args: sqlite
 #
 # Test that a build with a key takes what it signed: just check-licence [key licence]
 check-licence key=test_licence_key licence="": sqlite
-    #!/usr/bin/env bash
+    #!/bin/bash
     set -euo pipefail
     licence='{{licence}}'
     if [ -z "$licence" ] && [ '{{key}}' = '{{test_licence_key}}' ]; then licence='{{test_licence}}'; fi
@@ -529,7 +535,7 @@ check-licence key=test_licence_key licence="": sqlite
 # and leaves nothing mounted; --sudo runs them as root instead, where sudo asks no
 # password. Skipped where neither can mount. Linux only: just mount-test [--sudo]
 mount-test *args:
-    #!/usr/bin/env bash
+    #!/bin/bash
     set -euo pipefail
     if [ "{{os()}}" != linux ]; then echo "mount-test: skipped: the mounts are Linux's"; exit 0; fi
     mkdir -p build/test
@@ -552,7 +558,7 @@ mount-test *args:
 # is mounted in a user and mount namespace where one can be had; with --sudo,
 # as root, an ext4 image on a loop device too.
 durability *args: sqlite
-    #!/usr/bin/env bash
+    #!/bin/bash
     set -euo pipefail
     mkdir -p build/test
     {{odin}} build durability -build-mode:test -debug {{san}} {{flags}} -out:build/test/durability{{exe}}
@@ -578,7 +584,7 @@ check:
 # all the command line links that is not Odin or the system's libcurl. Built by
 # jm's own recipes, once.
 sqlite: floor-jm
-    #!/usr/bin/env bash
+    #!/bin/bash
     set -euo pipefail
     if [ -n "{{floor}}" ]; then {{floor_env}}; fi
     if [ "{{jm}}" = "{{root}}/jm" ] && [ ! -e jm/.git ]; then git submodule update --init jm; fi
@@ -596,7 +602,7 @@ sqlite: floor-jm
 # built from the tag jm pins, as a static library, with the host's own cargo
 # and cc: the Rust it holds names no glibc version until the link above.
 deps: sqlite
-    #!/usr/bin/env bash
+    #!/bin/bash
     set -euo pipefail
     if [ -n "{{floor}}" ]; then {{floor_env}}; fi
     cd "{{jm}}"
@@ -630,7 +636,7 @@ deps: sqlite
 [private]
 [linux]
 sdl3-static: floor-jm
-    #!/usr/bin/env bash
+    #!/bin/bash
     set -euo pipefail
     if [ -n "{{floor}}" ]; then {{floor_env}}; fi
     cd "{{jm}}"
@@ -675,7 +681,7 @@ sdl3-static: floor-jm
 #
 # Open the window, reloading the view on every edit: just hot [dir]
 hot *args: deps
-    #!/usr/bin/env bash
+    #!/bin/bash
     set -euo pipefail
     mkdir -p build/debug/app build/hot
     {{odin}} build cmd/gui-host {{hot_opt}} {{flags}} {{curl_open}} {{sdl3_link}} -out:build/debug/app/{{gui}}-host{{exe}}
@@ -750,7 +756,7 @@ journeys: deps
 # it as a person does; journeys/window replays what the window recorded and checks
 # the accessibility tree. Evidence -> build/journeys/window.
 window-journey: (gui "debug")
-    #!/usr/bin/env bash
+    #!/bin/bash
     set -euo pipefail
     out="{{root}}/build/journeys/window"
     py=$(command -v python3 || command -v python)
@@ -806,7 +812,7 @@ package: (build "release") package-built
 [private]
 [linux]
 package-built:
-    #!/usr/bin/env bash
+    #!/bin/bash
     set -euo pipefail
     m=$(uname -m)
     case "$m" in
@@ -884,7 +890,7 @@ package-built:
 # commit the submodule is on; nothing when no floor is asked for or JM names one.
 [private]
 floor-jm:
-    #!/usr/bin/env bash
+    #!/bin/bash
     set -euo pipefail
     if [ -z "{{floor}}" ] || [ "{{jm}}" != "{{floor_dir}}/jm" ]; then exit 0; fi
     if [ ! -e jm/.git ]; then git submodule update --init jm; fi
@@ -906,7 +912,7 @@ clean:
 # otherwise ~/.local/bin, ~/bin, GOBIN, GOPATH/bin, /usr/local/bin, else the first
 # writable PATH entry.
 install:
-    #!/usr/bin/env bash
+    #!/bin/bash
     set -euo pipefail
     # A release build refuses an empty key set, so a local install without the
     # production keys takes the test keys: it accepts only test licences and
@@ -989,7 +995,7 @@ fsbench args="": (cli "release")
 # Check the walk: just fsbench-ci
 # Rewrite the baseline: just fsbench-ci --update
 fsbench-ci *args:
-    #!/usr/bin/env bash
+    #!/bin/bash
     set -euo pipefail
     if [ -z "${LEITA_LICENCE_KEY:-}" ]; then
         export LEITA_LICENCE_KEY="$(just --justfile "{{justfile()}}" --evaluate test_licence_key)"
