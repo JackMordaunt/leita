@@ -415,12 +415,16 @@ with cmake, and the window then needs no SDL3 installed. A Mac needs nothing
 from Homebrew to run it.
 
 ```sh
-just build release   # build/release/leita and build/release/app/Leita (.exe on Windows)
-just bundle          # on a Mac, build/release/Leita.app around them, unsigned
+just run             # -debug -o:minimal, no sanitizer, on the home directory
+just run speed       # -debug -o:speed, the debug allocator still on
+just run asan        # -debug -o:none -sanitize:address
+just run tsan        # -debug -o:none -sanitize:thread
+just run release     # the candidate, licence and update keys required
+just build           # the same modes, without opening the window
+just hot             # the minimal window, the view reloaded on every edit
+just publish         # release only, then this OS's packages (none on Windows yet)
 just install         # the release command line on PATH, as leita and as le
-just run             # a debug build of the window, opened on the home directory
 just test
-just hot             # the debug window, the view reloaded on every edit; no sanitizer, for speed
 ```
 
 `just` alone lists every recipe.

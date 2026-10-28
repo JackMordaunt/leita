@@ -39,7 +39,7 @@ binary :: proc() -> string {
 	if path := os.get_env("LEITA_BIN", context.temp_allocator); path != "" {
 		return path
 	}
-	return "build/debug/leita" + (".exe" when ODIN_OS == .Windows else "")
+	return "build/asan/leita" + (".exe" when ODIN_OS == .Windows else "")
 }
 
 // BUDGET is the time a journey may take before the runner fails it by name,

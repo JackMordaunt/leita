@@ -1,13 +1,14 @@
 # Standard recipes: build, run, clean, test, install.
 #
-#   just build [release]      the command line and the window, debug with ASan by
-#                             default, release optimised
-#   just cli [release]        the command line alone -> build/<mode>/leita
-#   just gui [release]        the window alone -> build/<mode>/app/Leita
+#   just build [mode]         the command line and the window -> build/<mode>/
+#   just cli [mode]           the command line alone -> build/<mode>/leita
+#   just gui [mode]           the window alone -> build/<mode>/app/Leita
 #   just bundle [window cli]  Leita.app from the release window and command line,
 #                             macOS only -> build/release/Leita.app
-#   just run [release] [dir]  build the window, then open it on a directory, the
+#   just run [mode] [dir]     build the window, then open it on a directory, the
 #                             home directory by default
+#   just hot [mode] [dir]     the window, its view rebuilt on every edit
+#   just publish              the release build, then this OS's packages
 #   just test                 run every imported package's tests under ASan -> build/test/
 #   just fuzz [suite] [seed] [duration] [flags]
 #                             leita-fuzz under ASan, here and in CI; its tree suite builds
@@ -28,11 +29,9 @@
 #   just clean                remove build/
 #   just deps                 fetch the jm submodule and the native libraries the window links
 #   just sqlite               fetch the jm submodule and build SQLite, all the command line links
-#   just hot [dir]            run's debug window without the sanitizer, the view reloaded
-#                             in place on every edit
 #   just gui-test             run the window's tests, the host's on a real directory
 #   just package              Linux: the release as an AppImage, a .deb and an .rpm
-#                             -> build/package/
+#                             -> build/package/. publish runs this on Linux
 #   just journeys             the built command line driven end to end on the made-up disk
 #                             (LEITA_SYNTHETIC), as a person would: scan, limits, reports,
 #                             history, monitoring, licence, then the window's user
@@ -44,20 +43,40 @@
 # the jm submodule (https://mordaunt.dev/code/jm); JM=<path> builds against another
 # checkout instead.
 #
-# A release checks licences against the public keys in LEITA_LICENCE_KEY, one
-# or more comma-separated 64-hex keys, which only the release build is given:
-# just cli release and just gui release refuse an empty or malformed set, since
-# a release without one takes no licence. A line holds when any key in the set
-# verifies it. Debug and test builds take none. The same builds take
-# LEITA_UPDATE_KEY, one 64-hex Ed25519 public key, and refuse a release
-# without it. The private half is LEITA_UPDATE_SEED, used only to sign a
-# release, never as a compile flag and never by the lifecycle fixture.
+# The mode is minimal, speed, asan, tsan or release. build, run and hot default
+# to minimal. The flags are minimal_opt and the variables beside it. minimal,
+# speed, asan and tsan pass -debug. release does not.
 #
-# Debug and test builds carry -sanitize:address. The debug allocator poisons its
-# guard bytes and freed blocks, so instrumented reads past the end or after free
-# trap at the faulting instruction. Pass SAN= to build without it:
-# `SAN= just build`. The hot-reload window alone builds without it, hot_opt
-# below. Odin does not create output directories, hence the mkdir.
+#   minimal   -o:minimal, no sanitizer. The daily build. Frame median 17ms.
+#   speed     -o:speed, no sanitizer. The same build, for a slow path. The view
+#             rebuilds in about 15s and the frame median was 8ms, against 28ms
+#             with no -o (measured 2026-10-16, scanning ~/Source).
+#   asan      -o:none -sanitize:address. Reads past the end and after free trap
+#             at the faulting instruction. Backtraces stay on.
+#   tsan      -o:none -sanitize:thread. Its own binary: address and thread
+#             sanitizers cannot be combined.
+#   release   -o:speed, the licence key and the update key, and on Windows a
+#             GUI program, so starting it opens no console. The candidate.
+#             publish accepts only this mode.
+#
+# minimal, speed, asan and tsan take no licence and carry no release stamp, so
+# a line does not grant Pro. release checks licences against LEITA_LICENCE_KEY,
+# one or more comma-separated 64-hex keys, and refuses an empty or malformed
+# set, since a release without one takes no licence. A line holds when any key
+# in the set verifies it. The same build takes LEITA_UPDATE_KEY, one 64-hex
+# Ed25519 public key, and refuses a release without it. The private half is
+# LEITA_UPDATE_SEED, used only to sign a release, never as a compile flag and
+# never by the lifecycle fixture.
+#
+# just hot adds -define:DEBUG_ALLOC_BACKTRACES=false on the four development
+# modes. The scan's workers allocate enough that the chains keep a scan in
+# 2.6s instead of 1.6s. The report still names the file, line and proc. A leak
+# hunt is just run asan. A frame in the view costs about 5.5x release under
+# AddressSanitizer and 2.3x without it (the same measurement).
+#
+# Test, fuzz and soak still honour SAN, whose default is -sanitize:address.
+# SAN= does not change build, run, hot or publish. Odin does not create output
+# directories, hence the mkdir.
 
 # Shebangs are `/bin/bash`. On Windows just maps that through cygpath to Git's
 # bash.exe. `bash` on PATH is the WSL launcher. That bash is not a login
@@ -113,19 +132,14 @@ san   := env("SAN", "-sanitize:address")
 # its own; Windows ships libcurl inside vendor:curl. Both binaries import
 # jm:http, the window for the licence and both for leita update.
 curl_open := if os() == "linux" { " -define:JM_HTTP_DLOPEN=true" } else { "" }
-# What just hot builds the host and the view with, instead of -debug {{san}}:
-# the loop is for editing the view, and every edit waits on a child build, so
-# the profile buys frame time only where it costs no compile time. No ASan: a
-# frame in the view costs 5.5x release with it, 2.3x without (measured
-# 2026-10-16, scanning ~/Source); just gui, just test and just gui-test keep
-# it. -o:minimal: the frame median goes from 28 ms to 17 ms and the child
-# build from 0.97 s to 1.02 s; -o:speed reaches 8 ms but builds in 15 s. No
-# allocation backtraces: the debug allocator captures a call chain at every
-# allocation, and the scan's workers allocate enough that the scan keeps in
-# 1.6 s instead of 2.6 s without them. A leak or issue report still names
-# the allocating file, line and proc; it loses the call chain under them,
-# so a leak hunt is a job for just gui.
-hot_opt := "-debug -o:minimal -define:DEBUG_ALLOC_BACKTRACES=false"
+# Compiler flags for each mode. mode_arms is the shell that sets opt from the
+# mode, shared by cli, gui and hot. release adds the keys itself, and on
+# Windows the window adds -subsystem:windows.
+minimal_opt := "-debug -o:minimal"
+speed_opt := "-debug -o:speed"
+asan_opt := "-debug -o:none -sanitize:address"
+tsan_opt := "-debug -o:none -sanitize:thread"
+mode_arms := "minimal) opt='" + minimal_opt + "' ;; " + "speed) opt='" + speed_opt + "' ;; " + "asan) opt='" + asan_opt + "' ;; " + "tsan) opt='" + tsan_opt + "' ;;"
 exe   := if os() == "windows" { ".exe" } else { "" }
 bin   := "leita"
 # The short name install puts beside leita, the same command in two letters, as
@@ -174,20 +188,20 @@ journey_update_key := "79b5562e8fe654f94078b112e8a98ba7901f853ae695bed7e0e3910ba
 default:
     @just --list --unsorted
 
-# Build the command line and the window: just build [release]
-build mode="debug": (cli mode) (gui mode)
+# Build the command line and the window: just build [mode]
+build mode="minimal": (cli mode) (gui mode)
 
-# The command line, debug with AddressSanitizer or release optimised.
+# The command line, in one of the modes above.
 #
-# Build the command line -> build/<mode>/leita: just cli [release]
-cli mode="debug": sqlite
+# Build the command line -> build/<mode>/leita: just cli [mode]
+cli mode="minimal": sqlite
     #!/bin/bash
     set -euo pipefail
     if [ -n "{{floor}}" ]; then {{floor_env}}; fi
     case "{{mode}}" in
-    debug) opt="-debug {{san}}" ;;
+    {{mode_arms}}
     release) opt="-o:speed -define:LEITA_LICENCE_KEY='$(just --justfile "{{justfile()}}" release-key)' -define:LEITA_UPDATE_KEY='$(just --justfile "{{justfile()}}" update-key)'" ;;
-    *) echo "cli: the mode is debug or release, not {{mode}}" >&2; exit 1 ;;
+    *) echo "cli: the mode is minimal, speed, asan, tsan or release, not {{mode}}" >&2; exit 1 ;;
     esac
     mkdir -p build/{{mode}}
     {{odin}} build cmd/cli $opt {{odin_target}} {{flags}} {{curl_open}} -out:build/{{mode}}/{{bin}}{{exe}}
@@ -264,20 +278,20 @@ baseline-test arch="amd64" floor="2.26": (_baseline-stage arch floor)
     {{odin}} build walk -build-mode:test -target:$target $march -o:none \
         $(echo "{{flags}}" | sed "s|-collection:jm={{jm}}|-collection:jm={{root}}/$stage/jm|") -out:"$stage/walk-test"
 
-# The window, debug with AddressSanitizer or release optimised.
+# The window, in one of the modes above.
 #
-# Build the window -> build/<mode>/app/Leita: just gui [release]
-gui mode="debug": deps
+# Build the window -> build/<mode>/app/Leita: just gui [mode]
+gui mode="minimal": deps
     #!/bin/bash
     set -euo pipefail
     if [ -n "{{floor}}" ]; then {{floor_env}}; fi
     case "{{mode}}" in
-    debug) opt="-debug {{san}}" ;;
+    {{mode_arms}}
     release) opt="-o:speed -define:LEITA_LICENCE_KEY='$(just --justfile "{{justfile()}}" release-key)' -define:LEITA_UPDATE_KEY='$(just --justfile "{{justfile()}}" update-key)'" ;;
-    *) echo "gui: the mode is debug or release, not {{mode}}" >&2; exit 1 ;;
+    *) echo "gui: the mode is minimal, speed, asan, tsan or release, not {{mode}}" >&2; exit 1 ;;
     esac
     # A release window on Windows is a GUI program, so starting it opens no
-    # console behind it; a debug one keeps its console, where printing goes.
+    # console behind it. Every other mode keeps its console, where printing goes.
     if [ "{{os()}}" = windows ] && [ "{{mode}}" = release ]; then opt="$opt -subsystem:windows"; fi
     mkdir -p build/{{mode}}/app
     {{odin}} build cmd/gui $opt {{odin_target}} {{flags}} {{curl_open}} {{sdl3_link}} -out:build/{{mode}}/app/{{gui}}{{exe}}
@@ -396,15 +410,18 @@ lifecycle:
     sha=$(git rev-parse HEAD)
     "$py" tools/test-lifecycle/gate.py local "$dir" "$sha"
 
-# A first argument of release builds and runs the release build.
+# A first argument that names a mode builds that one. Anything else is the
+# directory, and the mode is minimal.
 #
-# Build the window, then open it on a directory: just run [release] [dir]
+# Build the window, then open it on a directory: just run [mode] [dir]
 [positional-arguments]
 run *args:
     #!/bin/bash
     set -euo pipefail
-    mode=debug
-    if [ "${1:-}" = release ] || [ "${1:-}" = debug ]; then mode=$1; shift; fi
+    mode=minimal
+    case "${1:-}" in
+    minimal|speed|asan|tsan|release) mode=$1; shift ;;
+    esac
     just --justfile "{{justfile()}}" gui "$mode"
     exec build/$mode/app/{{gui}}{{exe}} "$@"
 
@@ -672,20 +689,47 @@ sdl3-static: floor-jm
 # The window with its view hot-reloaded. The host (cmd/gui-host) owns the window and
 # the scan; the view runs as cmd/gui-child in a subprocess, rebuilt here whenever an
 # .odin file it is made of changes, into its own timestamped binary under
-# build/hot, named in build/hot/view.watch, which the host re-reads and respawns
-# from (ui/shell.run_host). The scan keeps running across reloads; a change to
-# the scan or the pipeline (gui/app, survey, scan, walk, ntfs) needs the recipe
-# run again. A shell loop rather than jm's tools/hot-watch, which passes its own
-# checkout as the jm collection. stat is GNU's -c or BSD's -f, whichever runs.
-# Both builds take hot_opt, the sanitizer-free profile, not -debug {{san}}.
+# build/hot/<mode>, named in build/hot/<mode>/view.watch, which the host re-reads
+# and respawns from (ui/shell.run_host). The scan keeps running across reloads; a
+# change to the scan or the pipeline (gui/app, survey, scan, walk, ntfs) needs the
+# recipe run again. A shell loop rather than jm's tools/hot-watch, which passes its
+# own checkout as the jm collection. stat is GNU's -c or BSD's -f, whichever runs.
+# The host and the view take the mode's flags. The four development modes also
+# drop allocation backtraces, as the header says. A release-mode host takes the
+# keys; the view does not check licences, so it is only -o:speed. The host keeps
+# its console in every mode, so the reload line stays visible. The packaged
+# window is cmd/gui, which publish builds.
 #
-# Open the window, reloading the view on every edit: just hot [dir]
+# Open the window, reloading the view on every edit: just hot [mode] [dir]
+[positional-arguments]
 hot *args: deps
     #!/bin/bash
     set -euo pipefail
-    mkdir -p build/debug/app build/hot
-    {{odin}} build cmd/gui-host {{hot_opt}} {{flags}} {{curl_open}} {{sdl3_link}} -out:build/debug/app/{{gui}}-host{{exe}}
-    rm -f build/hot/view.watch
+    mode=minimal
+    case "${1:-}" in
+    minimal|speed|asan|tsan|release) mode=$1; shift ;;
+    esac
+    case "$mode" in
+    {{mode_arms}}
+    release) opt="-o:speed" ;;
+    *) echo "hot: the mode is minimal, speed, asan, tsan or release, not $mode" >&2; exit 1 ;;
+    esac
+    child_opt=$opt
+    if [ "$mode" = release ]; then
+        opt="$opt -define:LEITA_LICENCE_KEY='$(just --justfile "{{justfile()}}" release-key)' -define:LEITA_UPDATE_KEY='$(just --justfile "{{justfile()}}" update-key)'"
+    else
+        opt="$opt -define:DEBUG_ALLOC_BACKTRACES=false"
+        child_opt=$opt
+    fi
+    mkdir -p "build/$mode/app" "build/hot/$mode"
+    {{odin}} build cmd/gui-host $opt {{flags}} {{curl_open}} {{sdl3_link}} -out:build/$mode/app/{{gui}}-host{{exe}}
+    if [ "{{os()}}" = windows ]; then
+        for dll in "$({{odin}} root)/vendor/sdl3/SDL3.dll" "{{jm}}/ui/accesskit/lib/accesskit.dll"; do
+            [ -f "$dll" ] || { echo "hot: $dll is missing, and the window does not start without it" >&2; exit 1; }
+            cp "$dll" "build/$mode/app/"
+        done
+    fi
+    rm -f "build/hot/$mode/view.watch"
     (
       last=""
       n=0
@@ -695,11 +739,11 @@ hot *args: deps
         if [ "$mt" != "$last" ]; then
           last=$mt
           n=$((n + 1))
-          out=build/hot/view-$(date +%s)-${n}{{exe}}
-          if {{odin}} build cmd/gui-child {{hot_opt}} {{flags}} -out:"$out"; then
-            printf '%s' "$out" > build/hot/view.watch
+          out=build/hot/$mode/view-$(date +%s)-${n}{{exe}}
+          if {{odin}} build cmd/gui-child $child_opt {{flags}} -out:"$out"; then
+            printf '%s' "$out" > "build/hot/$mode/view.watch"
             echo "hot: view ready $out"
-            ls -t build/hot/view-* | tail -n +3 | xargs -r rm -f
+            ls -t build/hot/$mode/view-* | tail -n +3 | xargs -r rm -f
           else
             echo "hot: build failed; the window keeps the last good view"
           fi
@@ -709,8 +753,8 @@ hot *args: deps
     ) &
     watcher=$!
     trap 'kill $watcher 2>/dev/null' EXIT
-    while [ ! -f build/hot/view.watch ]; do sleep 0.2; done
-    build/debug/app/{{gui}}-host{{exe}} build/hot/view.watch {{args}}
+    while [ ! -f "build/hot/$mode/view.watch" ]; do sleep 0.2; done
+    build/$mode/app/{{gui}}-host{{exe}} "build/hot/$mode/view.watch" "$@"
 
 # Leita's own suite (which arguments open the window and which run leita), the
 # view in a probe over the host on a real directory, the view's own suite,
@@ -726,7 +770,7 @@ schedule-evidence:
 
 # Run the window's suites under ASan
 # The command line as a process, on the made-up disk, in a home of its own per
-# journey; journeys/harness_test.odin says how. The binary is the debug build, or
+# journey; journeys/harness_test.odin says how. The binary is build/asan/leita, or
 # LEITA_BIN.
 #
 # The journeys' binary is the debug build with two keys compiled in, so a journey can
@@ -750,17 +794,17 @@ journeys: deps
     ODIN="{{odin}}" LEITA_TEST_LICENCE='{{test_licence}}' LEITA_JOURNEY_ARTIFACTS="${LEITA_JOURNEY_ARTIFACTS:-{{root}}/build/journeys/artifacts}" tools/journeys/run journeys/gui build/test/journeys-gui{{exe}} -debug {{san}} {{flags}} {{curl_open}} -define:LEITA_LICENCE_KEY={{test_licence_key}} -define:LEITA_RELEASED=2026-10-24T00:00:00Z
 
 # The window as the operating system drives it, kept small: tools/journeys/window.py
-# starts the debug window on the made-up disk, finds it, gives it the keyboard,
+# starts the address-sanitizer window on the made-up disk, finds it, gives it the keyboard,
 # presses the search shortcut and types through the window system (xdotool on an
 # Xvfb display on Linux, SendInput on Windows, System Events on macOS) and closes
 # it as a person does; journeys/window replays what the window recorded and checks
 # the accessibility tree. Evidence -> build/journeys/window.
-window-journey: (gui "debug")
+window-journey: (gui "asan")
     #!/bin/bash
     set -euo pipefail
     out="{{root}}/build/journeys/window"
     py=$(command -v python3 || command -v python)
-    run=("$py" tools/journeys/window.py "build/debug/app/{{gui}}{{exe}}" "$out")
+    run=("$py" tools/journeys/window.py "build/asan/app/{{gui}}{{exe}}" "$out")
     if [ "{{os()}}" = linux ]; then run=(xvfb-run -a -s "-screen 0 1600x1000x24" "${run[@]}"); fi
     "${run[@]}"
     LEITA_WINDOW_RECORDING="$out/session.rec" {{odin}} test journeys/window -debug {{san}} {{flags}} -out:build/test/journeys-window{{exe}}
@@ -803,6 +847,26 @@ runtime_sha_aarch64 := "00cbdfcf917cc6c0ff6d3347d59e0ca1f7f45a6df1a428a0d6d8a786
 # a build on a newer system than the one it is for makes packages that system
 # refuses, rather than binaries that fail to start.
 #
+# Linux is package (AppImage, .deb, .rpm). macOS is bundle (Leita.app).
+# Windows has no packaging recipe; the binaries stay in build/release.
+# Any mode but release is refused: a development build takes no licence.
+# Build the release, then package it for this OS: just publish
+publish mode="release":
+    #!/bin/bash
+    set -euo pipefail
+    if [ "{{mode}}" != release ]; then
+        echo "publish: only release is packaged, not {{mode}}" >&2
+        exit 1
+    fi
+    case "{{os()}}" in
+    linux) just --justfile "{{justfile()}}" package ;;
+    macos) just --justfile "{{justfile()}}" bundle ;;
+    *)
+        just --justfile "{{justfile()}}" build release
+        echo "publish: {{os()}} has no package. The release is build/release/{{bin}}{{exe}} and build/release/app/{{gui}}{{exe}}"
+        ;;
+    esac
+
 # Build the AppImage, .deb and .rpm -> build/package/: just package
 [linux]
 package: (build "release") package-built
