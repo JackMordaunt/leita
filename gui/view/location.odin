@@ -37,6 +37,39 @@ LOCATION_FADE :: f32(40)
 // the last.
 LOCATION_PAD :: f32(6)
 
+// TRAIL_BUTTON is the room at the trail's right end each of its buttons,
+// the folder and the magnifier, takes, and TRAIL_GAP the well left bare
+// between the steps and them.
+TRAIL_BUTTON :: f32(30)
+TRAIL_GAP :: f32(4)
+
+// SCAN_PICK is the area the folder dialog the bar opens answers.
+@(private)
+SCAN_PICK :: ops.Area_Id(0x6c65_6974_7363_616e) // "leitscan"
+
+// take_scan_pick scans the folder the bar's dialog chose. A cancel, or a
+// platform with no dialog to show, leaves things as they are; a path too
+// long to send opens the field holding it, saying so.
+@(private)
+take_scan_pick :: proc(gtx: ^ui.Ctx, m: ^Model) {
+	for e in ui.events(gtx, SCAN_PICK) {
+		if e.kind != .Picked || e.text == "" {
+			continue
+		}
+		req := command.Scan {
+			path = command.text_make(e.text),
+		}
+		if req.path.cut {
+			edit_location(m, e.text)
+			m.path_long = true
+			continue
+		}
+		close_search(m)
+		ui.command(gtx, command.Command(req))
+		m.editing, m.path_long = false, false
+	}
+}
+
 // Step is one step of the location.
 Step :: struct {
 	label:   string,
@@ -84,9 +117,11 @@ steps_of :: proc(gtx: ^ui.Ctx, crumbs: []query.Crumb) -> []Step {
 	return out[:]
 }
 
-// location draws the bar across what it is offered.
+// location draws the bar across what it is offered, the trail keeping room
+// clear at its right end. It says whether it drew the trail rather than the
+// field.
 @(private)
-location :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result) {
+location :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result, room: f32 = 0) -> bool {
 	r, _ := ui.need(gtx, query.Rings{generation = m.generation, dir = m.dir}, query.Rings_Result)
 	if r != nil && r.generation == m.generation && r.gone {
 		leave_gone(m, r.up)
@@ -95,14 +130,21 @@ location :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result) {
 	if r != nil && r.generation == m.generation && len(r.crumbs) > 0 {
 		keep_trail(m, r.crumbs)
 	}
-	// Until the answer for a directory just opened lands, the bar shows the trail
-	// it had, rather than dropping to the field for those frames.
-	have := len(m.trail) > 0 && m.trail_generation == m.generation
-	if !have || m.editing || prog == nil || prog.state == .Failed {
-		location_field(gtx, m, have)
-		return
+	if !trail_shows(m, prog) {
+		location_field(gtx, m, len(m.trail) > 0 && m.trail_generation == m.generation)
+		return false
 	}
-	trail(gtx, m, steps_of(gtx, m.trail[:]), crumb_path(gtx, m.trail[:]))
+	trail(gtx, m, steps_of(gtx, m.trail[:]), crumb_path(gtx, m.trail[:]), room)
+	return true
+}
+
+// trail_shows is whether the bar shows the trail rather than the field. Until
+// the answer for a directory just opened lands, it shows the trail it had,
+// rather than dropping to the field for those frames.
+@(private)
+trail_shows :: proc(m: ^Model, prog: ^query.Progress_Result) -> bool {
+	have := len(m.trail) > 0 && m.trail_generation == m.generation
+	return have && !m.editing && prog != nil && prog.state != .Failed
 }
 
 // keep_trail copies crumbs, the way to the directory the bar shows, into the
@@ -151,7 +193,7 @@ area of its own; the well beneath takes the wheel, and a press on its empty end
 or on the current step opens the field.
 */
 @(private)
-trail :: proc(gtx: ^ui.Ctx, m: ^Model, steps: []Step, here: string, loc := #caller_location) {
+trail :: proc(gtx: ^ui.Ctx, m: ^Model, steps: []Step, here: string, room: f32 = 0, loc := #caller_location) {
 	// The width is read inside the widget: a flexible slot's share is set as the
 	// widget opens, and before that the constraints are the whole row's.
 	p := ui.widget_open(gtx, loc = loc)
@@ -177,7 +219,7 @@ trail :: proc(gtx: ^ui.Ctx, m: ^Model, steps: []Step, here: string, loc := #call
 		laid[i] = {para, x, para.width + 2 * STEP_PAD}
 		x += laid[i].w
 	}
-	most := max(x + 2 * LOCATION_PAD - width, 0)
+	most := max(x + 2 * LOCATION_PAD + room - width, 0)
 	if m.location_follow {
 		m.location_offset = most
 	}
@@ -203,7 +245,7 @@ trail :: proc(gtx: ^ui.Ctx, m: ^Model, steps: []Step, here: string, loc := #call
 	ops.fill(gtx.scene, well, bg)
 	ops.input_area(gtx.scene, p.id, box, {.Press, .Scroll}, .Text)
 
-	ops.clip_push(gtx.scene, ops.Round_Rect{{1, 1, width - 2, LOCATION_HEIGHT - 2}, 5})
+	ops.clip_push(gtx.scene, ops.Round_Rect{{1, 1, width - 2 - room, LOCATION_HEIGHT - 2}, 0 if room > 0 else 5})
 	shift := LOCATION_PAD - m.location_offset
 	step_h := LOCATION_HEIGHT - 8
 	for s, i in steps {
@@ -264,7 +306,7 @@ trail :: proc(gtx: ^ui.Ctx, m: ^Model, steps: []Step, here: string, loc := #call
 		fade(gtx, 0, LOCATION_FADE, bg, clear)
 	}
 	if m.location_offset < most - 0.5 {
-		fade(gtx, width - LOCATION_FADE, width, clear, bg)
+		fade(gtx, width - room - LOCATION_FADE, width - room, clear, bg)
 	}
 	ops.clip_pop(gtx.scene)
 	ops.stroke(gtx.scene, well, primer.color(.Border_Color_Default), {width = 1})
@@ -298,9 +340,14 @@ location_field :: proc(gtx: ^ui.Ctx, m: ^Model, have: bool) {
 		&m.path,
 		placeholder = tr(.Location_Placeholder),
 		leading = .File_Directory,
+		action = .File_Directory,
+		action_name = tr(.Scan_Choose),
 		block = true,
 		name = tr(.Location),
 	)
+	if field.action {
+		ui.pick_folder(gtx, SCAN_PICK, strings.trim_space(ui.text_string(&m.path)))
+	}
 	if m.edit_focus {
 		if field.focused {
 			m.edit_focus = false

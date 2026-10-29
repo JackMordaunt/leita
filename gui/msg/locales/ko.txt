@@ -14,6 +14,9 @@ theme_dark = 어두운 테마
 export = 내보내기
 exporting = 내보내는 중…
 licence = 라이선스
+back = 뒤로
+forward = 앞으로
+scan_choose = 스캔할 폴더 선택
 
 # About
 version = 버전 {0}

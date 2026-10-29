@@ -17,6 +17,9 @@ theme_dark = Tema escuro
 export = Exportar
 exporting = Exportando…
 licence = Licença
+back = Voltar
+forward = Avançar
+scan_choose = Escolher uma pasta para analisar
 
 # About
 version = Versão {0}

@@ -16,6 +16,9 @@ theme_dark = 深色主题
 export = 导出
 exporting = 正在导出…
 licence = 许可证
+back = 后退
+forward = 前进
+scan_choose = 选择要扫描的文件夹
 
 # About
 version = 版本 {0}

@@ -79,10 +79,10 @@ close_search :: proc(m: ^Model) {
 	m.search_pick, m.search_keys, m.search_go = 0, false, false
 }
 
-// search_button is the magnifier beside the location bar.
+// search_button is the magnifier inside the location bar.
 @(private)
-search_button :: proc(gtx: ^ui.Ctx, m: ^Model) {
-	if primer.icon_button(gtx, .Search, tr(.Search), .Invisible) {
+search_button :: proc(gtx: ^ui.Ctx, m: ^Model, size := primer.Button_Size.Medium) {
+	if primer.icon_button(gtx, .Search, tr(.Search), .Invisible, size) {
 		open_search(m)
 	}
 }

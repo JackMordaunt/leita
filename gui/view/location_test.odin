@@ -123,7 +123,7 @@ a_frame_leaves_no_scheme_behind :: proc(t: ^testing.T) {
 	r: Location_Rig
 	location_open(&r)
 	defer location_close(&r)
-	r.m.dark = true
+	pin_theme(&r.m, true)
 	ui.probe_frame(&r.h.p)
 	testing.expect(t, primer.scheme() != &r.m.scheme, "the scheme is not the Model's")
 	testing.expect_value(t, primer.theme(), primer.Theme.Light)
@@ -155,7 +155,8 @@ a_full_location_bar_opens_on_a_click :: proc(t: ^testing.T) {
 	)
 	testing.expect(t, !r.m.editing, "the bar is the steps")
 
-	ui.probe_click_at(p, {bar.x + bar.w - 3, bar.y + bar.h / 2})
+	// The bare well between the steps and the buttons inside the bar's end.
+	ui.probe_click_at(p, {bar.x + bar.w - trail_room(true) + TRAIL_GAP / 2, bar.y + bar.h / 2})
 	testing.expect(t, r.m.editing, "a click on the full bar opens the field")
 	testing.expect(
 		t,
@@ -175,7 +176,10 @@ a_full_location_bar_opens_on_a_click :: proc(t: ^testing.T) {
 	ui.probe_key(p, .Escape)
 	ui.probe_frame(p)
 	testing.expect(t, !r.m.editing, "Escape puts the steps back")
-	testing.expect(t, ui.probe_click(p, parent), "a step that is not current")
+	// The parent runs off the bar's start: click the end of it that shows.
+	up := ui.probe_bounds(p, parent)
+	testing.expect(t, up.w > 0, "a step that is not current")
+	ui.probe_click_at(p, {up.x + up.w - 8, up.y + up.h / 2})
 	testing.expect_value(t, r.m.dir, u32(3))
 	testing.expect(t, !r.m.editing, "navigates rather than opening the field")
 

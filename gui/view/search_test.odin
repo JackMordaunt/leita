@@ -320,6 +320,7 @@ the_bar_holds_still_as_the_search_opens_and_closes :: proc(t: ^testing.T) {
 	settle(p)
 	was := ui.probe_bounds(p, "Settings")
 	testing.expect(t, was.w > 0, "the bar has its Settings button")
+	bar := ui.probe_bounds(p, "Location")
 	magnifier := ui.probe_bounds(p, "Search")
 
 	still :: proc(t: ^testing.T, p: ^ui.Probe, was: ops.Rect, switching: string) {
@@ -332,9 +333,10 @@ the_bar_holds_still_as_the_search_opens_and_closes :: proc(t: ^testing.T) {
 	ui.probe_key(p, .F, {ui.SHORTCUT})
 	still(t, p, was, "opening")
 	testing.expect(t, s.m.searching)
-	// The field takes the place of the bar and the magnifier both.
+	// The field takes the place of the bar and the magnifier, inside it or
+	// beside it.
 	field := ui.probe_bounds(p, "Search")
-	end := magnifier.x + magnifier.w
+	end := max(bar.x + bar.w, magnifier.x + magnifier.w)
 	testing.expectf(t, field.x + field.w == end, "the field ends at %v, not %v", field.x + field.w, end)
 	ui.probe_key(p, .Escape)
 	still(t, p, was, "closing")

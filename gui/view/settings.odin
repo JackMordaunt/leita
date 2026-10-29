@@ -100,11 +100,11 @@ its focus to the gear, and give it back on closing to the menu item that is no
 longer there.
 */
 @(private)
-settings_menu :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result) {
+settings_menu :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result, size := primer.Button_Size.Medium) {
 	// The menu hangs from the gear, drawn after it in one stack, as
 	// primer.action_menu_button asks of its menu (jm/ui/primer/menus.odin).
 	ui.stack(gtx)
-	if primer.icon_button(gtx, .Gear, tr(.Settings), .Invisible, expanded = m.settings_open) {
+	if primer.icon_button(gtx, .Gear, tr(.Settings), .Invisible, size, expanded = m.settings_open) {
 		m.settings_open = !m.settings_open
 	}
 	gear := ui.last_widget(gtx)

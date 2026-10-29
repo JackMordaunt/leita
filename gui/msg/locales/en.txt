@@ -21,6 +21,9 @@ theme_dark = Dark theme
 export = Export
 exporting = Exporting…
 licence = Licence
+back = Back
+forward = Forward
+scan_choose = Choose a folder to scan
 
 # About
 version = Version {0}

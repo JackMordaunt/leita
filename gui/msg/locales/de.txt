@@ -15,6 +15,9 @@ theme_dark = Dunkles Design
 export = Exportieren
 exporting = Wird exportiert…
 licence = Lizenz
+back = Zurück
+forward = Vorwärts
+scan_choose = Ordner zum Scannen auswählen
 
 # About
 version = Version {0}

@@ -21,6 +21,7 @@ import "jm:ui/design"
 import "jm:ui/ops"
 import "jm:ui/primer"
 import tok "jm:ui/primer/tokens"
+import "jm:ui/windows"
 
 import "../../human"
 import "../../version"
@@ -394,7 +395,19 @@ view :: proc(gtx: ^ui.Ctx, user: rawptr) {
 	}
 	m.row_hover, m.row_hover_next = m.row_hover_next, {}
 
-	ui.inset(gtx, {left = PAD, top = PAD, bottom = PAD})
+	// The caption is part of the client: a bar along the top (caption_bar)
+	// holds the window's controls over the toolbar. Buttons the frame draws
+	// go on last, over everything at the window's top right.
+	top := PAD
+	if in_caption(gtx) {
+		caption_bar(gtx, m, prog)
+		top = bar_height(gtx) + 12
+	}
+	defer if gtx.title_bar.drawn && gtx.title_bar.height > 0 {
+		b := caption_buttons(gtx)
+		windows.paint_caption_buttons(gtx, ui.id_mix(0, CAPTION_KEY), {b.x, b.y}, b.h, m.dark)
+	}
+	ui.inset(gtx, {left = PAD, top = top, bottom = PAD})
 	ui.column(gtx, gap = 12, align = .Fill)
 	if ui.inset(gtx, {right = PAD}) {
 		if ui.column(gtx, gap = 12, align = .Fill) {
@@ -572,52 +585,369 @@ side :: proc(gtx: ^ui.Ctx, m: ^Model) {
 
 // --- the bar along the top -----------------------------------------------------
 
+// BAR_GAP is the space between the toolbar's parts, and the space kept
+// clear of the caption buttons.
+BAR_GAP :: f32(8)
+
+// BAR is the caption bar's height when the frame draws the caption buttons
+// (Title_Bar.drawn), as tall as they are. BAR_MAC is a unified macOS
+// window's, the height of a toolbar beside the traffic lights.
+BAR :: f32(32)
+BAR_MAC :: f32(52)
+
+// BAR_MARK is the mark's size in the caption bar, and BAR_INSET the bar's
+// space before the mark and after the gear.
+BAR_MARK :: f32(22)
+BAR_INSET :: f32(10)
+
+// BAR_DRAG is the width of bar kept free to drag the window by: tools
+// collapse into the settings menu before they take it.
+BAR_DRAG :: f32(140)
+
+// DIVIDER is the rule between the caption buttons and the bar's own
+// controls: BAR_GAP either side of it, DIVIDER tall.
+DIVIDER :: f32(16)
+
+// TOOL is a tool's size in the bar, and TOOL_GAP the space between tools.
+TOOL :: tok.CONTROL_SMALL_SIZE
+TOOL_GAP :: f32(2)
+
+// BAR_NAME is the product's name in the caption bar.
+@(private)
+BAR_NAME :: tok.Type_Style {
+	weight      = tok.BASE_TEXT_WEIGHT_SEMIBOLD,
+	size        = 13,
+	line_height = 20,
+}
+
+// CAPTION_KEY names the drawn caption buttons' tags.
+@(private)
+CAPTION_KEY :: u64(0x63617074)
+
+// Bar_Tool is a tool the caption bar shows while it has room, in the order
+// they collapse, last first: Theme goes first, Rescan last. Each is in the
+// settings menu too, so a collapsed one is still to hand.
+Bar_Tool :: enum u8 {
+	Rescan,
+	Export,
+	Theme,
+}
+
+// Bar_Layout is where the caption bar's parts go, in window space.
+Bar_Layout :: struct {
+	height: f32,
+	lead:   f32, // the mark's left edge
+	nav_x:  f32, // back's left edge, forward after it
+	free:    f32, // the first tool's left edge, where the drag after forward ends
+	gear_x:  f32,
+	divider: f32, // the rule's left edge, beside the caption buttons; 0 with none
+	shown:   bit_set[Bar_Tool],
+}
+
+// bar_layout lays out a caption bar width wide and height tall around the
+// caption buttons, on whichever side they are, with a rule between them and
+// the bar's controls. name is the product name's width. The tools that fit
+// beside the gear with BAR_DRAG left over are shown, by priority.
+bar_layout :: proc(width, height: f32, buttons: ops.Rect, name: f32) -> (l: Bar_Layout) {
+	l.height = height
+	l.lead = BAR_INSET
+	right := width - BAR_INSET
+	if buttons.w > 0 && buttons.h > 0 {
+		rule := tok.BORDER_WIDTH_THIN
+		if buttons.x <= width / 2 {
+			l.divider = buttons.x + buttons.w + BAR_GAP
+			l.lead = l.divider + rule + BAR_GAP
+		} else {
+			l.divider = buttons.x - BAR_GAP - rule
+			right = l.divider - BAR_GAP
+		}
+	}
+	l.nav_x = l.lead + BAR_MARK + BAR_GAP + name + 2 * BAR_GAP
+	nav_end := l.nav_x + 2 * TOOL + TOOL_GAP
+	l.gear_x = right - TOOL
+	room := l.gear_x - TOOL_GAP - nav_end - BAR_DRAG
+	used: f32
+	for t in Bar_Tool {
+		if used + TOOL + TOOL_GAP > room {
+			break
+		}
+		used += TOOL + TOOL_GAP
+		l.shown += {t}
+	}
+	l.free = l.gear_x - used
+	return
+}
+
+// in_caption is whether the window's caption is the client's.
+@(private)
+in_caption :: proc(gtx: ^ui.Ctx) -> bool {
+	return gtx.title_bar.height > 0
+}
+
+// bar_height is the caption bar's height: BAR when the frame draws the
+// caption buttons, BAR_MAC on macOS, else the platform's caption and at
+// least BAR.
+@(private)
+bar_height :: proc(gtx: ^ui.Ctx) -> f32 {
+	if gtx.title_bar.drawn {
+		return BAR
+	}
+	when ODIN_OS == .Darwin {
+		return max(gtx.title_bar.height, BAR_MAC)
+	} else {
+		return max(gtx.title_bar.height, BAR)
+	}
+}
+
+// caption_buttons is the caption buttons in window space: the ones the
+// frame draws, at its top right, or the platform's.
+@(private)
+caption_buttons :: proc(gtx: ^ui.Ctx) -> ops.Rect {
+	if !gtx.title_bar.drawn {
+		return gtx.title_bar.buttons
+	}
+	w := windows.caption_width(gtx)
+	return {gtx.viewport.x - w, 0, w, BAR}
+}
+
+// caption_bar is the bar along the top of a window whose caption is the
+// client's: the mark and the product, back and forward, the place scanned
+// in the middle, then the tools that fit (bar_layout) and the gear, whose
+// menu holds the rest. All but the controls drags the window.
+@(private)
+caption_bar :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result) {
+	w := gtx.viewport.x
+	h := bar_height(gtx)
+	name := design.layout_style(gtx, version.PRODUCT, BAR_NAME, primer.font_for(gtx, BAR_NAME.weight))
+	l := bar_layout(w, h, caption_buttons(gtx), name.width)
+	nav_end := l.nav_x + 2 * TOOL + TOOL_GAP
+	top := (h - TOOL) / 2
+	tools_end := l.gear_x + TOOL
+
+	ui.overlay(gtx, cs = {min = {w, h}, max = {w, h}})
+	ops.fill(gtx.scene, ops.Rect{0, h - tok.BORDER_WIDTH_THIN, w, tok.BORDER_WIDTH_THIN}, primer.color(.Border_Color_Muted))
+	if l.divider > 0 {
+		rule := ops.Rect{l.divider, (h - DIVIDER) / 2, tok.BORDER_WIDTH_THIN, DIVIDER}
+		ops.fill(gtx.scene, rule, primer.color(.Border_Color_Default))
+	}
+	offer_drag(gtx, {0, 0, l.nav_x, h})
+	offer_drag(gtx, {nav_end, 0, l.free - nav_end, h})
+	offer_drag(gtx, {tools_end, 0, w - tools_end, h})
+
+	mark.draw(gtx, {l.lead, (h - BAR_MARK) / 2}, BAR_MARK, primer.color(.Fg_Color_Default), mark.SEA)
+	name_at := ops.Point{l.lead + BAR_MARK + BAR_GAP, (h - name.height) / 2}
+	design.draw_paragraph(gtx, name, name_at, primer.color(.Fg_Color_Default))
+	ops.tag(gtx.scene, ui.id_mix(0, CAPTION_KEY + 1), version.PRODUCT, {name_at.x, name_at.y, name.width, name.height})
+
+	// The place scanned, centred in the window, where it clears both sides.
+	if prog != nil && prog.target != "" {
+		place := filepath.base(human.shown(prog.target))
+		st := tok.TEXT_BODY_SHORTHAND_SMALL
+		para := design.layout_style(gtx, place, st, primer.font_for(gtx, st.weight))
+		x := (w - para.width) / 2
+		if x > nav_end + BAR_GAP && x + para.width < l.free - BAR_GAP {
+			design.draw_paragraph(gtx, para, {x, (h - para.height) / 2}, primer.color(.Fg_Color_Muted))
+		}
+	}
+
+	ui.stack(gtx)
+	// Disabled, not inactive: an inactive invisible button is filled, and a
+	// step that goes nowhere should read as the glyph alone.
+	open := !dialog_open(m)
+	if ui.inset(gtx, {left = l.nav_x, top = top}) {
+		if ui.row(gtx, gap = TOOL_GAP, align = .Center) {
+			back := primer.Interaction.Live if open && len(m.back) > 0 else .Disabled
+			if primer.icon_button(gtx, .Arrow_Left, tr(.Back), .Invisible, .Small, state = back) {
+				go_back(m)
+			}
+			forward := primer.Interaction.Live if open && len(m.forward) > 0 else .Disabled
+			if primer.icon_button(gtx, .Arrow_Right, tr(.Forward), .Invisible, .Small, state = forward) {
+				go_forward(m)
+			}
+		}
+	}
+	if ui.inset(gtx, {left = l.free, top = top}) {
+		if ui.row(gtx, gap = TOOL_GAP, align = .Center) {
+			for t in l.shown {
+				bar_tool(gtx, m, prog, t)
+			}
+			settings_menu(gtx, m, prog, .Small)
+		}
+	}
+}
+
+// bar_tool is one of the caption bar's tools.
+@(private)
+bar_tool :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result, t: Bar_Tool) {
+	live :: proc(ok: bool) -> primer.Interaction {
+		return .Live if ok else .Disabled
+	}
+	open := !dialog_open(m)
+	switch t {
+	case .Rescan:
+		if prog != nil && prog.state == .Scanning {
+			if primer.icon_button(gtx, .Square_Fill, tr(.Stop), .Invisible, .Small, state = live(open)) {
+				ui.command(gtx, command.Command(command.Stop{}))
+			}
+		} else if primer.icon_button(gtx, .Sync, tr(.Rescan), .Invisible, .Small, state = live(open && can_rescan(prog))) {
+			rescan(gtx, prog)
+		}
+	case .Export:
+		scanned := prog != nil && prog.generation != 0
+		busy := scanned && exporting(m, prog)
+		name := tr(.Exporting) if busy else tr(.Export)
+		done := scanned && prog.state == .Done
+		if primer.icon_button(gtx, .Download, name, .Invisible, .Small, loading = busy, state = live(open && done)) {
+			export_show(gtx, m)
+		}
+	case .Theme:
+		if primer.icon_button(gtx, .Moon if m.dark else .Sun, tr(.Theme), .Invisible, .Small, state = live(open)) {
+			set_theme(gtx, m, .Light if m.dark else .Dark)
+		}
+	}
+}
+
+// toolbar is the top row. Under a caption bar it is the location alone,
+// the bar having the rest; otherwise the mark, the product, the location
+// and the gear.
 @(private)
 toolbar :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result) {
-	ui.row(gtx, gap = 8, align = .Center)
-	logo(gtx)
-	title(gtx, version.PRODUCT)
-	ui.spacer(gtx, 8)
-	ui.flexible(gtx, 1)
-	location_bar(gtx, m, prog)
-	settings_menu(gtx, m, prog)
+	if in_caption(gtx) {
+		location_bar(gtx, m, prog)
+		return
+	}
+	if ui.row(gtx, gap = BAR_GAP, align = .Center) {
+		logo(gtx)
+		title(gtx, version.PRODUCT)
+		ui.spacer(gtx, BAR_GAP)
+		ui.flexible(gtx, 1)
+		location_bar(gtx, m, prog)
+		settings_menu(gtx, m, prog)
+	}
+}
+
+// offer_drag offers r, in window space, as a drag. Where r meets
+// the caption buttons, only the parts outside them are offered.
+@(private)
+offer_drag :: proc(gtx: ^ui.Ctx, r: ops.Rect) {
+	if r.w <= 0 || r.h <= 0 {
+		return
+	}
+	b := caption_buttons(gtx)
+	if !rect_meets(r, b) {
+		ui.window_drag(gtx, r)
+		return
+	}
+	if b.x > r.x {
+		ui.window_drag(gtx, {r.x, r.y, min(b.x, r.x + r.w) - r.x, r.h})
+	}
+	right := b.x + b.w
+	end := r.x + r.w
+	if right < end {
+		ui.window_drag(gtx, {right, r.y, end - right, r.h})
+	}
+	x0 := max(r.x, b.x)
+	x1 := min(end, right)
+	if x1 <= x0 {
+		return
+	}
+	if b.y > r.y {
+		ui.window_drag(gtx, {x0, r.y, x1 - x0, min(b.y, r.y + r.h) - r.y})
+	}
+	bottom := b.y + b.h
+	low := r.y + r.h
+	if bottom < low {
+		ui.window_drag(gtx, {x0, bottom, x1 - x0, low - bottom})
+	}
+}
+
+// rect_meets is whether a and b share any area.
+@(private)
+rect_meets :: proc(a, b: ops.Rect) -> bool {
+	return (
+		a.w > 0 &&
+		a.h > 0 &&
+		b.w > 0 &&
+		b.h > 0 &&
+		a.x < b.x + b.w &&
+		b.x < a.x + a.w &&
+		a.y < b.y + b.h &&
+		b.y < a.y + a.h)
 }
 
 /*
-location_bar is the location bar with the magnifier beside it, or the search field
-in the place of both. It is one child of the toolbar either way, and sizes the
-bar from this frame's width: a row offers a stretched child what its other
-children took the frame before (ui.flexible), so were the magnifier the
-toolbar's own child, the buttons after it would jump for the frame the search
-closes, as the_bar_holds_still_as_the_search_opens_and_closes saw.
+location_bar is the location bar, or the search field in its place. While it
+shows the trail, a folder button and the magnifier sit inside its right end,
+drawn over the trail, which keeps TRAIL_BUTTON clear there for each: the folder
+opens the platform's folder dialog and scans what it chooses, the magnifier
+turns the bar into the search field. While it shows the field, which has a
+folder button of its own, the magnifier sits beside it.
 */
 @(private)
 location_bar :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result) {
+	take_scan_pick(gtx, m)
 	ui.row(gtx, gap = 8, align = .Center)
 	if m.searching {
 		search_field(gtx, m)
 		return
 	}
-	magnifier := prog != nil && prog.generation != 0
 	width := gtx.constraints.max.x
-	if magnifier {
-		width -= tok.CONTROL_MEDIUM_SIZE + 8
-	}
+	magnifier := prog != nil && prog.generation != 0
+	shows := trail_shows(m, prog)
 	if !ui.is_finite(width) {
 		location(gtx, m, prog)
-	} else if ui.sized(gtx, {min = {width, 0}, max = {width, ui.INF}}) {
-		location(gtx, m, prog)
-	}
-	if magnifier {
-		search_button(gtx, m)
-		// Not while a dialog is open or one the settings menu chose is about
-		// to: the keyboard is the dialog's.
-		if m.bar_focus && !m.editing && !dialog_open(m) && m.settings_dialog == .None {
-			ui.focus_request(gtx, ui.last_widget(gtx).id)
+	} else if shows {
+		room := trail_room(magnifier)
+		ui.stack(gtx)
+		if ui.sized(gtx, {min = {width, 0}, max = {width, ui.INF}}) {
+			location(gtx, m, prog, room)
+		}
+		size := tok.CONTROL_SMALL_SIZE
+		x := width - room + TRAIL_GAP + (TRAIL_BUTTON - size) / 2
+		top := (LOCATION_HEIGHT - size) / 2
+		if ui.inset(gtx, {left = x, top = top}) {
+			if primer.icon_button(gtx, .File_Directory, tr(.Scan_Choose), .Invisible, .Small) {
+				ui.pick_folder(gtx, SCAN_PICK, prog.target)
+			}
+		}
+		if magnifier {
+			if ui.inset(gtx, {left = x + TRAIL_BUTTON, top = top}) {
+				search_button(gtx, m, .Small)
+				refocus_magnifier(gtx, m)
+			}
+		}
+	} else {
+		field := width - (tok.CONTROL_MEDIUM_SIZE + 8 if magnifier else 0)
+		if ui.sized(gtx, {min = {field, 0}, max = {field, ui.INF}}) {
+			location(gtx, m, prog)
+		}
+		if magnifier {
+			search_button(gtx, m)
+			refocus_magnifier(gtx, m)
 		}
 	}
-	if !m.editing {
+	// A field that closed this frame brings the trail back next frame, and
+	// with it the magnifier inside the bar, a widget of its own: the focus
+	// is asked for again then.
+	if !m.editing && trail_shows(m, prog) == shows {
 		m.bar_focus = false
+	}
+}
+
+// trail_room is the room the trail keeps clear at its end for its buttons:
+// the folder, and the magnifier when there is one.
+@(private)
+trail_room :: proc(magnifier: bool) -> f32 {
+	return TRAIL_GAP + TRAIL_BUTTON * (2 if magnifier else 1) + 1
+}
+
+// refocus_magnifier gives the keyboard back to the magnifier just drawn when a
+// bar field closes. Not while a dialog is open or one the settings menu chose
+// is about to: the keyboard is the dialog's.
+@(private)
+refocus_magnifier :: proc(gtx: ^ui.Ctx, m: ^Model) {
+	if m.bar_focus && !m.editing && !dialog_open(m) && m.settings_dialog == .None {
+		ui.focus_request(gtx, ui.last_widget(gtx).id)
 	}
 }
 
@@ -1137,7 +1467,7 @@ TITLE :: tok.Type_Style {
 // window_title is the window's name for a scan of path: on macOS the folder's
 // own name alone, as a Finder window carries its folder's and a TextEdit window
 // its file's; elsewhere the name and then the product, as Notepad and Explorer
-// title theirs. The title bar alone shows it; the toolbar keeps the product.
+// title theirs. The taskbar and Alt-Tab show it; the toolbar keeps the product.
 window_title :: proc(path: string, allocator := context.temp_allocator) -> string {
 	name := filepath.base(path)
 	when ODIN_OS == .Darwin {

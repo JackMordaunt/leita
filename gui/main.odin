@@ -47,6 +47,7 @@ run :: proc(path: string) {
 			fallbacks = scripts,
 			clear = {255, 255, 255, 255},
 			data = app.data_host(h),
+			title_bar = .Drawn,
 			icon_light = brand.png(false),
 			icon_dark = brand.png(true),
 		},

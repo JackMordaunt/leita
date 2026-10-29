@@ -14,6 +14,9 @@ theme_dark = Тёмная тема
 export = Экспорт
 exporting = Экспорт…
 licence = Лицензия
+back = Назад
+forward = Вперёд
+scan_choose = Выбрать папку для сканирования
 
 # About
 version = Версия {0}

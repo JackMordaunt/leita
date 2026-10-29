@@ -17,6 +17,9 @@ theme_dark = ダークテーマ
 export = 書き出す
 exporting = 書き出し中…
 licence = ライセンス
+back = 戻る
+forward = 進む
+scan_choose = スキャンするフォルダーを選択
 
 # About
 version = バージョン {0}

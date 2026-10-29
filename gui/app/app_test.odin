@@ -1118,9 +1118,12 @@ the_location_bar_edits_into_a_field_and_back :: proc(t: ^testing.T) {
 	testing.expect(t, settle(&r, "Done"))
 	testing.expect(t, settle(&r, filepath.base(root)))
 
-	// The bar's empty end opens the field, focused, holding the path.
+	// The bar's empty end, before the buttons inside it, opens the field,
+	// focused, holding the path.
 	bar := ui.probe_bounds(&r.p, "Location")
-	ui.probe_click_at(&r.p, {bar.x + bar.w - 20, bar.y + bar.h / 2})
+	folder := ui.probe_bounds(&r.p, "Choose a folder to scan")
+	testing.expect(t, folder.w > 0, "the bar has its folder button")
+	ui.probe_click_at(&r.p, {folder.x - 20, bar.y + bar.h / 2})
 	press_and_hand_on(&r)
 	press_and_hand_on(&r)
 	testing.expect(t, r.m.editing, "the bar is a field")
@@ -1134,7 +1137,7 @@ the_location_bar_edits_into_a_field_and_back :: proc(t: ^testing.T) {
 	testing.expect(t, settle(&r, filepath.base(root)))
 
 	// Enter scans what the field holds.
-	ui.probe_click_at(&r.p, {bar.x + bar.w - 20, bar.y + bar.h / 2})
+	ui.probe_click_at(&r.p, {folder.x - 20, bar.y + bar.h / 2})
 	press_and_hand_on(&r)
 	press_and_hand_on(&r)
 	first := r.m.generation
@@ -1438,9 +1441,14 @@ every_window_size_lays_out_without_a_clash :: proc(t: ^testing.T) {
 				r.p.size = {width, height}
 				ui.probe_advance(&r.p, 30, 1.0 / 60)
 				at := fmt.tprintf("%v at %vx%v", colour, width, height)
-				tool := []string{"Leita", "Location", "Search", "Settings"}
+				// The magnifier sits inside the location bar, so it is held
+				// apart from the others only.
+				tool := []string{"Leita", "Location", "Settings", "Search"}
 				for i in 0 ..< len(tool) {
 					for j in i + 1 ..< len(tool) {
+						if tool[i] == "Location" && tool[j] == "Search" {
+							continue
+						}
 						a, b := ui.probe_bounds(&r.p, tool[i]), ui.probe_bounds(&r.p, tool[j])
 						testing.expectf(
 							t,
