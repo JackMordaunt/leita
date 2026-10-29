@@ -150,6 +150,12 @@ jobs:
         run: |
           if [ "${{ runner.os }}" = Windows ]; then export SAN=; fi
           just gui-test
+      # AppKit's native controls and event monitors need the main thread;
+      # the headless view tests and odin test's workers cannot prove them.
+      - name: native macOS title bar
+        if: runner.os == 'macOS'
+        timeout-minutes: 4
+        run: python3 tools/macos/test_titlebar.py
       # A release checks licences against the public key it is built with,
       # and its recipes refuse to build without one: first that refusal, then
       # the build, with the key the repository secret LEITA_LICENCE_KEY holds,
