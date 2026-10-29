@@ -155,7 +155,7 @@ jobs:
       - name: native macOS title bar
         if: runner.os == 'macOS'
         timeout-minutes: 4
-        run: python3 tools/macos/test_titlebar.py
+        run: just native-titlebar-test
       # A release checks licences against the public key it is built with,
       # and its recipes refuse to build without one: first that refusal, then
       # the build, with the key the repository secret LEITA_LICENCE_KEY holds,
