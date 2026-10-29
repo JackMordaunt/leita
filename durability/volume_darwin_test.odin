@@ -365,6 +365,20 @@ apfs_expect_scan :: proc(t: ^testing.T, v: Apfs_Volume, phase: string) {
 		if .Directory not_in scan.node_flags(n) {
 			a, known := scan.account_of(&tree, i)
 			testing.expect(t, known)
+			path := scan.path(&tree, i, context.temp_allocator)
+			native: posix.stat_t
+			stat_ok :=
+				posix.lstat(strings.clone_to_cstring(path, context.temp_allocator), &native) == .OK
+			testing.expectf(
+				t,
+				stat_ok &&
+				a.logical == u64(native.st_size) &&
+				a.allocated == u64(native.st_blocks) * 512 &&
+				n.disk == a.allocated,
+				"APFS %s: scan allocation differs from native stat for %s",
+				phase,
+				path,
+			)
 			logical += a.logical
 			files_seen += 1
 		}
@@ -403,8 +417,27 @@ apfs_expect_volume_scan :: proc(t: ^testing.T, v: Apfs_Volume, phase: string) {
 		return
 	}
 	found: int
+	found_filler := false
 	for i in 0 ..< tree.count {
 		path := scan.path(&tree, i, context.temp_allocator)
+		if path == in_dir(v.mount, "filler") {
+			native: posix.stat_t
+			stat_ok :=
+				posix.lstat(strings.clone_to_cstring(path, context.temp_allocator), &native) == .OK
+			n := scan.node(&tree, i)
+			a, known := scan.account_of(&tree, i)
+			testing.expectf(
+				t,
+				stat_ok &&
+				known &&
+				a.logical == u64(native.st_size) &&
+				a.allocated == u64(native.st_blocks) * 512 &&
+				n.disk == a.allocated &&
+				n.disk > APFS_IMAGE_BYTES / 2,
+				"the whole-volume scan must show the filler that exhausted the disk",
+			)
+			found_filler = true
+		}
 		if path != in_dir(v.mount, TREE + "/first") &&
 		   path != in_dir(v.mount, TREE + "/nested/second") {
 			continue
@@ -422,6 +455,9 @@ apfs_expect_volume_scan :: proc(t: ^testing.T, v: Apfs_Volume, phase: string) {
 		found += 1
 	}
 	testing.expectf(t, found == 2, "APFS %s: whole-volume scan missed existing files", phase)
+	if phase == "full" {
+		testing.expect(t, found_filler, "the full-volume scan found the file consuming its space")
+	}
 	log.infof("APFS %s whole-volume scan: nodes=%d unread=%d", phase, tree.count, tree.unread)
 }
 
