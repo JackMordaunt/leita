@@ -448,3 +448,8 @@ webhook_waiting.one = {0} Zustellung wartet
 webhook_waiting = {0} Zustellungen warten
 webhook_sends_paths = Sendet Ordnerpfade
 webhook_testing = Wird gesendet…
+
+# Persistence
+storage_unkept = Einstellungen oder Verlauf können nicht gespeichert werden
+settings_unkept = Einstellungen: {0}
+history_unkept = Verlauf: {0}

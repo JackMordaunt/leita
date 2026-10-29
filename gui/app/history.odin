@@ -27,6 +27,7 @@ history_open :: proc(d: ^Desk, path: string) {
 	st := new(history.Store)
 	if err := history.open(st, path); err != nil {
 		fmt.eprintln("leita: scans will not be kept:", path, err)
+		storage_problem_set(&d.history_problem, history.describe(err))
 		free(st)
 		return
 	}
@@ -35,6 +36,8 @@ history_open :: proc(d: ^Desk, path: string) {
 }
 
 history_close :: proc(d: ^Desk) {
+	delete(d.history_problem)
+	d.history_problem = ""
 	if d.history != nil {
 		history.close(d.history)
 		free(d.history)
@@ -54,6 +57,12 @@ keep :: proc(d: ^Desk) {
 		return
 	}
 	place := history.place_of(&s.tree, top, s.engine)
+	if d.history.read_only {
+		if then, found := history.latest(d.history, place, 0); found {
+			compare(d, then.id)
+		}
+		return
+	}
 	id, err := history.keep(
 		d.history,
 		place,
@@ -65,8 +74,13 @@ keep :: proc(d: ^Desk) {
 	)
 	if err != nil {
 		fmt.eprintln("leita: could not keep the scan:", err)
+		storage_problem_set(&d.history_problem, history.describe(err))
+		if then, found := history.latest(d.history, place, 0); found {
+			compare(d, then.id)
+		}
 		return
 	}
+	storage_problem_set(&d.history_problem, "")
 	d.snapshot = id
 	if then, found := history.latest(d.history, place, id); found {
 		compare(d, then.id)

@@ -183,11 +183,13 @@ Desk :: struct {
 	// kept as, the one it is compared with, and what each node held in that.
 	history:             ^history.Store,
 	history_path:        string,
+	history_problem:     string, // owned: a failed store open or save
 	snapshot:            i64,
 	compared:            query.Snapshot,
 	was:                 map[u32]u64,
 	// What the person chose, kept between runs (settings.odin); nil when not.
 	settings:            ^settings.Store,
+	settings_problem:    string, // owned: a failed store open or save
 	// Where reports are exported to when the window names no file, and where
 	// its save dialog opens: files.reports_folder unless init was given one, ""
 	// for neither; and each one saved, by the notice that said so (export.odin).
@@ -1099,6 +1101,7 @@ progress :: proc(d: ^Desk) -> query.Progress_Result {
 		generation = d.generation,
 		exporting  = d.exporting,
 		reports    = d.reports,
+		storage_problem = storage_problem(d),
 	}
 	s := d.scan
 	if s == nil {

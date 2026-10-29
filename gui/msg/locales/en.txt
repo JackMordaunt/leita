@@ -498,3 +498,8 @@ webhook_waiting.one = {0} delivery waiting to be taken
 webhook_waiting = {0} deliveries waiting to be taken
 webhook_sends_paths = Sends folder paths
 webhook_testing = Sending…
+
+# Persistence
+storage_unkept = Settings or history cannot be saved
+settings_unkept = Settings: {0}
+history_unkept = History: {0}

@@ -472,3 +472,8 @@ webhook_waiting.many = {0} de entregas aguardando
 webhook_waiting = {0} entregas aguardando
 webhook_sends_paths = Envia caminhos de pastas
 webhook_testing = Enviando…
+
+# Persistence
+storage_unkept = Não é possível salvar as configurações ou o histórico
+settings_unkept = Configurações: {0}
+history_unkept = Histórico: {0}

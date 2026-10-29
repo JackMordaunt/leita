@@ -491,3 +491,8 @@ webhook_waiting.many = {0} доставок ждут
 webhook_waiting = {0} доставки ждут
 webhook_sends_paths = Отправляет пути к папкам
 webhook_testing = Отправка…
+
+# Persistence
+storage_unkept = Не удаётся сохранить настройки или историю
+settings_unkept = Настройки: {0}
+history_unkept = История: {0}

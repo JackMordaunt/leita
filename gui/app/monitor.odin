@@ -155,7 +155,7 @@ monitor_open :: proc(d: ^Desk, kept: string, scheduler: ^schedule.Host, argv: []
 	mo.argv = make([]string, 3)
 	mo.argv[0], mo.argv[1], mo.argv[2] = exe, "monitor", "run"
 	mo.scheduler = strings.clone(schedule.describe(mo.host))
-	if d.settings != nil && settings.monitoring(d.settings) {
+	if d.settings != nil && !d.settings.read_only && settings.monitoring(d.settings) {
 		if was := schedule.program(mo.host); was != "" && was != exe {
 			schedule.install(mo.host, mo.argv)
 		}
@@ -202,7 +202,7 @@ unlocked :: proc(d: ^Desk) -> bool {
 
 // set_monitoring turns monitoring on or off as c asks.
 set_monitoring :: proc(d: ^Desk, c: command.Monitoring) {
-	if d.settings == nil {
+	if d.settings == nil || d.settings.read_only {
 		monitor_settle(d, say(d, .Monitor_Unkept))
 		return
 	}
@@ -239,7 +239,7 @@ set_monitoring :: proc(d: ^Desk, c: command.Monitoring) {
 
 // watch has the monitor watch the place c names.
 watch :: proc(d: ^Desk, c: ^command.Watch) {
-	if d.settings == nil {
+	if d.settings == nil || d.settings.read_only {
 		monitor_settle(d, say(d, .Monitor_Unkept))
 		return
 	}
@@ -275,7 +275,7 @@ watch :: proc(d: ^Desk, c: ^command.Watch) {
 
 // unwatch stops the monitor watching the place c names.
 unwatch :: proc(d: ^Desk, c: ^command.Unwatch) {
-	if d.settings == nil {
+	if d.settings == nil || d.settings.read_only {
 		monitor_settle(d, say(d, .Monitor_Unkept))
 		return
 	}

@@ -428,3 +428,8 @@ webhook_failed = 前回の試行は失敗しました: {0}
 webhook_waiting = {0} 件の配信が待機中
 webhook_sends_paths = フォルダーのパスを送信
 webhook_testing = 送信中…
+
+# Persistence
+storage_unkept = 設定または履歴を保存できません
+settings_unkept = 設定: {0}
+history_unkept = 履歴: {0}

@@ -472,3 +472,8 @@ webhook_waiting.many = {0} de livraisons en attente
 webhook_waiting = {0} livraisons en attente
 webhook_sends_paths = Envoie les chemins des dossiers
 webhook_testing = Envoi…
+
+# Persistence
+storage_unkept = Les paramètres ou l’historique ne peuvent pas être enregistrés
+settings_unkept = Paramètres : {0}
+history_unkept = Historique : {0}

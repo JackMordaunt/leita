@@ -469,3 +469,8 @@ webhook_waiting.many = {0} di consegne in attesa
 webhook_waiting = {0} consegne in attesa
 webhook_sends_paths = Invia i percorsi delle cartelle
 webhook_testing = Invio…
+
+# Persistence
+storage_unkept = Impossibile salvare le impostazioni o la cronologia
+settings_unkept = Impostazioni: {0}
+history_unkept = Cronologia: {0}

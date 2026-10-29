@@ -427,3 +427,8 @@ webhook_failed = 上次尝试失败：{0}
 webhook_waiting = {0} 条投递等待中
 webhook_sends_paths = 发送文件夹路径
 webhook_testing = 正在发送…
+
+# Persistence
+storage_unkept = 无法保存设置或历史记录
+settings_unkept = 设置：{0}
+history_unkept = 历史记录：{0}

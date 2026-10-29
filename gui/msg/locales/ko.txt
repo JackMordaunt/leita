@@ -425,3 +425,8 @@ webhook_failed = 마지막 시도 실패: {0}
 webhook_waiting = 전달 대기 중 {0}건
 webhook_sends_paths = 폴더 경로 보냄
 webhook_testing = 보내는 중…
+
+# Persistence
+storage_unkept = 설정 또는 기록을 저장할 수 없습니다
+settings_unkept = 설정: {0}
+history_unkept = 기록: {0}

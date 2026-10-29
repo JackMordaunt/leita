@@ -413,6 +413,9 @@ view :: proc(gtx: ^ui.Ctx, user: rawptr) {
 		if ui.column(gtx, gap = 12, align = .Fill) {
 			toolbar(gtx, m, prog)
 			status(gtx, m, prog)
+			if prog != nil && prog.storage_problem != "" {
+				primer.banner(gtx, tr(.Storage_Unkept), safe(gtx, prog.storage_problem), .Warning)
+			}
 		}
 	}
 	if prog == nil || prog.generation == 0 {

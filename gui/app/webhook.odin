@@ -40,7 +40,7 @@ Test_Run :: struct {
 
 // add_webhook keeps the webhook c names, with a new secret, or says why not.
 add_webhook :: proc(d: ^Desk, c: ^command.Add_Webhook, allocator := context.temp_allocator) {
-	if d.settings == nil {
+	if d.settings == nil || d.settings.read_only {
 		monitor_settle(d, say(d, .Monitor_Unkept))
 		return
 	}
@@ -69,7 +69,7 @@ add_webhook :: proc(d: ^Desk, c: ^command.Add_Webhook, allocator := context.temp
 
 // remove_webhook forgets the webhook c names and what waits for it.
 remove_webhook :: proc(d: ^Desk, c: ^command.Remove_Webhook) {
-	if d.settings == nil {
+	if d.settings == nil || d.settings.read_only {
 		monitor_settle(d, say(d, .Monitor_Unkept))
 		return
 	}
@@ -89,7 +89,7 @@ test_webhook :: proc(
 	temp := context.temp_allocator,
 ) {
 	mo := &d.monitoring
-	if d.settings == nil || mo.testing || !unlocked(d) {
+	if d.settings == nil || d.settings.read_only || mo.testing || !unlocked(d) {
 		return
 	}
 	url := command.text_of(&c.url)
@@ -115,14 +115,16 @@ test_webhook :: proc(
 				job := (^Test_Run)(data)
 				st: settings.Store
 				if settings.open(&st, job.settings) == nil {
-					webhook.deliver(
-						&st,
-						time.to_unix_seconds(time.now()),
-						webhook.post,
-						nil,
-						job.hook,
-					)
-					settings.close(&st)
+					defer settings.close(&st)
+					if !st.read_only {
+						webhook.deliver(
+							&st,
+							time.to_unix_seconds(time.now()),
+							webhook.post,
+							nil,
+							job.hook,
+						)
+					}
 				}
 				stream.port_send(job.answer^, Test_Done{})
 				delete(job.settings, job.made_in)

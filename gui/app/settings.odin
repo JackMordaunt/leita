@@ -7,6 +7,7 @@ import "jm:i18n"
 import "jm:sqlite3"
 
 import "../../settings"
+import "../../history"
 import "../command"
 import "../query"
 
@@ -28,6 +29,7 @@ settings_open :: proc(d: ^Desk, path: string) {
 	st := new(settings.Store)
 	if err := settings.open(st, path); err != nil {
 		fmt.eprintln("leita: settings will not be kept:", path, err)
+		storage_problem_set(&d.settings_problem, history.describe(err))
 		free(st)
 		return
 	}
@@ -44,6 +46,8 @@ update_restore :: proc(d: ^Desk, allocator := context.allocator) {
 }
 
 settings_close :: proc(d: ^Desk) {
+	delete(d.settings_problem)
+	d.settings_problem = ""
 	if d.settings != nil {
 		settings.close(d.settings)
 		free(d.settings)
@@ -152,5 +156,8 @@ remember_dismiss :: proc(d: ^Desk, version: string, allocator := context.allocat
 keep_setting :: proc(d: ^Desk, key, value: string) {
 	if err := settings.set(d.settings, key, value); err != nil {
 		fmt.eprintln("leita: could not keep the setting", key, err)
+		storage_problem_set(&d.settings_problem, history.describe(err))
+	} else {
+		storage_problem_set(&d.settings_problem, "")
 	}
 }

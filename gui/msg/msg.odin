@@ -26,6 +26,9 @@ import "jm:i18n"
 
 Msg :: enum u16 {
 	Settings,
+	Storage_Unkept,
+	Settings_Unkept,
+	History_Unkept,
 	Language,
 	About,
 	Stop,

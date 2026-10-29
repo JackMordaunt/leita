@@ -226,3 +226,22 @@ a_stopped_scans_chart_is_marked_incomplete :: proc(t: ^testing.T) {
 	testing.expect(t, !ui.probe_tagged(p, "incomplete cache"), "nothing is outlined")
 	testing.expect(t, !ui.probe_tagged(p, "incomplete top"), "the frame is not")
 }
+
+// A full data volume is a persistent storage problem, not a failed scan or
+// an action toast. It is visible before the first scan and survives actions.
+@(test)
+a_storage_warning_survives_scans_and_action_notices :: proc(t: ^testing.T) {
+	s: Status_Rig
+	status_open(&s)
+	defer status_close(&s)
+	p := &s.h.p
+	warning := "Settings: storage is full; existing values can be read."
+	deliver(&s, {storage_problem = warning})
+	testing.expect(t, ui.probe_tagged(p, "Settings or history cannot be saved"))
+	testing.expect(t, ui.probe_tagged(p, warning))
+	deliver(&s, {generation = 1, state = .Done, target = "/top", storage_problem = warning, notice = {id = 1, text = "Another action finished"}})
+	testing.expect(t, ui.probe_tagged(p, warning), "an action does not hide the storage problem")
+	testing.expect(t, ui.probe_tagged(p, "Done"), "the scan still completes")
+	deliver(&s, {generation = 1, state = .Done, target = "/top"})
+	testing.expect(t, !ui.probe_tagged(p, "Settings or history cannot be saved"), "the warning clears when persistence recovers")
+}
