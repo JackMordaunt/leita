@@ -42,8 +42,8 @@ purging. CFURL.h in the macOS 11.3 SDK defines the important-usage capacity as
 "Total available capacity in bytes for "Important" resources, including space
 expected to be cleared by purging non-essential and cached resources", and the
 plain capacity as "Total free space in bytes"; the gap between the two is that
-purge. Both are CFURL volume resource values, so every macOS from the 11 floor
-answers through CoreFoundation alone.
+purge. Both keys are available through CoreFoundation on the macOS 11 floor,
+but a resource value can be unavailable, and the two reads are not atomic.
 
 It is the system's estimate, not a measurement of any file; the walk never
 charges it to one. No figure, a figure that is not a positive-or-zero 64-bit
@@ -60,6 +60,13 @@ darwin_purgeable :: proc(root: string) -> (purgeable: u64, known: bool) {
 
 	available := cf_url_i64(url, kCFURLVolumeAvailableCapacityKey) or_return
 	important := cf_url_i64(url, kCFURLVolumeAvailableCapacityForImportantUsageKey) or_return
+	return darwin_purgeable_capacity(available, important)
+}
+
+// Separate capacity samples may disagree while another process writes to
+// the volume. Unknown must not become a wrapped byte count or a known zero.
+@(private)
+darwin_purgeable_capacity :: proc(available, important: i64) -> (purgeable: u64, known: bool) {
 	if available < 0 || important < available {
 		return
 	}

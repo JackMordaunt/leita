@@ -178,9 +178,10 @@ test_empty_apfs_image_has_no_local_snapshots :: proc(t: ^testing.T) {
 }
 
 /*
-macOS answers for purgeable space on the startup Data volume, the one a home
-folder scan reaches. The figure is the system's; the test asserts only that it
-answers and that the answer is a byte count no larger than the volume.
+The startup Data volume is the one a home folder scan reaches. The capacity
+keys exist on macOS 11+, but a figure can be unavailable, or independent
+samples can disagree while another process writes. A known estimate fits
+inside the volume; an unknown one never carries a fabricated byte count.
 */
 @(test)
 test_purgeable_on_data_volume :: proc(t: ^testing.T) {
@@ -191,8 +192,42 @@ test_purgeable_on_data_volume :: proc(t: ^testing.T) {
 	}
 	purgeable, known := darwin_purgeable(root)
 	log.infof("purgeable on %s: %d bytes (known %v)", root, purgeable, known)
-	testing.expect(t, known, "macOS 11+ answers both CFURL capacity keys")
-	testing.expect(t, purgeable <= u64(st.blocks) * u64(st.bsize))
+	if known {
+		testing.expect(t, purgeable <= u64(st.blocks) * u64(st.bsize))
+	} else {
+		testing.expect_value(t, purgeable, u64(0))
+	}
+}
+
+// A known zero is distinct from capacity samples that cannot establish a
+// figure. In particular, taking space between the reads must not underflow.
+@(test)
+test_purgeable_capacity_disagreement_stays_unknown :: proc(t: ^testing.T) {
+	Case :: struct { available, important: i64, purgeable: u64, known: bool }
+	cases := []Case {
+		{100, 125, 25, true},
+		{100, 100, 0, true},
+		{125, 100, 0, false},
+		{-1, 125, 0, false},
+		{100, -1, 0, false},
+		{0, max(i64), u64(max(i64)), true},
+	}
+	for c in cases {
+		got, known := darwin_purgeable_capacity(c.available, c.important)
+		testing.expect_value(t, got, c.purgeable)
+		testing.expect_value(t, known, c.known)
+	}
+}
+
+// A failed native lookup must remain unknown even though the capacity
+// keys themselves are present on this OS.
+@(test)
+test_purgeable_for_a_missing_resource_is_unknown :: proc(t: ^testing.T) {
+	root := fresh_root(t, "purgeable-missing")
+	defer os.remove_all(root)
+	got, known := darwin_purgeable(fmt.tprintf("%s/not-present", root))
+	testing.expect(t, !known)
+	testing.expect_value(t, got, u64(0))
 }
 
 /*
