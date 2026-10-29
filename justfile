@@ -211,6 +211,9 @@ cli mode="minimal": sqlite
     esac
     mkdir -p build/{{mode}}
     {{odin}} build cmd/cli $opt {{odin_target}} {{flags}} {{curl_open}} -out:build/{{mode}}/{{bin}}{{exe}}
+    if [ "{{os()}}" = macos ]; then
+        python3 tools/macos/check_minos.py --system-only "build/{{mode}}/{{bin}}{{exe}}"
+    fi
 
 # The staged jm of cli-baseline and baseline-test, its SQLite and zstd built with zig cc.
 [private]
@@ -301,6 +304,9 @@ gui mode="minimal": deps
     if [ "{{os()}}" = windows ] && [ "{{mode}}" = release ]; then opt="$opt -subsystem:windows"; fi
     mkdir -p build/{{mode}}/app
     {{odin}} build cmd/gui $opt {{odin_target}} {{flags}} {{curl_open}} {{sdl3_link}} -out:build/{{mode}}/app/{{gui}}{{exe}}
+    if [ "{{os()}}" = macos ]; then
+        python3 tools/macos/check_minos.py --system-only "build/{{mode}}/app/{{gui}}{{exe}}"
+    fi
     if [ -n "{{floor}}" ]; then
         # The floor is a promise about the binary, so it is read back from it.
         need=$(readelf -V "build/{{mode}}/app/{{gui}}" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -n 1)
@@ -614,6 +620,12 @@ sqlite: floor-jm
     cd "{{jm}}"
     ls sqlite3/lib/sqlite3.* >/dev/null 2>&1 || just sqlite
     ls zstd/lib/zstd.* >/dev/null 2>&1 || just zstd
+    if [ "{{os()}}" = macos ]; then
+        # An old archive can survive a deployment-target change: existence
+        # and source mtimes do not establish what macOS it was built for.
+        # Remove a failing generated lib directory and rerun to rebuild it.
+        python3 "{{root}}/tools/macos/check_minos.py" sqlite3/lib/sqlite3.a zstd/lib/zstd.a
+    fi
 
 # What sqlite fetches, and the libraries jm:ui links: Blend2D to draw,
 # kb_text_shape to shape text, AccessKit for screen readers, and on macOS and
@@ -647,6 +659,12 @@ deps: sqlite
         ls ui/accesskit/lib/*accesskit* >/dev/null 2>&1 || just accesskit
     fi
     just sdl3
+    if [ "{{os()}}" = macos ]; then
+        # Check every archive's object deployment targets, including the
+        # prebuilt AccessKit. The final binary's minos alone can stay at 11
+        # even when it contains objects that were compiled for macOS 15.
+        python3 "{{root}}/tools/macos/check_minos.py" ui/blend2d/lib/libblend2d.a ui/kb/lib/kb_text_shape.a ui/accesskit/lib/libaccesskit.a ui/shell/lib/libSDL3.a
+    fi
     if [ "{{os()}}" = linux ]; then just --justfile "{{justfile()}}" sdl3-static; fi
 
 # jm builds SDL3 static for macOS alone and leaves Linux to a system SDL3,

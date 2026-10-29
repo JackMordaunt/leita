@@ -1,17 +1,21 @@
 #!/usr/bin/env python3
 """Fail when a Mach-O file asks for a newer macOS than the floor.
 
-    check_minos.py [--floor 11.0] FILE...
+    check_minos.py [--floor 11.0] [--system-only] FILE...
 
-FILE is run through `otool -l` (LLVM's llvm-otool prints the same lines), and
+FILE may be an executable, a dylib, an object or a static archive. It is run
+through `otool -arch all -l` (LLVM's llvm-otool prints the same lines), and
 every LC_BUILD_VERSION `minos` and LC_VERSION_MIN_MACOSX `version` it names
 is compared with the floor. A fat file's slices are each checked when otool
 prints them. A file with no such load command, or a platform other than
 macOS, fails too: silence is not a minimum.
 
-This reads what the linker wrote. It does not show that a system symbol
-or framework the binary calls exists on the floor release; only a run on
-that release does.
+With --system-only, non-system dylib dependencies are rejected too: a
+standalone Leita binary must not depend on a library installed by Homebrew.
+
+This reads what the compiler and linker wrote. It does not show that a system
+symbol or framework the binary calls exists on the floor release; only a run
+on that release does.
 """
 import argparse
 import re
@@ -22,7 +26,8 @@ import sys
 
 def version(text):
     """'11.0' or '11.0.1' as a tuple of ints."""
-    return tuple(int(p) for p in text.split("."))
+    parts = tuple(int(p) for p in text.split("."))
+    return parts + (0,) * max(0, 3 - len(parts))
 
 
 def minimums(otool_output):
@@ -68,12 +73,32 @@ def verdict(name, otool_output, floor):
             problems.append(f"{name}: platform {platform}, not macos")
         elif version(minos) > version(floor):
             problems.append(f"{name}: needs macOS {minos}, the floor is {floor}")
-    return problems
+    return list(dict.fromkeys(problems))
+
+
+def external_libraries(otool_output):
+    """Dylib install names outside the macOS system library directories."""
+    found = []
+    cmd = None
+    for line in otool_output.splitlines():
+        s = line.strip()
+        m = re.match(r"cmd (\S+)", s)
+        if m:
+            cmd = m.group(1)
+            continue
+        if cmd in {"LC_LOAD_DYLIB", "LC_LOAD_WEAK_DYLIB", "LC_REEXPORT_DYLIB",
+                   "LC_LOAD_UPWARD_DYLIB", "LC_LAZY_LOAD_DYLIB"}:
+            m = re.match(r"name (.+) \(offset \d+\)$", s)
+            if m and not m.group(1).startswith(("/usr/lib/", "/System/Library/")):
+                found.append(m.group(1))
+    return list(dict.fromkeys(found))
 
 
 def main(argv):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--floor", default="11.0")
+    ap.add_argument("--system-only", action="store_true",
+                    help="reject non-system dylib dependencies in standalone binaries")
     ap.add_argument("files", nargs="+")
     args = ap.parse_args(argv)
     otool = shutil.which("otool") or shutil.which("llvm-otool")
@@ -82,11 +107,14 @@ def main(argv):
         return 2
     bad = []
     for path in args.files:
-        out = subprocess.run([otool, "-l", path], capture_output=True, text=True)
+        out = subprocess.run([otool, "-arch", "all", "-l", path], capture_output=True, text=True)
         if out.returncode != 0:
             bad.append(f"{path}: otool failed: {out.stderr.strip()}")
             continue
         problems = verdict(path, out.stdout, args.floor)
+        if args.system_only:
+            problems.extend(f"{path}: non-system dependency {lib}"
+                            for lib in external_libraries(out.stdout))
         bad.extend(problems)
         if not problems:
             shown = ", ".join(sorted({m for _, m in minimums(out.stdout)}))
