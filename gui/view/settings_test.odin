@@ -69,6 +69,23 @@ rescan_says_its_shortcut_in_letters_the_font_has :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(said, "Ctrl+R") == (ODIN_OS != .Darwin), said)
 }
 
+// An unset choice follows the OS. Light and dark stay where they were set.
+@(test)
+an_unset_theme_follows_the_os :: proc(t: ^testing.T) {
+	m: Model
+	apply_theme(&m)
+	testing.expect_value(t, m.dark, system_dark())
+	m.theme = .Light
+	apply_theme(&m)
+	testing.expect(t, !m.dark)
+	m.theme = .Dark
+	apply_theme(&m)
+	testing.expect(t, m.dark)
+	m.theme = .Auto
+	apply_theme(&m)
+	testing.expect_value(t, m.dark, system_dark())
+}
+
 // sent is the last Command of type T the last frame sent, if it sent one.
 @(private)
 sent :: proc(p: ^ui.Probe, $T: typeid) -> (got: Maybe(T)) {
@@ -83,7 +100,8 @@ sent :: proc(p: ^ui.Probe, $T: typeid) -> (got: Maybe(T)) {
 }
 
 // The gear's menu holds what the bar did: Stop while a scan runs and Rescan
-// after, the theme, and the languages in a submenu; a choice closes the menu.
+// after, the theme in a submenu, and the languages in a submenu; a choice
+// closes the menu. Auto follows the OS.
 @(test)
 settings_menu_holds_the_bar_actions :: proc(t: ^testing.T) {
 	c: Settings_Case
@@ -103,7 +121,7 @@ settings_menu_holds_the_bar_actions :: proc(t: ^testing.T) {
 	testing.expect(t, !ui.probe_tagged(p, "Monitoring"), "closed to begin with")
 	testing.expect(t, ui.probe_click(p, "Settings"))
 	ui.probe_advance(p, 10, 1.0 / 60)
-	for item in ([]string{"Export", "Stop", "Monitoring", "Licence", "Language", "Dark theme", "About Leita"}) {
+	for item in ([]string{"Export", "Stop", "Monitoring", "Licence", "Language", "Theme", "About Leita"}) {
 		testing.expectf(t, ui.probe_tagged(p, item), "the menu has %s", item)
 	}
 	testing.expect(t, !ui.probe_tagged(p, "Rescan"), "no Rescan while a scan runs")
@@ -118,9 +136,25 @@ settings_menu_holds_the_bar_actions :: proc(t: ^testing.T) {
 	testing.expect(t, scanned, "Rescan scans again")
 	testing.expect_value(t, command.text_of(&scan.path), "/data")
 
-	testing.expect(t, choose(p, &c.m, "Dark theme"))
+	testing.expect(t, choose(p, &c.m, "Theme"))
+	ui.probe_advance(p, 10, 1.0 / 60)
+	testing.expect(t, c.m.theme_open, "Theme opens its submenu")
+	for item in ([]string{"Auto", "Light theme", "Dark theme"}) {
+		testing.expectf(t, ui.probe_tagged(p, item), "the theme menu has %s", item)
+	}
+	testing.expect(t, ui.probe_click_top(p, "Dark theme"))
 	testing.expect(t, c.m.dark, "the theme turned dark")
-	testing.expect_value(t, sent(p, command.Theme), Maybe(command.Theme)(command.Theme{dark = true}))
+	testing.expect_value(t, c.m.theme, query.Theme_Choice.Dark)
+	testing.expect_value(t, sent(p, command.Theme), Maybe(command.Theme)(command.Theme{choice = u8(query.Theme_Choice.Dark)}))
+	ui.probe_advance(p, 10, 1.0 / 60)
+	testing.expect(t, !c.m.settings_open && !c.m.theme_open, "the choice closed both menus")
+
+	testing.expect(t, choose(p, &c.m, "Theme"))
+	ui.probe_advance(p, 10, 1.0 / 60)
+	testing.expect(t, ui.probe_click_top(p, "Auto"))
+	testing.expect_value(t, c.m.theme, query.Theme_Choice.Auto)
+	testing.expect(t, c.m.dark == system_dark(), "auto follows the OS")
+	testing.expect_value(t, sent(p, command.Theme), Maybe(command.Theme)(command.Theme{choice = u8(query.Theme_Choice.Auto)}))
 
 	testing.expect(t, choose(p, &c.m, "Language"))
 	ui.probe_advance(p, 10, 1.0 / 60)
@@ -129,6 +163,58 @@ settings_menu_holds_the_bar_actions :: proc(t: ^testing.T) {
 	ui.probe_advance(p, 10, 1.0 / 60)
 	testing.expect_value(t, c.m.locale, i18n.Locale.German)
 	testing.expect(t, !c.m.settings_open && !c.m.language_open, "the choice closed both menus")
+}
+
+@(private = "file")
+caption_is_dark :: proc(caption: [3]u8) -> bool {
+	return caption[0] < 128
+}
+
+// The full window tells the platform its appearance on the first frame, and
+// again when a light or dark choice, or auto following the OS, changes it.
+@(test)
+the_window_is_told_when_the_appearance_changes :: proc(t: ^testing.T) {
+	m: Model
+	model_init(&m, "")
+	m.settings_read = true
+	defer model_destroy(&m)
+	fonts := []ops.Font_Ref {
+		{0, ui.default_font(), 400},
+		{1, ui.default_font(), 500},
+		{2, ui.default_font(), 600},
+		{3, ui.default_font(), 400},
+	}
+	h: render.Headless
+	render.headless_init(&h, view, &m, {1000, 700}, fonts)
+	defer render.headless_destroy(&h)
+	p := &h.p
+
+	dark, caption, set := ui.probe_window_theme(p)
+	testing.expect(t, set && dark == system_dark(), "the first frame tells the OS appearance")
+	testing.expect(t, caption_is_dark(caption) == system_dark(), "the caption is that page")
+
+	pin_theme(&m, !system_dark())
+	ui.probe_frame(p)
+	dark, caption, set = ui.probe_window_theme(p)
+	testing.expect(t, set && dark == !system_dark(), "an explicit choice overrides the OS")
+	testing.expect(t, caption_is_dark(caption) == dark, "the caption follows the choice")
+
+	m.theme = .Auto
+	ui.probe_frame(p)
+	dark, caption, set = ui.probe_window_theme(p)
+	testing.expect(t, set && dark == system_dark(), "auto follows the OS again")
+	testing.expect(t, caption_is_dark(caption) == system_dark(), "the caption follows the OS")
+
+	// The choice lands during the frame, after the caption was told. The
+	// next frame tells the page it draws.
+	testing.expect(t, choose(p, &m, "Theme"))
+	ui.probe_advance(p, 10, 1.0 / 60)
+	pick := "Dark theme" if !system_dark() else "Light theme"
+	testing.expect(t, ui.probe_click_top(p, pick))
+	ui.probe_frame(p)
+	dark, caption, set = ui.probe_window_theme(p)
+	testing.expect(t, set && dark == !system_dark(), "a menu choice is told with the frame that draws it")
+	testing.expect(t, caption_is_dark(caption) == dark, "the caption is that page")
 }
 
 // A dialog chosen from the menu takes the focus, though the menu gives it back

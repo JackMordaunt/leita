@@ -16,8 +16,8 @@ history store: the language picked from the toolbar's menu and the theme. The
 window asks for them once (query.Settings) and opens as they were left; each
 choice it sends is written at once.
 
-A store that cannot be opened leaves the window at its defaults for the session:
-nothing else depends on it.
+A store that cannot be opened leaves the language at the system's and the theme
+following the OS for the session: nothing else depends on it.
 */
 
 // settings_open opens the store at path, or leaves settings unkept for "".
@@ -51,8 +51,16 @@ settings_close :: proc(d: ^Desk) {
 	}
 }
 
+// These are command.Theme's choice. command does not import this package.
+#assert(u8(query.Theme_Choice.Unset) == 0)
+#assert(u8(query.Theme_Choice.Light) == 1)
+#assert(u8(query.Theme_Choice.Dark) == 2)
+#assert(u8(query.Theme_Choice.Auto) == 3)
+
 settings_answer :: proc(d: ^Desk, allocator := context.temp_allocator) -> query.Settings_Result {
 	r: query.Settings_Result
+	// Absent, unreadable, and anything that is not light or dark follow the OS.
+	r.theme = .Auto
 	// The unsaved flag is reported even when nothing is kept, so About can
 	// say that checks are off for this session.
 	if d.update_save_failed {
@@ -70,6 +78,8 @@ settings_answer :: proc(d: ^Desk, allocator := context.temp_allocator) -> query.
 			r.theme = .Light
 		case "dark":
 			r.theme = .Dark
+		case "auto":
+			r.theme = .Auto
 		}
 	}
 	// A choice this session could not write stays off, whatever the store says.
@@ -89,12 +99,23 @@ remember_language :: proc(d: ^Desk, c: command.Language) {
 	keep_setting(d, settings.LANGUAGE, i18n.locale_tag(i18n.Locale(c.locale)))
 }
 
-// remember_theme keeps the theme the person picked.
+// remember_theme keeps the theme the person picked. Unset is not a choice.
 remember_theme :: proc(d: ^Desk, c: command.Theme) {
 	if d.settings == nil {
 		return
 	}
-	keep_setting(d, settings.THEME, "dark" if c.dark else "light")
+	value: string
+	switch query.Theme_Choice(c.choice) {
+	case .Light:
+		value = "light"
+	case .Dark:
+		value = "dark"
+	case .Auto:
+		value = "auto"
+	case .Unset:
+		return
+	}
+	keep_setting(d, settings.THEME, value)
 }
 
 // remember_updates keeps the opt-in. Off is written, so a later run stays

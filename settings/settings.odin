@@ -7,7 +7,7 @@ be deleted without touching the other. The window and the command line share it.
 
 A setting is a key and a text value. Only what the person chose is kept: a key
 never written reads as absent, and the window then follows its own default (the
-system's language, the light theme).
+system's language, the OS theme).
 
 A Store is not thread-safe: one thread uses it.
 */
@@ -29,7 +29,7 @@ BUSY_WAIT :: 2 * time.Second
 
 // The keys the window keeps.
 LANGUAGE :: "language" // a BCP 47 tag, as i18n.locale_tag gives it
-THEME    :: "theme" // "light" or "dark"
+THEME    :: "theme" // "light", "dark", or "auto"; absent follows the OS
 // UPDATES is "on" when the person opted in to automatic release checks.
 // Absent is off, including a store written before the key existed, so an
 // upgrade does not start checking.

@@ -157,7 +157,7 @@ open :: proc(w: ^Window, day: int, size: ops.Size, dark: bool, first: int) {
 		inbox      = w.data.inbox,
 	}
 	view.model_init(&w.m, synth.HOME)
-	w.m.dark = dark
+	view.pin_theme(&w.m, dark)
 	w.faces = view.fonts()
 	w.backs = view.fallbacks(w.faces)
 	render.headless_init(

@@ -93,8 +93,7 @@ Scenario :: struct {
 	locale: i18n.Locale,
 }
 
-// LIGHT is the window as it opens (gui/main.odin), the scenario a story that
-// names none runs in.
+// LIGHT is the light theme, the scenario a story that names none runs in.
 LIGHT :: Scenario{"light", {1280, 820}, false, .English}
 
 // DARK is the same window in the dark theme.
@@ -166,7 +165,7 @@ open :: proc(
 	w.data = app.data_host(&w.h)
 	msg.init(&w.words, scenario.locale)
 	view.model_init(&w.m, path, scenario.locale)
-	w.m.dark = scenario.dark
+	view.pin_theme(&w.m, scenario.dark)
 	w.faces = view.fonts()
 	w.backs = view.fallbacks(w.faces)
 	render.headless_init(

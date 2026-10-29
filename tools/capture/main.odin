@@ -135,7 +135,7 @@ main :: proc() {
 	defer movie_destroy(&movie)
 	// Reapply the requested theme before each scripted step and waiting frame.
 	for i := 4; i < len(args); i += 1 {
-		model.dark = args[3] == "dark"
+		view.pin_theme(&model, args[3] == "dark")
 		if !movie.active {ui.probe_frame(&h.p)}
 		if movie_step(&movie, &h, args, &i) {continue}
 		flag := args[i]
@@ -172,7 +172,7 @@ main :: proc() {
 				}
 				deadline := time.tick_now()._nsec + i64(120 * time.Second)
 				for {
-					model.dark = args[3] == "dark"
+					view.pin_theme(&model, args[3] == "dark")
 					if !movie.active {ui.probe_frame(&h.p)}
 					ready := false
 					switch flag {
@@ -215,7 +215,7 @@ main :: proc() {
 			if !ok || n < 1 {fail("invalid frame count")}
 			i += 2
 			for j in 0 ..< n {
-				model.dark = args[3] == "dark"
+				view.pin_theme(&model, args[3] == "dark")
 				ui.probe_set_dt(&h.p, 1.0 / 30)
 				ui.probe_frame(&h.p)
 				if !png(&h, fmt.tprintf("%s%05d.png", prefix, j)) {fail("frame write failed")}

@@ -880,6 +880,8 @@ a_long_name_stops_short_of_its_share_bar :: proc(t: ^testing.T) {
 	r: Rig
 	rig_open(&r, root)
 	defer rig_close(&r)
+	// White is the background read below; the theme otherwise follows the OS.
+	view.pin_theme(&r.m, false)
 	testing.expect(t, settle(&r, "Done"))
 	// The name is in the largest files as soon as they land, which can be before
 	// the listing: wait for its row's bar itself.
@@ -3449,13 +3451,15 @@ the_language_and_theme_chosen_are_there_the_next_run :: proc(t: ^testing.T) {
 		rig_open(&r, root, kept)
 		defer rig_close(&r)
 		testing.expect(t, settle(&r, "Done"))
-		testing.expect(t, !r.m.dark, "light until chosen")
+		testing.expect(t, r.m.dark == view.system_dark(), "the OS theme until chosen")
 		testing.expect(t, choose(&r, "Language"))
 		ui.probe_advance(&r.p, 20, 1.0 / 60)
 		testing.expect(t, ui.probe_click_top(&r.p, "Deutsch"))
 		press_and_hand_on(&r)
 		testing.expect(t, settle(&r, msg.tr(de, .Done)))
-		testing.expect(t, choose(&r, msg.tr(de, .Theme_Dark)))
+		testing.expect(t, choose(&r, msg.tr(de, .Theme)))
+		ui.probe_advance(&r.p, 20, 1.0 / 60)
+		testing.expect(t, ui.probe_click_top(&r.p, msg.tr(de, .Theme_Dark)))
 		press_and_hand_on(&r)
 		testing.expect(t, r.m.dark)
 		testing.expect(
@@ -3465,11 +3469,26 @@ the_language_and_theme_chosen_are_there_the_next_run :: proc(t: ^testing.T) {
 		)
 	}
 
+	{
+		r: Rig
+		rig_open(&r, root, kept)
+		defer rig_close(&r)
+		testing.expect(t, settle(&r, msg.tr(de, .Done)), "the next run opens in German")
+		testing.expect(t, r.m.dark, "and dark")
+		testing.expect_value(t, r.m.locale, i18n.Locale.German)
+		testing.expect(t, choose(&r, msg.tr(de, .Theme)))
+		ui.probe_advance(&r.p, 20, 1.0 / 60)
+		testing.expect(t, ui.probe_click_top(&r.p, msg.tr(de, .Theme_Auto)))
+		press_and_hand_on(&r)
+		testing.expect(t, settings_hold(kept, settings.THEME, "auto"), "auto is kept")
+		testing.expect_value(t, r.m.dark, view.system_dark())
+	}
+
 	r: Rig
 	rig_open(&r, root, kept)
 	defer rig_close(&r)
-	testing.expect(t, settle(&r, msg.tr(de, .Done)), "the next run opens in German")
-	testing.expect(t, r.m.dark, "and dark")
+	testing.expect(t, settle(&r, msg.tr(de, .Done)), "auto opens in German")
+	testing.expect(t, r.m.dark == view.system_dark(), "and follows the OS")
 	testing.expect_value(t, r.m.locale, i18n.Locale.German)
 }
 
@@ -3856,12 +3875,13 @@ monitoring_watches_a_place_and_hands_it_to_the_scheduler :: proc(t: ^testing.T) 
 	testing.expect(t, settle(&r, "Alert"), "the place is marked")
 	testing.expect(t, settle(&r, "Recent alerts"))
 
+	view.pin_theme(&r.m, false)
 	ui.probe_advance(&r.p, 20, 1.0 / 60)
 	testing.expect(t, render.headless_png(&r.hl, "build/test/monitoring_light.png"))
-	r.m.dark = true
+	view.pin_theme(&r.m, true)
 	ui.probe_advance(&r.p, 20, 1.0 / 60)
 	testing.expect(t, render.headless_png(&r.hl, "build/test/monitoring_dark.png"))
-	r.m.dark = false
+	view.pin_theme(&r.m, false)
 
 	// A webhook takes https only, but http to this machine; Send test reaches
 	// it, signed, and the dialog says it was delivered.

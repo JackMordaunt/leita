@@ -169,8 +169,9 @@ Language :: struct {
 }
 
 // Theme is the theme the person chose, remembered for the next run.
+// choice is query.Theme_Choice's value: 1 light, 2 dark, 3 auto. 0 is not kept.
 Theme :: struct {
-	dark: bool,
+	choice: u8,
 }
 
 // Monitoring turns monitoring on, handing it to the system's scheduler, or off,

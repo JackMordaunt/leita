@@ -10,6 +10,8 @@ import "jm:ui/render"
 
 import harness "jm:fuzz"
 
+import "../view"
+
 /*
 Action is one thing a person does to the window, drawn from a case's bytes.
 Wait is first, so a zero byte, which shrinking turns every byte into, is the
@@ -33,7 +35,7 @@ Action :: enum u8 {
 	Reclaim, // the Reclaim chart, and its Clean up
 	Chart, // Sunburst, Treemap, Icicle, or a colouring
 	Resize,
-	Theme, // the system's theme changes under the window
+	Theme, // flips between the light and dark themes
 	Language, // the settings menu's Language, then one
 	Licence, // the licence dialog, a licence pasted, Add
 	Scroll,
@@ -109,8 +111,8 @@ SETTINGS := [?]string {
 	"Monitoring",
 	"History",
 	"Export",
-	"Dark theme",
-	"Light theme",
+	"Theme", // twice, where the light and dark toggles were, so a case's bytes still index
+	"Theme",
 }
 
 CHARTS := [?]string{"Sunburst", "Treemap", "Icicle", "Reclaim", "Type", "Change", "Size", "Age"}
@@ -210,7 +212,7 @@ act :: proc(w: ^Window, src: ^harness.Source, allocator := context.temp_allocato
 		detail = fmt.tprint(s)
 		p.size = s
 	case .Theme:
-		w.m.dark = !w.m.dark
+		view.pin_theme(&w.m, !w.m.dark)
 	case .Language:
 		lang := harness.choice(src, LANGUAGES[:])
 		detail = lang

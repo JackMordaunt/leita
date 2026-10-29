@@ -30,6 +30,8 @@ Msg :: enum u16 {
 	About,
 	Stop,
 	Rescan,
+	Theme,
+	Theme_Auto,
 	Theme_Light,
 	Theme_Dark,
 	Export,

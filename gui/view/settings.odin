@@ -11,9 +11,10 @@ import "../query"
 /*
 The window opens as the person left it: the language they picked and the theme
 they chose, which the host keeps between runs (gui/app/settings.odin). The view
-asks once; until the answer comes, and for anything never chosen, it keeps its
-defaults, the system's language and the light theme. Each choice is sent to the
-host as it is made (language_menu, the theme item in settings_menu).
+asks once. Until that answer, and when the choice is auto or was never made,
+the theme follows the OS (apply_theme). A stored light or dark choice overrides
+it, including one pinned before the answer (pin_theme). Each choice is sent to
+the host as it is made (language_menu, theme_menu).
 */
 
 // recall_settings puts what the person chose in an earlier run in use, once.
@@ -32,13 +33,58 @@ recall_settings :: proc(gtx: ^ui.Ctx, m: ^Model) {
 			set_language(m, locale)
 		}
 	}
+	// A light or dark choice wins over one pinned for a capture or a story.
+	// Auto does not, so that pin is not undone by an absent setting.
 	switch r.theme {
+	case .Light, .Dark:
+		m.theme = r.theme
+	case .Auto, .Unset:
+		if m.theme != .Light && m.theme != .Dark {
+			m.theme = .Auto
+		}
+	}
+}
+
+// tell_window asks the platform to match the appearance this frame draws:
+// the caption and the taskbar icon. Call it after apply_theme, before a
+// choice in the frame can change m.dark. The first frame asks, and a
+// later one when that appearance changes.
+@(private)
+tell_window :: proc(gtx: ^ui.Ctx, m: ^Model) {
+	if gtx.router == nil || (m.told && m.told_dark == m.dark) {
+		return
+	}
+	m.told = true
+	m.told_dark = m.dark
+	ui.set_window_theme(gtx, m.dark, primer.color(.Bg_Color_Default))
+}
+
+// apply_theme resolves the choice into the appearance this frame draws.
+// Unset and Auto follow the OS, so a change there shows on a later frame.
+@(private)
+apply_theme :: proc(m: ^Model) {
+	switch m.theme {
 	case .Light:
 		m.dark = false
 	case .Dark:
 		m.dark = true
-	case .Unset:
+	case .Unset, .Auto:
+		m.dark = system_dark()
 	}
+}
+
+// pin_theme forces light or dark, rather than following the OS.
+pin_theme :: proc(m: ^Model, dark: bool) {
+	m.theme = .Dark if dark else .Light
+	m.dark = dark
+}
+
+// set_theme puts choice in use and asks the host to keep it.
+@(private)
+set_theme :: proc(gtx: ^ui.Ctx, m: ^Model, choice: query.Theme_Choice) {
+	m.theme = choice
+	apply_theme(m)
+	ui.command(gtx, command.Command(command.Theme{choice = u8(choice)}))
 }
 
 /*
@@ -115,18 +161,48 @@ settings_menu :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result) {
 		m.settings_dialog = .Licence
 	}
 	language_item(&menu, m)
-	if primer.action_menu_item(
-		&menu,
-		tr(.Theme_Light) if m.dark else tr(.Theme_Dark),
-		leading = .Sun if m.dark else .Moon,
-	) {
-		m.dark = !m.dark
-		ui.command(gtx, command.Command(command.Theme{dark = m.dark}))
-	}
+	theme_item(&menu, m)
 	if primer.action_menu_item(&menu, trf(gtx, .About, version.PRODUCT), leading = .Info) {
 		m.settings_dialog = .About
 	}
 	language_menu(gtx, &menu, m)
+	theme_menu(gtx, &menu, m)
+}
+
+// theme_item is the settings menu's Theme and the submenu it opens. The
+// submenu is drawn after every other item, so settings_menu calls theme_menu.
+@(private)
+theme_item :: proc(menu: ^primer.Action_Menu, m: ^Model) {
+	primer.action_menu_item(
+		menu,
+		tr(.Theme),
+		leading = .Moon if m.dark else .Sun,
+		submenu = &m.theme_open,
+	)
+}
+
+// theme_menu is the submenu of themes that theme_item opens: Auto follows
+// the OS, and Light and Dark stay.
+@(private)
+theme_menu :: proc(gtx: ^ui.Ctx, parent: ^primer.Action_Menu, m: ^Model) {
+	menu := primer.action_menu_submenu_open(parent, &m.theme_open, selection = .Single)
+	defer primer.action_menu_close(&menu)
+	if !menu.visible {
+		return
+	}
+	if primer.action_menu_item(
+		&menu,
+		tr(.Theme_Auto),
+		selected = m.theme == .Auto || m.theme == .Unset,
+	) {
+		set_theme(gtx, m, .Auto)
+	}
+	if primer.action_menu_item(&menu, tr(.Theme_Light), selected = m.theme == .Light) {
+		set_theme(gtx, m, .Light)
+	}
+	if primer.action_menu_item(&menu, tr(.Theme_Dark), selected = m.theme == .Dark) {
+		set_theme(gtx, m, .Dark)
+	}
 }
 
 // RESCAN_HINT and RESCAN_TEXT are Rescan's shortcut in the menu: key caps on

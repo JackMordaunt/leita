@@ -142,7 +142,14 @@ Model :: struct {
 	// the magnifier takes the keyboard when next drawn, so it is not left on
 	// the field that has gone.
 	bar_focus:        bool,
+	// dark is the appearance drawn. theme is the choice: Light and Dark stay,
+	// and Unset and Auto follow the OS (settings.odin, apply_theme).
 	dark:             bool,
+	theme:            query.Theme_Choice,
+	// told is whether the window was asked to match told_dark. The first
+	// frame asks; a later frame asks when the appearance changes.
+	told:             bool,
+	told_dark:        bool,
 	scheme:           primer.Scheme,
 	// The directory shown, as an index into the tree of that generation. Each scan
 	// fills a tree of its own, so on a new one the view returns to its top.
@@ -257,6 +264,7 @@ Model :: struct {
 	locale:           i18n.Locale,
 	strings:          ^msg.Strings,
 	language_open:    bool,
+	theme_open:       bool,
 	locale_told:      Maybe(i18n.Locale),
 	// What the person chose in an earlier run has been put in use, whether the
 	// settings menu is open, and the dialog chosen from it (settings.odin).
@@ -340,9 +348,13 @@ view :: proc(gtx: ^ui.Ctx, user: rawptr) {
 	m := (^Model)(user)
 	defer m.drawn = true
 	recall_settings(gtx, m)
+	apply_theme(m)
 	theme: primer.Theme = m.dark ? .Dark : .Light
 	m.scheme = primer.theme_scheme(theme)
 	primer.use(&m.scheme, theme)
+	// This frame's appearance. A choice made while the frame draws changes
+	// m.dark after this, and is told next frame with the page that frame paints.
+	tell_window(gtx, m)
 	// primer's scheme is thread-local and m.scheme is the Model's: cleared on return,
 	// so no thread reads a Model that has since gone (a test's, on the stack).
 	defer primer.use(nil)

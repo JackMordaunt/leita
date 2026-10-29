@@ -402,11 +402,15 @@ Update_Result :: struct {
 // as they left it.
 Settings :: struct {}
 
-// Theme_Choice is the theme chosen, or Unset to follow the window's default.
+// Theme_Choice is the theme chosen. Unset has not been answered yet. Auto
+// follows the OS, as does a setting never written. Light and Dark stay until
+// the person chooses again. The values are command.Theme's choice: this
+// package is not imported there, so the numbers stay put.
 Theme_Choice :: enum u8 {
 	Unset,
 	Light,
 	Dark,
+	Auto,
 }
 
 Settings_Result :: struct {
