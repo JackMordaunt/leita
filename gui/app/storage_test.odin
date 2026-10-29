@@ -64,7 +64,7 @@ a_read_only_configuration_restores_preferences_without_changing_the_scheduler ::
 	testing.expect_value(t, string(after), string(before))
 	testing.expect(t, settings.monitoring(&st), "the saved enabled flag is unchanged")
 	remember_theme(&d, command.Theme{choice = u8(query.Theme_Choice.Light)})
-	kept_theme, _ := settings.get(&st, settings.THEME)
+	kept_theme, _ := settings.get(&st, settings.THEME, context.temp_allocator)
 	testing.expect_value(t, kept_theme, "dark")
 	r := settings_answer(&d)
 	testing.expect_value(t, r.language, "es")
