@@ -848,6 +848,12 @@ gui-test: deps
     # The window's fuzz suite on a fixed seed, its corpus first; just fuzz gui runs it longer.
     {{odin}} test gui/fuzz -debug {{san}} {{flags}} {{curl_open}} -define:ODIN_TEST_THREADS=1 -out:build/test/app/{{gui}}-fuzz{{exe}}
 
+# AppKit's native title bar checked on the process's main thread. The runner
+# uses process-local preferences and owns every window it opens.
+[macos]
+native-titlebar-test: deps
+    python3 tools/macos/test_titlebar.py
+
 # The tools package fetches into build/tools, each pinned by its SHA-256 for
 # both architectures a release builds Linux on: nfpm builds the .deb and the
 # .rpm (the sums are those of nfpm's checksums.txt); appimagetool builds the
