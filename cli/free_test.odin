@@ -130,7 +130,7 @@ an_earlier_scan_is_kept_but_not_compared_after_the_trial :: proc(t: ^testing.T) 
 	testing.expect_value(t, code, EXIT_OK)
 	testing.expect(t, strings.contains(err, "comparing with earlier scans"), err)
 	testing.expect(t, strings.contains(err, "this scan is still kept"), err)
-	testing.expect(t, !strings.contains(err, "history unavailable"), err)
+	testing.expect(t, !strings.contains(err, "could not be saved in history"), err)
 	text := read_file(t, out)
 	testing.expect(t, strings.contains(text, "\"compared\": null"), text)
 	testing.expect(t, strings.contains(text, report.FREE_EXPORT), text)
@@ -212,4 +212,46 @@ capture :: proc(
 	out = read_file(t, out_path)
 	err = read_file(t, err_path)
 	return
+}
+
+// A full or read-only data folder must not prevent a scan from comparing
+// with readable history. The new scan remains unsaved, and says so clearly.
+when ODIN_OS != .Windows {
+	@(test)
+	a_read_only_history_still_compares_but_never_claims_to_save :: proc(t: ^testing.T) {
+		if os.get_euid() == 0 {
+			return // root bypasses the fixture's ordinary permission denial
+		}
+		root := scratch(t, "read-only-history")
+		defer os.remove_all(root)
+		data := fmt.tprintf("%s-history", root)
+		defer os.remove_all(data)
+		kept := fmt.tprintf("%s/history.db", data)
+		body := make([]byte, 2 << 20, context.temp_allocator)
+		testing.expect(t, os.write_entire_file(fmt.tprintf("%s/big", root), body) == nil)
+		code, _, _ := capture(t, {target = root}, kept, false)
+		testing.expect_value(t, code, EXIT_OK)
+		original := read_file(t, kept)
+		testing.expect(t, os.write_entire_file(fmt.tprintf("%s/more", root), body) == nil)
+		testing.expect(t, os.change_mode(data, {.Read_User, .Execute_User}) == nil)
+		defer os.change_mode(data, {.Read_User, .Write_User, .Execute_User})
+		st: history.Store
+		open_err := history.open(&st, kept)
+		if !testing.expectf(t, open_err == nil, "%s", history.describe(open_err)) {
+			return
+		}
+		if !testing.expect(t, st.read_only) {
+			history.close(&st)
+			return
+		}
+		reason := st.read_only_reason
+		history.close(&st)
+		out, err: string
+		code, out, err = capture(t, {target = root, report = "-", format = "json"}, kept, false)
+		testing.expect_value(t, code, EXIT_OK)
+		testing.expect(t, strings.contains(out, "\"compared\": {") && !strings.contains(out, "\"compared\": null"), out)
+		testing.expect(t, strings.contains(err, "this scan could not be saved in history") && strings.contains(err, reason), err)
+		testing.expect(t, !strings.contains(err, "this scan is still kept"), err)
+		testing.expect_value(t, read_file(t, kept), original)
+	}
 }

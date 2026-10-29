@@ -273,12 +273,22 @@ monitor_parse :: proc(
 	return monitor.EXIT_FAILED, false
 }
 
-// open_settings opens the settings store, saying why not on w.
+// open_settings opens readable settings; a command that changes them asks
+// for write and is refused before it can alter a scheduler or send a test.
 @(private)
-monitor_open_settings :: proc(c: Monitor_Context, st: ^settings.Store, w: io.Writer) -> bool {
+monitor_open_settings :: proc(c: Monitor_Context, st: ^settings.Store, w: io.Writer, write := false) -> bool {
 	if err := settings.open(st, c.paths.settings); err != nil {
 		monitor_errorf(c, w, "cannot open %s: %s", c.paths.settings, history.describe(err))
 		return false
+	}
+	if st.read_only {
+		if write {
+			monitor_errorf(c, w, "settings cannot be changed: %s", st.read_only_reason)
+			settings.close(st)
+			return false
+		}
+		aside := c.aside if c.aside.procedure != nil else w
+		monitor_notef(c, aside, "saved settings are read-only: %s", st.read_only_reason)
 	}
 	return true
 }
@@ -292,7 +302,7 @@ monitor_add :: proc(
 	w: io.Writer,
 ) -> int {
 	st: settings.Store
-	if !monitor_open_settings(c, &st, w) {
+	if !monitor_open_settings(c, &st, w, write = true) {
 		return monitor.EXIT_FAILED
 	}
 	defer settings.close(&st)
@@ -318,7 +328,7 @@ monitor_add :: proc(
 @(private)
 monitor_remove :: proc(c: Monitor_Context, path: string, w: io.Writer) -> int {
 	st: settings.Store
-	if !monitor_open_settings(c, &st, w) {
+	if !monitor_open_settings(c, &st, w, write = true) {
 		return monitor.EXIT_FAILED
 	}
 	defer settings.close(&st)
@@ -351,7 +361,7 @@ monitor_heal :: proc(c: Monitor_Context, w: io.Writer) {
 		return
 	}
 	defer settings.close(&st)
-	if !settings.monitoring(&st) {
+	if st.read_only || !settings.monitoring(&st) {
 		return
 	}
 	was := schedule.program(c.host)
@@ -378,7 +388,7 @@ monitor_heal :: proc(c: Monitor_Context, w: io.Writer) {
 // switch_on hands the monitor to the scheduler, then turns monitoring on.
 monitor_switch_on :: proc(c: Monitor_Context, w: io.Writer) -> int {
 	st: settings.Store
-	if !monitor_open_settings(c, &st, w) {
+	if !monitor_open_settings(c, &st, w, write = true) {
 		return monitor.EXIT_FAILED
 	}
 	defer settings.close(&st)
@@ -418,7 +428,7 @@ monitor_switch_on :: proc(c: Monitor_Context, w: io.Writer) -> int {
 // which disables it before deleting its files.
 monitor_switch_off :: proc(c: Monitor_Context, w: io.Writer) -> int {
 	st: settings.Store
-	if !monitor_open_settings(c, &st, w) {
+	if !monitor_open_settings(c, &st, w, write = true) {
 		return monitor.EXIT_FAILED
 	}
 	defer settings.close(&st)
@@ -444,6 +454,8 @@ monitor_list :: proc(c: Monitor_Context, w: io.Writer) -> int {
 	switch {
 	case !settings.monitoring(&st):
 		fmt.wprintln(w, "monitoring is off")
+	case st.read_only:
+		fmt.wprintln(w, "monitoring is paused until settings can be saved")
 	case !schedule.loaded(c.host):
 		fmt.wprintfln(
 			w,

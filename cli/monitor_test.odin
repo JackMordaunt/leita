@@ -586,3 +586,76 @@ a_monitor_webhook_hears_each_new_alert_and_a_test :: proc(t: ^testing.T) {
 	_, out = monitor_run_monitor(&b, "webhook", "list")
 	testing.expect(t, strings.contains(out, "nothing is sent anywhere"), out)
 }
+
+// A restored readable settings file must not let a diagnostic command heal
+// timers, or let a scheduled run send alerts whose state cannot be saved.
+when ODIN_OS != .Windows {
+	@(private = "file")
+	monitor_capacity_post :: proc(_: string, _: []string, _: string, user: rawptr) -> (int, string) {
+		count := cast(^int)user
+		count^ += 1
+		return 204, ""
+	}
+
+	@(test)
+	read_only_monitor_settings_preserve_diagnosis_without_external_actions :: proc(t: ^testing.T) {
+		if os.get_euid() == 0 {
+			return // root bypasses the fixture's ordinary permission denial
+		}
+		b: Monitor_Bench
+		monitor_bench_open(t, &b)
+		defer os.remove_all(b.dir)
+		code, _ := monitor_run_monitor(&b, "add", b.place, "--min-free", "1000PB")
+		testing.expect_value(t, code, 0)
+		code, _ = monitor_run_monitor(&b, "on")
+		testing.expect_value(t, code, 0)
+		url := "http://127.0.0.1:12345/capacity-test"
+		code, _ = monitor_run_monitor(&b, "webhook", "add", url)
+		testing.expect_value(t, code, 0)
+		st: settings.Store
+		testing.expect(t, settings.open(&st, b.c.paths.settings) == nil)
+		testing.expect_value(t, webhook.queue_test(&st, 1, time.to_unix_seconds(b.c.now)), "")
+		settings.close(&st)
+		// A previous monitor run leaves this file in place. Locking an
+		// existing file can still succeed when its directory cannot grow.
+		testing.expect(t, os.write_entire_file(b.c.paths.lock, nil) == nil)
+		original := read_file(t, b.c.paths.settings)
+		data := filepath.dir(b.c.paths.settings)
+		testing.expect(t, os.change_mode(data, {.Read_User, .Execute_User}) == nil)
+		defer os.change_mode(data, {.Read_User, .Write_User, .Execute_User})
+		open_err := settings.open(&st, b.c.paths.settings)
+		if !testing.expectf(t, open_err == nil, "%s", history.describe(open_err)) {
+			return
+		}
+		if !testing.expect(t, st.read_only) {
+			settings.close(&st)
+			return
+		}
+		reason := st.read_only_reason
+		settings.close(&st)
+		b.c.argv[0] = monitor_join(b.dir, "bin", "moved-leita") // would trigger scheduler healing
+		clear(&b.commands)
+		posts := 0
+		b.c.post, b.c.posted = monitor_capacity_post, &posts
+
+		out: string
+		code, out = monitor_run_monitor(&b, "list")
+		testing.expect_value(t, code, 0)
+		testing.expect(t, strings.contains(out, b.place) && strings.contains(out, reason), out)
+		testing.expect(t, strings.contains(out, "paused"), out)
+		code, out = monitor_run_monitor(&b, "webhook", "list")
+		testing.expect_value(t, code, 0)
+		testing.expect(t, strings.contains(out, url), out)
+		for args in ([][]string{{"on"}, {"off"}, {"add", b.place}, {"remove", b.place}, {"webhook", "add", url}, {"webhook", "remove", url}, {"webhook", "test"}, {"run", "--all"}}) {
+			code, out = monitor_run_monitor(&b, ..args)
+			testing.expect_value(t, code, monitor.EXIT_FAILED)
+			testing.expectf(t, strings.contains(out, reason), "%v: %s", args, out)
+		}
+		testing.expect_value(t, len(b.commands), 0)
+		testing.expect_value(t, len(b.shown), 0)
+		testing.expect_value(t, posts, 0)
+		testing.expect_value(t, read_file(t, b.c.paths.lock), "")
+		testing.expect(t, !os.exists(b.c.paths.history), "the refused run did not scan or save history")
+		testing.expect_value(t, read_file(t, b.c.paths.settings), original)
+	}
+}

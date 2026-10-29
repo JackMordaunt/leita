@@ -186,3 +186,32 @@ a_bad_store_or_flag_is_exit_1 :: proc(t: ^testing.T) {
 	testing.expect_value(t, code, EXIT_OK)
 	testing.expect(t, strings.has_prefix(said, "leita history"), said)
 }
+
+// Reading the existing audit trail remains available even when its store
+// cannot accept a write. The --json stream stays machine-readable.
+when ODIN_OS != .Windows {
+	@(test)
+	a_read_only_record_can_still_be_printed_as_json :: proc(t: ^testing.T) {
+		if os.get_euid() == 0 {
+			return // root bypasses the fixture's ordinary permission denial
+		}
+		done := seed_actions()
+		dir, kept := seeded(t, done[:])
+		defer os.remove_all(dir)
+		data := fmt.tprintf("%s/data", dir)
+		original := read_file(t, kept)
+		testing.expect(t, os.change_mode(data, {.Read_User, .Execute_User}) == nil)
+		defer os.change_mode(data, {.Read_User, .Write_User, .Execute_User})
+		st: history.Store
+		open_err := history.open(&st, kept)
+		if !testing.expectf(t, open_err == nil, "%s", history.describe(open_err)) {
+			return
+		}
+		testing.expect(t, st.read_only)
+		history.close(&st)
+		code, out := history_says(kept, "--json")
+		testing.expect_value(t, code, EXIT_OK)
+		testing.expect(t, strings.has_prefix(out, "[") && strings.contains(out, "old.iso"), out)
+		testing.expect_value(t, read_file(t, kept), original)
+	}
+}

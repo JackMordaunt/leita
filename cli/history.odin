@@ -84,6 +84,9 @@ history_dispatch :: proc(c: History_Context, args: []string, w: io.Writer) -> in
 		return EXIT_ERROR
 	}
 	defer history.close(&st)
+	if st.read_only {
+		say_note("saved history is read-only: %s", st.read_only_reason)
+	}
 	done, err := history.actions(&st, asked.since)
 	if err != nil {
 		say_error("cannot read the record at %s: %s", c.kept, history.describe(err))

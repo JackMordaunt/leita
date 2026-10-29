@@ -21,7 +21,8 @@ monitor_webhook :: proc(
 	verb := args[0] if len(args) > 0 else "list"
 	rest := args[1:] if len(args) > 0 else nil
 	st: settings.Store
-	if !monitor_open_settings(c, &st, w) {
+	write := verb == "add" || verb == "remove" || verb == "test"
+	if !monitor_open_settings(c, &st, w, write = write) {
 		return monitor.EXIT_FAILED
 	}
 	defer settings.close(&st)

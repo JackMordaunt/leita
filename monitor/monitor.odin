@@ -101,6 +101,12 @@ run :: proc(opt: Options, w: io.Writer) -> int {
 		return EXIT_FAILED
 	}
 	defer settings.close(&st)
+	// Readable fallback preserves diagnosis, but a run must not send an
+	// alert or start a scan while its state cannot be recorded.
+	if st.read_only {
+		fmt.wprintfln(w, "error: monitoring cannot run while settings are read-only: %s", st.read_only_reason)
+		return EXIT_FAILED
+	}
 	if !settings.monitoring(&st) {
 		fmt.wprintln(w, "monitoring is off: nothing to do")
 		return 0

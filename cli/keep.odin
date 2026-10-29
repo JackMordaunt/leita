@@ -18,8 +18,9 @@ compared with the last kept of the same place, then kept itself.
 
 The store is shared with a window that may be writing to it at the same moment:
 history opens it in WAL mode with a busy timeout, and a store that is still busy
-past that, or cannot be opened at all, leaves this scan unkept and uncompared
-rather than failing it.
+past that, or cannot be opened at all, leaves this scan unkept rather than
+failing it. A readable earlier scan remains available for comparison even
+when the new scan cannot be saved.
 */
 
 // Kept is what history did with one scan.
@@ -79,7 +80,7 @@ and a note says so.
 */
 say_kept :: proc(k: Kept, now: u64, quiet: bool, compare: bool) {
 	if k.problem != "" {
-		say_note("history unavailable, so this scan is not kept: %s", k.problem)
+		say_note("this scan could not be saved in history: %s", k.problem)
 	}
 	prev, compared := k.previous.?
 	if k.place == "" || (!compared && k.problem != "") {
