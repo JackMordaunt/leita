@@ -157,6 +157,8 @@ keep_setting :: proc(d: ^Desk, key, value: string) {
 	if err := settings.set(d.settings, key, value); err != nil {
 		fmt.eprintln("leita: could not keep the setting", key, err)
 		storage_problem_set(&d.settings_problem, history.describe(err))
+		fault := err.? or_else {}
+		delete(fault.text, d.settings.db.allocator)
 	} else {
 		storage_problem_set(&d.settings_problem, "")
 	}

@@ -75,6 +75,8 @@ keep :: proc(d: ^Desk) {
 	if err != nil {
 		fmt.eprintln("leita: could not keep the scan:", err)
 		storage_problem_set(&d.history_problem, history.describe(err))
+		fault := err.? or_else {}
+		delete(fault.text, d.history.db.allocator)
 		if then, found := history.latest(d.history, place, 0); found {
 			compare(d, then.id)
 		}
