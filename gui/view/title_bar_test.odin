@@ -251,3 +251,48 @@ a_bar_with_buttons_on_the_left_keeps_the_gear_right :: proc(t: ^testing.T) {
 	testing.expect_value(t, l.lead, 80 + 2 * BAR_GAP + 1)
 	testing.expect_value(t, l.gear_x, 1000 - BAR_INSET - TOOL)
 }
+
+// Native traffic lights occupy the left of the 52-point macOS bar. The
+// application controls stay clickable, and narrowing the window preserves
+// a drag area while tools move into settings.
+@(test)
+the_mac_bar_reserves_native_buttons_and_keeps_controls_clickable :: proc(t: ^testing.T) {
+	r: Title_Rig
+	title_open(&r)
+	defer title_close(&r)
+	p := &r.h.p
+	open(&r.m, 7)
+	open(&r.m, 8)
+	go_back(&r.m)
+	buttons := ops.Rect{0, 0, 61, BAR_MAC}
+	for width in ([]f32{1000, 640}) {
+		p.size.x = width
+		title_show(p, {height = BAR_MAC, buttons = buttons, active = true})
+		testing.expect_value(t, len(p.prev.buttons), 0)
+		name := ui.probe_bounds(p, version.PRODUCT)
+		testing.expect(t, name.x > buttons.x + buttons.w)
+		gear := ui.probe_bounds(p, "Settings")
+		testing.expect(t, gear.w > 0 && gear.x + gear.w <= width)
+		for label in ([]string{"Back", "Forward", "Settings", "Rescan", "Export", "Theme"}) {
+			control := ui.probe_bounds(p, label)
+			if control.w <= 0 {
+				continue
+			}
+			testing.expectf(t, control.y >= 0 && control.y + control.h <= BAR_MAC, "%s outside the bar: %v", label, control)
+			for drag in p.prev.drags {
+				testing.expectf(t, !rect_meets(drag, control), "drag %v covers %s at %v", drag, label, control)
+			}
+		}
+		for drag in p.prev.drags {
+			testing.expect(t, !rect_meets(drag, buttons))
+			testing.expect(t, drag.y + drag.h <= BAR_MAC)
+		}
+		testing.expect(t, ui.probe_bounds(p, "Location").y >= BAR_MAC)
+		testing.expect(t, ui.probe_click(p, "Back"))
+		ui.probe_frame(p)
+		testing.expect_value(t, r.m.dir, query.ROOT)
+		testing.expect(t, ui.probe_click(p, "Forward"))
+		ui.probe_frame(p)
+		testing.expect_value(t, r.m.dir, u32(7))
+	}
+}

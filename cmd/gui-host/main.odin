@@ -56,7 +56,7 @@ main :: proc() {
 			watch = os.args[1],
 			clear = {255, 255, 255, 255},
 			data = app.data_host(h),
-			title_bar = .Drawn,
+			title_bar = .Unified when ODIN_OS == .Darwin else .Drawn,
 			icon_light = brand.png(false),
 			icon_dark = brand.png(true),
 		},

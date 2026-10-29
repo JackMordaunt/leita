@@ -726,9 +726,11 @@ caption_bar :: proc(gtx: ^ui.Ctx, m: ^Model, prog: ^query.Progress_Result) {
 
 	ui.overlay(gtx, cs = {min = {w, h}, max = {w, h}})
 	ops.fill(gtx.scene, ops.Rect{0, h - tok.BORDER_WIDTH_THIN, w, tok.BORDER_WIDTH_THIN}, primer.color(.Border_Color_Muted))
-	if l.divider > 0 {
-		rule := ops.Rect{l.divider, (h - DIVIDER) / 2, tok.BORDER_WIDTH_THIN, DIVIDER}
-		ops.fill(gtx.scene, rule, primer.color(.Border_Color_Default))
+	when ODIN_OS != .Darwin {
+		if l.divider > 0 {
+			rule := ops.Rect{l.divider, (h - DIVIDER) / 2, tok.BORDER_WIDTH_THIN, DIVIDER}
+			ops.fill(gtx.scene, rule, primer.color(.Border_Color_Default))
+		}
 	}
 	offer_drag(gtx, {0, 0, l.nav_x, h})
 	offer_drag(gtx, {nav_end, 0, l.free - nav_end, h})
