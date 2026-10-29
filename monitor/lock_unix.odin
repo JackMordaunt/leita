@@ -22,6 +22,8 @@ foreign libc {
 LOCK_EX :: 2
 @(private)
 LOCK_NB :: 4
+@(private)
+LOCK_UN :: 8
 
 // Lock is the lock taken, held until unlock or the process ends.
 Lock :: struct {
@@ -30,8 +32,8 @@ Lock :: struct {
 
 // lock takes the lock on the file at path, making it if it is missing, without
 // waiting: flock, which belongs to the open file, so another open of it, in
-// this process or another, is refused until this one closes, which the system
-// does when the process ends, as flock(2) has it.
+// this process or another, is refused until this run unlocks. Closing the last
+// copy also releases it when a process ends, as flock(2) has it.
 lock :: proc(path: string) -> (l: Lock, result: Lock_Result) {
 	fd := posix.open(
 	strings.clone_to_cstring(path, context.temp_allocator),
@@ -45,9 +47,9 @@ lock :: proc(path: string) -> (l: Lock, result: Lock_Result) {
 	}
 	// A process being started by a thread beside this one holds a copy of
 	// every open file from its fork until its exec closes the close-on-exec
-	// ones, the lock's among them; a lock let go an instant ago reads as
-	// held for that window. A few short retries outlast it; a run that is
-	// truly still going holds the lock for far longer.
+	// ones, the lock's among them. If the owner exits without unlock, that
+	// copy may briefly keep the lock alive. A few short retries outlast it;
+	// a run that is truly still going holds the lock for far longer.
 	errno: posix.Errno
 	for _ in 0 ..< HELD_RETRIES {
 		if flock(fd, LOCK_EX | LOCK_NB) == 0 {
@@ -70,9 +72,12 @@ HELD_RETRIES :: 10
 @(private = "file")
 HELD_RETRY_WAIT :: 10 * time.Millisecond
 
-// unlock lets the lock go.
+// unlock ends this run's ownership, even if a forked child still has a
+// copy of the open-file description. Closing alone would keep the lock
+// until that child execs or exits, despite this run having finished.
 unlock :: proc(l: ^Lock) {
 	if l.fd >= 0 {
+		_ = flock(l.fd, LOCK_UN)
 		posix.close(l.fd)
 	}
 	l.fd = -1
