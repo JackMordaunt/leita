@@ -160,6 +160,8 @@ Swap :: struct {
 	dir:    string,
 	target: string,
 	kind:   Link_Kind,
+	locked: bool,
+	err:    os.Error,
 	done:   bool,
 	linked: bool,
 }
@@ -175,8 +177,29 @@ swap_on_enter :: proc(name: string) {
 		return
 	}
 	swap.done = true
-	if os.rename(swap.dir, fmt.tprintf("%s.real", swap.dir)) != nil {
+	when ODIN_OS == .Darwin {
+		if swap.locked {
+			// macOS refuses to rename this mode-000 fixture. The simulated
+			// attacker owns it, so grant access just for the rename, then
+			// restore the locked mode before installing the replacement.
+			swap.err = os.change_mode(swap.dir, {.Read_User, .Write_User, .Execute_User})
+			if swap.err != nil {
+				return
+			}
+		}
+	}
+	real := fmt.tprintf("%s.real", swap.dir)
+	swap.err = os.rename(swap.dir, real)
+	if swap.err != nil {
 		return
+	}
+	when ODIN_OS == .Darwin {
+		if swap.locked {
+			swap.err = os.change_mode(real, {})
+			if swap.err != nil {
+				return
+			}
+		}
 	}
 	swap.linked = link_dir(swap.kind, swap.target, swap.dir)
 }
@@ -207,7 +230,7 @@ native_a_directory_replaced_during_a_delete_leaves_the_target :: proc(t: ^testin
 		before_enter = swap_on_enter
 		failed, _, err := delete_tree(at(root, "tree"))
 		kept := os.exists(at(root, "decoy", "keep"))
-		testing.expectf(t, swap.linked, "%v: the directory was not replaced", kind)
+		testing.expectf(t, swap.linked, "%v: the directory was not replaced: %v", kind, swap.err)
 		testing.expectf(t, kept, "%v: the delete followed the link into decoy", kind)
 		// The link is left, and the tree holding it.
 		testing.expectf(t, err == .Partly && failed == 1, "%v: %v, %d left", kind, err, failed)
@@ -273,6 +296,7 @@ native_permission_recovery_does_not_follow_a_swapped_link :: proc(t: ^testing.T)
 			dir    = sub,
 			target = at(root, "decoy"),
 			kind   = kind,
+			locked = true,
 		}
 		before_enter = swap_on_enter
 		failed, _, err := delete_tree(at(root, "tree"))
@@ -281,7 +305,7 @@ native_permission_recovery_does_not_follow_a_swapped_link :: proc(t: ^testing.T)
 		_ = set_read_only(at(root, "decoy"), false)
 		_ = os.change_mode(fmt.tprintf("%s.real", sub), os.Permissions_All)
 		_ = set_read_only(fmt.tprintf("%s.real", sub), false)
-		testing.expectf(t, swap.linked, "%v: the directory was not replaced", kind)
+		testing.expectf(t, swap.linked, "%v: the directory was not replaced: %v", kind, swap.err)
 		testing.expectf(t, kept, "%v: the delete followed the link into decoy", kind)
 		testing.expectf(t, still, "%v: the decoy lost its read-only mode", kind)
 		testing.expectf(t, err == .Partly && failed == 1, "%v: %v, %d left", kind, err, failed)
