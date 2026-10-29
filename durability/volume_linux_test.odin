@@ -209,10 +209,8 @@ expect_kept :: proc(t: ^testing.T, v: Volume, after: string) {
 	testing.expectf(t, ok, "%v %s: the baseline does not load: %s", v.kind, after, why)
 
 	st: settings.Store
-	if err := settings.open(&st, in_dir(dir, SETTINGS)); err != nil {
-		// Reported, not read: card 760 is to read it.
-		log.infof("%v %s: settings do not open: %s", v.kind, after, history.describe(err))
-	} else {
+	if err := settings.open(&st, in_dir(dir, SETTINGS));
+	   testing.expectf(t, err == nil, "%v %s: settings must remain readable: %s", v.kind, after, history.describe(err)) {
 		value, found := settings.get(&st, "kept", context.temp_allocator)
 		testing.expectf(t, found && value == "before", "%v %s: the setting is lost", v.kind, after)
 		testing.expectf(t, integrity(st.db) == "ok", "%v %s: the settings store is damaged", v.kind, after)
@@ -220,9 +218,8 @@ expect_kept :: proc(t: ^testing.T, v: Volume, after: string) {
 	}
 
 	h: history.Store
-	if err := history.open(&h, in_dir(dir, HISTORY)); err != nil {
-		log.infof("%v %s: history does not open: %s", v.kind, after, history.describe(err))
-	} else {
+	if err := history.open(&h, in_dir(dir, HISTORY));
+	   testing.expectf(t, err == nil, "%v %s: history must remain readable: %s", v.kind, after, history.describe(err)) {
 		snaps, _ := history.list(&h, place_of(1))
 		testing.expectf(t, len(snaps) == 1, "%v %s: the scan kept is lost", v.kind, after)
 		testing.expectf(t, integrity(h.db) == "ok", "%v %s: the history store is damaged", v.kind, after)
@@ -298,7 +295,7 @@ a_full_volume_keeps_every_copy_before :: proc(t: ^testing.T) {
 }
 
 /*
-On a volume that is read-only, every store reads, or says it cannot be opened, and
+On a volume that is read-only, every seeded store remains readable and
 none is lost; each write says it failed; a delete takes nothing and says so. The
 Trash is not tried here: one on this volume is the seam's Read_Only, in gui/files.
 */
