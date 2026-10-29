@@ -42,6 +42,9 @@ UPDATE_CHECKED :: "update_checked"
 
 Store :: struct {
 	db: sqlite3.Db,
+	read_only: bool, // existing saved data is readable, but this connection cannot save
+	read_only_reason: string, // static explanation; reopen after storage recovers
+	legacy: bool, // an unversioned read-only store uses historical column defaults
 }
 
 @(private)
@@ -70,13 +73,17 @@ open :: proc(st: ^Store, path: string) -> sqlite3.Error {
 			_ = os.make_directory_all(dir)
 		}
 	}
-	db := sqlite3.open(path, {busy_timeout = BUSY_WAIT}) or_return
-	if err := adopt(db); err != nil {
-		sqlite3.close(&db)
-		return err
+	db, err := sqlite3.open(path, {busy_timeout = BUSY_WAIT})
+	if err == nil { err = adopt(db) }
+	if err == nil {
+		st.db = db
+		return nil
 	}
-	st.db = db
-	return nil
+	sqlite3.close(&db)
+	if path == sqlite3.MEMORY || !schema.can_read_only(err) { return err }
+	result := open_read_only(st, path, err)
+	delete(err.?.text) // the failed writable connection no longer owns its copied fault text
+	return result
 }
 
 // adopt refuses a newer schema, then migrates and stamps a store this build
@@ -84,10 +91,13 @@ open :: proc(st: ^Store, path: string) -> sqlite3.Error {
 // file as it was.
 @(private)
 adopt :: proc(db: sqlite3.Db) -> sqlite3.Error {
-	version := schema.user_version(db) or_return
+	version := schema.user_version(db, db.allocator) or_return
 	if version > SCHEMA_VERSION {
 		return newer_schema(version)
 	}
+	sqlite3.exec(db, "BEGIN IMMEDIATE") or_return
+	committed := false
+	defer if !committed { _ = sqlite3.exec(db, "ROLLBACK") }
 	for sql in ([]string{SCHEMA, MONITOR_SCHEMA, WEBHOOK_SCHEMA}) {
 		sqlite3.exec(db, sql) or_return
 	}
@@ -95,6 +105,8 @@ adopt :: proc(db: sqlite3.Db) -> sqlite3.Error {
 	if version < SCHEMA_VERSION {
 		stamp_schema(db) or_return
 	}
+	sqlite3.exec(db, "COMMIT") or_return
+	committed = true
 	_ = sqlite3.exec(db, "PRAGMA journal_mode = WAL")
 	return nil
 }
@@ -152,6 +164,7 @@ get :: proc(
 
 // set keeps value under key in place of any before it.
 set :: proc(st: ^Store, key, value: string) -> sqlite3.Error {
+	write_allowed(st) or_return
 	return sqlite3.exec_args(
 		st.db,
 		`INSERT INTO setting(key, value) VALUES (?, ?)
@@ -168,6 +181,7 @@ windows that both saw the same previous cannot both record a check: one
 commits, the other finds the value changed and leaves it.
 */
 replace_if :: proc(st: ^Store, key, previous, value: string) -> (won: bool, err: sqlite3.Error) {
+	if blocked := write_allowed(st); blocked != nil { return {}, blocked }
 	if err = sqlite3.exec(st.db, "BEGIN IMMEDIATE"); err != nil {
 		return false, err
 	}
@@ -258,7 +272,7 @@ migrate :: proc(db: sqlite3.Db) -> sqlite3.Error {
 			"SELECT 1 FROM pragma_table_info(?) WHERE name = ?",
 			column.table,
 			column.name,
-			allocator = context.temp_allocator,
+			allocator = db.allocator,
 		) or_return
 		has := sqlite3.next(&rows)
 		sqlite3.finish(&rows) or_return

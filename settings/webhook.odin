@@ -3,6 +3,7 @@ package leita_settings
 import "core:strings"
 
 import "jm:sqlite3"
+import "../schema"
 
 /*
 Webhooks, a paid feature: the person's own servers the monitor tells of each
@@ -74,6 +75,7 @@ hook_add :: proc(
 	id: i64,
 	err: sqlite3.Error,
 ) {
+	if blocked := write_allowed(st); blocked != nil { return {}, blocked }
 	sqlite3.exec_args(
 		st.db,
 		`INSERT INTO webhook(url, secret, paths, added) VALUES (?, ?, ?, ?)
@@ -99,6 +101,7 @@ hook_add :: proc(
 // hook_remove forgets the webhook to url and what waits for it, and says
 // whether there was one.
 hook_remove :: proc(st: ^Store, url: string) -> (found: bool, err: sqlite3.Error) {
+	if blocked := write_allowed(st); blocked != nil { return {}, blocked }
 	sqlite3.exec_args(
 		st.db,
 		"DELETE FROM delivery WHERE hook IN (SELECT id FROM webhook WHERE url = ?)",
@@ -110,6 +113,11 @@ hook_remove :: proc(st: ^Store, url: string) -> (found: bool, err: sqlite3.Error
 
 // hooks is every webhook, in the order they were added, in allocator.
 hooks :: proc(st: ^Store, allocator := context.allocator) -> (out: []Webhook, err: sqlite3.Error) {
+	if st.read_only && st.legacy {
+		exists := schema.table_exists(st.db, "webhook") or_return
+		if !exists { return nil, nil }
+	}
+
 	rows := sqlite3.query(
 		st.db,
 		`SELECT id, url, secret, paths, added, last_sent, last_problem
@@ -151,6 +159,7 @@ hooks_destroy :: proc(hs: []Webhook, allocator := context.allocator) {
 // note_delivery keeps how the last delivery to webhook id went: taken at sent,
 // or refused for problem, which leaves when one was last taken as it was.
 note_delivery :: proc(st: ^Store, id: i64, sent: i64, problem: string) -> sqlite3.Error {
+	write_allowed(st) or_return
 	if problem == "" {
 		return sqlite3.exec_args(
 			st.db,
@@ -178,6 +187,7 @@ enqueue :: proc(
 	id: i64,
 	err: sqlite3.Error,
 ) {
+	if blocked := write_allowed(st); blocked != nil { return {}, blocked }
 	sqlite3.exec_args(
 		st.db,
 		"INSERT INTO delivery(hook, event, body, created, next_at) VALUES (?, ?, ?, ?, ?)",
@@ -201,6 +211,11 @@ due :: proc(
 	out: []Delivery,
 	err: sqlite3.Error,
 ) {
+	if st.read_only && st.legacy {
+		exists := schema.table_exists(st.db, "delivery") or_return
+		if !exists { return nil, nil }
+	}
+
 	rows := sqlite3.query(
 		st.db,
 		`SELECT id, hook, event, body, created, attempts, next_at, problem FROM delivery
@@ -245,12 +260,14 @@ deliveries_destroy :: proc(ds: []Delivery, allocator := context.allocator) {
 
 // forget_delivery forgets delivery id, taken or given up on.
 forget_delivery :: proc(st: ^Store, id: i64) -> sqlite3.Error {
+	write_allowed(st) or_return
 	return sqlite3.exec_args(st.db, "DELETE FROM delivery WHERE id = ?", id)
 }
 
 // retry keeps that delivery id was tried attempts times, last failing for
 // problem, and is next due at next_at.
 retry :: proc(st: ^Store, id: i64, attempts: int, next_at: i64, problem: string) -> sqlite3.Error {
+	write_allowed(st) or_return
 	return sqlite3.exec_args(
 		st.db,
 		"UPDATE delivery SET attempts = ?, next_at = ?, problem = ? WHERE id = ?",

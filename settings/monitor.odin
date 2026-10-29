@@ -5,6 +5,7 @@ import "core:mem"
 import "core:strings"
 
 import "jm:sqlite3"
+import "../schema"
 
 /*
 What monitoring keeps (a paid feature): the places watched and how often each
@@ -159,6 +160,7 @@ set_monitoring :: proc(st: ^Store, on: bool) -> sqlite3.Error {
 
 // watch keeps w, in place of any watch of the same place.
 watch :: proc(st: ^Store, w: Watch) -> sqlite3.Error {
+	write_allowed(st) or_return
 	return sqlite3.exec_args(
 		st.db,
 		`INSERT INTO watch(place, every, added, warn_used, fail_used, min_free, full_within, growth)
@@ -181,6 +183,7 @@ watch :: proc(st: ^Store, w: Watch) -> sqlite3.Error {
 // unwatch stops watching place and forgets its runs and alerts, and says
 // whether it was watched.
 unwatch :: proc(st: ^Store, place: string) -> (found: bool, err: sqlite3.Error) {
+	if blocked := write_allowed(st); blocked != nil { return {}, blocked }
 	sqlite3.exec_args(st.db, "DELETE FROM watch WHERE place = ?", place) or_return
 	found = sqlite3.changes(st.db) > 0
 	sqlite3.exec_args(st.db, "DELETE FROM run WHERE place = ?", place) or_return
@@ -190,10 +193,18 @@ unwatch :: proc(st: ^Store, place: string) -> (found: bool, err: sqlite3.Error) 
 
 // watches is every place watched, in the order they were added, in allocator.
 watches :: proc(st: ^Store, allocator := context.allocator) -> (out: []Watch, err: sqlite3.Error) {
+	read_sql := `SELECT place, every, added, warn_used, fail_used, min_free, full_within, growth
+			FROM watch ORDER BY added, place`
+	if st.read_only && st.legacy {
+		exists := schema.table_exists(st.db, "watch") or_return
+		if !exists { return nil, nil }
+		selected := schema.select_columns(st.db, "watch", {"place", "every", "added", "warn_used", "fail_used", "min_free", "full_within", "growth"}, {"", "", "", "0", "0", "0", "0", "0"}) or_return
+		read_sql = fmt.tprintf("SELECT %s FROM watch ORDER BY added, place", selected)
+	}
+
 	rows := sqlite3.query(
 		st.db,
-		`SELECT place, every, added, warn_used, fail_used, min_free, full_within, growth
-			FROM watch ORDER BY added, place`,
+		read_sql,
 		allocator = context.temp_allocator,
 	) or_return
 	found := make([dynamic]Watch, allocator)
@@ -275,6 +286,7 @@ watches_destroy :: proc(ws: []Watch, allocator := context.allocator) {
 // record keeps r as the newest run of its place and forgets the oldest past
 // RUNS_KEPT, and returns its id.
 record :: proc(st: ^Store, r: Run) -> (id: i64, err: sqlite3.Error) {
+	if blocked := write_allowed(st); blocked != nil { return {}, blocked }
 	sqlite3.exec_args(
 		st.db,
 		`INSERT INTO run(place, started, seconds, bytes, disk_total, disk_free, updated,
@@ -315,11 +327,19 @@ runs :: proc(
 	out: []Run,
 	err: sqlite3.Error,
 ) {
+	read_sql := `SELECT id, place, started, seconds, bytes, disk_total, disk_free, updated, reread,
+			taken, why, problem, firing
+			FROM run WHERE place = ? ORDER BY started DESC, id DESC LIMIT ?`
+	if st.read_only && st.legacy {
+		exists := schema.table_exists(st.db, "run") or_return
+		if !exists { return nil, nil }
+		selected := schema.select_columns(st.db, "run", {"id", "place", "started", "seconds", "bytes", "disk_total", "disk_free", "updated", "reread", "taken", "why", "problem", "firing"}, {"", "", "", "", "", "", "", "0", "0", "0", "''", "", "''"}) or_return
+		read_sql = fmt.tprintf("SELECT %s FROM run WHERE place = ? ORDER BY started DESC, id DESC LIMIT ?", selected)
+	}
+
 	rows := sqlite3.query(
 		st.db,
-		`SELECT id, place, started, seconds, bytes, disk_total, disk_free, updated, reread,
-			taken, why, problem, firing
-			FROM run WHERE place = ? ORDER BY started DESC, id DESC LIMIT ?`,
+		read_sql,
 		place,
 		i64(limit),
 		allocator = context.temp_allocator,
@@ -379,6 +399,7 @@ last_run :: proc(st: ^Store, place: string, allocator := context.allocator) -> (
 
 // raise keeps a as raised, and forgets the oldest past RAISED_KEPT.
 raise :: proc(st: ^Store, a: Raised) -> sqlite3.Error {
+	write_allowed(st) or_return
 	sqlite3.exec_args(
 		st.db,
 		`INSERT INTO raised(place, raised, kind, used_percent, free, total, days, grew,
@@ -414,6 +435,11 @@ alerts :: proc(
 	out: []Raised,
 	err: sqlite3.Error,
 ) {
+	if st.read_only && st.legacy {
+		exists := schema.table_exists(st.db, "raised") or_return
+		if !exists { return nil, nil }
+	}
+
 	rows := sqlite3.query(
 		st.db,
 		`SELECT id, place, raised, kind, used_percent, free, total, days, grew, limit_crossed,

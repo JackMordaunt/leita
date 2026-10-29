@@ -47,6 +47,9 @@ BUSY_WAIT :: 2 * time.Second
 
 Store :: struct {
 	db: sqlite3.Db,
+	read_only: bool, // existing saved data is readable, but this connection cannot save
+	read_only_reason: string, // static explanation; reopen after storage recovers
+	legacy: bool, // an unversioned read-only store uses historical column defaults
 }
 
 // Snapshot is one finished scan as remembered: when it was taken, in Unix
@@ -144,7 +147,6 @@ open :: proc(st: ^Store, path: string) -> sqlite3.Error {
 		if dir := filepath.dir(path); dir != "" {
 			_ = os.make_directory_all(dir)
 		}
-		prune_baselines(path, time.now())
 
 		// SQLite takes a file of one byte for an empty database and writes a
 		// new one over it. A file that holds anything and does not begin with
@@ -155,16 +157,18 @@ open :: proc(st: ^Store, path: string) -> sqlite3.Error {
 	}
 	// The window and the command line may both write at once: one waits for the
 	// other's write, a short transaction, rather than failing at once.
-	db := sqlite3.open(
-		path,
-		{busy_timeout = BUSY_WAIT, on_open = "PRAGMA foreign_keys = ON"},
-	) or_return
-	if err := adopt(db); err != nil {
-		sqlite3.close(&db)
-		return err
+	db, err := sqlite3.open(path, {busy_timeout = BUSY_WAIT, on_open = "PRAGMA foreign_keys = ON"})
+	if err == nil { err = adopt(db) }
+	if err == nil {
+		st.db = db
+		if path != sqlite3.MEMORY { prune_baselines(path, time.now()) }
+		return nil
 	}
-	st.db = db
-	return nil
+	sqlite3.close(&db)
+	if path == sqlite3.MEMORY || !schema.can_read_only(err) { return err }
+	result := open_read_only(st, path, err)
+	delete(err.?.text) // the failed writable connection no longer owns its copied fault text
+	return result
 }
 
 // adopt refuses a newer schema, then migrates and stamps a store this build
@@ -172,15 +176,20 @@ open :: proc(st: ^Store, path: string) -> sqlite3.Error {
 // file as it was.
 @(private)
 adopt :: proc(db: sqlite3.Db) -> sqlite3.Error {
-	version := schema.user_version(db) or_return
+	version := schema.user_version(db, db.allocator) or_return
 	if version > SCHEMA_VERSION {
 		return newer_schema(version)
 	}
+	sqlite3.exec(db, "BEGIN IMMEDIATE") or_return
+	committed := false
+	defer if !committed { _ = sqlite3.exec(db, "ROLLBACK") }
 	sqlite3.exec(db, SCHEMA) or_return
 	migrate(db) or_return
 	if version < SCHEMA_VERSION {
 		stamp_schema(db) or_return
 	}
+	sqlite3.exec(db, "COMMIT") or_return
+	committed = true
 	_ = sqlite3.exec(db, "PRAGMA journal_mode = WAL")
 	return nil
 }
@@ -212,15 +221,7 @@ SQLITE_HEADER :: "SQLite format 3\x00"
 // SQLite's header: the files sqlite3.open may create or write to.
 @(private)
 empty_or_sqlite :: proc(path: string) -> bool {
-	f, err := os.open(path)
-	if err != nil {
-		return true
-	}
-	defer os.close(f)
-
-	head: [len(SQLITE_HEADER)]byte
-	n, _ := os.read_full(f, head[:])
-	return n == 0 || (n == len(head) && string(head[:]) == SQLITE_HEADER)
+	return schema.empty_or_sqlite(path)
 }
 
 // ADDED_COLUMNS is each column added to snapshot since the store was first made,
@@ -239,9 +240,10 @@ migrate :: proc(db: sqlite3.Db) -> sqlite3.Error {
 	rows := sqlite3.query(
 		db,
 		"SELECT name FROM pragma_table_info('snapshot')",
-		allocator = context.temp_allocator,
+		allocator = db.allocator,
 	) or_return
 	has := make(map[string]bool, context.temp_allocator)
+	defer for name in has { delete(name, db.allocator) }
 	for sqlite3.next(&rows) {
 		has[sqlite3.text(rows, 0)] = true
 	}
@@ -282,6 +284,7 @@ save :: proc(
 	id: i64,
 	err: sqlite3.Error,
 ) {
+	if blocked := write_allowed(st); blocked != nil { return {}, blocked }
 	Save :: struct {
 		top:          string,
 		taken:        i64,
@@ -334,6 +337,7 @@ save :: proc(
 
 // record adds actions to the audit trail, all or none.
 record :: proc(st: ^Store, actions: []Action) -> sqlite3.Error {
+	write_allowed(st) or_return
 	if len(actions) == 0 {
 		return nil
 	}
@@ -382,6 +386,11 @@ actions :: proc(
 	out: []Action,
 	err: sqlite3.Error,
 ) {
+	if st.read_only && st.legacy {
+		exists := schema.table_exists(st.db, "action") or_return
+		if !exists { return nil, nil }
+	}
+
 	rows := sqlite3.query(
 		st.db,
 		`SELECT taken, kind, path, detail, bytes, failed FROM action
@@ -434,10 +443,16 @@ list :: proc(
 	out: []Snapshot,
 	err: sqlite3.Error,
 ) {
+	read_sql := `SELECT id, taken, bytes, items, disk_total, disk_free FROM snapshot
+			WHERE top = ? ORDER BY id DESC`
+	if st.read_only && st.legacy {
+		selected := schema.select_columns(st.db, "snapshot", {"id", "taken", "bytes", "items", "disk_total", "disk_free"}, {"", "", "", "", "0", "0"}) or_return
+		read_sql = fmt.tprintf("SELECT %s FROM snapshot WHERE top = ? ORDER BY id DESC", selected)
+	}
+
 	rows := sqlite3.query(
 		st.db,
-		`SELECT id, taken, bytes, items, disk_total, disk_free FROM snapshot
-			WHERE top = ? ORDER BY id DESC`,
+		read_sql,
 		top,
 		allocator = context.temp_allocator,
 	) or_return
