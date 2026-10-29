@@ -1,0 +1,6 @@
+// Leita's shell icon. leita.ico is branding/mark-dark.png, the light ink,
+// so the mark stays visible on a dark taskbar. Cropped to its ink and drawn
+// to the edge, at 16, 24, 32, 48, 64 and 256.
+// The build links leita.res, the output of rc.exe on this file, so a parallel
+// build does not compile this twice onto one path.
+1 ICON "leita.ico"

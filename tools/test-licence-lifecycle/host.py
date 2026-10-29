@@ -213,6 +213,8 @@ def odin_build(package, dest, defines):
         cmd.append("-define:JM_HTTP_DLOPEN=true")
     if system == "darwin":
         cmd.append("-minimum-os-version:11.0")
+    if system == "windows":
+        cmd.append("-resource:tools/windows/leita.res")
     cmd.extend(defines)
     cmd.append(f"-out:{dest}")
     run_checked(cmd, ROOT)

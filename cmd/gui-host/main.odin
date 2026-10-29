@@ -18,6 +18,7 @@ import "core:os"
 import "jm:ui/shell"
 
 import "../../gui/app"
+import "../../gui/brand"
 @(require) import "../../gui/leaks"
 import "../../history"
 import "../../version"
@@ -55,6 +56,8 @@ main :: proc() {
 			watch = os.args[1],
 			clear = {255, 255, 255, 255},
 			data = app.data_host(h),
+			icon_light = brand.png(false),
+			icon_dark = brand.png(true),
 		},
 	)
 	app.stop(h)

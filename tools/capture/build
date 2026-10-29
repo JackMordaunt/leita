@@ -23,6 +23,8 @@ done
 case "$(uname -s)" in
   Linux) capture_os+=(-define:JM_HTTP_DLOPEN=true) ;;
   Darwin) capture_os+=(-minimum-os-version:11.0) ;;
+  # -resource exists only in the Windows compiler. Git Bash reports MINGW.
+  MINGW*|MSYS*|CYGWIN*) capture_os+=(-resource:tools/windows/leita.res) ;;
 esac
 # pdf's test file is compiled into this host and #load's a font from the
 # repo's jm checkout. A worktree with an empty submodule still builds when

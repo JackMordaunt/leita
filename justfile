@@ -116,14 +116,20 @@ year := env("LEITA_YEAR", `date +%Y`)
 # a licence line does not entitle. LEITA_RELEASED=<instant> sets it.
 released := env("LEITA_RELEASED", "")
 released_define := if released == "" { "" } else { " -define:LEITA_RELEASED=" + released }
-# check_flags is what odin check takes; flags adds the macOS minimum, which
-# only build, run and test accept.
+# check_flags is what odin check takes. flags adds what only build, run and
+# test accept: the macOS minimum, and on Windows the shell icon.
 check_flags := "-vet -strict-style -collection:jm=" + jm + " -define:LEITA_VERSION=" + version + " -define:LEITA_SHORT=" + short + " -define:LEITA_YEAR=" + year + released_define
-flags := check_flags + minos
+flags := check_flags + minos + resource
 # macOS 11.0 is the oldest Odin targets, and jm builds its native libraries
 # for it. Without the flag a binary carries the building Mac's own version as
 # its minimum, and an older Mac refuses to start it.
 minos := if os() == "macos" { " -minimum-os-version:11.0" } else { "" }
+# The Windows compiler is the only one that registers -resource (it is inside
+# GB_SYSTEM_WINDOWS). Passing it on macOS or Linux is an unknown flag and the
+# build stops, so those hosts get nothing. The file is the compiled resource,
+# tools/windows/leita.res, made from leita.rc: a .rc would be compiled again
+# by every link onto that one path, and just build links both binaries at once.
+resource := if os() == "windows" { " -resource:" + root + "/tools/windows/leita.res" } else { "" }
 san   := env("SAN", "-sanitize:address")
 # Linux opens libcurl when a licence key is first sent or an update asked for,
 # not at start-up (jm:http/libcurl): Ubuntu's desktop may carry only the GnuTLS
