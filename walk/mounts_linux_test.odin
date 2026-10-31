@@ -212,8 +212,9 @@ bind_place :: proc(t: ^testing.T, name: string) -> string {
 }
 
 /*
-Bind source at target. False, logged, where this process cannot mount, which fails
-the test only when LEITA_MOUNT_TEST says the mounts must be made.
+Bind source at target. False, logged, where this process cannot mount or this
+kernel gives no mount ids, which fails the test only when LEITA_MOUNT_TEST says
+the mounts must be made.
 */
 @(private = "file")
 bind :: proc(t: ^testing.T, source, target: string) -> bool {
@@ -221,6 +222,9 @@ bind :: proc(t: ^testing.T, source, target: string) -> bool {
 	// Without mount ids (statx before Linux 5.8) the walk cannot tell a bind from a
 	// directory, so what these tests expect of one is not this kernel's to give.
 	if !kernel_gives_mount_ids() {
+		if os.get_env("LEITA_MOUNT_TEST", context.temp_allocator) != "" {
+			testing.fail_now(t, "LEITA_MOUNT_TEST is set, but this kernel gives no mount ids")
+		}
 		log.warnf("skipped: this kernel gives no mount ids (Linux 5.8); a bind is walked as a directory")
 		return false
 	}

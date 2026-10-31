@@ -137,6 +137,19 @@ jobs:
             sudo install "$dir"/compsize-1.5/compsize /usr/local/bin/compsize
           ) || echo "compsize not built: its comparison is skipped"
           just btrfs-test --sudo
+      # The delete and walk tests that mount, in a user namespace. Ubuntu 24.04
+      # refuses one to a process without an AppArmor profile. Where the sysctl
+      # is not there or cannot be set, the recipe would exit 0 and say it
+      # skipped. LEITA_MOUNT_REQUIRED makes that skip fail. A developer machine
+      # does not set it, so a local skip still exits 0.
+      - name: mount-test (linux)
+        if: runner.os == 'Linux'
+        timeout-minutes: 10
+        env:
+          LEITA_MOUNT_REQUIRED: "1"
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          just mount-test
       # Warm walk of a seeded tmpfs against the committed baseline. A median
       # past the tolerance fails the job. Ubuntu only; tools/fsbench --ci
       # mounts the tmpfs. The command line, the seed and a few runs stay
