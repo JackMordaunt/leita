@@ -74,7 +74,15 @@ start :: proc(t: ^testing.T, c: Case, dir: string, at := 0) -> (child: os.Proces
 	defer os.close(stderr)
 
 	err: os.Error
-	child, err = os.process_start({command = {self}, env = env[:], stderr = stderr})
+	// macOS 26 SIGKILLs a child forked out of this multithreaded ASan process
+	// before exec, so the case never reaches the seam. The test recipe
+	// serializes these cases; the durability recipe does not. posix_spawn does
+	// not run the child in the forked address space.
+	when ODIN_OS == .Darwin {
+		child, err = spawn_child(self, env[:], os.fd(stderr))
+	} else {
+		child, err = os.process_start({command = {self}, env = env[:], stderr = stderr})
+	}
 	testing.expectf(t, err == nil, "cannot start a child: %v", err)
 	return child, err == nil
 }
