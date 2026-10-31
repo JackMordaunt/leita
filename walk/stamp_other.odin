@@ -27,4 +27,15 @@ when ODIN_OS != .Windows {
 	still_names :: proc(path: string, id: File_Id) -> bool {
 		return true
 	}
+
+	// No id to match a copied name to the base's payer, so the copy stays an extra.
+	@(private)
+	id_of :: proc(path: string) -> (id: File_Id, known: bool) {
+		return {}, false
+	}
+
+	@(private)
+	path_present :: proc(path: string) -> bool {
+		return true
+	}
 }

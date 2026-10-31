@@ -82,3 +82,39 @@ still_names :: proc(path: string, id: File_Id) -> bool {
 	}
 	return u64(u32(st.st_dev)) == id.device && u64(st.st_ino) == id.inode
 }
+
+// The file id a walk would store for `path`, or not known when lstat cannot say.
+// The device is the same u32 parse_entry takes from ATTR_CMN_DEVID.
+@(private)
+id_of :: proc(path: string) -> (id: File_Id, known: bool) {
+	buf: Path
+	cpath, terminated := terminate(path, &buf)
+	if !terminated {
+		return {}, false
+	}
+	st: posix.stat_t
+	if posix.lstat(cpath, &st) != .OK {
+		return {}, false
+	}
+	return {device = u64(u32(st.st_dev)), inode = u64(st.st_ino)}, true
+}
+
+// Whether `path` is still on disk. False only when lstat finds nothing there, so a
+// path that cannot be asked is treated as present.
+@(private)
+path_present :: proc(path: string) -> bool {
+	buf: Path
+	cpath, terminated := terminate(path, &buf)
+	if !terminated {
+		return true
+	}
+	st: posix.stat_t
+	if posix.lstat(cpath, &st) != .OK {
+		#partial switch posix.errno() {
+		case .ENOENT, .ENOTDIR:
+			return false
+		}
+		return true
+	}
+	return true
+}

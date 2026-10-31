@@ -739,6 +739,66 @@ still_names :: proc(path: string, id: File_Id) -> bool {
 	return u64(u32(info.VolumeSerialNumber)) == id.device && raw[0] == id.inode && raw[1] == id.upper
 }
 
+// The file id a walk would store for `path`, or not known when the file cannot be
+// asked. The device is the 32-bit serial describe stores, the low half of FileIdInfo's.
+@(private)
+id_of :: proc(path: string) -> (id: File_Id, known: bool) {
+	f, asked := open_by_path(path)
+	if !asked || f == win.INVALID_HANDLE_VALUE {
+		return {}, false
+	}
+	defer win.CloseHandle(f)
+	info: win.FILE_ID_INFO
+	if !win.GetFileInformationByHandleEx(f, .FileIdInfo, &info, size_of(info)) {
+		return {}, false
+	}
+	raw := transmute([2]u64)info.FileId
+	return {
+		device = u64(u32(info.VolumeSerialNumber)),
+		inode  = raw[0],
+		upper  = raw[1],
+	}, true
+}
+
+// Whether `path` is still on disk. False only when it does not open because it is
+// gone, so a path that cannot be asked is treated as present.
+@(private)
+path_present :: proc(path: string) -> bool {
+	f, asked := open_by_path(path)
+	if !asked {
+		return true
+	}
+	if f == win.INVALID_HANDLE_VALUE {
+		switch win.GetLastError() {
+		case win.ERROR_FILE_NOT_FOUND, win.ERROR_PATH_NOT_FOUND:
+			return false
+		}
+		return true
+	}
+	win.CloseHandle(f)
+	return true
+}
+
+// `asked` is false when the path cannot be encoded, which is not the file being gone.
+@(private)
+open_by_path :: proc(path: string) -> (handle: win.HANDLE, asked: bool) {
+	buf: [dynamic]u16
+	buf.allocator = context.temp_allocator
+	wide, ok := widen(path, &buf)
+	if !ok {
+		return win.INVALID_HANDLE_VALUE, false
+	}
+	return win.CreateFileW(
+		wide,
+		win.FILE_READ_ATTRIBUTES,
+		win.FILE_SHARE_READ | win.FILE_SHARE_WRITE | win.FILE_SHARE_DELETE,
+		nil,
+		win.OPEN_EXISTING,
+		win.FILE_FLAG_BACKUP_SEMANTICS | win.FILE_FLAG_OPEN_REPARSE_POINT,
+		nil,
+	), true
+}
+
 // FILE_ID_EXTD_DIR_INFO from <winbase.h>, up to the name that follows it.
 @(private = "file")
 File_Id_Extd_Dir_Info :: struct {
