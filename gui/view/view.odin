@@ -280,6 +280,7 @@ Model :: struct {
 	// was, the same of the recorder's switch, and whether the host has answered
 	// since the dialog opened.
 	monitor_open:     bool,
+	monitor_drawn:    bool, // drawn at least once; an open menu waits until then
 	watch_text:       ui.Text_State,
 	monitor_sent:     Maybe(u32),
 	monitor_want:     Maybe(bool),

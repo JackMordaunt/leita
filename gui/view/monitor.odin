@@ -50,6 +50,7 @@ EVERY_WORDS := [query.Frequency]msg.Msg {
 @(private)
 monitor_dialog :: proc(gtx: ^ui.Ctx, m: ^Model) {
 	if !m.monitor_open {
+		m.monitor_drawn = false
 		return
 	}
 	r, _ := ui.need(gtx, query.Monitor{}, query.Monitor_Result)
@@ -67,100 +68,136 @@ monitor_dialog :: proc(gtx: ^ui.Ctx, m: ^Model) {
 			m.hook_paths = false
 		}
 	}
-	locked := !unlocked(gtx, m)
-	waiting := m.monitor_sent != nil
+	// The menu gives the keyboard back to the gear the frame after it
+	// closes, and a dialog asks for focus only on the frame it first
+	// draws. Drawn under a menu that is still open, that ask is spent
+	// by the time the gear takes the keyboard back.
+	if m.settings_open && !m.monitor_drawn {
+		return
+	}
 	close := false
 	buttons := [1]primer.Dialog_Button{{content = tr(.Close), clicked = &close}}
 	// The dialog hangs from the top, not the middle: its content grows and
 	// shrinks with each answer, and a centred dialog would move all of it,
 	// above the change as well as below, by half of each.
-	if primer.dialog(
+	dl := primer.dialog_open(
 		gtx,
 		&m.monitor_open,
 		tr(.Monitoring),
 		footer = buttons[:],
 		width = .XLarge,
 		align = .Top,
-	) {
-		ui.column(gtx, gap = 16, align = .Fill)
-		if locked {
-			primer.inline_message(gtx, tr(.Monitoring_Locked), .Warning)
-		}
-		// The dialog is drawn from the host's first answer, so what that answer
-		// settles, the licence warning, the note of how scans will run here and
-		// whether the recorder is offered, is there from the dialog's first
-		// frame. Everything that changes after, with the switch or an answer,
-		// sits in a slot that holds its height either way, so the places
-		// below never move.
-		if r.note != "" {
-			primer.inline_message(gtx, r.note, .Warning)
-		}
-		if ui.row(gtx, gap = 12, align = .Center) {
-			ui.flexible(gtx, 1)
-			if ui.column(gtx, gap = 4) {
-				primer.text(gtx, tr(.Scheduled_Scans), weight = .Semibold)
-				primer.text(
-					gtx,
-					trf(gtx, .Monitoring_Explain, version.PRODUCT),
-					.Small,
-					color = primer.color(.Fg_Color_Muted),
-				)
-			}
-			// The switch shows what it was set to until the host answers, and
-			// takes no flip meanwhile: otherwise it would fall back to the
-			// host's value the frame after a click and leap again at the
-			// answer, with the scheduler being written between.
-			on := m.monitor_want.? or_else r.on
-			if primer.toggle_switch(
-				   gtx,
-				   &on,
-				   name = tr(.Scheduled_Scans),
-				   label_on = tr(.On),
-				   label_off = tr(.Off),
-				   state = .Disabled if locked && !r.on else .Live,
-			   ) &&
-			   !waiting {
-				m.monitor_want = on
-				send_monitor(gtx, m, r, command.Monitoring{on = on})
-			}
-		}
-		// Where scans run, said in both states so the line is as tall off as on.
-		if primer.slot(gtx, lines = 1, size = .Small) {
-			if r.scheduler != "" {
-				through := msg.Msg.Monitoring_Through if r.on else msg.Msg.Monitoring_Through_Off
-				primer.text(
-					gtx,
-					trf(gtx, through, r.scheduler),
-					.Small,
-					color = primer.color(.Fg_Color_Muted),
-				)
-			}
-		}
-		if r.recorder_shown {
-			recorder_row(gtx, m, r, waiting)
-		}
-		if primer.slot(gtx, lines = 1) {
-			if m.monitor_answered && r.problem != "" && m.monitor_part != .Webhooks {
-				primer.inline_message(gtx, r.problem, .Critical)
-			}
-		}
-		primer.heading(gtx, tr(.Watched_Places), level = 2, variant = .Small)
-		if len(r.watched) == 0 {
-			primer.text(gtx, tr(.Watched_None), color = primer.color(.Fg_Color_Muted))
-		}
-		for w, i in r.watched {
-			watched_row(gtx, m, r, w, i, locked)
-			if m.limits_open && m.limits_place == w.place {
-				limits_editor(gtx, m, r, w, locked)
-			}
-		}
-		watch_field(gtx, m, r, locked)
-		recent_alerts(gtx, r)
-		webhooks(gtx, m, r, locked)
+	)
+	if !dl.visible {
+		return
 	}
+	m.monitor_drawn = true
+	if !focus_within(gtx, dl.id) {
+		ui.focus_first(gtx, dl.id)
+	}
+	monitor_body(gtx, m, r)
+	primer.dialog_close(&dl)
 	if close {
 		m.monitor_open = false
 	}
+}
+
+// focus_within reports whether the keyboard is inside the focus scope id.
+// focus_line is the focused area's ancestor scopes after the last route.
+@(private)
+focus_within :: proc(gtx: ^ui.Ctx, id: ops.Area_Id) -> bool {
+	r := gtx.router
+	if r == nil {
+		return false
+	}
+	for scope in r.focus_line {
+		if scope == id {
+			return true
+		}
+	}
+	return false
+}
+
+// monitor_body is the Monitoring dialog's column.
+@(private)
+monitor_body :: proc(gtx: ^ui.Ctx, m: ^Model, r: ^query.Monitor_Result) {
+	locked := !unlocked(gtx, m)
+	waiting := m.monitor_sent != nil
+	ui.column(gtx, gap = 16, align = .Fill)
+	if locked {
+		primer.inline_message(gtx, tr(.Monitoring_Locked), .Warning)
+	}
+	// The dialog is drawn from the host's first answer, so what that answer
+	// settles, the licence warning, the note of how scans will run here and
+	// whether the recorder is offered, is there from the dialog's first
+	// frame. Everything that changes after, with the switch or an answer,
+	// sits in a slot that holds its height either way, so the places
+	// below never move.
+	if r.note != "" {
+		primer.inline_message(gtx, r.note, .Warning)
+	}
+	if ui.row(gtx, gap = 12, align = .Center) {
+		ui.flexible(gtx, 1)
+		if ui.column(gtx, gap = 4) {
+			primer.text(gtx, tr(.Scheduled_Scans), weight = .Semibold)
+			primer.text(
+				gtx,
+				trf(gtx, .Monitoring_Explain, version.PRODUCT),
+				.Small,
+				color = primer.color(.Fg_Color_Muted),
+			)
+		}
+		// The switch shows what it was set to until the host answers, and
+		// takes no flip meanwhile: otherwise it would fall back to the
+		// host's value the frame after a click and leap again at the
+		// answer, with the scheduler being written between.
+		on := m.monitor_want.? or_else r.on
+		if primer.toggle_switch(
+			   gtx,
+			   &on,
+			   name = tr(.Scheduled_Scans),
+			   label_on = tr(.On),
+			   label_off = tr(.Off),
+			   state = .Disabled if locked && !r.on else .Live,
+		   ) &&
+		   !waiting {
+			m.monitor_want = on
+			send_monitor(gtx, m, r, command.Monitoring{on = on})
+		}
+	}
+	// Where scans run, said in both states so the line is as tall off as on.
+	if primer.slot(gtx, lines = 1, size = .Small) {
+		if r.scheduler != "" {
+			through := msg.Msg.Monitoring_Through if r.on else msg.Msg.Monitoring_Through_Off
+			primer.text(
+				gtx,
+				trf(gtx, through, r.scheduler),
+				.Small,
+				color = primer.color(.Fg_Color_Muted),
+			)
+		}
+	}
+	if r.recorder_shown {
+		recorder_row(gtx, m, r, waiting)
+	}
+	if primer.slot(gtx, lines = 1) {
+		if m.monitor_answered && r.problem != "" && m.monitor_part != .Webhooks {
+			primer.inline_message(gtx, r.problem, .Critical)
+		}
+	}
+	primer.heading(gtx, tr(.Watched_Places), level = 2, variant = .Small)
+	if len(r.watched) == 0 {
+		primer.text(gtx, tr(.Watched_None), color = primer.color(.Fg_Color_Muted))
+	}
+	for w, i in r.watched {
+		watched_row(gtx, m, r, w, i, locked)
+		if m.limits_open && m.limits_place == w.place {
+			limits_editor(gtx, m, r, w, locked)
+		}
+	}
+	watch_field(gtx, m, r, locked)
+	recent_alerts(gtx, r)
+	webhooks(gtx, m, r, locked)
 }
 
 /*
