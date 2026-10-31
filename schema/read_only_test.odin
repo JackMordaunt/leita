@@ -3,6 +3,7 @@ package schema
 import "core:fmt"
 import "core:os"
 import "core:slice"
+import "core:strings"
 import "core:testing"
 import jm_path "jm:path"
 import "jm:sqlite3"
@@ -72,6 +73,56 @@ a_same_process_wal_writer_is_not_copied_or_unlocked :: proc(t: ^testing.T) {
 	testing.expect(t, sqlite3.next(&rows))
 	testing.expect_value(t, sqlite3.integer(rows, 0), i64(141))
 	sqlite3.finish(&rows)
+}
+
+// A full volume lets SQLite create the WAL and then fail while sizing the
+// wal index. The WAL is shorter than its header and holds no pages. The
+// direct image still refuses that empty file; the recovery path reads.
+@(test)
+a_headerless_wal_left_by_a_failed_open_is_readable :: proc(t: ^testing.T) {
+	path, dir := image_fixture(t)
+	defer os.remove_all(dir)
+	before, _ := os.read_entire_file(path, context.temp_allocator)
+	wal := fmt.tprintf("%s-wal", path)
+	shm := fmt.tprintf("%s-shm", path)
+	testing.expect(t, os.write_entire_file(wal, nil) == nil)
+	blank := make([]byte, 4096)
+	defer delete(blank)
+	testing.expect(t, os.write_entire_file(shm, blank) == nil)
+	db, err := memory_image(path, true)
+	if !testing.expectf(t, err == nil, "headerless wal: %v", err) {return}
+	defer sqlite3.close(&db)
+	rows, qerr := sqlite3.query(db, "SELECT value FROM note", allocator = context.temp_allocator)
+	testing.expect(t, qerr == nil)
+	testing.expect(t, sqlite3.next(&rows))
+	testing.expect_value(t, sqlite3.integer(rows, 0), i64(42))
+	sqlite3.finish(&rows)
+	fault := sqlite3.exec(db, "INSERT INTO note VALUES(99)")
+	testing.expect(t, fault != nil)
+	if fault !=
+	   nil {testing.expect_value(t, fault.?.code, sqlite3.Code.Read_Only); delete(fault.?.text)}
+	after, _ := os.read_entire_file(path, context.temp_allocator)
+	testing.expect(t, slice.equal(before, after))
+	wal_after, _ := os.read_entire_file(wal, context.temp_allocator)
+	shm_after, _ := os.read_entire_file(shm, context.temp_allocator)
+	testing.expect(t, len(wal_after) == 0)
+	testing.expect(t, len(shm_after) == 4096)
+}
+
+@(test)
+a_wal_header_still_blocks_the_image :: proc(t: ^testing.T) {
+	path, dir := image_fixture(t)
+	defer os.remove_all(dir)
+	header := make([]byte, 32)
+	defer delete(header)
+	testing.expect(t, os.write_entire_file(fmt.tprintf("%s-wal", path), header) == nil)
+	db, err := memory_image(path, true)
+	testing.expect(t, err != nil)
+	testing.expect(t, db.handle == nil)
+	if err != nil {
+		testing.expect(t, strings.contains(err.?.text, "journal or WAL"))
+		delete(err.?.text)
+	}
 }
 
 @(test)
