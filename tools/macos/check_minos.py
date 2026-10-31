@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fail when a Mach-O file asks for a newer macOS than the floor.
 
-    check_minos.py [--floor 11.0] [--system-only] FILE...
+    check_minos.py [--floor 11.0] [--system-only] [--allow-sanitizer-runtime] FILE...
 
 FILE may be an executable, a dylib, an object or a static archive. It is run
 through `otool -arch all -l` (LLVM's llvm-otool prints the same lines), and
@@ -12,6 +12,10 @@ macOS, fails too: silence is not a minimum.
 
 With --system-only, non-system dylib dependencies are rejected too: a
 standalone Leita binary must not depend on a library installed by Homebrew.
+--allow-sanitizer-runtime ignores only compiler-rt's libclang_rt.asan*.dylib
+and libclang_rt.tsan*.dylib, including one under a versioned LLVM prefix.
+Every other non-system dylib still fails. A release build does not pass the
+flag, so the same runtime is rejected there.
 
 This reads what the compiler and linker wrote. It does not show that a system
 symbol or framework the binary calls exists on the floor release; only a run
@@ -76,8 +80,22 @@ def verdict(name, otool_output, floor):
     return list(dict.fromkeys(problems))
 
 
-def external_libraries(otool_output):
-    """Dylib install names outside the macOS system library directories."""
+def sanitizer_runtime(path):
+    """True for compiler-rt libclang_rt.asan*.dylib or libclang_rt.tsan*.dylib.
+
+    The match is the file name, so a versioned LLVM prefix such as
+    /opt/homebrew/opt/llvm@22/lib/clang/22/lib/darwin/ still qualifies.
+    """
+    name = path.rsplit("/", 1)[-1]
+    return re.fullmatch(r"libclang_rt\.(asan|tsan).*\.dylib", name) is not None
+
+
+def external_libraries(otool_output, allow_sanitizer_runtime=False):
+    """Dylib install names outside the macOS system library directories.
+
+    A compiler-rt ASan or TSan dylib is omitted when allow_sanitizer_runtime
+    is set. Every other non-system install name is still returned.
+    """
     found = []
     cmd = None
     for line in otool_output.splitlines():
@@ -90,7 +108,10 @@ def external_libraries(otool_output):
                    "LC_LOAD_UPWARD_DYLIB", "LC_LAZY_LOAD_DYLIB"}:
             m = re.match(r"name (.+) \(offset \d+\)$", s)
             if m and not m.group(1).startswith(("/usr/lib/", "/System/Library/")):
-                found.append(m.group(1))
+                lib = m.group(1)
+                if allow_sanitizer_runtime and sanitizer_runtime(lib):
+                    continue
+                found.append(lib)
     return list(dict.fromkeys(found))
 
 
@@ -99,6 +120,8 @@ def main(argv):
     ap.add_argument("--floor", default="11.0")
     ap.add_argument("--system-only", action="store_true",
                     help="reject non-system dylib dependencies in standalone binaries")
+    ap.add_argument("--allow-sanitizer-runtime", action="store_true",
+                    help="with --system-only, ignore compiler-rt ASan and TSan dylibs")
     ap.add_argument("files", nargs="+")
     args = ap.parse_args(argv)
     otool = shutil.which("otool") or shutil.which("llvm-otool")
@@ -113,8 +136,9 @@ def main(argv):
             continue
         problems = verdict(path, out.stdout, args.floor)
         if args.system_only:
-            problems.extend(f"{path}: non-system dependency {lib}"
-                            for lib in external_libraries(out.stdout))
+            problems.extend(
+                f"{path}: non-system dependency {lib}"
+                for lib in external_libraries(out.stdout, args.allow_sanitizer_runtime))
         bad.extend(problems)
         if not problems:
             shown = ", ".join(sorted({m for _, m in minimums(out.stdout)}))

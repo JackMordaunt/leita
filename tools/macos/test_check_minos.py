@@ -65,6 +65,25 @@ class MinosTest(unittest.TestCase):
         self.assertEqual(c.external_libraries(out),
                          ["/opt/homebrew/lib/liblocal.dylib", "@rpath/liblocal.dylib"])
 
+    def test_sanitizer_runtime_is_ignored_only_with_the_flag(self):
+        asan = ("/opt/homebrew/opt/llvm@22/lib/clang/22/lib/darwin/"
+                "libclang_rt.asan_osx_dynamic.dylib")
+        tsan = ("/opt/homebrew/opt/llvm@22/lib/clang/22/lib/darwin/"
+                "libclang_rt.tsan_osx_dynamic.dylib")
+        other = "/opt/homebrew/opt/llvm@22/lib/libLLVM.dylib"
+        ubsan = ("/opt/homebrew/opt/llvm@22/lib/clang/22/lib/darwin/"
+                 "libclang_rt.ubsan_osx_dynamic.dylib")
+
+        def load(name):
+            return f"cmd LC_LOAD_DYLIB\nname {name} (offset 24)\n"
+
+        runtimes = load(asan) + load(tsan)
+        self.assertEqual(c.external_libraries(runtimes, allow_sanitizer_runtime=True), [])
+        self.assertEqual(c.external_libraries(runtimes), [asan, tsan])
+        mixed = runtimes + load(other) + load(ubsan)
+        self.assertEqual(c.external_libraries(mixed, allow_sanitizer_runtime=True),
+                         [other, ubsan])
+
     def test_system_dependencies_and_own_install_name_are_allowed(self):
         out = "cmd LC_LOAD_DYLIB\nname /usr/lib/libSystem.B.dylib (offset 24)\n"
         out += "cmd LC_LOAD_WEAK_DYLIB\nname /System/Library/Frameworks/Metal.framework/Metal (offset 24)\n"
@@ -131,6 +150,34 @@ class NativeMinosTest(unittest.TestCase):
         got = self.check(linked, "--system-only")
         self.assertEqual(got.returncode, 1, got.stdout + got.stderr)
         self.assertIn(f"non-system dependency {library}", got.stderr)
+
+    def test_sanitizer_runtime_flag_ignores_only_that_dylib(self):
+        runtime = self.compile(
+            "libclang_rt.asan_osx_dynamic.dylib",
+            "int asan_stub(void) { return 0; }",
+            "-dynamiclib", "-mmacosx-version-min=11.0")
+        other = self.compile(
+            "libother.dylib", "int other_stub(void) { return 0; }",
+            "-dynamiclib", "-mmacosx-version-min=11.0")
+        only = self.compile(
+            "only", "int asan_stub(void); int main(void) { return asan_stub(); }",
+            "-mmacosx-version-min=11.0", str(runtime))
+        both = self.compile(
+            "both",
+            "int asan_stub(void); int other_stub(void);"
+            "int main(void) { return asan_stub() + other_stub(); }",
+            "-mmacosx-version-min=11.0", str(runtime), str(other))
+
+        got = self.check(only, "--system-only", "--allow-sanitizer-runtime")
+        self.assertEqual(got.returncode, 0, got.stdout + got.stderr)
+        self.assertIn("minos", got.stdout)
+        got = self.check(only, "--system-only")
+        self.assertEqual(got.returncode, 1, got.stdout + got.stderr)
+        self.assertIn(f"non-system dependency {runtime}", got.stderr)
+        got = self.check(both, "--system-only", "--allow-sanitizer-runtime")
+        self.assertEqual(got.returncode, 1, got.stdout + got.stderr)
+        self.assertNotIn(str(runtime), got.stderr)
+        self.assertIn(f"non-system dependency {other}", got.stderr)
 
 
 if __name__ == "__main__":

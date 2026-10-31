@@ -216,7 +216,17 @@ cli mode="minimal": sqlite
     mkdir -p build/{{mode}}
     {{odin}} build cmd/cli $opt {{odin_target}} {{flags}} {{curl_open}} -out:build/{{mode}}/{{bin}}{{exe}}
     if [ "{{os()}}" = macos ]; then
-        python3 tools/macos/check_minos.py --system-only "build/{{mode}}/{{bin}}{{exe}}"
+        # asan and tsan link Homebrew LLVM's compiler-rt dylib. The floor
+        # check still runs; only that runtime is excused. minimal, speed
+        # and release keep the plain check, so a release that links it fails.
+        case "{{mode}}" in
+        asan|tsan)
+            python3 tools/macos/check_minos.py --system-only --allow-sanitizer-runtime "build/{{mode}}/{{bin}}{{exe}}"
+            ;;
+        *)
+            python3 tools/macos/check_minos.py --system-only "build/{{mode}}/{{bin}}{{exe}}"
+            ;;
+        esac
     fi
 
 # The staged jm of cli-baseline and baseline-test, its SQLite and zstd built with zig cc.
@@ -309,7 +319,17 @@ gui mode="minimal": deps
     mkdir -p build/{{mode}}/app
     {{odin}} build cmd/gui $opt {{odin_target}} {{flags}} {{curl_open}} {{sdl3_link}} -out:build/{{mode}}/app/{{gui}}{{exe}}
     if [ "{{os()}}" = macos ]; then
-        python3 tools/macos/check_minos.py --system-only "build/{{mode}}/app/{{gui}}{{exe}}"
+        # asan and tsan link Homebrew LLVM's compiler-rt dylib. The floor
+        # check still runs; only that runtime is excused. minimal, speed
+        # and release keep the plain check, so a release that links it fails.
+        case "{{mode}}" in
+        asan|tsan)
+            python3 tools/macos/check_minos.py --system-only --allow-sanitizer-runtime "build/{{mode}}/app/{{gui}}{{exe}}"
+            ;;
+        *)
+            python3 tools/macos/check_minos.py --system-only "build/{{mode}}/app/{{gui}}{{exe}}"
+            ;;
+        esac
     fi
     if [ -n "{{floor}}" ]; then
         # The floor is a promise about the binary, so it is read back from it.
