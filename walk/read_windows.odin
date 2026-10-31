@@ -62,18 +62,15 @@ list_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 	}
 	// Not FILE_FLAG_OPEN_REPARSE_POINT, for the reason the Linux reader gives: the
 	// queue holds a junction or a symlink only when the caller asked for those to be
-	// followed. BACKUP_SEMANTICS is what lets CreateFileW open a directory at all.
-	dir := win.CreateFileW(
-		wide,
-		win.FILE_LIST_DIRECTORY | win.FILE_READ_ATTRIBUTES | win.SYNCHRONIZE,
-		win.FILE_SHARE_READ | win.FILE_SHARE_WRITE | win.FILE_SHARE_DELETE,
-		nil,
-		win.OPEN_EXISTING,
-		win.FILE_FLAG_BACKUP_SEMANTICS,
-		nil,
-	)
+	// followed. A path past UNICODE_PATH_MAX cannot be one CreateFileW, so it is
+	// opened a piece at a time; anything shorter stays that one call.
+	dir, denied, oom := open_for_list(base, wide, &s.wide)
+	if oom {
+		w.err = .Out_Of_Memory
+		return 0, 0, false
+	}
 	if dir == win.INVALID_HANDLE_VALUE {
-		mark_unread(w, d.index, win.GetLastError() == win.ERROR_ACCESS_DENIED)
+		mark_unread(w, d.index, denied)
 		return 0, 0, false
 	}
 	defer win.CloseHandle(dir)
@@ -467,6 +464,167 @@ relative :: proc(dir: win.HANDLE, name: ^win.UNICODE_STRING) -> win.OBJECT_ATTRI
 }
 
 /*
+The directory at path, for listing. wide is path as UTF-16, already in buf.
+
+A path of at most UNICODE_PATH_MAX units is one CreateFileW, as every directory
+was. A longer path does not fit in the UNICODE_STRING CreateFileW builds, so it
+is opened a piece at a time (open_pieces). A failure of that chain is unread,
+not denied: the path was the obstacle, and nothing under the directory is
+charged because it is not listed. denied is set only when CreateFileW refuses
+a path it could hold for want of permission. oom is a buffer that would not grow.
+*/
+@(private = "file")
+open_for_list :: proc(
+	path: string,
+	wide: win.wstring,
+	buf: ^[dynamic]u16,
+) -> (
+	dir: win.HANDLE,
+	denied, oom: bool,
+) {
+	if wide_units(buf[:]) <= UNICODE_PATH_MAX {
+		dir = create_directory(wide)
+		denied = dir == win.INVALID_HANDLE_VALUE && win.GetLastError() == win.ERROR_ACCESS_DENIED
+		return dir, denied, false
+	}
+	dir, oom = open_pieces(path, buf)
+	return dir, false, oom
+}
+
+// create_directory opens path the way list_dir always opened a directory.
+// BACKUP_SEMANTICS is what lets CreateFileW open a directory at all.
+@(private = "file")
+create_directory :: proc(path: win.wstring) -> win.HANDLE {
+	return win.CreateFileW(
+		path,
+		win.FILE_LIST_DIRECTORY | win.FILE_READ_ATTRIBUTES | win.SYNCHRONIZE,
+		win.FILE_SHARE_READ | win.FILE_SHARE_WRITE | win.FILE_SHARE_DELETE,
+		nil,
+		win.OPEN_EXISTING,
+		win.FILE_FLAG_BACKUP_SEMANTICS,
+		nil,
+	)
+}
+
+/*
+A directory whose path does not fit in one UNICODE_STRING, opened a piece at a
+time. Each piece is at most UNICODE_PATH_MAX UTF-16 units and ends on a
+separator (next_wide_piece). The first is an absolute path CreateFileW opens.
+Each later piece is opened from the handle the one before it left, then that
+handle is closed.
+
+Only a directory past the limit takes this, so an ordinary tree makes the one
+CreateFileW it always did. The ancestors are closed before this returns, and
+list_dir closes the directory it lists before its children are opened, so no
+directory stays open across a later rename. Not a handle when a piece cannot
+be cut or will not open; oom when a piece's buffer would not grow.
+*/
+@(private = "file")
+open_pieces :: proc(path: string, buf: ^[dynamic]u16) -> (h: win.HANDLE, oom: bool) {
+	at := win.INVALID_HANDLE_VALUE
+	owned := false
+	rest := path
+	for {
+		piece, after, cut := next_wide_piece(rest, UNICODE_PATH_MAX)
+		if !cut {
+			close_owned(at, owned)
+			return win.INVALID_HANDLE_VALUE, false
+		}
+		next, failed, out := open_piece(at, owned, piece, buf)
+		close_owned(at, owned)
+		if out {
+			return win.INVALID_HANDLE_VALUE, true
+		}
+		if failed {
+			return win.INVALID_HANDLE_VALUE, false
+		}
+		if after == "" {
+			return next, false
+		}
+		at, owned, rest = next, true, after
+	}
+}
+
+// The first piece is absolute, so CreateFileW opens it. A later piece is
+// relative to the directory the previous piece opened.
+@(private = "file")
+open_piece :: proc(
+	parent: win.HANDLE,
+	owned: bool,
+	piece: string,
+	buf: ^[dynamic]u16,
+) -> (
+	h: win.HANDLE,
+	failed, oom: bool,
+) {
+	wide, ok := widen(piece, buf)
+	if !ok {
+		return win.INVALID_HANDLE_VALUE, true, true
+	}
+	units := wide_units(buf[:])
+	if units == 0 || units > UNICODE_PATH_MAX {
+		return win.INVALID_HANDLE_VALUE, true, false
+	}
+	if !owned {
+		h = create_directory(wide)
+		return h, h == win.INVALID_HANDLE_VALUE, false
+	}
+	h = open_relative_directory(parent, buf[:units])
+	return h, h == win.INVALID_HANDLE_VALUE, false
+}
+
+@(private = "file")
+close_owned :: proc(h: win.HANDLE, owned: bool) {
+	if owned {
+		win.CloseHandle(h)
+	}
+}
+
+// Open the relative path name from dir, with the options CreateFileW uses for
+// FILE_FLAG_BACKUP_SEMANTICS and no FILE_FLAG_OVERLAPPED (kernelbase
+// CreateFileW): backup intent, synchronous, case-insensitive, and not
+// FILE_OPEN_REPARSE_POINT, so a junction is followed as the single call follows
+// one. The id check in list_dir still refuses a directory swapped for a link.
+@(private = "file")
+open_relative_directory :: proc(dir: win.HANDLE, name: []u16) -> win.HANDLE {
+	if len(name) == 0 || len(name) > UNICODE_PATH_MAX {
+		return win.INVALID_HANDLE_VALUE
+	}
+	us := counted(name)
+	oa := relative(dir, &us)
+	oa.Attributes = OBJ_CASE_INSENSITIVE
+	h: win.HANDLE
+	iosb: win.IO_STATUS_BLOCK
+	status := win.NtCreateFile(
+		&h,
+		win.FILE_LIST_DIRECTORY | win.FILE_READ_ATTRIBUTES | win.SYNCHRONIZE,
+		&oa,
+		&iosb,
+		nil,
+		0,
+		win.FILE_SHARE_READ | win.FILE_SHARE_WRITE | win.FILE_SHARE_DELETE,
+		FILE_OPEN,
+		FILE_OPEN_FOR_BACKUP_INTENT | kstat.FILE_SYNCHRONOUS_IO_NONALERT,
+		nil,
+		0,
+	)
+	if status < 0 || h == nil {
+		return win.INVALID_HANDLE_VALUE
+	}
+	return h
+}
+
+// How many UTF-16 units are in buf before the NUL widen writes.
+@(private = "file")
+wide_units :: proc(buf: []u16) -> int {
+	n := 0
+	for n < len(buf) && buf[n] != 0 {
+		n += 1
+	}
+	return n
+}
+
+/*
 What a reader needs to know of the volume a directory is on, kept per worker by
 serial number, so it is asked once per volume rather than once per directory.
 
@@ -568,6 +726,9 @@ The path a directory is opened by, with the \\?\ prefix that lifts the 260-chara
 limit and turns off every rewriting of the path on the way to the kernel. Only the
 root a walk starts from arrives without it: it is made absolute here, and every
 directory found below it is joined onto the prefixed form, so is already in it.
+
+The prefix does not lift the kernel's limit of 32,767 UTF-16 units in one
+UNICODE_STRING. A directory past that is opened by open_pieces, not here.
 
 Not ok when the path cannot be made absolute or there is no room to, either of which
 the caller treats as a directory it could not open.
@@ -809,6 +970,13 @@ FILE_SUPPORTS_HARD_LINKS :: 0x00400000
 FILE_OPEN :: 1
 @(private = "file")
 FILE_NON_DIRECTORY_FILE :: 0x00000040
+// NtCreateFile options and object attributes that CreateFileW sets for this
+// open, from <winternl.h>. FILE_FLAG_BACKUP_SEMANTICS becomes backup intent
+// rather than FILE_NON_DIRECTORY_FILE. OBJ_CASE_INSENSITIVE is 0x40.
+@(private = "file")
+FILE_OPEN_FOR_BACKUP_INTENT :: 0x00004000
+@(private = "file")
+OBJ_CASE_INSENSITIVE :: 0x00000040
 
 // Not in core:sys/windows. NtQueryInformationByName is documented as available from
 // Windows 10 1703.
