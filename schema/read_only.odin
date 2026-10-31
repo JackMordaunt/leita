@@ -39,8 +39,9 @@ read_only_reason :: proc(path: string, err: sqlite3.Error) -> string {
 }
 
 // read_only first uses SQLite's WAL-aware read-only mode. A checkpointed
-// WAL database without sidecars may still require writing its directory;
-// only then try a sidecar-free, exclusively guarded memory image.
+// WAL database may still require writing its directory to create the wal
+// index. When that write cannot be done, a headerless WAL left by the
+// failed open holds no pages; the guarded memory image reads the main file.
 read_only :: proc(path: string, wait: time.Duration) -> (db: sqlite3.Db, err: sqlite3.Error) {
 	db, err = sqlite3.open(path, {read_only = true, busy_timeout = wait})
 	if err == nil {
@@ -58,7 +59,10 @@ read_only :: proc(path: string, wait: time.Duration) -> (db: sqlite3.Db, err: sq
 		return
 	}
 	delete(err.?.text) // the WAL-aware attempt failed; the next result owns its own fault
-	return memory_image(path)
+	// The failed open may have created a zero-length WAL and a short -shm.
+	// Those hold no committed pages. A WAL long enough for its header still
+	// blocks the image, as does an empty sidecar passed straight to it.
+	return memory_image(path, true)
 }
 
 // table_exists distinguishes a genuinely absent old table from a failed
@@ -134,8 +138,17 @@ refuse_image :: proc(text: string, code := sqlite3.Code.Read_Only) -> sqlite3.Er
 
 // This never opens a raw OS handle to the database: closing such a handle
 // can drop another SQLite connection's process-scoped POSIX locks.
+// headerless_wal_ok is set only after SQLite's own read-only open has
+// already failed for lack of storage. A direct caller must not set it: an
+// empty sidecar, or a database busy with a writer, stays a refusal.
 @(private)
-memory_image :: proc(path: string) -> (db: sqlite3.Db, err: sqlite3.Error) {
+memory_image :: proc(
+	path: string,
+	headerless_wal_ok := false,
+) -> (
+	db: sqlite3.Db,
+	err: sqlite3.Error,
+) {
 	source, open_err := sqlite3.open(path, {no_create = true})
 	if open_err != nil {
 		delete(open_err.?.text)
@@ -170,11 +183,10 @@ memory_image :: proc(path: string) -> (db: sqlite3.Db, err: sqlite3.Error) {
 		}
 		physical_readonly = true
 	}
-	if !sidecar_free(canonical) {
+	if image_blocked(canonical, headerless_wal_ok) {
 		return {}, refuse_image("Saved data has a journal or WAL; it cannot be safely read without its live state.")
 	}
-	moved: c.int
-	if sqlite3.sqlite3_file_control(source.handle, "main", 20, &moved) != 0 || moved != 0 {
+	if file_moved(source) {
 		return {}, refuse_image("Saved data moved while opening; no read-only snapshot was taken.")
 	}
 	n: i64
@@ -187,30 +199,27 @@ memory_image :: proc(path: string) -> (db: sqlite3.Db, err: sqlite3.Error) {
 	// SQLite recommends 20 bytes of padding even for a readonly image:
 	// https://sqlite.org/c3ref/deserialize.html . SQLite owns this allocation.
 	data := cast([^]u8)sqlite3.sqlite3_malloc64(u64(n + 20))
-	if data ==
-	   nil {
-	   	return {}, refuse_image("Not enough memory to read saved data without writing storage.", .No_Mem)
-	   }
+	if data == nil {
+		return {}, refuse_image("Not enough memory to read saved data without writing storage.", .No_Mem)
+	}
 	transferred := false
 	defer if !transferred {sqlite3.sqlite3_free(data)}
 	for at: i64 = 0; at < n; {
 		count := min(n - at, 1024 * 1024)
-		if m.read(file, &data[at], c.int(count), at) !=
-		   0 {
-		   	return {}, refuse_image("Saved database could not be read completely.")
-		   }
+		if m.read(file, &data[at], c.int(count), at) != 0 {
+			return {}, refuse_image("Saved database could not be read completely.")
+		}
 		at += count
 	}
 	for i in n ..< n + 20 {data[i] = 0}
-	if string(data[:16]) !=
-	   "SQLite format 3\x00" {
-	   	return {}, refuse_image("file is not a database", .Not_A_Db)
-	   }
+	if string(data[:16]) != "SQLite format 3\x00" {
+		return {}, refuse_image("file is not a database", .Not_A_Db)
+	}
 	after: i64
-	if m.size(file, &after) != 0 || after != n || !sidecar_free(canonical) {
+	if m.size(file, &after) != 0 || after != n || image_blocked(canonical, headerless_wal_ok) {
 		return {}, refuse_image("Saved database changed while reading; no read-only snapshot was taken.")
 	}
-	if sqlite3.sqlite3_file_control(source.handle, "main", 20, &moved) != 0 || moved != 0 {
+	if file_moved(source) {
 		return {}, refuse_image("Saved database moved while reading; no read-only snapshot was taken.")
 	}
 	if physical_readonly {
@@ -222,8 +231,8 @@ memory_image :: proc(path: string) -> (db: sqlite3.Db, err: sqlite3.Error) {
 	if (data[18] != 1 && data[18] != 2) || (data[19] != 1 && data[19] != 2) {
 		return {}, refuse_image("Saved database uses an unsupported file format.", .Not_A_Db)
 	}
-	// A checked, sidecar-free database is checkpointed. Deserialized
-	// images cannot use WAL: change only this private memory copy's format
+	// Deserialized images cannot use WAL. No WAL frame was present, so the
+	// main file is the checkpoint: change only this private copy's format
 	// bytes to rollback mode, as SQLite's deserialize documentation directs.
 	data[18], data[19] = 1, 1
 	db, err = sqlite3.open(sqlite3.MEMORY)
@@ -251,6 +260,53 @@ sidecar_free :: proc(path: string) -> bool {
 		}
 	}
 	return true
+}
+
+// image_blocked refuses every sidecar unless the caller has already shown
+// that SQLite cannot open the store. In that case only a journal with bytes,
+// or a WAL long enough to contain its 32-byte header, is live state. A
+// headerless WAL is what a failed open leaves when the wal index cannot be
+// sized, and SQLite itself then reads the main file alone.
+@(private)
+image_blocked :: proc(path: string, headerless_wal_ok: bool) -> bool {
+	if !headerless_wal_ok {
+		return !sidecar_free(path)
+	}
+	if sidecar_bytes(path, "-journal") > 0 {
+		return true
+	}
+	return sidecar_bytes(path, "-wal") >= 32
+}
+
+// sidecar_bytes fails closed: an unreadable sidecar is treated as live.
+@(private)
+sidecar_bytes :: proc(path, suffix: string) -> i64 {
+	full := strings.concatenate({path, suffix}, context.temp_allocator)
+	size, missing, known := file_size(full)
+	if missing {
+		return 0
+	}
+	if !known {
+		return max(i64)
+	}
+	return size
+}
+
+// file_moved asks SQLITE_FCNTL_HAS_MOVED (20). The Windows VFS does not
+// implement it and returns SQLITE_NOTFOUND, leaving the output untouched.
+// SQLite assumes the file stayed put in that case. Any other failure is
+// treated as a move, so a VFS that tried and could not say still refuses.
+@(private)
+file_moved :: proc(db: sqlite3.Db) -> bool {
+	moved: c.int
+	rc := sqlite3.sqlite3_file_control(db.handle, "main", 20, &moved)
+	if rc == c.int(sqlite3.Code.Not_Found) {
+		return false
+	}
+	if rc != 0 {
+		return true
+	}
+	return moved != 0
 }
 
 // require_select validates a store's readable schema without running DDL.
