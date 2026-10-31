@@ -495,7 +495,7 @@ stop :: proc(h: ^Host) {
 	thumbs_destroy(h)
 	scan_end(&h.desk)
 	stream.destroy(h.p)
-	delete(h.desk.live)
+	live_clear(&h.desk)
 	delete(h.desk.reclaimable)
 	for _, path in h.desk.recycle_paths {
 		delete(path)
@@ -541,7 +541,15 @@ on_need :: proc(user: rawptr, need: ui.Need, added: bool) {
 	case ui.need_is(need, query.Settings):
 		q = query.Settings{}
 	case ui.need_is(need, query.Search):
-		q, _ = ui.need_as(need, query.Search)
+		// The term is unmarshalled into this frame's temp allocator. The
+		// frame frees that before the desk, which may be busy with the
+		// scan, clones it. A search would then run on the length of the
+		// term and zeros for its bytes, and answer no hits.
+		s, ok := ui.need_as(need, query.Search)
+		if added && ok {
+			s.term = strings.clone(s.term)
+		}
+		q = s
 	case ui.need_is(need, query.Monitor):
 		q = query.Monitor{}
 	case ui.need_is(need, query.Update):
@@ -624,7 +632,13 @@ desk_main :: proc(h: ^Host) {
 	defer release_temp()
 	for {
 		sync.sema_wait(&h.desk_wake)
+		// stop joins the pool before it wakes this thread. A Search term
+		// cloned on the UI thread is still in a port until some node takes
+		// the need, and the pool will not. drain is only safe once no other
+		// thread is running the pipeline.
 		if sync.atomic_load(&h.stopping) {
+			stream.drain(h.p)
+			free_all(context.temp_allocator)
 			return
 		}
 		stream.drain_pinned(h.p)
@@ -679,19 +693,44 @@ updated_in :: proc(u: Updated) -> Desk_In {
 	return u
 }
 
+// live_put stores q for key. A Search term was cloned on the UI thread and
+// is this map's to free: find_open clones its own copy for the finding.
+live_put :: proc(d: ^Desk, key: ui.Need_Key, q: Query) {
+	live_free(d, key)
+	d.live[key] = q
+}
+
+// live_free drops key and frees the Search term stored for it.
+live_free :: proc(d: ^Desk, key: ui.Need_Key) {
+	if s, ok := d.live[key].(query.Search); ok {
+		delete(s.term)
+	}
+	delete_key(&d.live, key)
+}
+
+// live_clear frees every Search term the map still holds, then the map.
+live_clear :: proc(d: ^Desk) {
+	for _, q in d.live {
+		if s, ok := q.(query.Search); ok {
+			delete(s.term)
+		}
+	}
+	delete(d.live)
+}
+
 // desk_step is the desk: one need, command or tick at a time, on the desk thread.
 desk_step :: proc(d: ^Desk, v: Desk_In) {
 	v := v
 	switch &e in v {
 	case Need_Event:
 		if !e.added {
-			delete_key(&d.live, e.key)
+			live_free(d, e.key)
 			if _, is := e.q.(query.Search); is {
 				find_close(d, e.key)
 			}
 			return
 		}
-		d.live[e.key] = e.q
+		live_put(d, e.key, e.q)
 		#partial switch q in e.q {
 		case query.Search:
 			find_open(d, e.key, q)
