@@ -21,6 +21,9 @@ foreign freebsd_mount {
 // the same st_dev and st_ino as the underlying filesystem. No allocation.
 mount_id_freebsd :: proc(fd: posix.FD) -> (id: [2]i32, ok: bool) {
 	ok = leita_freebsd_mount_id(c.int(fd), &id) == 0
+	// A restricted jail can hide every fsid as zero. Those mounts cannot be
+	// distinguished, so refusing the identity is safer than crossing aliases.
+	ok = ok && id != [2]i32{}
 	return
 }
 
