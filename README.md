@@ -465,6 +465,7 @@ shared data and snapshots can make file totals an upper bound: file totals,
 dataset/pool usage and bytes freed by deletion are different quantities.
 Reclaimable bytes remain unknown. The current implementation still needs
 new native UFS and ZFS fixture acceptance, including permissions and mount
-boundaries. Earlier experiments on FreeBSD 15.1 do not validate this source
+boundaries. Jails that hide mount identities cannot currently be scanned;
+visible mount metadata is required. Earlier experiments on FreeBSD 15.1 do not validate this source
 revision; a cross-platform source check and a successful CI build alone do
 not establish those filesystem guarantees.
