@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 import tarfile
 import tempfile
@@ -14,6 +15,55 @@ from unittest.mock import patch
 SPEC = importlib.util.spec_from_file_location("freebsd_native", Path(__file__).with_name("native.py"))
 native = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(native)
+
+
+class WatchdogTests(unittest.TestCase):
+    def test_timeout_kills_sleeping_descendant_and_preserves_progress(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            ready = root / "child.pid"
+            child = ("import os,signal,time; from pathlib import Path; "
+                     "signal.signal(signal.SIGTERM,signal.SIG_IGN); "
+                     f"Path({str(ready)!r}).write_text(str(os.getpid())); time.sleep(30)")
+            parent = ("import subprocess,sys,time; "
+                      f"subprocess.Popen([sys.executable,'-c',{child!r}]); "
+                      "print('before timeout',flush=True); time.sleep(30)")
+            with patch.object(native, "ROOT", root), self.assertRaises(subprocess.TimeoutExpired) as failure:
+                native.run([sys.executable, "-c", parent], timeout=1, text=True,
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.assertIn("before timeout", failure.exception.output)
+            self.assertTrue(ready.exists(), "the descendant must be running before the timeout")
+            child_pid = int(ready.read_text())
+            state = subprocess.run(["ps", "-o", "stat=", "-p", str(child_pid)],
+                                   capture_output=True, text=True, check=False).stdout.strip()
+            self.assertTrue(not state or state.startswith("Z"),
+                            f"the child was left running after timeout: {state}")
+            events = [json.loads(line) for line in (root / "build/freebsd/progress.jsonl").read_text().splitlines()]
+            self.assertEqual([event["state"] for event in events], ["start", "timeout"])
+            self.assertEqual(events[-1]["timeout"], 1)
+
+    def test_captured_command_output_is_unchanged(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(native, "ROOT", Path(directory)):
+            result = native.run([sys.executable, "-c", "print('value with spaces')"],
+                                text=True, stdout=subprocess.PIPE)
+            self.assertEqual(result.stdout, "value with spaces\n")
+            self.assertEqual(result.returncode, 0)
+
+    def test_all_package_suite_keeps_tests_and_names_state_changes(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(native, "ROOT", Path(directory)), \
+             patch.object(native, "value", return_value="-vet -define:LEITA_VERSION=v9.8.7"), \
+             patch.object(native, "run") as command, patch.dict(os.environ, {"ODIN": "odin", "SAN": ""}):
+            native.test_suite()
+        compile_call, execute_call = command.call_args_list
+        compile_argv = compile_call.args[0]
+        self.assertEqual(compile_argv[:3], ["odin", "build", "cmd/cli"])
+        self.assertIn("-all-packages", compile_argv)
+        self.assertIn("-build-mode:test", compile_argv)
+        self.assertIn("-define:ODIN_TEST_LOG_STATE_CHANGES=true", compile_argv)
+        self.assertIn("-define:LEITA_VERSION=v9.8.7", compile_argv)
+        self.assertEqual(compile_call.kwargs["timeout"], 600)
+        self.assertEqual(execute_call.kwargs["timeout"], 1200)
+        self.assertEqual(str(execute_call.args[0][0]), compile_argv[-1].removeprefix("-out:"))
 
 
 class DependencyTests(unittest.TestCase):

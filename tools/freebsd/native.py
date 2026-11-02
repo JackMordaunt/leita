@@ -4,6 +4,9 @@ import argparse
 import hashlib
 import json
 import os
+import signal
+import sys
+import time
 from pathlib import Path
 import platform
 import re
@@ -16,8 +19,51 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def run(argv, **kwargs):
-    return subprocess.run([str(arg) for arg in argv], check=True, **kwargs)
+def progress(state, argv, **details):
+    event = dict(state=state, argv=argv, at=time.time(), **details)
+    destination = ROOT / "build" / "freebsd" / "progress.jsonl"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with destination.open("a") as stream:
+        stream.write(json.dumps(event) + "\n")
+    print(f"[freebsd {state}] {shlex.join(argv)} {json.dumps(details)}", file=sys.stderr, flush=True)
+
+
+def kill_group(process, sig):
+    try:
+        os.killpg(process.pid, sig)
+    except ProcessLookupError:
+        pass
+
+
+def run(argv, timeout=30, **kwargs):
+    """Bound the whole compiler/test process group and retain timeout evidence."""
+    argv = [str(arg) for arg in argv]
+    started = time.monotonic()
+    progress("start", argv, timeout=timeout)
+    process = subprocess.Popen(argv, start_new_session=True, **kwargs)
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        kill_group(process, signal.SIGTERM)
+        try:
+            stdout, stderr = process.communicate(timeout=2)
+        except subprocess.TimeoutExpired:
+            kill_group(process, signal.SIGKILL)
+            stdout, stderr = process.communicate()
+        finally:
+            # A parent may exit on TERM while a child ignores it. Kill the
+            # remaining group even when communicate has already returned.
+            kill_group(process, signal.SIGKILL)
+        progress("timeout", argv, timeout=timeout, elapsed=time.monotonic() - started)
+        raise subprocess.TimeoutExpired(argv, timeout, output=stdout, stderr=stderr)
+    except BaseException:
+        kill_group(process, signal.SIGKILL)
+        process.communicate()
+        raise
+    progress("end", argv, returncode=process.returncode, elapsed=time.monotonic() - started)
+    completed = subprocess.CompletedProcess(argv, process.returncode, stdout, stderr)
+    completed.check_returncode()
+    return completed
 
 
 def value(name):
@@ -62,7 +108,7 @@ def dependencies():
     if not (jm / "justfile").exists():
         if jm != ROOT / "jm":
             raise SystemExit(f"JM collection is missing: {jm}")
-        run(["git", "submodule", "update", "--init", "jm"], cwd=ROOT)
+        run(["git", "submodule", "update", "--init", "jm"], cwd=ROOT, timeout=300)
     cc = shlex.split(os.environ.get("CC", "cc"))
     ar = shlex.split(os.environ.get("AR", "ar"))
     defines_text = sqlite_defines(jm / "justfile")
@@ -73,7 +119,7 @@ def dependencies():
         obj = output / f"{package}.o"
         archive = output / f"{package}.a"
         run(cc + ["-O2", "-fPIC", "-c", jm / package / "vendor" / f"{package}.c",
-                  "-o", obj] + defines)
+                  "-o", obj] + defines, timeout=300)
         archive.unlink(missing_ok=True)
         run(ar + ["rcs", archive, obj])
         if package == "sqlite3":
@@ -83,7 +129,7 @@ def dependencies():
     obj = ROOT / "build" / "freebsd" / "native.o"
     obj.parent.mkdir(parents=True, exist_ok=True)
     run(cc + ["-std=c11", "-O2", "-fPIC", "-Wall", "-Wextra", "-Werror", "-c",
-              ROOT / "scan" / "native_freebsd.c", "-o", obj])
+              ROOT / "scan" / "native_freebsd.c", "-o", obj], timeout=300)
     archive = output / "freebsd.a"
     archive.unlink(missing_ok=True)
     run(ar + ["rcs", archive, obj])
@@ -108,17 +154,27 @@ def build(mode):
     # archives were rebuilt above; flags and version still come from the root.
     odin = shlex.split(os.environ.get("ODIN", "odin"))
     run(odin + ["build", "cmd/cli", "-target:freebsd_amd64"] + options +
-        shlex.split(value("flags")) + [f"-out:{binary}"], cwd=ROOT)
+        shlex.split(value("flags")) + [f"-out:{binary}"], cwd=ROOT, timeout=600)
     return binary
+
+
+def test_suite():
+    output = ROOT / "build" / "freebsd"
+    output.mkdir(parents=True, exist_ok=True)
+    flags = shlex.split(value("flags"))
+    odin = shlex.split(os.environ.get("ODIN", "odin"))
+    binary = output / "tests"
+    # Separate compiler and suite budgets so timeout evidence identifies which
+    # stalled; every imported package and test still runs.
+    run(odin + ["build", "cmd/cli", "-build-mode:test", "-all-packages", "-debug",
+                "-define:ODIN_TEST_LOG_STATE_CHANGES=true", "-define:ODIN_TEST_FANCY=false"] + flags +
+        shlex.split(os.environ.get("SAN", "")) + [f"-out:{binary}"], cwd=ROOT, timeout=600)
+    run([binary], cwd=ROOT, timeout=1200)
 
 
 def tests():
     binary = build("speed")
-    output = ROOT / "build" / "freebsd"
-    flags = shlex.split(value("flags"))
-    odin = shlex.split(os.environ.get("ODIN", "odin"))
-    run(odin + ["test", "cmd/cli", "-all-packages", "-debug"] + flags +
-        shlex.split(os.environ.get("SAN", "")) + [f"-out:{output / 'tests'}"], cwd=ROOT)
+    test_suite()
     # Run against a private home so no installed licence/history is read or changed.
     with tempfile.TemporaryDirectory(prefix="leita-freebsd-") as directory:
         work = Path(directory)
@@ -129,7 +185,7 @@ def tests():
         env = dict(os.environ, HOME=str(work / "home"), XDG_DATA_HOME=str(work / "data"),
                    XDG_CONFIG_HOME=str(work / "config"), LEITA_LICENCE="")
         report = work / "report.json"
-        run([binary, "--whole", "--no-history", "--report", report, tree], env=env)
+        run([binary, "--whole", "--no-history", "--report", report, tree], env=env, timeout=60)
         parsed = json.loads(report.read_text())
         expected = (tree / "file.txt").stat().st_blocks * 512
         if parsed.get("totals", {}).get("bytes") != expected:

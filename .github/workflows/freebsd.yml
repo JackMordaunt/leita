@@ -59,5 +59,6 @@ jobs:
             build/package/*freebsd-amd64.tar.gz
             build/package/*freebsd-amd64.tar.gz.sha256
             build/freebsd/fixtures
+            build/freebsd/progress.jsonl
           if-no-files-found: warn
           retention-days: 14
