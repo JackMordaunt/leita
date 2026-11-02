@@ -862,17 +862,21 @@ journeys: deps
     ODIN="{{odin}}" LEITA_TEST_LICENCE='{{test_licence}}' LEITA_JOURNEY_ARTIFACTS="${LEITA_JOURNEY_ARTIFACTS:-{{root}}/build/journeys/artifacts}" tools/journeys/run journeys/gui build/test/journeys-gui{{exe}} -debug {{san}} {{flags}} {{curl_open}} -define:LEITA_LICENCE_KEY={{test_licence_key}} -define:LEITA_RELEASED=2026-10-24T00:00:00Z
 
 # The window as the operating system drives it, kept small: tools/journeys/window.py
-# starts the address-sanitizer window on the made-up disk, finds it, gives it the keyboard,
+# starts the window on the made-up disk, finds it, gives it the keyboard,
 # presses the search shortcut and types through the window system (xdotool on an
 # Xvfb display on Linux, SendInput on Windows, System Events on macOS) and closes
 # it as a person does; journeys/window replays what the window recorded and checks
 # the accessibility tree. Evidence -> build/journeys/window.
-window-journey: (gui "asan")
+# Windows uses speed, following its existing policy of running the UI without
+# ASan; Linux and macOS use asan. The build and launched path use the same mode.
+window_journey_mode := if os() == "windows" { "speed" } else { "asan" }
+
+window-journey: (gui window_journey_mode)
     #!{{bash}}
     set -euo pipefail
     out="{{root}}/build/journeys/window"
     py=$(command -v python3 || command -v python)
-    run=("$py" tools/journeys/window.py "build/asan/app/{{gui}}{{exe}}" "$out")
+    run=("$py" tools/journeys/window.py "build/{{window_journey_mode}}/app/{{gui}}{{exe}}" "$out")
     if [ "{{os()}}" = linux ]; then run=(xvfb-run -a -s "-screen 0 1600x1000x24" "${run[@]}"); fi
     "${run[@]}"
     LEITA_WINDOW_RECORDING="$out/session.rec" {{odin}} test journeys/window -debug {{san}} {{flags}} -out:build/test/journeys-window{{exe}}
