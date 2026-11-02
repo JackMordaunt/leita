@@ -8,6 +8,8 @@ import "core:path/filepath"
 import "core:reflect"
 import "core:strings"
 import "core:sync"
+import "core:sys/posix"
+import win "core:sys/windows"
 import "core:testing"
 import "core:thread"
 import "core:time"
@@ -20,6 +22,10 @@ import "../human"
 import "../scan"
 import "../term"
 import "../version"
+
+// The allocation oracle calls the platform API selected below.
+_ :: posix
+_ :: win
 
 // --version names the build and where it runs.
 @(test)
@@ -117,13 +123,9 @@ a_report_of_a_directory_reads_back :: proc(t: ^testing.T) {
 	defer os.remove_all(root)
 	testing.expect(t, os.make_directory(root) == nil, "could not make the root")
 	testing.expect(t, os.make_directory(fmt.tprintf("%s/sub", root)) == nil)
-	write :: proc(t: ^testing.T, path: string, size: int) {
-		body := make([]byte, size, context.temp_allocator)
-		testing.expectf(t, os.write_entire_file(path, body) == nil, "could not write %s", path)
-	}
-	write(t, fmt.tprintf("%s/a.txt", root), 2000)
-	write(t, fmt.tprintf("%s/sub/b.mp4", root), 5000)
-	write(t, fmt.tprintf("%s/sub/%s", root, QUOTED_NAME), 1500)
+	write_payload(t, fmt.tprintf("%s/a.txt", root), 2000)
+	write_payload(t, fmt.tprintf("%s/sub/b.mp4", root), 5000)
+	write_payload(t, fmt.tprintf("%s/sub/%s", root, QUOTED_NAME), 1500)
 	out := fmt.tprintf("%s.json", root)
 	defer os.remove(out)
 
@@ -138,11 +140,26 @@ a_report_of_a_directory_reads_back :: proc(t: ^testing.T) {
 	if !is_object {
 		return
 	}
-	testing.expect_value(t, top["schema"].(json.String), "leita.report/1")
-	totals := top["totals"].(json.Object)
-	testing.expect_value(t, totals["files"].(json.Integer), 3)
-	testing.expect_value(t, totals["directories"].(json.Integer), 1)
-	files := top["largest_files"].(json.Array)
+	schema, schema_string := top["schema"].(json.String)
+	totals, totals_object := top["totals"].(json.Object)
+	if !testing.expect(
+		t,
+		schema_string && totals_object,
+		"schema and totals have their documented types",
+	) {return}
+	testing.expect_value(t, schema, "leita.report/1")
+	file_count, file_integer := totals["files"].(json.Integer)
+	directory_count, directory_integer := totals["directories"].(json.Integer)
+	total_bytes, total_integer := totals["bytes"].(json.Integer)
+	if !testing.expect(
+		t,
+		file_integer && directory_integer && total_integer,
+		"totals are integer counts",
+	) {return}
+	testing.expect_value(t, file_count, 3)
+	testing.expect_value(t, directory_count, 1)
+	files, files_array := top["largest_files"].(json.Array)
+	if !testing.expect(t, files_array, "largest_files is an array") {return}
 	testing.expect_value(t, len(files), 3)
 	// The report joins names under the target as scan.resolve spells it, with
 	// the platform separator. That spelling is what the assertion compares.
@@ -153,15 +170,49 @@ a_report_of_a_directory_reads_back :: proc(t: ^testing.T) {
 	if name_err == nil {
 		canonical = scan.location(named, context.temp_allocator)
 	}
-	testing.expect_value(
+	allocations := make(map[string]i64)
+	for c in ([]struct {
+			path:  string,
+			bytes: i64,
+		}{{fmt.tprintf("%s%sa.txt", canonical, scan.SEPARATOR), fixture_allocation(t, fmt.tprintf("%s/a.txt", root))}, {fmt.tprintf("%s%ssub%sb.mp4", canonical, scan.SEPARATOR, scan.SEPARATOR), fixture_allocation(t, fmt.tprintf("%s/sub/b.mp4", root))}, {fmt.tprintf("%s%ssub%s%s", canonical, scan.SEPARATOR, scan.SEPARATOR, QUOTED_NAME), fixture_allocation(t, fmt.tprintf("%s/sub/%s", root, QUOTED_NAME))}}) {
+		allocations[c.path] = c.bytes
+	}
+	defer delete(allocations)
+	previous: i64 = max(i64)
+	charged: i64
+	for value in files {
+		entry, entry_ok := value.(json.Object)
+		if !testing.expect(t, entry_ok, "a file entry is an object") {return}
+		path, path_ok := entry["path"].(json.String)
+		bytes, bytes_ok := entry["bytes"].(json.Integer)
+		if !testing.expect(
+			t,
+			path_ok && bytes_ok,
+			"a file carries its path and allocation",
+		) {return}
+		want, found := allocations[path]
+		testing.expect(t, found, "the report named a fixture file")
+		testing.expect_value(t, bytes, want)
+		testing.expect(t, bytes <= previous, "largest files are sorted by allocation")
+		previous = bytes
+		charged += bytes
+		delete_key(&allocations, path)
+	}
+	testing.expect_value(t, len(allocations), 0)
+	testing.expect_value(t, total_bytes, charged)
+	_, compared_null := top["compared"].(json.Null)
+	testing.expect(t, compared_null, "no store, so no earlier scan")
+	space, space_object := top["space"].(json.Object)
+	if !testing.expect(t, space_object, "the disk it is on was measured") {return}
+	capacity, capacity_integer := space["total"].(json.Integer)
+	free, free_integer := space["free"].(json.Integer)
+	if !testing.expect(
 		t,
-		files[0].(json.Object)["path"].(json.String),
-		fmt.tprintf("%s%ssub%sb.mp4", canonical, scan.SEPARATOR, scan.SEPARATOR),
-	)
-	testing.expect(t, top["compared"].(json.Null) == nil, "no store, so no earlier scan")
-	space := top["space"].(json.Object)
-	testing.expect(t, space["total"].(json.Integer) > 0, "the disk it is on was measured")
-	testing.expect(t, space["free"].(json.Integer) <= space["total"].(json.Integer))
+		capacity_integer && free_integer,
+		"capacity is measured in integer bytes",
+	) {return}
+	testing.expect(t, capacity > 0, "the disk it is on was measured")
+	testing.expect(t, free <= capacity)
 }
 
 // A report named .pdf is a PDF, on the paper asked for.
@@ -240,14 +291,7 @@ no_threshold_flags_leaves_the_exit_code_unchanged :: proc(t: ^testing.T) {
 	os.remove_all(root)
 	defer os.remove_all(root)
 	testing.expect(t, os.make_directory(root) == nil, "could not make the root")
-	testing.expect(
-		t,
-		os.write_entire_file(
-			fmt.tprintf("%s/a.bin", root),
-			make([]byte, 4096, context.temp_allocator),
-		) ==
-		nil,
-	)
+	write_payload(t, fmt.tprintf("%s/a.bin", root), 4096)
 	out := fmt.tprintf("%s.json", root)
 	defer os.remove(out)
 
@@ -266,8 +310,15 @@ no_threshold_flags_leaves_the_exit_code_unchanged :: proc(t: ^testing.T) {
 	if !is_object {
 		return
 	}
-	testing.expect_value(t, top["totals"].(json.Object)["bytes"].(json.Integer), 4096)
-	testing.expect(t, top["thresholds"].(json.Null) == nil, "none was asked for")
+	allocated := fixture_allocation(t, fmt.tprintf("%s/a.bin", root))
+	testing.expect(t, allocated > 0, "the written fixture occupies disk space")
+	totals, totals_object := top["totals"].(json.Object)
+	if !testing.expect(t, totals_object, "the report has totals") {return}
+	bytes, bytes_integer := totals["bytes"].(json.Integer)
+	if !testing.expect(t, bytes_integer, "charged bytes are an integer") {return}
+	testing.expect_value(t, bytes, allocated)
+	_, thresholds_null := top["thresholds"].(json.Null)
+	testing.expect(t, thresholds_null, "none was asked for")
 }
 
 /*
@@ -327,9 +378,71 @@ keeps_events :: proc(t: ^testing.T, root: string) -> bool {
 }
 
 @(private)
-write_zeros :: proc(t: ^testing.T, path: string, size: int) {
+write_payload :: proc(t: ^testing.T, path: string, size: int) {
 	body := make([]byte, size, context.temp_allocator)
-	testing.expectf(t, os.write_entire_file(path, body) == nil, "could not write %s", path)
+	// Xorshift64 has no short repeated block for filesystem compression to fold.
+	// A zero-filled 2 MiB file on ZFS can occupy 512 bytes, below history's floor.
+	state: u64 = 0x4d595df4d0f33173
+	for &byte in body {
+		state ~= state << 13
+		state ~= state >> 7
+		state ~= state << 17
+		byte = u8(state)
+	}
+	file, err := os.open(path, {.Write, .Create, .Trunc})
+	if !testing.expectf(t, err == nil, "could not open %s: %v", path, err) {return}
+	defer os.close(file)
+	n, write_err := os.write(file, body)
+	testing.expectf(
+		t,
+		write_err == nil && n == len(body),
+		"could not write %s: %v",
+		path,
+		write_err,
+	)
+	if size > 0 {
+		// Finish delayed compression/allocation before measuring the fixture.
+		testing.expect_value(t, os.sync(file), nil)
+	}
+}
+
+// Allocation is measured independently of the scan so compression and filesystem
+// block rounding are not confused with the file's logical length.
+@(private)
+fixture_allocation :: proc(t: ^testing.T, path: string) -> i64 {
+	when ODIN_OS == .Windows {
+		wide := win.utf8_to_utf16(path, context.temp_allocator)
+		handle := win.CreateFileW(
+			win.wstring(raw_data(wide)),
+			win.FILE_READ_ATTRIBUTES,
+			win.FILE_SHARE_READ | win.FILE_SHARE_WRITE | win.FILE_SHARE_DELETE,
+			nil,
+			win.OPEN_EXISTING,
+			0,
+			nil,
+		)
+		if !testing.expect(
+			t,
+			handle != win.INVALID_HANDLE_VALUE,
+			"cannot measure fixture allocation",
+		) {return -1}
+		defer win.CloseHandle(handle)
+		info: win.FILE_STANDARD_INFO
+		if !testing.expect(
+			t,
+			bool(
+				win.GetFileInformationByHandleEx(handle, .FileStandardInfo, &info, size_of(info)),
+			),
+		) {return -1}
+		return i64(info.AllocationSize)
+	} else {
+		info: posix.stat_t
+		if !testing.expect(
+			t,
+			posix.stat(strings.clone_to_cstring(path, context.temp_allocator), &info) == .OK,
+		) {return -1}
+		return i64(info.st_blocks) * 512
+	}
 }
 
 // snapshot_count is how many scans the store at path keeps, of every place.
@@ -365,12 +478,20 @@ a_second_scan_reports_what_changed :: proc(t: ^testing.T) {
 	defer os.remove_all(root)
 	defer os.remove_all(filepath.dir(store))
 	big := fmt.tprintf("%s/big.bin", root)
-	write_zeros(t, big, 2 << 20)
+	write_payload(t, big, 2 << 20)
+	before := fixture_allocation(t, big)
+	if !testing.expect(
+		t,
+		before >= 1 << 20,
+		"the first file meets history's retained-entry floor",
+	) {return}
 
 	testing.expect_value(t, scan_and_say({target = root}, store), 0)
 	testing.expect_value(t, snapshot_count(t, store), 1)
 
-	write_zeros(t, big, 3 << 20)
+	write_payload(t, big, 3 << 20)
+	after := fixture_allocation(t, big)
+	if !testing.expect(t, after > before, "the fixture grew on disk") {return}
 	out := fmt.tprintf("%s.json", root)
 	defer os.remove(out)
 	testing.expect_value(t, scan_and_say({target = root, report = out}, store), 0)
@@ -386,12 +507,21 @@ a_second_scan_reports_what_changed :: proc(t: ^testing.T) {
 	}
 	_, compared := top["compared"].(json.Object)
 	testing.expect(t, compared, "the second scan is compared with the first")
-	files := top["largest_files"].(json.Array)
+	files, files_array := top["largest_files"].(json.Array)
+	if !testing.expect(t, files_array, "largest_files is an array") {return}
 	testing.expect_value(t, len(files), 1)
 	if len(files) == 1 {
-		f := files[0].(json.Object)
-		testing.expect_value(t, f["bytes_before"].(json.Integer), 2 << 20)
-		testing.expect_value(t, f["change"].(json.Integer), 1 << 20)
+		f, file_object := files[0].(json.Object)
+		if !testing.expect(t, file_object, "a reported file is an object") {return}
+		was, was_integer := f["bytes_before"].(json.Integer)
+		change, change_integer := f["change"].(json.Integer)
+		if !testing.expect(
+			t,
+			was_integer && change_integer,
+			"a retained file has integer history and change",
+		) {return}
+		testing.expect_value(t, was, before)
+		testing.expect_value(t, change, after - before)
 	}
 }
 
@@ -403,7 +533,7 @@ no_history_leaves_the_store_alone :: proc(t: ^testing.T) {
 	defer stdio_done()
 	root, store := fresh(t, "leita_no_history_cli")
 	defer os.remove_all(root)
-	write_zeros(t, fmt.tprintf("%s/a.bin", root), 1 << 20)
+	write_payload(t, fmt.tprintf("%s/a.bin", root), 1 << 20)
 
 	testing.expect_value(t, scan_and_say({target = root, no_history = true}, store), 0)
 	testing.expect(t, !os.exists(store), "the store was made")
@@ -412,33 +542,36 @@ no_history_leaves_the_store_alone :: proc(t: ^testing.T) {
 
 // With history on, a scan keeps the place's whole tree beside the store, where the
 // window and the monitor find it, whole or not; the next scan updates from it.
-@(test)
-a_scan_keeps_a_baseline_beside_the_store :: proc(t: ^testing.T) {
-	stdio_shared()
-	defer stdio_done()
-	root, store := fresh(t, "leita_baseline_cli")
-	defer os.remove_all(root)
-	defer os.remove_all(filepath.dir(store))
-	write_zeros(t, fmt.tprintf("%s/a.bin", root), 1 << 20)
-	target, _, err := scan.resolve(root)
-	testing.expect_value(t, err, scan.Error.None)
-	defer scan.target_destroy(&target)
-	baseline := history.baseline_path(
-		store,
-		scan.location(target, context.temp_allocator),
-		context.temp_allocator,
-	)
-	if !keeps_events(t, root) {
-		return
-	}
+// Reusable baselines require one of these platforms' change cursors.
+when ODIN_OS == .Linux || ODIN_OS == .Darwin || ODIN_OS == .Windows {
+	@(test)
+	a_scan_keeps_a_baseline_beside_the_store :: proc(t: ^testing.T) {
+		stdio_shared()
+		defer stdio_done()
+		root, store := fresh(t, "leita_baseline_cli")
+		defer os.remove_all(root)
+		defer os.remove_all(filepath.dir(store))
+		write_payload(t, fmt.tprintf("%s/a.bin", root), 1 << 20)
+		target, _, err := scan.resolve(root)
+		testing.expect_value(t, err, scan.Error.None)
+		defer scan.target_destroy(&target)
+		baseline := history.baseline_path(
+			store,
+			scan.location(target, context.temp_allocator),
+			context.temp_allocator,
+		)
+		if !keeps_events(t, root) {
+			return
+		}
 
-	testing.expect_value(t, scan_and_say({target = root, whole = true}, store), 0)
-	testing.expectf(t, os.exists(baseline), "no baseline at %s", baseline)
-	testing.expect(t, os.remove(baseline) == nil, "could not remove the baseline")
-	testing.expect_value(t, scan_and_say({target = root}, store), 0)
-	testing.expectf(t, os.exists(baseline), "no baseline at %s", baseline)
-	testing.expect_value(t, scan_and_say({target = root}, store), 0)
-	testing.expect_value(t, snapshot_count(t, store), 3)
+		testing.expect_value(t, scan_and_say({target = root, whole = true}, store), 0)
+		testing.expectf(t, os.exists(baseline), "no baseline at %s", baseline)
+		testing.expect(t, os.remove(baseline) == nil, "could not remove the baseline")
+		testing.expect_value(t, scan_and_say({target = root}, store), 0)
+		testing.expectf(t, os.exists(baseline), "no baseline at %s", baseline)
+		testing.expect_value(t, scan_and_say({target = root}, store), 0)
+		testing.expect_value(t, snapshot_count(t, store), 3)
+	}
 }
 
 /*
@@ -452,50 +585,53 @@ the baseline's, and that allocator is as empty when the scan begins as the binar
 Its draw loop frees this test's temp allocator too, so what the test reads after is in
 the heap. Without the fix it failed 4 runs in 4 (2026-10-13).
 */
-@(test)
-a_live_scan_keeps_a_baseline_beside_the_store :: proc(t: ^testing.T) {
-	stdio_shared()
-	defer stdio_done()
-	root, store := fresh(t, "leita_live_baseline_cli")
-	root = strings.clone(root)
-	defer delete(root)
-	store = strings.clone(store)
-	defer delete(store)
-	defer os.remove_all(root)
-	defer os.remove_all(filepath.dir(store))
-	defer remove_deep(root)
-	if !keeps_events(t, root) {
-		return
-	}
-	for d in 0 ..< 50 {
-		dir := fmt.tprintf("%s/d%02d", root, d)
-		testing.expect(t, os.make_directory(dir) == nil, "could not make a directory")
-		for i in 0 ..< 1000 {
-			write_zeros(t, fmt.tprintf("%s/f%04d", dir, i), 0)
+// Reusable baselines require one of these platforms' change cursors.
+when ODIN_OS == .Linux || ODIN_OS == .Darwin || ODIN_OS == .Windows {
+	@(test)
+	a_live_scan_keeps_a_baseline_beside_the_store :: proc(t: ^testing.T) {
+		stdio_shared()
+		defer stdio_done()
+		root, store := fresh(t, "leita_live_baseline_cli")
+		root = strings.clone(root)
+		defer delete(root)
+		store = strings.clone(store)
+		defer delete(store)
+		defer os.remove_all(root)
+		defer os.remove_all(filepath.dir(store))
+		defer remove_deep(root)
+		if !keeps_events(t, root) {
+			return
 		}
-	}
-	// The largest thing, whose path each frame's line spells, deep and long enough
-	// to reach past where the scan put the baseline's path.
-	for depth in 1 ..= DEPTH {
-		made := os.make_directory(long(deep(root, depth)))
-		testing.expect(t, made == nil, "could not make a deep directory")
-	}
-	write_zeros(t, long(fmt.tprintf("%s/big.bin", deep(root, DEPTH))), 1 << 20)
-	target, _, err := scan.resolve(root)
-	testing.expect_value(t, err, scan.Error.None)
-	defer scan.target_destroy(&target)
-	baseline := history.baseline_path(store, scan.location(target, context.temp_allocator))
-	defer delete(baseline)
+		for d in 0 ..< 50 {
+			dir := fmt.tprintf("%s/d%02d", root, d)
+			testing.expect(t, os.make_directory(dir) == nil, "could not make a directory")
+			for i in 0 ..< 1000 {
+				write_payload(t, fmt.tprintf("%s/f%04d", dir, i), 0)
+			}
+		}
+		// The largest thing, whose path each frame's line spells, deep and long enough
+		// to reach past where the scan put the baseline's path.
+		for depth in 1 ..= DEPTH {
+			made := os.make_directory(long(deep(root, depth)))
+			testing.expect(t, made == nil, "could not make a deep directory")
+		}
+		write_payload(t, long(fmt.tprintf("%s/big.bin", deep(root, DEPTH))), 1 << 20)
+		target, _, err := scan.resolve(root)
+		testing.expect_value(t, err, scan.Error.None)
+		defer scan.target_destroy(&target)
+		baseline := history.baseline_path(store, scan.location(target, context.temp_allocator))
+		defer delete(baseline)
 
-	free_all(context.temp_allocator)
-	live := Options {
-		target = root,
-		live   = true,
-		whole  = true,
-		gentle = true,
+		free_all(context.temp_allocator)
+		live := Options {
+			target = root,
+			live   = true,
+			whole  = true,
+			gentle = true,
+		}
+		testing.expect_value(t, scan_and_say(live, store), 0)
+		testing.expectf(t, os.exists(baseline), "no baseline at %s", baseline)
 	}
-	testing.expect_value(t, scan_and_say(live, store), 0)
-	testing.expectf(t, os.exists(baseline), "no baseline at %s", baseline)
 }
 
 // How many directories of 200 characters a_live_scan_keeps_a_baseline_beside_the_store
@@ -546,7 +682,7 @@ a_busy_store_leaves_the_scan_unkept :: proc(t: ^testing.T) {
 	root, store := fresh(t, "leita_busy_history_cli")
 	defer os.remove_all(root)
 	defer os.remove_all(filepath.dir(store))
-	write_zeros(t, fmt.tprintf("%s/a.bin", root), 1 << 20)
+	write_payload(t, fmt.tprintf("%s/a.bin", root), 1 << 20)
 	testing.expect_value(t, scan_and_say({target = root}, store), 0)
 
 	other: history.Store
@@ -568,7 +704,7 @@ a_store_written_briefly_elsewhere_is_waited_for :: proc(t: ^testing.T) {
 	root, store := fresh(t, "leita_wait_history_cli")
 	defer os.remove_all(root)
 	defer os.remove_all(filepath.dir(store))
-	write_zeros(t, fmt.tprintf("%s/a.bin", root), 1 << 20)
+	write_payload(t, fmt.tprintf("%s/a.bin", root), 1 << 20)
 	testing.expect_value(t, scan_and_say({target = root}, store), 0)
 
 	other: history.Store
@@ -634,7 +770,7 @@ the_summary_shows_a_hostile_name_without_its_controls :: proc(t: ^testing.T) {
 		log.infof("this filesystem stored the hostile name as %q", stored)
 	}
 	dir := fmt.tprintf("%s/%s", root, stored)
-	write_zeros(t, fmt.tprintf("%s/%s", dir, stored), 1 << 20)
+	write_payload(t, fmt.tprintf("%s/%s", dir, stored), 1 << 20)
 	// The scan names the directory by its resolved path, which can differ from the
 	// temp directory's own spelling when that is reached through a symbolic link.
 	info, stat_err := os.stat(dir, context.temp_allocator)
@@ -669,7 +805,7 @@ the_summary_shows_a_hostile_name_without_its_controls :: proc(t: ^testing.T) {
 // exit code, by pointing os.stdout at a file for the run. The file's text is in the
 // heap, for the caller to delete.
 @(private)
-capture_stdout :: proc(t: ^testing.T, opt: Options) -> (out: string, code: int) {
+capture_stdout :: proc(t: ^testing.T, opt: Options, kept := "") -> (out: string, code: int) {
 	sync.rw_mutex_lock(&stdio_rw)
 	defer sync.rw_mutex_unlock(&stdio_rw)
 	dir, _ := os.temp_directory(context.temp_allocator)
@@ -681,7 +817,7 @@ capture_stdout :: proc(t: ^testing.T, opt: Options) -> (out: string, code: int) 
 	}
 	saved := os.stdout
 	os.stdout = file
-	code = scan_and_say(opt)
+	code = scan_and_say(opt, kept)
 	os.stdout = saved
 	os.close(file)
 	data, read_err := os.read_entire_file(path, context.allocator)
