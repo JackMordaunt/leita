@@ -1,5 +1,6 @@
 package walk_fuzz
 
+import "base:runtime"
 import "core:fmt"
 import "core:log"
 import "core:os"
@@ -418,7 +419,8 @@ draws_hidden_binds :: proc(t: ^testing.T) {
 
 // The mutator and the scan must overlap, or the churn property only ever checks
 // a tree before or after: a script that adds files one at a time to a directory
-// is met part way by some scan.
+// is met part way by the first scan. The root listing releases a prefix of the
+// ops before its child is read, and the rest wait for that scan to finish.
 @(test)
 scans_meet_the_tree_part_way :: proc(t: ^testing.T) {
 	context.allocator = context.temp_allocator
@@ -426,7 +428,10 @@ scans_meet_the_tree_part_way :: proc(t: ^testing.T) {
 		return
 	}
 	spec := Spec {
-		nodes = []Node{{id = 0, parent = NONE, kind = .Dir, target = NONE}, {id = 1, parent = 0, name = "d1", kind = .Dir, target = NONE}},
+		nodes = []Node {
+			{id = 0, parent = NONE, kind = .Dir, target = NONE},
+			{id = 1, parent = 0, name = "d1", kind = .Dir, target = NONE},
+		},
 	}
 	ops := make([]Op, MAX_OPS)
 	for &op, i in ops {
@@ -439,14 +444,66 @@ scans_meet_the_tree_part_way :: proc(t: ^testing.T) {
 		}
 	}
 	met := 0
-	for _ in 0 ..< 40 {
-		class, what := run_churn(spec, ops, midway = &met)
-		testing.expectf(t, class == "", "%s: %s", class, what)
-		if met > 0 {
-			return
-		}
+	class, what := run_churn(spec, ops, midway = &met, interleave = true)
+	testing.expectf(t, class == "", "%s: %s", class, what)
+	testing.expect(t, met > 0, "the coordinated scan must meet the tree part way through the ops")
+}
+
+// An early scan failure may skip the hook entirely. Joining must release both
+// handoffs and finish the script, rather than strand its worker at either one.
+@(test)
+cleanup_releases_a_mutator_before_the_scan_handoff :: proc(t: ^testing.T) {
+	context.allocator = context.temp_allocator
+	if cannot_mount(t) {
+		return
 	}
-	testing.expect(t, false, "no scan in 40 runs met the tree part way through the ops")
+	spec := Spec {
+		nodes = []Node{{id = 0, parent = NONE, kind = .Dir, target = NONE}},
+	}
+	fx: Fixture
+	defer destroy(&fx)
+	if !testing.expect_value(t, build(spec, &fx), "") {
+		return
+	}
+	ops := []Op {
+		{kind = .Create, id = 1, parent = 0, name = "first", size = 1},
+		{kind = .Create, id = 2, parent = 0, name = "second", size = 1},
+	}
+	c := start_churn(&fx, ops, runtime.heap_allocator(), interleave = true)
+	testing.expect_value(t, finish_churn(&fx, c, context.temp_allocator), "")
+	after, _ := replay(spec, ops)
+	class, what := scan_from(after, &fx, 0, context.temp_allocator)
+	testing.expectf(t, class == "", "%s: %s", class, what)
+}
+
+// The scan's acknowledgement must also arrive when an OS operation fails.
+// Trying to create a file where the fixture already has a directory fails on
+// every materialiser, without depending on permissions or the clock.
+@(test)
+a_failed_op_releases_the_scan_handoff :: proc(t: ^testing.T) {
+	context.allocator = context.temp_allocator
+	if cannot_mount(t) {
+		return
+	}
+	spec := Spec {
+		nodes = []Node {
+			{id = 0, parent = NONE, kind = .Dir, target = NONE},
+			{id = 1, parent = 0, name = "directory", kind = .Dir, target = NONE},
+		},
+	}
+	fx: Fixture
+	defer destroy(&fx)
+	if !testing.expect_value(t, build(spec, &fx), "") {
+		return
+	}
+	ops := []Op{{kind = .Create, id = 2, parent = 0, name = "directory", size = 1}}
+	c := start_churn(&fx, ops, runtime.heap_allocator(), interleave = true)
+	churn_listed(fx.root, c)
+	testing.expect(
+		t,
+		finish_churn(&fx, c, context.temp_allocator) != "",
+		"the failed create is reported after the scan is released",
+	)
 }
 
 // A rename moves a file between two directories: a scan may meet it at both ends,

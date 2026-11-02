@@ -221,6 +221,8 @@ read_whole :: proc(
 	allocator: runtime.Allocator,
 	follow := false,
 	path := "",
+	after_list: proc(path: string, data: rawptr) = nil,
+	after_list_data: rawptr = nil,
 ) -> (
 	class, what: string,
 ) {
@@ -231,7 +233,11 @@ read_whole :: proc(
 	if fx.denies {
 		restore, _ = deny(fx)
 	}
-	err := walk.read(path if path != "" else fx.paths[start], &w.tree, walk.Config{follow = follow})
+	err := walk.read(
+		path if path != "" else fx.paths[start],
+		&w.tree,
+		walk.Config{follow = follow, after_list = after_list, after_list_data = after_list_data},
+	)
 	if restore != nil {
 		restore()
 	}

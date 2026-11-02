@@ -128,8 +128,19 @@ an update against a whole scan. The class is the kind of failure, "" for none.
 `midway` counts the scans that found a number of names strictly between the
 tree's before and after, which only a scan that overlapped the ops can: the
 evidence that the mutator and the scan run at the same time.
+`interleave` makes the first scan release a prefix of the ops after listing the
+root, before reading its children. The remaining ops wait for that scan to
+finish. It is for the overlap regression; ordinary fuzz cases keep racing freely.
 */
-run_churn :: proc(drawn: Spec, ops: []Op, allocator := context.temp_allocator, midway: ^int = nil) -> (class, what: string) {
+run_churn :: proc(
+	drawn: Spec,
+	ops: []Op,
+	allocator := context.temp_allocator,
+	midway: ^int = nil,
+	interleave := false,
+) -> (
+	class, what: string,
+) {
 	spec := fit(drawn, allocator)
 	fx: Fixture
 	defer destroy(&fx)
@@ -152,8 +163,10 @@ run_churn :: proc(drawn: Spec, ops: []Op, allocator := context.temp_allocator, m
 	}
 
 	since := time.now()._nsec - i64(SINCE_SLACK)
-	mutator := start_churn(&fx, ops, runtime.heap_allocator())
-	release_churn(mutator)
+	mutator := start_churn(&fx, ops, runtime.heap_allocator(), interleave)
+	if !interleave {
+		release_churn(mutator)
+	}
 	earliest: Scan_Result
 	defer scan.tree_destroy(&earliest.tree)
 	scans := 0
@@ -163,9 +176,33 @@ run_churn :: proc(drawn: Spec, ops: []Op, allocator := context.temp_allocator, m
 		last := churn_finished(mutator)
 		other: Scan_Result
 		w := &earliest if scans == 0 else &other
-		class, what = read_whole(&fx, 0, w, allocator)
+		if interleave && scans == 0 {
+			class, what = read_whole(
+				&fx,
+				0,
+				w,
+				allocator,
+				after_list = churn_listed,
+				after_list_data = mutator,
+			)
+			// Even an early scan failure must let the mutator finish and be joined.
+			release_churn(mutator)
+			intrinsics.atomic_store(&mutator.resume, 1)
+			if class == "" && intrinsics.atomic_load(&mutator.listed) == 0 {
+				class, what =
+					"materialiser", "the overlap scan never reached its directory-listing handoff"
+			}
+		} else {
+			class, what = read_whole(&fx, 0, w, allocator)
+		}
 		scans += 1
-		if got, was, will := w.tally.files + w.tally.extras, before.files + before.extras, finished.files + finished.extras; got != was && got != will {
+		if got, was, will :=
+			   w.tally.files +
+			   w.tally.extras,
+			   before.files +
+			   before.extras,
+			   finished.files +
+			   finished.extras; got != was && got != will {
 			if midway != nil {
 				midway^ += 1
 			}
@@ -175,7 +212,9 @@ run_churn :: proc(drawn: Spec, ops: []Op, allocator := context.temp_allocator, m
 		}
 		if class == "" {
 			if why := bounds_fault(limits, w.tally, w.disk, least, allocator); why != "" {
-				class, what = "churn", format_reason(allocator, "scan %d of the tree changing: %s", scans, why)
+				class, what =
+					"churn",
+					format_reason(allocator, "scan %d of the tree changing: %s", scans, why)
 			}
 		}
 		if class != "" {
@@ -200,7 +239,8 @@ run_churn :: proc(drawn: Spec, ops: []Op, allocator := context.temp_allocator, m
 	if class, what = read_whole(&fx, 0, &whole, allocator); class != "" {
 		return class, what
 	}
-	if class, what = read_update(&fx, 0, &earliest.tree, &updated, allocator, since, true); class != "" {
+	if class, what = read_update(&fx, 0, &earliest.tree, &updated, allocator, since, true);
+	   class != "" {
 		return class, format_reason(allocator, "updating the scan made during the ops: %s", what)
 	}
 	if whole.tally != updated.tally || whole.disk != updated.disk {
@@ -214,7 +254,8 @@ run_churn :: proc(drawn: Spec, ops: []Op, allocator := context.temp_allocator, m
 		)
 	}
 	if !slice.equal(layout(&whole.tree, allocator), layout(&updated.tree, allocator)) {
-		return "update", "a scan made during the ops brought up to date lists other entries than a whole scan"
+		return "update",
+			"a scan made during the ops brought up to date lists other entries than a whole scan"
 	}
 	return "", ""
 }
@@ -242,45 +283,101 @@ at the same moment, and sleeps a little between ops so that a scan of a small tr
 is still under way for several of them. It keeps its own map of paths, as the
 caller reads the fixture's, and hands it over when it is joined. Each OS's
 materialiser does an op (`do_op`).
+The overlap regression instead waits for the scanner's first directory listing,
+does a prefix of ops, and holds the rest until that scan is finished. Both
+directions acknowledge progress; a deadline reports a broken handoff, never
+decides when a scan or an op should run.
 */
 Churn :: struct {
-	ops:       []Op,
-	paths:     map[int]string, // the mutator's own, allocated from `allocator`
-	go:        u32,
-	done:      u32,
-	err:       string, // allocated from `allocator`
-	worker:    ^thread.Thread,
-	allocator: runtime.Allocator, // the mutator's memory, which outlives the thread's own context
+	ops:            []Op,
+	paths:          map[int]string, // the mutator's own, allocated from `allocator`
+	go:             u32,
+	interleave:     bool,
+	listed:         u32,
+	prefix_done:    u32,
+	resume:         u32,
+	handoff_failed: u32,
+	done:           u32,
+	err:            string, // allocated from `allocator`
+	worker:         ^thread.Thread,
+	allocator:      runtime.Allocator, // the mutator's memory, which outlives the thread's own context
 }
 
 // PAUSE is how long the mutator rests between ops.
 PAUSE :: 20 * time.Microsecond
 
+// This is a deadlock guard, not a delay used to arrange an interleaving.
+HANDOFF_WAIT :: 30 * time.Second
+
+@(private)
+await_churn :: proc(c: ^Churn, flag: ^u32) -> bool {
+	start := time.tick_now()
+	for intrinsics.atomic_load(flag) == 0 {
+		if time.tick_since(start) >= HANDOFF_WAIT {
+			intrinsics.atomic_store(&c.handoff_failed, 1)
+			return false
+		}
+		thread.yield()
+	}
+	return true
+}
+
+// The first listing is the root's. This existing walk callback runs before
+// its children are opened, so mutation happens inside the scan, not before it.
+@(private)
+churn_listed :: proc(_: string, data: rawptr) {
+	c := (^Churn)(data)
+	if intrinsics.atomic_exchange(&c.listed, 1) != 0 {
+		return
+	}
+	release_churn(c)
+	await_churn(c, &c.prefix_done)
+}
+
 // start_churn starts the mutator for a built fixture. It does nothing until
 // `release_churn`.
-start_churn :: proc(fx: ^Fixture, ops: []Op, allocator: runtime.Allocator) -> ^Churn {
+start_churn :: proc(
+	fx: ^Fixture,
+	ops: []Op,
+	allocator: runtime.Allocator,
+	interleave := false,
+) -> ^Churn {
 	c := new(Churn, allocator)
 	c.ops = ops
 	c.allocator = allocator
+	c.interleave = interleave
 	c.paths = make(map[int]string, allocator)
 	for id, p in fx.paths {
 		c.paths[id] = strings.clone(p, allocator)
 	}
 
-	c.worker = thread.create_and_start_with_data(c, proc(data: rawptr) {
+	c.worker = thread.create_and_start_with_data(
+	c,
+	proc(data: rawptr) {
 		c := (^Churn)(data)
-		for intrinsics.atomic_load(&c.go) == 0 {
-			thread.yield()
+		defer intrinsics.atomic_store(&c.done, 1)
+		defer intrinsics.atomic_store(&c.prefix_done, 1) // also wakes the scan on an op failure
+		if !await_churn(c, &c.go) {
+			return
 		}
-		for op in c.ops {
+		for op, i in c.ops {
 			if why := do_op(c, op); why != "" {
 				c.err = why
 				break
 			}
-			time.sleep(PAUSE)
+			if c.interleave {
+				if i + 1 == max(1, len(c.ops) / 2) {
+					intrinsics.atomic_store(&c.prefix_done, 1)
+					if !await_churn(c, &c.resume) {
+						break
+					}
+				}
+			} else {
+				time.sleep(PAUSE)
+			}
 		}
-		intrinsics.atomic_store(&c.done, 1)
-	})
+	},
+	)
 	return c
 }
 
@@ -297,6 +394,7 @@ churn_finished :: proc(c: ^Churn) -> bool {
 // and says what it could not do, "" if nothing.
 finish_churn :: proc(fx: ^Fixture, c: ^Churn, allocator: runtime.Allocator) -> string {
 	release_churn(c)
+	intrinsics.atomic_store(&c.resume, 1)
 	thread.join(c.worker)
 	thread.destroy(c.worker)
 	for id, p in c.paths {
@@ -305,6 +403,9 @@ finish_churn :: proc(fx: ^Fixture, c: ^Churn, allocator: runtime.Allocator) -> s
 	}
 	delete(c.paths)
 	err := strings.clone(c.err, allocator)
+	if err == "" && intrinsics.atomic_load(&c.handoff_failed) != 0 {
+		err = strings.clone("scanner/mutator handoff timed out", allocator)
+	}
 	delete(c.err, c.allocator)
 	free(c, c.allocator)
 	return err
