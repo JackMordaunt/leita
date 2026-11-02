@@ -172,6 +172,8 @@ mounted_at :: proc(
 ) {
 	when ODIN_OS == .Darwin {
 		return mounted_at_statfs(path, allocator)
+	} else when ODIN_OS == .FreeBSD {
+		return mounted_at_freebsd(path, allocator)
 	} else when ODIN_OS != .Linux {
 		// Other unixes report their mounts through getmntinfo rather than a file.
 		return "", "", .Unknown, false

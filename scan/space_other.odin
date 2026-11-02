@@ -1,6 +1,7 @@
 #+build !darwin
 #+build !linux
 #+build !windows
+#+build !freebsd
 package scan
 
 // Nothing here asks other systems how large a filesystem is.
