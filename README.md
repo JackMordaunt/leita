@@ -438,7 +438,7 @@ just check-freebsd
 ```
 
 For a native build, use a fresh checkout with the jm submodule and install
-`bash`, `curl`, `git`, `just` and `python311` from FreeBSD packages. The base
+`bash`, `curl`, `git`, `just` and `python3` from FreeBSD packages. The base
 system supplies `cc` and `ar`. Build Odin from the same pin as
 [the CI setup](.github/actions/setup/action.yml), using the supported LLVM
 version, following [Odin's source-build instructions](https://odin-lang.org/docs/install/).
