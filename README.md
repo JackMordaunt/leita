@@ -429,9 +429,30 @@ just test
 
 `just` alone lists every recipe.
 
-FreeBSD amd64 has a CLI port under validation. It builds from source; no
-FreeBSD release or updater artifact is published. The window is a separate
-follow-up. A source check from Linux or macOS is:
+The FreeBSD amd64 command line was validated on FreeBSD 15.1-RELEASE-p3.
+The [native validation run](https://github.com/JackMordaunt/leita/actions/runs/41454512558),
+for source revision `a50c63a`, covers UFS, ZFS with lz4 compression, and nullfs
+mount boundaries. It checks sparse and hard-linked files, unread folders,
+whole scans, CSV/JSON reports, saved history, threshold exit codes and repeated
+monitor runs. Native C, Python and Odin stat probes also verify the file metadata
+layout and allocated-byte measurements.
+
+This is CLI support. The window is a separate follow-up. FreeBSD has no
+published release or updater artifact. The development candidate is available
+in the run's `freebsd-15.1-amd64-cli-candidate` Actions artifact, rather than
+GitHub Releases. As root, install its runtime dependency with `pkg install curl`.
+Then, as your normal user, from the directory containing the candidate tarball:
+
+```sh
+tar -xzf leita-freebsd-ci-freebsd-amd64.tar.gz
+./leita-freebsd-ci-freebsd-amd64/bin/leita /path/to/scan
+```
+
+The archive carries install instructions, licence notices and `BUILD.json`
+with the source revision, compiler and dynamic-library requirements. It uses
+the system's libcurl and does not bundle FreeBSD system libraries.
+
+To check the FreeBSD source selection from Linux or macOS:
 
 ```sh
 just check-freebsd
@@ -447,25 +468,20 @@ version, following [Odin's source-build instructions](https://odin-lang.org/docs
 
 ```sh
 just freebsd-build           # CLI only; rebuilds SQLite, zstd and the mount shim
-just freebsd-test            # native CLI package tests and a private-home scan/report check
+just freebsd-test            # native stat diagnostic, imported tests and scan/report check
 just freebsd-package speed  # development archive, dependency metadata and notices
 ```
 
-The binary is `build/speed/leita`. The archive under `build/package/` contains
-`bin/leita`, `bin/le`, install instructions, build metadata, dynamic library
-requirements and licence notices. It requires the system's libcurl; it does
-not bundle FreeBSD system libraries. `just freebsd-package` uses release
-mode and requires the same `LEITA_LICENCE_KEY` and `LEITA_UPDATE_KEY` public
-keys as other platforms. It does not publish anything.
+The binary is `build/speed/leita`; archives are written under `build/package/`.
+`just freebsd-package` uses release mode and requires the same
+`LEITA_LICENCE_KEY` and `LEITA_UPDATE_KEY` public keys as other platforms.
+It does not publish anything.
 
 FreeBSD reads each place whole; incremental reuse and a native change
 recorder are unavailable. Schedule `leita monitor run` externally with cron.
-File allocation is measured from the filesystem's allocated blocks. On ZFS,
-shared data and snapshots can make file totals an upper bound: file totals,
-dataset/pool usage and bytes freed by deletion are different quantities.
-Reclaimable bytes remain unknown. The current implementation still needs
-new native UFS and ZFS fixture acceptance, including permissions and mount
-boundaries. Jails that hide mount identities cannot currently be scanned;
-visible mount metadata is required. Earlier experiments on FreeBSD 15.1 do not validate this source
-revision; a cross-platform source check and a successful CI build alone do
-not establish those filesystem guarantees.
+File allocation is measured from the filesystem's allocated blocks. ZFS data
+sharing can make summed file allocations an upper bound on unique file data.
+File totals, dataset/pool usage, snapshot usage and bytes freed by deletion
+are different quantities; reclaimable bytes remain unknown. Jails that hide
+mount identities cannot currently be scanned; visible mount metadata is
+required.
