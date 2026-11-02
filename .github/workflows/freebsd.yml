@@ -1,0 +1,59 @@
+# This job produces a CLI candidate, never an update feed or a published release.
+# Native UFS/ZFS fixture acceptance remains a separate gate (card 881).
+name: freebsd-cli
+
+on:
+  push:
+    branches: [main, "ci/**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: freebsd-cli-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          submodules: true
+          persist-credentials: false
+      - name: FreeBSD 15.1 amd64 CLI
+        uses: vmactions/freebsd-vm@c46abacb49f09938ca4e1702d15d836285d694cc # v1.5.9
+        with:
+          release: "15.1"
+          arch: amd64
+          mem: 8192
+          cpu: 4
+          prepare: |
+            pkg install -y bash curl git gmake just llvm22 python311
+          run: |
+            set -eu
+            # Match .github/actions/setup's compiler pin. The package manager's
+            # Odin can carry a different core/vendor API and is not substituted.
+            git clone --depth 1 --branch brainfold-pin-984eb69e0 https://github.com/JackMordaunt/Odin /opt/leita-odin
+            (cd /opt/leita-odin && LLVM_CONFIG=llvm-config22 gmake release)
+            export ODIN=/opt/leita-odin/odin
+            export PATH=/usr/local/bin:$PATH
+            just check-freebsd
+            python3 -m unittest discover -s tools/freebsd -p 'test_*.py'
+            # Permission fixtures must run as an ordinary user, not the VM's root.
+            pw useradd leita -m -s /bin/sh
+            chown -R leita "$PWD"
+            su -m leita -c 'sh tools/freebsd/ci'
+      - name: Native CLI candidate and build metadata
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: freebsd-15.1-amd64-cli-candidate
+          path: |
+            build/package/*freebsd-amd64.tar.gz
+            build/package/*freebsd-amd64.tar.gz.sha256
+          if-no-files-found: warn
+          retention-days: 14

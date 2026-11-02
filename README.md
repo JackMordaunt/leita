@@ -428,3 +428,43 @@ just test
 ```
 
 `just` alone lists every recipe.
+
+FreeBSD amd64 has a CLI port under validation. It builds from source; no
+FreeBSD release or updater artifact is published. The window is a separate
+follow-up. A source check from Linux or macOS is:
+
+```sh
+just check-freebsd
+```
+
+For a native build, use a fresh checkout with the jm submodule and install
+`bash`, `curl`, `git`, `just` and `python311` from FreeBSD packages. The base
+system supplies `cc` and `ar`. Build Odin from the same pin as
+[the CI setup](.github/actions/setup/action.yml), using the supported LLVM
+version, following [Odin's source-build instructions](https://odin-lang.org/docs/install/).
+[FreeBSD CI](.github/workflows/freebsd.yml) records the precise setup for a
+15.1 amd64 VM. Then, as your normal user:
+
+```sh
+just freebsd-build           # CLI only; rebuilds SQLite, zstd and the mount shim
+just freebsd-test            # native CLI package tests and a private-home scan/report check
+just freebsd-package speed  # development archive, dependency metadata and notices
+```
+
+The binary is `build/speed/leita`. The archive under `build/package/` contains
+`bin/leita`, `bin/le`, install instructions, build metadata, dynamic library
+requirements and licence notices. It requires the system's libcurl; it does
+not bundle FreeBSD system libraries. `just freebsd-package` uses release
+mode and requires the same `LEITA_LICENCE_KEY` and `LEITA_UPDATE_KEY` public
+keys as other platforms. It does not publish anything.
+
+FreeBSD reads each place whole; incremental reuse and a native change
+recorder are unavailable. Schedule `leita monitor run` externally with cron.
+File allocation is measured from the filesystem's allocated blocks. On ZFS,
+shared data and snapshots can make file totals an upper bound: file totals,
+dataset/pool usage and bytes freed by deletion are different quantities.
+Reclaimable bytes remain unknown. The current implementation still needs
+new native UFS and ZFS fixture acceptance, including permissions and mount
+boundaries. Earlier experiments on FreeBSD 15.1 do not validate this source
+revision; a cross-platform source check and a successful CI build alone do
+not establish those filesystem guarantees.

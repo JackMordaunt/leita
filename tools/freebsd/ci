@@ -1,0 +1,13 @@
+#!/bin/sh
+# Run by the VM as the unprivileged leita account. No production keys.
+set -eu
+HOME=$(getent passwd "$(id -un)" | cut -d: -f6)
+export HOME
+export LEITA_VERSION=freebsd-ci
+export LEITA_RELEASED=
+export LEITA_LICENCE=
+export LEITA_LICENCE_KEY=
+export LEITA_UPDATE_KEY=
+export LEITA_UPDATE_SEED=
+just freebsd-test
+just freebsd-package speed

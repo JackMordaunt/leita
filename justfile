@@ -78,13 +78,16 @@
 # SAN= does not change build, run, hot or publish. Odin does not create output
 # directories, hence the mkdir.
 
-# Shebangs are `/bin/bash`. On Windows just maps that through cygpath to Git's
+# Shebangs use bash below (/usr/local/bin/bash on FreeBSD). On Windows just
+# maps /bin/bash through cygpath to Git's
 # bash.exe. `bash` on PATH is the WSL launcher. That bash is not a login
 # shell, so System32 stays ahead of Git's coreutils and `sort` is Windows
 # sort.exe. Prepend Git's usr\bin. The branch is lazy, so a non-Windows
 # parse never runs cygpath.
 export PATH := if os() == "windows" { `cygpath -w /usr/bin` + ";" + env("PATH", "") } else { env("PATH", "") }
 odin  := env("ODIN", "odin")
+# FreeBSD packages bash under /usr/local; retain Git Bash's path on Windows.
+bash := if os() == "freebsd" { "/usr/local/bin/bash" } else { "/bin/bash" }
 # Forward slashes throughout: justfile_directory() on Windows returns
 # backslashes, and passing those mixed with the "/" below straight to a
 # native exe (odin.exe is not an MSYS program) through Git Bash corrupts
@@ -119,7 +122,8 @@ released_define := if released == "" { "" } else { " -define:LEITA_RELEASED=" + 
 # check_flags is what odin check takes. flags adds what only build, run and
 # test accept: the macOS minimum, and on Windows the shell icon.
 check_flags := "-vet -strict-style -collection:jm=" + jm + " -define:LEITA_VERSION=" + version + " -define:LEITA_SHORT=" + short + " -define:LEITA_YEAR=" + year + released_define
-flags := check_flags + minos + resource
+freebsd_link := if os() == "freebsd" { " -extra-linker-flags:\"-L/usr/local/lib -Wl,-rpath,/usr/local/lib\"" } else { "" }
+flags := check_flags + minos + resource + freebsd_link
 # macOS 11.0 is the oldest Odin targets, and jm builds its native libraries
 # for it. Without the flag a binary carries the building Mac's own version as
 # its minimum, and an older Mac refuses to start it.
@@ -201,7 +205,7 @@ build mode="minimal": (cli mode) (gui mode)
 #
 # Build the command line -> build/<mode>/leita: just cli [mode]
 cli mode="minimal": sqlite
-    #!/bin/bash
+    #!{{bash}}
     set -euo pipefail
     if [ -n "{{floor}}" ]; then {{floor_env}}; fi
     case "{{mode}}" in
@@ -219,7 +223,7 @@ cli mode="minimal": sqlite
 [private]
 [linux]
 _baseline-stage arch floor:
-    #!/bin/bash
+    #!{{bash}}
     set -euo pipefail
     command -v "${ZIG:-zig}" >/dev/null || { echo "baseline: zig is missing; install it or set ZIG=<path>" >&2; exit 1; }
     stage=build/baseline/{{arch}}
@@ -254,7 +258,7 @@ _baseline-stage arch floor:
 # Build the command line at a glibc floor: just cli-baseline [arch] [floor]
 [linux]
 cli-baseline arch="amd64" floor="2.26": (_baseline-stage arch floor)
-    #!/bin/bash
+    #!{{bash}}
     set -euo pipefail
     case "{{arch}}" in
     amd64) target=linux_amd64; march="-microarch:x86-64" ;;
@@ -275,7 +279,7 @@ cli-baseline arch="amd64" floor="2.26": (_baseline-stage arch floor)
 # process may mount; tools/linux-baseline/probe runs this and the command line.
 [linux]
 baseline-test arch="amd64" floor="2.26": (_baseline-stage arch floor)
-    #!/bin/bash
+    #!{{bash}}
     set -euo pipefail
     case "{{arch}}" in
     amd64) target=linux_amd64; march="-microarch:x86-64" ;;
@@ -291,7 +295,7 @@ baseline-test arch="amd64" floor="2.26": (_baseline-stage arch floor)
 #
 # Build the window -> build/<mode>/app/Leita: just gui [mode]
 gui mode="minimal": deps
-    #!/bin/bash
+    #!{{bash}}
     set -euo pipefail
     if [ -n "{{floor}}" ]; then {{floor_env}}; fi
     case "{{mode}}" in
@@ -340,7 +344,7 @@ gui mode="minimal": deps
 #
 # Build Leita.app -> build/release/Leita.app: just bundle [window cli]
 bundle window="" cli="":
-    #!/bin/bash
+    #!{{bash}}
     set -euo pipefail
     if [ "{{os()}}" != macos ]; then echo "bundle: skipped: Leita.app is built on macOS, with Apple's iconutil and sips"; exit 0; fi
     window='{{window}}'
@@ -384,7 +388,7 @@ bundle window="" cli="":
 # argument.
 [private]
 release-key:
-    #!/bin/bash
+    #!{{bash}}
     set -euo pipefail
     key="${LEITA_LICENCE_KEY:-}"
     key="${key//[[:space:]]/}"
@@ -398,7 +402,7 @@ release-key:
 # one 64-hex key, no commas. It fails when the value is empty or not one key.
 [private]
 update-key:
-    #!/bin/bash
+    #!{{bash}}
     set -euo pipefail
     key="${LEITA_UPDATE_KEY:-}"
     key="${key//[[:space:]]/}"
@@ -414,7 +418,7 @@ update-key:
 #
 # Native lifecycle evidence for this OS, then the release gate.
 lifecycle:
-    #!/bin/bash
+    #!{{bash}}
     set -euo pipefail
     if command -v python3 >/dev/null 2>&1; then py=python3; else py=python; fi
     dir="${LIFECYCLE_DIR:-build/lifecycle}"
@@ -428,7 +432,7 @@ lifecycle:
 # Build the window, then open it on a directory: just run [mode] [dir]
 [positional-arguments]
 run *args:
-    #!/bin/bash
+    #!{{bash}}
     set -euo pipefail
     mode=minimal
     case "${1:-}" in
@@ -482,7 +486,7 @@ test: sqlite
 # the window on the made-up disk, so it needs the libraries the window draws
 # with (deps), and takes seconds a case: just fuzz gui 1 0 -iters=4.
 fuzz suite="" seed="1" duration="" *extra: deps
-    #!/bin/bash
+    #!{{bash}}
     set -euo pipefail
     mkdir -p build/debug
     {{odin}} build tools/leita-fuzz -debug {{san}} {{flags}} {{curl_open}} -out:build/debug/leita-fuzz{{exe}}
@@ -515,7 +519,7 @@ fuzz suite="" seed="1" duration="" *extra: deps
 # (halt_on_error): on Linux Odin exits with a system call, so TSan's own exit
 # status at the end of a run never happens and a race would otherwise pass.
 soak sanitizer="address" duration="10m" seed="1" rounds="2" gui="gui": sqlite
-    #!/bin/bash
+    #!{{bash}}
     set -euo pipefail
     j() { just --justfile "{{justfile()}}" "$@"; }
     case "{{sanitizer}}" in
@@ -549,7 +553,7 @@ btrfs-test *args: sqlite
 #
 # Test that a build with a key takes what it signed: just check-licence [key licence]
 check-licence key=test_licence_key licence="": sqlite
-    #!/bin/bash
+    #!{{bash}}
     set -euo pipefail
     licence='{{licence}}'
     if [ -z "$licence" ] && [ '{{key}}' = '{{test_licence_key}}' ]; then licence='{{test_licence}}'; fi
@@ -566,7 +570,7 @@ check-licence key=test_licence_key licence="": sqlite
 # and leaves nothing mounted; --sudo runs them as root instead, where sudo asks no
 # password. Skipped where neither can mount. Linux only: just mount-test [--sudo]
 mount-test *args:
-    #!/bin/bash
+    #!{{bash}}
     set -euo pipefail
     if [ "{{os()}}" != linux ]; then echo "mount-test: skipped: the mounts are Linux's"; exit 0; fi
     mkdir -p build/test
@@ -589,7 +593,7 @@ mount-test *args:
 # is mounted in a user and mount namespace where one can be had; with --sudo,
 # as root, an ext4 image on a loop device too.
 durability *args: sqlite
-    #!/bin/bash
+    #!{{bash}}
     set -euo pipefail
     mkdir -p build/test
     {{odin}} build durability -build-mode:test -debug {{san}} {{flags}} -out:build/test/durability{{exe}}
@@ -610,12 +614,30 @@ check:
     {{odin}} check cmd/cli -debug {{check_flags}}
     {{odin}} check gui/notices -no-entry-point {{check_flags}}
 
+# Check FreeBSD amd64 source selection from any host; this does not link or run.
+check-freebsd:
+    {{odin}} check cmd/cli -target:freebsd_amd64 {{check_flags}}
+    {{odin}} check cmd/cli -target:freebsd_amd64 -debug {{check_flags}}
+
+# Build only the CLI on FreeBSD amd64, rebuilding native C archives first.
+freebsd-build mode="speed":
+    python3 tools/freebsd/native.py build {{mode}}
+
+# Native CLI package tests and a scan/report smoke check; no sanitizer by default.
+freebsd-test:
+    python3 tools/freebsd/native.py test
+
+# Installable CLI archive. release requires the normal licence and update keys;
+# speed is a development candidate, as used by CI, and carries no release stamp.
+freebsd-package mode="release":
+    python3 tools/freebsd/native.py package {{mode}}
+
 # The jm submodule, when JM does not name another checkout, SQLite, which keeps
 # both binaries' scans, and zstd, which decodes the patches leita update applies:
 # all the command line links that is not Odin or the system's libcurl. Built by
 # jm's own recipes, once.
 sqlite: floor-jm
-    #!/bin/bash
+    #!{{bash}}
     set -euo pipefail
     if [ -n "{{floor}}" ]; then {{floor_env}}; fi
     if [ "{{jm}}" = "{{root}}/jm" ] && [ ! -e jm/.git ]; then git submodule update --init jm; fi
@@ -639,7 +661,7 @@ sqlite: floor-jm
 # built from the tag jm pins, as a static library, with the host's own cargo
 # and cc: the Rust it holds names no glibc version until the link above.
 deps: sqlite
-    #!/bin/bash
+    #!{{bash}}
     set -euo pipefail
     if [ -n "{{floor}}" ]; then {{floor_env}}; fi
     cd "{{jm}}"
@@ -679,7 +701,7 @@ deps: sqlite
 [private]
 [linux]
 sdl3-static: floor-jm
-    #!/bin/bash
+    #!{{bash}}
     set -euo pipefail
     if [ -n "{{floor}}" ]; then {{floor_env}}; fi
     cd "{{jm}}"
@@ -729,7 +751,7 @@ sdl3-static: floor-jm
 # Open the window, reloading the view on every edit: just hot [mode] [dir]
 [positional-arguments]
 hot *args: deps
-    #!/bin/bash
+    #!{{bash}}
     set -euo pipefail
     mode=minimal
     case "${1:-}" in
@@ -826,7 +848,7 @@ journeys: deps
 # it as a person does; journeys/window replays what the window recorded and checks
 # the accessibility tree. Evidence -> build/journeys/window.
 window-journey: (gui "asan")
-    #!/bin/bash
+    #!{{bash}}
     set -euo pipefail
     out="{{root}}/build/journeys/window"
     py=$(command -v python3 || command -v python)
@@ -884,7 +906,7 @@ runtime_sha_aarch64 := "00cbdfcf917cc6c0ff6d3347d59e0ca1f7f45a6df1a428a0d6d8a786
 # Any mode but release is refused: a development build takes no licence.
 # Build the release, then package it for this OS: just publish
 publish mode="release":
-    #!/bin/bash
+    #!{{bash}}
     set -euo pipefail
     if [ "{{mode}}" != release ]; then
         echo "publish: only release is packaged, not {{mode}}" >&2
@@ -908,7 +930,7 @@ package: (build "release") package-built
 [private]
 [linux]
 package-built:
-    #!/bin/bash
+    #!{{bash}}
     set -euo pipefail
     m=$(uname -m)
     case "$m" in
@@ -986,7 +1008,7 @@ package-built:
 # commit the submodule is on; nothing when no floor is asked for or JM names one.
 [private]
 floor-jm:
-    #!/bin/bash
+    #!{{bash}}
     set -euo pipefail
     if [ -z "{{floor}}" ] || [ "{{jm}}" != "{{floor_dir}}/jm" ]; then exit 0; fi
     if [ ! -e jm/.git ]; then git submodule update --init jm; fi
@@ -1008,7 +1030,7 @@ clean:
 # otherwise ~/.local/bin, ~/bin, GOBIN, GOPATH/bin, /usr/local/bin, else the first
 # writable PATH entry.
 install:
-    #!/bin/bash
+    #!{{bash}}
     set -euo pipefail
     # A release build refuses an empty key set, so a local install without the
     # production keys takes the test keys: it accepts only test licences and
@@ -1091,7 +1113,7 @@ fsbench args="": (cli "release")
 # Check the walk: just fsbench-ci
 # Rewrite the baseline: just fsbench-ci --update
 fsbench-ci *args:
-    #!/bin/bash
+    #!{{bash}}
     set -euo pipefail
     if [ -z "${LEITA_LICENCE_KEY:-}" ]; then
         export LEITA_LICENCE_KEY="$(just --justfile "{{justfile()}}" --evaluate test_licence_key)"
