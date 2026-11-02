@@ -88,12 +88,12 @@ rescan_closed_dialogs :: proc(
 	)
 }
 
-// settled_scan is the desk's scan when it has finished and is the one the view
-// shows, so its tree holds still while it is read; nil otherwise.
+// settled_scan is a completed scan whose matching Done has reached the view,
+// so the oracle does not compare a completed tree with a still-scanning frame.
 @(private)
 settled_scan :: proc(w: ^Window) -> ^app.Scan {
-	s, generation := state(w)
-	if s != .Done || generation != w.m.generation || generation == 0 {
+	s, _, matched := published_state(w)
+	if s != .Done || !matched {
 		return nil
 	}
 	return w.h.desk.scan

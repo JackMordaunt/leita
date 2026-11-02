@@ -1,5 +1,6 @@
 package gui_fuzz
 
+import "core:encoding/cbor"
 import "core:fmt"
 import "core:os"
 import "core:sync"
@@ -286,8 +287,8 @@ linger :: proc(w: ^Window) {
 	ui.probe_frame(&w.p)
 }
 
-// state is how the scan stands on the desk, and the generation it is of.
-// The desk owns both; a word read here is at worst a frame stale.
+// state is the desk's private scan state. Done can precede the final answers:
+// the desk still has to keep history before publishing them to the window.
 state :: proc(w: ^Window) -> (s: query.State, generation: u32) {
 	sc := sync.atomic_load(&w.h.desk.scan)
 	if sc == nil {
@@ -296,8 +297,31 @@ state :: proc(w: ^Window) -> (s: query.State, generation: u32) {
 	return sync.atomic_load(&sc.state), sync.atomic_load(&w.h.desk.generation)
 }
 
-// finish lets the scan run to its end, waiting up to seconds, then holds the
-// gate again for the next.
+// published_state reads the Progress already delivered to the frame. Only
+// matching desk, frame and published generations describe the same scan.
+// An empty inbox is not a publication barrier while the desk is keeping history.
+@(private)
+published_state :: proc(w: ^Window) -> (s: query.State, generation: u32, matched: bool) {
+	shape, found := w.p.layout.shapes[ui.key_of(query.Progress{})]
+	if !found || shape.status != .Ready {
+		return
+	}
+	progress: query.Progress_Result
+	if cbor.unmarshal_from_bytes(shape.data, &progress, allocator = context.temp_allocator) !=
+	   nil {
+		return
+	}
+	private_state, private_generation := state(w)
+	return progress.state,
+		progress.generation,
+		progress.generation != 0 &&
+		progress.generation == private_generation &&
+		progress.generation == w.m.generation &&
+		progress.state == private_state
+}
+
+// finish lets the scan run until its matching terminal Progress has reached
+// the frame, waiting up to seconds, then holds the gate again for the next.
 finish :: proc(w: ^Window, seconds := 120) -> bool {
 	sync.atomic_store(&gate.open, true)
 	defer hold_at_gate()
@@ -305,7 +329,8 @@ finish :: proc(w: ^Window, seconds := 120) -> bool {
 
 	deadline := time.tick_now()._nsec + i64(seconds) * i64(time.Second)
 	for time.tick_now()._nsec < deadline {
-		if s, _ := state(w); s != .Scanning {
+		if s, _, matched := published_state(w);
+		   matched && (s == .Done || s == .Stopped || s == .Failed) {
 			settle(w)
 			return true
 		}
