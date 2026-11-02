@@ -42,9 +42,9 @@ Scan
   leita monitor ...         scheduled scans of the places you watch; leita monitor -h
   leita journal ...         Linux: record which folders change, so a scan reads only
                             those; off until leita journal on; leita journal -h
-  leita licence ...         the licence: leita licence add LICENCE keeps one, leita
-                            licence remove forgets it, LEITA_LICENCE holds one for a
-                            single run; leita licence -h
+  leita licence ...         the licence: activate KEY exchanges a shop key; add
+                            LICENCE keeps a line, remove forgets it; LEITA_LICENCE
+                            holds one for a single run; leita licence -h
   leita update [--check]    look for a newer leita, and install it when asked; it
                             never checks on its own; leita update -h
   leita history ...         what leita deleted or changed at your request, newest

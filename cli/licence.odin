@@ -7,8 +7,8 @@ import "core:strings"
 import "core:time"
 
 import "../history"
-import "../kstat"
 import "../human"
+import "../kstat"
 import "../licence"
 import "../settings"
 import "../term"
@@ -21,8 +21,8 @@ LEITA_LICENCE holds one for a single run instead, as in a container, where
 nothing is kept between runs.
 
 A licence is the line beginning leita., or the file from the receipt that
-holds it. A licence key from the receipt is exchanged for its licence by the
-window alone: leita licence sends nothing anywhere.
+holds it. `leita licence activate KEY` exchanges the receipt's shop key for
+that line. Displaying, adding and removing a line work offline.
 */
 
 LICENCE_USAGE :: `leita licence — the licence leita runs under.
@@ -32,6 +32,8 @@ LICENCE_USAGE :: `leita licence — the licence leita runs under.
   leita licence add LICENCE check a licence and keep it beside leita's data, where
                             the window finds it too: the line beginning leita., or
                             the file from your receipt that holds it
+  leita licence activate KEY exchange the shop key from your receipt over HTTPS
+                            and keep the verified licence for the window and CLI
   leita licence remove      forget the licence kept here
   LEITA_LICENCE=LICENCE     run under LICENCE, the line, for one run in place of the
                             one kept: for a server or a container that keeps nothing
@@ -40,6 +42,10 @@ Pro — comparing scans, scheduled scans, and PDF or HTML reports — needs a li
 once the 30-day evaluation has ended. Scanning, cleanup and a CSV or JSON of the
 current scan never do. A line keeps Pro for a release made at or before the
 paid-through date it carries, and a later release runs Free.
+
+Only activate sends a request: one POST containing the key to
+https://mordaunt.dev/leita/activate, with a 30-second timeout. LEITA_ACTIVATE_URL
+replaces that address for a sandbox. No redirect is followed.
 `
 
 // TIER_TITLES are the tiers as the command line names them, as the window does.
@@ -56,10 +62,14 @@ is kept beside, what LEITA_LICENCE holds, the key licences are checked against,
 nil for the one leita was built with, and the clock the trial is read by.
 */
 Licence_Context :: struct {
-	kept:  string,
-	given: string,
-	key:   []byte,
-	now:   time.Time,
+	kept:             string,
+	given:            string,
+	key:              []byte,
+	now:              time.Time,
+	// An explicit endpoint and deadline for a local activation fixture; zero
+	// values use LEITA_ACTIVATE_URL or production, and a 30-second timeout.
+	activate_url:     string,
+	activate_timeout: time.Duration,
 }
 
 // licence_command_line runs leita licence on this machine, saying how it went
@@ -79,6 +89,17 @@ licence_command_line :: proc(args: []string) -> int {
 // it went on w and what went wrong on standard error.
 licence_dispatch :: proc(c: Licence_Context, args: []string, w: io.Writer) -> int {
 	verb := args[0] if len(args) > 0 else ""
+	// Never echo an activation command's arguments: the key is a secret.
+	if verb == "activate" {
+		if len(args) == 2 && (args[1] == "-h" || args[1] == "--help") {
+			return licence_dispatch(c, {"--help"}, w)
+		}
+		if len(args) != 2 {
+			say_error("leita licence activate takes one shop key from your receipt")
+			return EXIT_ERROR
+		}
+		return activate_licence(c, args[1], w)
+	}
 	switch {
 	case verb == "-h" || verb == "--help":
 		b := strings.builder_make(context.temp_allocator)
@@ -93,7 +114,7 @@ licence_dispatch :: proc(c: Licence_Context, args: []string, w: io.Writer) -> in
 		return remove_licence(c, w)
 	}
 	say_error(
-		"leita licence takes add LICENCE, remove, or nothing, not %q",
+		"leita licence takes activate KEY, add LICENCE, remove, or nothing, not %q",
 		strings.join(args, " ", context.temp_allocator),
 	)
 	fmt.eprintln("leita licence -h lists what it takes")
@@ -172,7 +193,7 @@ add_licence :: proc(c: Licence_Context, offered: string, w: io.Writer) -> int {
 	text = strings.trim_space(text)
 	if !strings.has_prefix(text, "leita") || !strings.contains_rune(text, '.') {
 		say_error(
-			"that is not a licence: give the line beginning leita., or the file from your receipt that holds it; a licence key is exchanged for its licence in Leita, the window",
+			"that is not a licence: give the line beginning leita., or the file from your receipt that holds it; leita licence activate KEY exchanges a shop key",
 		)
 		return EXIT_ERROR
 	}

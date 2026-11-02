@@ -110,6 +110,7 @@ run :: proc(t: ^testing.T, h: Home, day: int, args: ..string, extra: []string = 
 		     "LOCALAPPDATA",
 		     "LEITA_SYNTHETIC",
 		     "LEITA_LICENCE",
+		     "LEITA_ACTIVATE_URL",
 		     "LEITA_RELEASE_BASE",
 		     "LEITA_COLOR",
 		     "XDG_DATA_HOME",

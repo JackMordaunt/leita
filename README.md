@@ -185,9 +185,10 @@ writes it for a program.
 ## Private by design
 
 - **No telemetry.** leita sends nothing about you or your disks, and nothing
-  anywhere unless you tell it where. It reaches the network in four cases. Adding a licence key in the window sends one POST to
-  `https://mordaunt.dev/leita/activate`; the body holds the key and nothing
-  else. When a licence kept on this machine no longer verifies, and the key
+  anywhere unless you tell it where. It reaches the network in four cases.
+  Adding a licence key in the window, or with `leita licence activate KEY`,
+  sends one POST to `https://mordaunt.dev/leita/activate`; the body holds the
+  key and nothing else. When a licence kept on this machine no longer verifies, and the key
   from the receipt was kept beside it, leita sends that key once more, to the
   same address. If that request cannot reach the server, or the server has no
   line, this copy stays free and says so, and the licence already kept stays.
@@ -389,11 +390,20 @@ Pro in those versions after the year ends. A later version runs as Free until
 another year is paid. A licence you already have keeps the rights it was sold
 with, and it does not expire.
 
-Without the window, `leita licence add FILE` keeps the licence file from your
-receipt (or the line in it beginning `leita.`), and `leita licence` shows whose
-it is, its tier and the paid-through date. A line keeps Pro for a release made
-at or before that date, and a later release runs Free. With no licence, it says
-how long the Pro evaluation has left. `leita licence remove` forgets the one
+Without the window, `leita licence activate KEY` exchanges the shop key from
+your receipt for a licence and keeps the verified line and receipt key beside
+leita's data. It sends only the key to the same activation address as the window,
+waits at most 30 seconds, and follows no redirects. An unavailable server, a
+rejected or refunded key, or an invalid response leaves the existing licence
+alone and exits 1. `LEITA_ACTIVATE_URL` replaces the address for sandbox testing,
+for example `https://mordaunt.dev/leita/sandbox/activate`.
+
+`leita licence add FILE` keeps a licence file you already have from your
+receipt (or the line in it beginning `leita.`), without a network request.
+`leita licence` shows whose it is, its tier and the paid-through date. A line
+keeps Pro for a release made at or before that date, and a later release runs
+Free. With no licence, it says how long the Pro evaluation has left.
+`leita licence remove` forgets the one
 kept here. For a single run, as in a container, set `LEITA_LICENCE` to that
 line instead.
 
