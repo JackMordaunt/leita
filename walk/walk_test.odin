@@ -27,6 +27,7 @@ fixture :: proc(t: ^testing.T, name: string) -> string {
 	write :: proc(t: ^testing.T, path: string, size: int) {
 		body := fixture_bytes(size)
 		testing.expectf(t, os.write_entire_file(path, body) == nil, "could not write %s", path)
+		fixture_sync(t, path, len(body))
 	}
 	testing.expect(t, os.make_directory(root) == nil, "could not make the root")
 	testing.expect(t, os.make_directory(fmt.tprintf("%s/sub", root)) == nil, "could not make sub")

@@ -48,6 +48,7 @@ test_a_sparse_file_is_charged_what_it_occupies :: proc(t: ^testing.T) {
 		os.write_entire_file(fmt.tprintf("%s/solid.bin", root), body) == nil,
 		"could not write",
 	)
+	fixture_sync(t, fmt.tprintf("%s/solid.bin", root), len(body))
 
 	tree: scan.Tree
 	testing.expect_value(t, scan.tree_init(&tree, 1), scan.Error.None)
@@ -139,6 +140,7 @@ deep_tree :: proc(t: ^testing.T, root: string) -> bool {
 	}
 	body := fixture_bytes(DEEP_BODY)
 	wrote := posix.write(file, raw_data(body), len(body))
+	fixture_sync_fd(t, int(file), len(body))
 	posix.close(file)
 	return testing.expect_value(t, int(wrote), DEEP_BODY)
 }
@@ -246,12 +248,14 @@ test_a_hard_linked_file_is_charged_once :: proc(t: ^testing.T) {
 	body := fixture_bytes(100_000)
 	shared := fmt.tprintf("%s/shared", root)
 	testing.expect(t, os.write_entire_file(shared, body) == nil, "could not write the file")
+	fixture_sync(t, shared, len(body))
 	for i in 0 ..< DIRS {
 		sub := fmt.tprintf("%s/d%02d", root, i)
 		testing.expect(t, os.make_directory(sub) == nil, "could not make a directory")
 		testing.expect(t, os.link(shared, fmt.tprintf("%s/name", sub)) == nil, "could not link")
 		lone := fmt.tprintf("%s/lone", sub)
 		testing.expect(t, os.write_entire_file(lone, body) == nil, "could not write a lone file")
+		fixture_sync(t, lone, len(body))
 	}
 
 	tree: scan.Tree
@@ -317,6 +321,7 @@ locked_place :: proc(t: ^testing.T, name: string) -> (root: string, ok: bool) {
 		os.write_entire_file(fmt.tprintf("%s/big.bin", locked), body) == nil,
 		"no big",
 	)
+	fixture_sync(t, fmt.tprintf("%s/big.bin", locked), len(body))
 	testing.expect(
 		t,
 		os.write_entire_file(fmt.tprintf("%s/a.txt", root), body[:100]) == nil,

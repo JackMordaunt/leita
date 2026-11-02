@@ -38,6 +38,7 @@ place :: proc(t: ^testing.T, name: string) -> string {
 put :: proc(t: ^testing.T, path: string, size: int) {
 	body := fixture_bytes(size)
 	testing.expectf(t, os.write_entire_file(path, body) == nil, "could not write %s", path)
+	fixture_sync(t, path, len(body))
 }
 
 // Grow still/k.txt where it is. No test here marks still, or updates with a restat

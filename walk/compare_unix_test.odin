@@ -19,6 +19,7 @@ BODY_LEN :: 1 << 20
 put :: proc(t: ^testing.T, path: string, length: int) {
 	body := fixture_bytes(length)
 	testing.expectf(t, os.write_entire_file(path, body) == nil, "could not write %s", path)
+	fixture_sync(t, path, len(body))
 }
 
 dir :: proc(t: ^testing.T, path: string) {

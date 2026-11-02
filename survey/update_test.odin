@@ -47,6 +47,7 @@ join :: proc(parts: ..string) -> string {
 put :: proc(t: ^testing.T, path: string, size: int) {
 	body := fixture_bytes(size)
 	testing.expectf(t, os.write_entire_file(path, body) == nil, "could not write %s", path)
+	fixture_sync(t, path, len(body))
 }
 
 @(private)
