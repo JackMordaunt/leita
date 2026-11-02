@@ -48,7 +48,10 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 	}
 	below := d.ancestors
 	if w.follow {
-		id := File_Id{device = u64(st.st_dev), inode = u64(st.st_ino)}
+		id := File_Id {
+			device = u64(st.st_dev),
+			inode  = u64(st.st_ino),
+		}
 		if on_path(below, id) {
 			posix.close(fd)
 			return 0, 0, true
@@ -104,14 +107,16 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 		if posix.S_ISREG(child_stat.st_mode) {
 			e.disk = u64(max(i64(child_stat.st_blocks), 0)) * 512
 			e.links = u32(min(u64(child_stat.st_nlink), u64(max(u32))))
-			e.account = file_account({
-				logical = u64(max(i64(child_stat.st_size), 0)),
-				allocated = e.disk,
-				charge = e.disk,
-				links = e.links,
-				allocated_known = true,
-				links_known = true,
-			})
+			e.account = file_account(
+				{
+					logical = u64(max(i64(child_stat.st_size), 0)),
+					allocated = e.disk,
+					charge = e.disk,
+					links = e.links,
+					allocated_known = true,
+					links_known = true,
+				},
+			)
 		}
 		index, descend, charged, recorded := record(w, d.index, e)
 		if !recorded {
@@ -124,11 +129,11 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 				return nodes, bytes, false
 			}
 			next := Dir {
-				index = index,
-				path = child,
-				ancestors = below,
+				index      = index,
+				path       = child,
+				ancestors  = below,
 				identified = e.directory,
-				listed = {e.id.device, e.id.inode, 0},
+				listed     = {e.id.device, e.id.inode, 0},
 			}
 			if _, append_err := append(&w.found, next); append_err != nil {
 				delete(child, w.allocator)
@@ -147,15 +152,22 @@ read_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 
 @(private)
 Anchor :: struct {
-	fd: posix.FD,
-	root: string,
-	errno: posix.Errno,
-	mount: [2]i32,
+	fd:        posix.FD,
+	root:      string,
+	errno:     posix.Errno,
+	mount:     [2]i32,
 	allocator: mem.Allocator,
 }
 
 @(private)
-anchor_prepare :: proc(path: string, follow: bool, allocator: mem.Allocator) -> (a: Anchor, err: mem.Allocator_Error) {
+anchor_prepare :: proc(
+	path: string,
+	follow: bool,
+	allocator: mem.Allocator,
+) -> (
+	a: Anchor,
+	err: mem.Allocator_Error,
+) {
 	a.fd = -1
 	a.allocator = allocator
 	_ = follow
@@ -220,7 +232,15 @@ open_listed :: proc(d: Dir, w: ^Worker, buf: ^Path) -> (posix.FD, posix.Errno) {
 // component refuses a symlink in any ancestor below the held root, while keeping
 // paths deeper than PATH_MAX usable. The caller's root may itself contain links.
 @(private)
-open_pieces :: proc(dir: posix.FD, path: string, nofollow: bool, buf: ^Path) -> (posix.FD, posix.Errno) {
+open_pieces :: proc(
+	dir: posix.FD,
+	path: string,
+	nofollow: bool,
+	buf: ^Path,
+) -> (
+	posix.FD,
+	posix.Errno,
+) {
 	at := dir
 	owned := false
 	defer if owned {posix.close(at)}
