@@ -176,6 +176,10 @@ def test_suite():
 
 def tests():
     binary = build("speed")
+    # Record C/Python/Odin ABI and allocation facts before test fixtures can
+    # obscure a native mismatch. A diagnostic failure remains a failed gate.
+    run([sys.executable, ROOT / "tools/freebsd/stat_probe.py", "--binary", binary,
+         "--output", ROOT / "build/freebsd/stat-probe.json"], cwd=ROOT, timeout=300)
     test_suite()
     # Run against a private home so no installed licence/history is read or changed.
     with tempfile.TemporaryDirectory(prefix="leita-freebsd-") as directory:

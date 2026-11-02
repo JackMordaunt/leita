@@ -47,6 +47,7 @@ jobs:
             build/freebsd/fixtures
             build/freebsd/progress.jsonl
             build/freebsd/gate-status
+            build/freebsd/stat-probe.json
           if-no-files-found: warn
           retention-days: 14
       - name: Enforce native gate result
