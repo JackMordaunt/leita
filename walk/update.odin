@@ -86,6 +86,12 @@ much too high. A base that kept no ids keeps its choice for a name a List job re
 */
 update :: proc(root: string, u: ^Update, t: ^scan.Tree, cfg := Config{}) -> Error {
 	u.whole = ""
+	when ODIN_OS == .FreeBSD {
+		// No persistent change source or validated BSD restat reuse yet. Even a
+		// direct caller with a baseline must read current allocation and names.
+		u.whole = "this platform requires a fresh walk"
+		return read(root, t, cfg)
+	}
 	when ODIN_OS == .Linux {
 		if btrfs_update_needs_read(root, cfg.follow) {
 			u.whole = "extent charges require a fresh walk"
