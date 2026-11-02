@@ -49,6 +49,18 @@ class WatchdogTests(unittest.TestCase):
             self.assertEqual(result.stdout, "value with spaces\n")
             self.assertEqual(result.returncode, 0)
 
+    def test_explicit_executable_preserves_bare_argv_zero_and_ignores_path_decoy(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            decoy = root / "tests"
+            decoy.write_text("#!/bin/sh\nprintf wrong-executable\n")
+            decoy.chmod(0o755)
+            with patch.object(native, "ROOT", root):
+                result = native.run(["tests", "-c", 'printf "%s" "$0"'], executable="/bin/sh",
+                                    env=dict(os.environ, PATH=str(root)), text=True,
+                                    stdout=subprocess.PIPE)
+            self.assertEqual(result.stdout, "tests")
+
     def test_all_package_suite_keeps_tests_and_names_state_changes(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(native, "ROOT", Path(directory)), \
              patch.object(native, "value", return_value="-vet -define:LEITA_VERSION=v9.8.7"), \
@@ -63,7 +75,8 @@ class WatchdogTests(unittest.TestCase):
         self.assertIn("-define:LEITA_VERSION=v9.8.7", compile_argv)
         self.assertEqual(compile_call.kwargs["timeout"], 600)
         self.assertEqual(execute_call.kwargs["timeout"], 300)
-        self.assertEqual(str(execute_call.args[0][0]), compile_argv[-1].removeprefix("-out:"))
+        self.assertEqual(execute_call.args[0], ["tests"])
+        self.assertEqual(execute_call.kwargs["executable"], compile_argv[-1].removeprefix("-out:"))
 
 
 class DependencyTests(unittest.TestCase):

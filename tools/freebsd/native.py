@@ -169,7 +169,9 @@ def test_suite():
     run(odin + ["build", "cmd/cli", "-build-mode:test", "-all-packages", "-debug",
                 "-define:ODIN_TEST_LOG_STATE_CHANGES=true", "-define:ODIN_TEST_FANCY=false"] + flags +
         shlex.split(os.environ.get("SAN", "")) + [f"-out:{binary}"], cwd=ROOT, timeout=600)
-    run([binary], cwd=ROOT, timeout=300)
+    # Odin's POSIX test launcher passes only the basename as argv[0] while
+    # posix_spawn executes the exact output path (pinned src/main.cpp).
+    run([binary.name], executable=str(binary), cwd=ROOT, timeout=300)
 
 
 def tests():
