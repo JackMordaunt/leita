@@ -118,3 +118,4 @@ jobs:
           path: |
             build/lifecycle/evidence.json
             build/lifecycle/evidence-*.json
+            build/lifecycle/captures/

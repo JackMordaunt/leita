@@ -73,11 +73,32 @@ write_tags :: proc(
 	return os.write_entire_file(path, strings.to_string(b)) == nil
 }
 
+// reveal_control scrolls a control into the viewport before a scripted click.
+// Tags also describe clipped controls: finding a tag alone does not mean a
+// pointer can reach it. The activation dialog's body contains the window centre.
+reveal_control :: proc(h: ^render.Headless, name: string) -> bool {
+	for i := 0; i < 80; i += 1 {
+		hit, found := ui.probe_find_top(&h.p, name)
+		if !found {return false}
+		box := ops.transform_rect(hit.transform, ops.shape_bounds(&h.p.scene, hit.shape))
+		centre := ops.Point{box.x + box.w / 2, box.y + box.h / 2}
+		under, visible := ui.hit_test(ui.probe_current(&h.p), centre, .Press)
+		if visible && under.area == hit.area &&
+		   centre.x >= 0 && centre.x < h.p.size.x &&
+		   centre.y >= 0 && centre.y < h.p.size.y {
+			return true
+		}
+		ui.probe_scroll_at(&h.p, h.p.size / 2, 0.5 if centre.y >= h.p.size.y / 2 else -0.5)
+		ui.probe_advance(&h.p, 5, 1.0 / 60)
+	}
+	return false
+}
+
 main :: proc() {
 	args := argv.program_args()
 	if len(args) < 4 {
 		fail(
-			"usage: capture TARGET ISOLATED_DATA_DIR light|dark [jm headless steps] [-await TAG] [-await-absent TAG] [-absent TAG] [-click-top TAG] [-tags PATH] [-rescan] [-pick PATH] [-signal PATH] [-await-file PATH] [-frames PREFIX COUNT]",
+			"usage: capture TARGET ISOLATED_DATA_DIR light|dark [jm headless steps] [-await TAG] [-await-absent TAG] [-absent TAG] [-reveal TAG] [-click-top TAG] [-tags PATH] [-rescan] [-pick PATH] [-signal PATH] [-await-file PATH] [-frames PREFIX COUNT]",
 		)
 	}
 	if args[3] != "light" && args[3] != "dark" {fail("theme must be light or dark")}
@@ -140,11 +161,15 @@ main :: proc() {
 		if movie_step(&movie, &h, args, &i) {continue}
 		flag := args[i]
 		switch flag {
-		case "-png", "-await", "-await-absent", "-absent", "-tags", "-pick", "-signal", "-await-file":
+		case "-png", "-await", "-await-absent", "-absent", "-reveal", "-expect-url", "-tags", "-pick", "-signal", "-await-file":
 			if i + 1 >= len(args) {fail("step needs an argument")}
 			i += 1
 			value := args[i]
 			switch flag {
+			case "-expect-url":
+				if ui.probe_opened_url(&h.p) != value {fail("the view did not open the expected URL")}
+			case "-reveal":
+				if !reveal_control(&h, value) {fail(fmt.tprintf("could not reveal control %s", value))}
 			case "-png":
 				if !png(&h, value) {fail("PNG write failed")}
 			case "-pick":

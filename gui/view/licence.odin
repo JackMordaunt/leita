@@ -93,7 +93,17 @@ licence_dialog :: proc(gtx: ^ui.Ctx, m: ^Model) {
 			disabled = pasted == "" || r.activating,
 		},
 	}
-	if primer.dialog(gtx, &m.licence_open, tr(.Licence), footer = buttons[:], width = .Medium) {
+	// A fixed-height body leaves room for the actions when the terms or an
+	// activation error need to scroll. Narrow windows use the whole viewport.
+	if primer.dialog(
+		gtx,
+		&m.licence_open,
+		tr(.Licence),
+		footer = buttons[:],
+		width = .Large,
+		height = .Large if gtx.viewport.y < 720 else .Auto,
+		narrow = .Fullscreen,
+	) {
 		ui.column(gtx, gap = 16, align = .Fill)
 		if why, ok := m.licence_why.?; ok && !r.unlocked {
 			primer.inline_message(gtx, locked_text(gtx, why), .Warning)

@@ -170,3 +170,93 @@ the_licence_dialog_names_paid_through_and_this_build :: proc(t: ^testing.T) {
 		),
 	)
 }
+
+// The key exchange stays usable in a small window, including a refusal that
+// makes the body longer. The action buttons stay on screen while the body scrolls.
+@(test)
+the_licence_dialog_keeps_its_actions_in_a_small_window :: proc(t: ^testing.T) {
+	for scenario in ([]struct {
+			dark:   bool,
+			height: f32,
+		}{{false, 360}, {true, 360}, {false, 720}, {true, 720}}) {
+		dark, height := scenario.dark, scenario.height
+		m: Model
+		model_init(&m, "/top")
+		m.settings_read = true
+		m.licence_open = true
+		ui.text_set(&m.licence_text, "FIXTURE-KEY")
+		pin_theme(&m, dark)
+		defer model_destroy(&m)
+		fonts := []ops.Font_Ref {
+			{0, ui.default_font(), 400},
+			{1, ui.default_font(), 500},
+			{2, ui.default_font(), 600},
+			{3, ui.default_font(), 400},
+		}
+		h: render.Headless
+		render.headless_init(&h, rights_frame, &m, {480, height}, fonts)
+		defer render.headless_destroy(&h)
+		ui.probe_deliver(
+			&h.p,
+			query.Progress{},
+			query.Progress_Result{generation = 1, state = .Done, target = "/top"},
+		)
+		result := query.Licence_Result {
+			trial_left = 30,
+			unlocked   = true,
+		}
+		ui.probe_deliver(&h.p, query.Licence{}, result)
+		ui.probe_advance(&h.p, 30, 1.0 / 60)
+		for failed in ([]bool{false, true}) {
+			if failed {
+				m.licence_answered = true
+				result.problem = "Leita could not reach the licence server. Check the connection, or open the licence file from your receipt instead."
+				result.offered += 1
+				ui.probe_deliver(&h.p, query.Licence{}, result)
+				ui.probe_advance(&h.p, 5, 1.0 / 60)
+			}
+			for name in ([]string{"Add licence", "Close"}) {
+				hit, found := ui.probe_find_top(&h.p, name)
+				if !testing.expectf(t, found, "%s is drawn", name) {continue}
+				box := ops.transform_rect(hit.transform, ops.shape_bounds(&h.p.scene, hit.shape))
+				testing.expectf(
+					t,
+					box.x >= 0 && box.x + box.w <= 480 && box.y >= 0 && box.y + box.h <= height,
+					"%s is inside the window: %v (dark=%v, refusal=%v)",
+					name,
+					box,
+					dark,
+					failed,
+				)
+			}
+			// A wheel over the dialog reaches the key field. A tag alone would
+			// pass even if the field were clipped outside its scroll viewport.
+			ui.text_set(&m.licence_text, "")
+			for i := 0; i < 20; i += 1 {
+				field, found := ui.probe_find_top(&h.p, "Licence to add")
+				box := ops.transform_rect(
+					field.transform,
+					ops.shape_bounds(&h.p.scene, field.shape),
+				)
+				under, visible := ui.hit_test(
+					ui.probe_current(&h.p),
+					{box.x + box.w / 2, box.y + box.h / 2},
+					.Press,
+				)
+				if found && visible && under.area == field.area {
+					ui.probe_click(&h.p, "Licence to add")
+					break
+				}
+				ui.probe_scroll_at(&h.p, {240, height / 2}, 1)
+				ui.probe_advance(&h.p, 10, 1.0 / 60)
+			}
+			testing.expect_value(t, ui.probe_focus_name(&h.p), "Licence to add")
+			ui.probe_type(&h.p, "FIXTURE-KEY")
+			ui.probe_frame(&h.p)
+			testing.expect_value(t, ui.text_string(&m.licence_text), "FIXTURE-KEY")
+		}
+		testing.expect(t, ui.probe_click_top(&h.p, "Close"))
+		ui.probe_frame(&h.p)
+		testing.expect(t, !m.licence_open, "the visible Close button closes the dialog")
+	}
+}

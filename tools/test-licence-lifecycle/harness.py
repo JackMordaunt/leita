@@ -24,6 +24,7 @@ OWNED = [
     "host_activation_tampered",
     "host_activation_http_error",
     "host_activation_timeout",
+    "host_activation_ui_matrix",
     "host_activation_unreachable",
     "host_pro_persisted_offline",
     "host_pro_later_ineligible",
@@ -239,6 +240,8 @@ def main():
         bins = build(bindir)
         for case_id, fn in cases(bins):
             run_case(results, case_id, fn)
+        import activation
+        run_case(results, "host_activation_ui_matrix", lambda: activation.render(directory / "captures", bins))
         if args.demos:
             capture = ROOT / "tools" / "capture"
             sys.path.insert(0, str(capture))

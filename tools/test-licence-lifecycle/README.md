@@ -26,7 +26,15 @@ pre-seeded licence, receipt or `first-use` file is that on-disk state.
 `python3 -m unittest discover -s tools/test-licence-lifecycle -p 'test_*.py'`
 checks the fixture without building Leita.
 
-Screenshots and demos are `tools/capture/lifecycle.py`. They are not part of
-this harness unless `--demos DIR` is passed, and they are not committed.
+The bounded first-run/activation still matrix (`tools/capture/activation.py`)
+also runs as `host_activation_ui_matrix`. Both themes at 1280×820 and 480×360
+cover fresh trial, trial over, activation, malformed/unknown/refunded keys,
+connection refusal and HTTP 500; one additional case uses the real 30-second
+timeout. PNGs, tags and a native-OS manifest are retained in
+`build/lifecycle/captures` by CI. They are evidence for inspection, not image
+goldens. Buy is observed through the probe without opening a browser.
+
+The larger screenshot and video demos are `tools/capture/lifecycle.py`. They
+are not part of this harness unless `--demos DIR` is passed, and are not committed.
 Set `JM` to a jm checkout that already contains the native libraries when the
 worktree submodule has not built them.

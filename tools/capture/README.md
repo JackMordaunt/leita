@@ -148,3 +148,20 @@ same list to standard error.
 release fixture (`tools/test-licence-lifecycle`). It writes light and dark PNGs,
 MP4s, a contact sheet and `index.html` into a directory outside the repository.
 The runs use throwaway keys. Automatic checks are off until About's checkbox is turned on. Opting in runs one signed local check and does not install a release.
+
+`python3 tools/capture/activation.py --out /tmp/leita-activation-review` runs a
+smaller first-run and activation review without videos. It captures both themes
+at 1280×820 and 480×360: a fresh trial and first scan, trial over, successful
+activation, malformed and unknown keys, a refunded-key refusal, an unreachable
+server and HTTP 500. One further case captures the real 30-second timeout and
+the pending indicator. It checks requests, persisted licence/receipt bytes,
+the trial stamp, the Buy URL requested through the probe, and that Close still
+works after each outcome. No browser is opened and no production endpoint is
+called. The HTML index and manifest identify the native OS; a theme does not
+emulate another platform.
+
+The licence lifecycle producer also runs this matrix and retains its PNGs,
+tag dumps and manifest under `build/lifecycle/captures` in each native CI job.
+`-reveal TAG` scrolls an activation-dialog control into the visible body before
+a click; unlike `-await`, it checks the clipped pointer hit, not just a tag.
+`-expect-url URL` checks the URL the view asked the probe to open.
