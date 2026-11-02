@@ -62,7 +62,7 @@ class WatchdogTests(unittest.TestCase):
         self.assertIn("-define:ODIN_TEST_LOG_STATE_CHANGES=true", compile_argv)
         self.assertIn("-define:LEITA_VERSION=v9.8.7", compile_argv)
         self.assertEqual(compile_call.kwargs["timeout"], 600)
-        self.assertEqual(execute_call.kwargs["timeout"], 1200)
+        self.assertEqual(execute_call.kwargs["timeout"], 300)
         self.assertEqual(str(execute_call.args[0][0]), compile_argv[-1].removeprefix("-out:"))
 
 

@@ -1,0 +1,19 @@
+#!/bin/sh
+# Run both independent native gates, preserving either failure. The caller is
+# root in the disposable VM; every CLI scan still runs as the leita account.
+set -eu
+: "${ODIN:?set ODIN to the native compiler}"
+unit_status=0
+su -l leita -c "cd '$PWD' && ODIN='$ODIN' sh tools/freebsd/ci" || unit_status=$?
+fixture_status=1
+if [ -x build/speed/leita ]; then
+    fixture_status=0
+    python3 tools/freebsd/fixtures.py --binary build/speed/leita --workdir build/freebsd/fixtures --native-user leita || fixture_status=$?
+else
+    printf '%s\n' 'native filesystem fixtures could not run: the CLI build produced no executable' >&2
+fi
+printf 'native gates: unit/package=%s filesystem=%s\n' "$unit_status" "$fixture_status"
+if [ "$unit_status" -ne 0 ]; then
+    exit "$unit_status"
+fi
+exit "$fixture_status"

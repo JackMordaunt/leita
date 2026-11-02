@@ -169,7 +169,7 @@ def test_suite():
     run(odin + ["build", "cmd/cli", "-build-mode:test", "-all-packages", "-debug",
                 "-define:ODIN_TEST_LOG_STATE_CHANGES=true", "-define:ODIN_TEST_FANCY=false"] + flags +
         shlex.split(os.environ.get("SAN", "")) + [f"-out:{binary}"], cwd=ROOT, timeout=600)
-    run([binary], cwd=ROOT, timeout=1200)
+    run([binary], cwd=ROOT, timeout=300)
 
 
 def tests():

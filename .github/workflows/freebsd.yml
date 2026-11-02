@@ -46,10 +46,9 @@ jobs:
             # Permission fixtures must run as an ordinary user, not the VM's root.
             pw useradd leita -m -s /bin/sh
             chown -R leita "$PWD"
-            su -l leita -c "cd '$PWD' && ODIN=/opt/leita-odin/odin sh tools/freebsd/ci"
-            # Root creates only disposable file-backed UFS/ZFS/nullfs fixtures;
-            # every scan is still executed as the ordinary leita account.
-            python3 tools/freebsd/fixtures.py --binary build/speed/leita --workdir build/freebsd/fixtures --native-user leita
+            # Gather filesystem proof from a built CLI even when the unit gate
+            # fails; the combined gate still returns failure for either result.
+            sh tools/freebsd/gates
       - name: Native CLI candidate and build metadata
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
