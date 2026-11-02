@@ -20,9 +20,35 @@ def run(argv, **kwargs):
     return subprocess.run([str(arg) for arg in argv], check=True, **kwargs)
 
 
-def value(name, justfile=ROOT / "justfile"):
-    return run(["just", "--justfile", justfile, "--evaluate", name],
+def value(name):
+    # Only the application justfile is portable to FreeBSD; jm has GUI-only
+    # prerequisites whose disabled recipes make even --evaluate fail there.
+    return run(["just", "--justfile", ROOT / "justfile", "--evaluate", name],
                text=True, stdout=subprocess.PIPE).stdout.strip()
+
+
+
+def sqlite_defines(justfile):
+    """Read jm's literal string assignment without evaluating its recipe graph."""
+    lines = justfile.read_text().splitlines()
+    for index, line in enumerate(lines):
+        match = re.fullmatch(r"sqlite_defines\s*:=\s*(.*)", line)
+        if match:
+            expression = match[1]
+            while expression.rstrip().endswith("\\"):
+                index += 1
+                if index == len(lines):
+                    raise ValueError("unterminated sqlite_defines assignment")
+                expression = expression.rstrip()[:-1] + lines[index].strip()
+            quoted = r'"(?:[^"\\]|\\.)*"'
+            if not re.fullmatch(r"\s*" + quoted + r"(?:\s*\+\s*" + quoted + r")*\s*", expression):
+                raise ValueError("sqlite_defines must remain a concatenation of literal strings")
+            result = "".join(json.loads(part) for part in re.findall(quoted, expression))
+            if not result or any(not re.fullmatch(r"-D[A-Za-z_][A-Za-z0-9_]*(?:=[A-Za-z0-9_()+.-]+)?", arg)
+                                 for arg in shlex.split(result)):
+                raise ValueError("sqlite_defines contains an unsupported compile option")
+            return result
+    raise ValueError("sqlite_defines assignment is missing")
 
 
 def native_host():
@@ -39,7 +65,8 @@ def dependencies():
         run(["git", "submodule", "update", "--init", "jm"], cwd=ROOT)
     cc = shlex.split(os.environ.get("CC", "cc"))
     ar = shlex.split(os.environ.get("AR", "ar"))
-    options = shlex.split(value("sqlite_defines", jm / "justfile"))
+    defines_text = sqlite_defines(jm / "justfile")
+    options = shlex.split(defines_text)
     for package, defines in [("sqlite3", options), ("zstd", [])]:
         output = jm / package / "lib"
         output.mkdir(parents=True, exist_ok=True)
@@ -50,7 +77,7 @@ def dependencies():
         archive.unlink(missing_ok=True)
         run(ar + ["rcs", archive, obj])
         if package == "sqlite3":
-            (output / "defines").write_text(value("sqlite_defines", jm / "justfile") + "\n")
+            (output / "defines").write_text(defines_text + "\n")
     output = ROOT / "scan" / "lib"
     output.mkdir(parents=True, exist_ok=True)
     obj = ROOT / "build" / "freebsd" / "native.o"
@@ -66,11 +93,23 @@ def build(mode):
     native_host()
     if mode == "release":
         # Keep the same public-key validation as every other platform.
-        run(["just", "release-key"], cwd=ROOT, stdout=subprocess.DEVNULL)
-        run(["just", "update-key"], cwd=ROOT, stdout=subprocess.DEVNULL)
+        keys = [run(["just", recipe], cwd=ROOT, text=True, stdout=subprocess.PIPE).stdout.strip()
+                for recipe in ["release-key", "update-key"]]
+        options = ["-o:speed", f"-define:LEITA_LICENCE_KEY={keys[0]}",
+                   f"-define:LEITA_UPDATE_KEY={keys[1]}"]
+    elif mode in {"minimal", "speed"}:
+        options = shlex.split(value(f"{mode}_opt"))
+    else:
+        raise ValueError(f"unsupported native build mode: {mode}")
     dependencies()
-    run(["just", "cli", mode], cwd=ROOT)
-    return ROOT / "build" / mode / "leita"
+    binary = ROOT / "build" / mode / "leita"
+    binary.parent.mkdir(parents=True, exist_ok=True)
+    # Do not enter root's sqlite prerequisite or any jm recipe. Their native
+    # archives were rebuilt above; flags and version still come from the root.
+    odin = shlex.split(os.environ.get("ODIN", "odin"))
+    run(odin + ["build", "cmd/cli", "-target:freebsd_amd64"] + options +
+        shlex.split(value("flags")) + [f"-out:{binary}"], cwd=ROOT)
+    return binary
 
 
 def tests():

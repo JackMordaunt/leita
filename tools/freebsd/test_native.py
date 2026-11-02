@@ -2,6 +2,9 @@
 import hashlib
 import importlib.util
 import json
+import os
+import shutil
+import subprocess
 from pathlib import Path
 import tarfile
 import tempfile
@@ -11,6 +14,58 @@ from unittest.mock import patch
 SPEC = importlib.util.spec_from_file_location("freebsd_native", Path(__file__).with_name("native.py"))
 native = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(native)
+
+
+class DependencyTests(unittest.TestCase):
+    SOURCE = ('sqlite_defines := "-DSQLITE_THREADSAFE=1 " + ' + chr(92) + "\n" +
+              '  "-DSQLITE_ENABLE_FTS5 -DSQLITE_OMIT_LOAD_EXTENSION"\n'
+              '_hot name mode dirs: unavailable_freebsd_dependency\n'
+              '    echo unused\n')
+
+    @unittest.skipUnless(shutil.which("just"), "just is needed to reproduce the invalid recipe graph")
+    def test_invalid_jm_recipe_graph_does_not_block_literal_define_read(self):
+        with tempfile.TemporaryDirectory() as directory:
+            justfile = Path(directory) / "justfile"
+            justfile.write_text(self.SOURCE)
+            result = subprocess.run(["just", "--justfile", str(justfile), "--evaluate", "sqlite_defines"],
+                                    text=True, capture_output=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("unknown dependency", result.stderr)
+            with patch.object(native, "run", side_effect=AssertionError("must not execute jm justfile")):
+                self.assertEqual(native.sqlite_defines(justfile),
+                                 "-DSQLITE_THREADSAFE=1 -DSQLITE_ENABLE_FTS5 -DSQLITE_OMIT_LOAD_EXTENSION")
+
+    def test_define_expressions_and_non_defines_fail_explicitly(self):
+        for expression in ['env("FLAGS")', '"-DSQLITE_THREADSAFE=1" + other', '"-O0"', '""']:
+            with self.subTest(expression=expression), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "justfile"
+                path.write_text("sqlite_defines := " + expression + "\n")
+                with self.assertRaises(ValueError):
+                    native.sqlite_defines(path)
+
+    def test_native_build_uses_root_flags_and_direct_odin_without_jm_recipes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            jm = root / "jm"
+            jm.mkdir()
+            (jm / "justfile").write_text(self.SOURCE)
+            values = {"jm": str(jm), "speed_opt": "-debug -o:speed",
+                      "flags": "-vet -collection:jm=jm -define:LEITA_VERSION=v9.8.7"}
+            with patch.object(native, "ROOT", root), patch.object(native, "native_host"), \
+                 patch.object(native, "value", side_effect=values.__getitem__), \
+                 patch.object(native, "run") as command, patch.dict(os.environ, {"ODIN": "odin"}):
+                binary = native.build("speed")
+            calls = [call.args[0] for call in command.call_args_list]
+            self.assertFalse(any(argv[0] == "just" for argv in calls))
+            sqlite = next(argv for argv in calls if "-DSQLITE_THREADSAFE=1" in argv)
+            self.assertIn("-DSQLITE_ENABLE_FTS5", sqlite)
+            self.assertIn("-DSQLITE_OMIT_LOAD_EXTENSION", sqlite)
+            self.assertEqual((jm / "sqlite3/lib/defines").read_text(),
+                             "-DSQLITE_THREADSAFE=1 -DSQLITE_ENABLE_FTS5 -DSQLITE_OMIT_LOAD_EXTENSION\n")
+            odin = calls[-1]
+            self.assertEqual(odin[:4], ["odin", "build", "cmd/cli", "-target:freebsd_amd64"])
+            self.assertIn("-define:LEITA_VERSION=v9.8.7", odin)
+            self.assertEqual(odin[-1], f"-out:{binary}")
 
 
 class PackageTests(unittest.TestCase):
