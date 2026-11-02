@@ -51,10 +51,6 @@ test_a_baseline_does_not_keep_an_unread_directory_as_empty :: proc(t: ^testing.T
 	target, choice, err := scan.resolve(root)
 	testing.expect_value(t, err, scan.Error.None)
 	defer scan.target_destroy(&target)
-	if _, has_events := changes.now(root); !has_events {
-		log.info("skipped: the volume keeps no change history, so no baseline is kept")
-		return
-	}
 
 	run  :: proc(t: ^testing.T, target: scan.Target, engine: scan.Engine, file: string) -> Fill {
 		tree := new(scan.Tree)
@@ -68,7 +64,12 @@ test_a_baseline_does_not_keep_an_unread_directory_as_empty :: proc(t: ^testing.T
 		}
 		fill_run(&f)
 		testing.expectf(t, problem(&f) == "", "the fill failed: %s", problem(&f))
-		testing.expect(t, f.saved, "the result was not kept")
+		_, has_events := changes.now(scan.location(target, context.temp_allocator))
+		testing.expect_value(t, f.saved, has_events)
+		if !has_events {
+			testing.expect_value(t, f.how, Fill_Kind.Full)
+			testing.expect(t, f.why != "", "the missing change source must explain the whole scan")
+		}
 		return f
 	}
 	done :: proc(f: ^Fill) {

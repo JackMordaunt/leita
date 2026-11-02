@@ -3,7 +3,6 @@ package walk
 import "core:fmt"
 import "core:log"
 import "core:os"
-import "core:slice"
 import "core:testing"
 import "core:time"
 
@@ -37,8 +36,7 @@ place :: proc(t: ^testing.T, name: string) -> string {
 // write_file is Windows' alone.
 @(private = "file")
 put :: proc(t: ^testing.T, path: string, size: int) {
-	body := make([]byte, size, context.temp_allocator)
-	slice.fill(body, 'x')
+	body := fixture_bytes(size)
 	testing.expectf(t, os.write_entire_file(path, body) == nil, "could not write %s", path)
 }
 
@@ -61,6 +59,9 @@ read_tree :: proc(t: ^testing.T, root: string) -> scan.Tree {
 // still assert the copying path on filesystems where reuse remains supported.
 @(private = "file")
 update_rereads_fixture :: proc(root: string) -> bool {
+	when ODIN_OS == .FreeBSD {
+		return true
+	}
 	when ODIN_OS == .Linux {
 		return btrfs_update_needs_read(root, false)
 	}

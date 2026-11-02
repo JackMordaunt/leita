@@ -45,8 +45,7 @@ join :: proc(parts: ..string) -> string {
 // Write a file of `size` bytes, for this package's tests.
 @(private)
 put :: proc(t: ^testing.T, path: string, size: int) {
-	body := make([]byte, size, context.temp_allocator)
-	slice.fill(body, 'x')
+	body := fixture_bytes(size)
 	testing.expectf(t, os.write_entire_file(path, body) == nil, "could not write %s", path)
 }
 
@@ -395,7 +394,12 @@ test_a_fill_with_a_baseline_updates_the_place :: proc(t: ^testing.T) {
 		defer fill_destroy(&f)
 		fill_run(&f)
 		testing.expectf(t, problem(&f) == "", "the fill failed: %s", problem(&f))
-		testing.expect(t, f.saved, "the result was not kept")
+		_, has_events := changes.now(scan.location(target, context.temp_allocator))
+		testing.expect_value(t, f.saved, has_events)
+		if !has_events {
+			testing.expect_value(t, f.how, Fill_Kind.Full)
+			testing.expect(t, f.why != "", "the missing change source must explain the whole scan")
+		}
 		return tree, f.how, f.why
 	}
 
@@ -439,8 +443,12 @@ test_a_fill_asked_whole_reads_whole_and_keeps :: proc(t: ^testing.T) {
 	defer scan.target_destroy(&target)
 	// A baseline is kept only on a volume that can say what changed since.
 	_, has_events := changes.now(root)
-	if !testing.expect(t, has_events, "no cursor: the volume keeps no change history") {
-		return
+	when ODIN_OS == .FreeBSD {
+		testing.expect(t, !has_events, "FreeBSD currently requires full scans")
+	} else {
+		if !testing.expect(t, has_events, "no cursor: the volume keeps no change history") {
+			return
+		}
 	}
 
 	runs := [3]Fill{}
@@ -459,12 +467,12 @@ test_a_fill_asked_whole_reads_whole_and_keeps :: proc(t: ^testing.T) {
 		defer fill_destroy(&f)
 		fill_run(&f)
 		testing.expectf(t, problem(&f) == "", "the fill failed: %s", problem(&f))
-		testing.expectf(t, f.saved, "run %d was not kept", i)
+		testing.expect_value(t, f.saved, has_events)
 	}
 	testing.expect_value(t, runs[1].how, Fill_Kind.Full)
-	testing.expect_value(t, runs[1].why, "asked to read it whole")
+	testing.expect_value(t, runs[1].why, "asked to read it whole" if has_events else "the system cannot say what changes in this place")
 	testing.expect_value(t, runs[2].how, fixture_fill_kind(root))
-	testing.expect(t, runs[2].taken != {}, "no time the base was kept")
+	testing.expect_value(t, runs[2].taken != {}, has_events)
 	words := how_read(runs[2].how == .Updated, runs[2].why, runs[2].reread, runs[2].taken)
 	prefix := "read whole: " if fixture_fill_kind(root) == .Full else "updated: "
 	testing.expectf(t, strings.has_prefix(words, prefix), "%q", words)

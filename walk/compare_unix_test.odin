@@ -3,7 +3,6 @@ package walk
 
 import "core:fmt"
 import "core:os"
-import "core:slice"
 import "core:strings"
 import "core:testing"
 
@@ -18,8 +17,7 @@ Case :: struct {
 BODY_LEN :: 1 << 20
 
 put :: proc(t: ^testing.T, path: string, length: int) {
-	body := make([]byte, length, context.temp_allocator)
-	slice.fill(body, 'x')
+	body := fixture_bytes(length)
 	testing.expectf(t, os.write_entire_file(path, body) == nil, "could not write %s", path)
 }
 

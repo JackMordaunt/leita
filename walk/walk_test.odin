@@ -2,7 +2,6 @@ package walk
 
 import "core:fmt"
 import "core:os"
-import "core:slice"
 import "core:testing"
 
 import "../scan"
@@ -26,8 +25,7 @@ fixture :: proc(t: ^testing.T, name: string) -> string {
 	os.remove_all(root)
 
 	write :: proc(t: ^testing.T, path: string, size: int) {
-		body := make([]byte, size, context.temp_allocator)
-		slice.fill(body, 'x')
+		body := fixture_bytes(size)
 		testing.expectf(t, os.write_entire_file(path, body) == nil, "could not write %s", path)
 	}
 	testing.expect(t, os.make_directory(root) == nil, "could not make the root")

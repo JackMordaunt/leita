@@ -42,8 +42,7 @@ test_a_sparse_file_is_charged_what_it_occupies :: proc(t: ^testing.T) {
 	os.close(hole)
 
 	// The same length, actually written.
-	body := make([]byte, 1 << 20, context.temp_allocator)
-	slice.fill(body, 'x')
+	body := fixture_bytes(1 << 20)
 	testing.expect(
 		t,
 		os.write_entire_file(fmt.tprintf("%s/solid.bin", root), body) == nil,
@@ -138,8 +137,7 @@ deep_tree :: proc(t: ^testing.T, root: string) -> bool {
 	if !testing.expect(t, file >= 0, "could not make the leaf") {
 		return false
 	}
-	body := make([]byte, DEEP_BODY, context.temp_allocator)
-	slice.fill(body, 'x')
+	body := fixture_bytes(DEEP_BODY)
 	wrote := posix.write(file, raw_data(body), len(body))
 	posix.close(file)
 	return testing.expect_value(t, int(wrote), DEEP_BODY)
@@ -245,8 +243,7 @@ test_a_hard_linked_file_is_charged_once :: proc(t: ^testing.T) {
 	testing.expect(t, os.make_directory(root) == nil, "could not make the root")
 
 	DIRS :: 40
-	body := make([]byte, 100_000, context.temp_allocator)
-	slice.fill(body, 'x')
+	body := fixture_bytes(100_000)
 	shared := fmt.tprintf("%s/shared", root)
 	testing.expect(t, os.write_entire_file(shared, body) == nil, "could not write the file")
 	for i in 0 ..< DIRS {
@@ -314,8 +311,7 @@ locked_place :: proc(t: ^testing.T, name: string) -> (root: string, ok: bool) {
 	testing.expect(t, os.make_directory(root) == nil, "could not make the root")
 	locked := fmt.tprintf("%s/locked", root)
 	testing.expect(t, os.make_directory(locked) == nil, "could not make locked")
-	body := make([]byte, 1 << 20, context.temp_allocator)
-	slice.fill(body, 'x')
+	body := fixture_bytes(1 << 20)
 	testing.expect(
 		t,
 		os.write_entire_file(fmt.tprintf("%s/big.bin", locked), body) == nil,
