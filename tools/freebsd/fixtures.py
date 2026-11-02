@@ -33,7 +33,7 @@ def allocation_oracle(root, *, boundaries=(), follow=False):
     as unread. Run under the same uid as Leita for the permission comparison.
     """
     root = Path(root)
-    stop = {os.path.abspath(p) for p in boundaries}
+    stop = {os.path.realpath(p) for p in boundaries}
     root_device = root.stat().st_dev
     seen = set()
     totals = dict(bytes=0, files=0, directories=0, unread=0)
@@ -45,7 +45,7 @@ def allocation_oracle(root, *, boundaries=(), follow=False):
             identity = (current.st_dev, current.st_ino)
             if identity in ancestors or current.st_dev != root_device:
                 return
-            if os.path.abspath(folder) in stop:
+            if os.path.realpath(folder) in stop:
                 return
             children = sorted(folder.iterdir(), key=lambda p: os.fsencode(p.name))
         except OSError:

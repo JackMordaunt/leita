@@ -45,6 +45,14 @@ class AllocationOracleTest(unittest.TestCase):
         answer = fixtures.allocation_oracle(self.root, boundaries=[boundary])
         self.assertEqual(answer['totals'], dict(bytes=0, files=0, directories=1, unread=0))
 
+    def test_followed_link_cannot_bypass_an_explicit_mount_boundary(self):
+        boundary = self.root / 'mounted'
+        boundary.mkdir()
+        (boundary / 'outside-allocation').write_bytes(b'x' * 65536)
+        (self.root / 'alias').symlink_to('mounted', target_is_directory=True)
+        answer = fixtures.allocation_oracle(self.root, boundaries=[boundary], follow=True)
+        self.assertEqual(answer['totals'], dict(bytes=0, files=1, directories=1, unread=0))
+
     def test_permission_failure_is_reported_and_not_treated_as_empty(self):
         denied = self.root / 'denied'
         denied.mkdir()
