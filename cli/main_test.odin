@@ -391,7 +391,6 @@ write_payload :: proc(t: ^testing.T, path: string, size: int) {
 	}
 	file, err := os.open(path, {.Write, .Create, .Trunc})
 	if !testing.expectf(t, err == nil, "could not open %s: %v", path, err) {return}
-	defer os.close(file)
 	n, write_err := os.write(file, body)
 	testing.expectf(
 		t,
@@ -403,6 +402,28 @@ write_payload :: proc(t: ^testing.T, path: string, size: int) {
 	if size > 0 {
 		// Finish delayed compression/allocation before measuring the fixture.
 		testing.expect_value(t, os.sync(file), nil)
+	}
+	testing.expect_value(t, os.close(file), nil)
+	when ODIN_OS == .FreeBSD {
+		if size > 0 {
+			// Test-only ZFS settlement: fsync may finish before st_blocks reflects
+			// allocation. The independent native matrix also syncs before its oracle.
+			started := time.tick_now()
+			posix.sync()
+			allocated := fixture_allocation(t, path)
+			for allocated < i64(size) && time.tick_since(started) < 10 * time.Second {
+				time.sleep(10 * time.Millisecond)
+				allocated = fixture_allocation(t, path)
+			}
+			testing.expectf(
+				t,
+				allocated >= i64(size),
+				"%s allocation %d did not reach its incompressible length %d within 10s",
+				path,
+				allocated,
+				size,
+			)
+		}
 	}
 }
 

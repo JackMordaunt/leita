@@ -80,12 +80,7 @@ monitor_bench_open :: proc(t: ^testing.T, b: ^Monitor_Bench) {
 	b.dir = dir
 	b.place = monitor_join(dir, "watched")
 	testing.expect(t, os.make_directory_all(monitor_join(b.place, "photos")) == nil)
-	body := make([]byte, 2 << 20, context.temp_allocator)
-	slice.fill(body, 'x')
-	testing.expect(
-		t,
-		os.write_entire_file(monitor_join(b.place, "photos", "big.raw"), body) == nil,
-	)
+	write_payload(t, monitor_join(b.place, "photos", "big.raw"), 2 << 20)
 	// The binary the scheduler is to run, which list looks for.
 	testing.expect(t, os.make_directory_all(monitor_join(dir, "bin")) == nil)
 	testing.expect(t, os.write_entire_file(monitor_join(dir, "bin", "leita"), nil) == nil)
@@ -346,12 +341,16 @@ monitor_a_run_scans_what_is_due_and_keeps_it_in_history :: proc(t: ^testing.T) {
 	if runs[0].updated {
 		testing.expect(t, strings.contains(out, "read again since"), out)
 	} else {
-		testing.expect(
-			t,
-			runs[0].why == "extent charges require a fresh walk" ||
-			runs[0].why == "clone charges require a fresh walk",
-			out,
-		)
+		when ODIN_OS == .FreeBSD {
+			testing.expect_value(t, runs[0].why, "the system cannot say what changes in this place")
+		} else {
+			testing.expect(
+				t,
+				runs[0].why == "extent charges require a fresh walk" ||
+				runs[0].why == "clone charges require a fresh walk",
+				out,
+			)
+		}
 		testing.expect(t, strings.contains(out, fmt.tprintf("read whole: %s", runs[0].why)), out)
 	}
 
@@ -368,10 +367,18 @@ monitor_a_run_scans_what_is_due_and_keeps_it_in_history :: proc(t: ^testing.T) {
 		context.temp_allocator,
 	)
 	testing.expect(t, baseline != b.c.paths.history && baseline != b.place)
-	testing.expectf(t, os.exists(baseline), "no baseline at %s", baseline)
+	when ODIN_OS == .FreeBSD {
+		testing.expect(t, !os.exists(baseline), "a cursorless run must not keep a reusable baseline")
+	} else {
+		testing.expectf(t, os.exists(baseline), "no baseline at %s", baseline)
+	}
 	code, _ = monitor_run_monitor(&b, "remove", b.place)
 	testing.expect_value(t, code, 0)
-	testing.expect(t, os.exists(baseline), "the baseline went with the place")
+	when ODIN_OS == .FreeBSD {
+		testing.expect(t, !os.exists(baseline), "removing a watch must not manufacture a baseline")
+	} else {
+		testing.expect(t, os.exists(baseline), "the baseline went with the place")
+	}
 	testing.expect_value(t, monitor_snapshot_count(t, &b), 3)
 }
 
@@ -558,7 +565,8 @@ a_monitor_webhook_hears_each_new_alert_and_a_test :: proc(t: ^testing.T) {
 	b.c.post = webhook.post
 	url := loopback.url(srv, "/leita")
 
-	_, _ = monitor_run_monitor(&b, "add", b.place, "--warn-used", "1")
+	// Force a limit independent of how much this fresh filesystem has used.
+	_, _ = monitor_run_monitor(&b, "add", b.place, "--min-free", "1000000TB")
 	_, _ = monitor_run_monitor(&b, "on")
 	_, out := monitor_run_monitor(&b, "run")
 	testing.expect(t, !strings.contains(out, "webhooks:"), out)
@@ -580,14 +588,14 @@ a_monitor_webhook_hears_each_new_alert_and_a_test :: proc(t: ^testing.T) {
 	// The alert fired last run, before the webhook: clear it, and raise it again.
 	_, _ = monitor_run_monitor(&b, "add", b.place)
 	_, _ = monitor_run_monitor(&b, "run", "--all")
-	_, _ = monitor_run_monitor(&b, "add", b.place, "--warn-used", "1")
+	_, _ = monitor_run_monitor(&b, "add", b.place, "--min-free", "1000000TB")
 	_, out = monitor_run_monitor(&b, "run", "--all")
 	testing.expect(t, strings.contains(out, "webhooks: 1 delivered"), out)
 	heard := monitor_hook_heard(&server)
 	testing.expect_value(t, len(heard), 2)
 	if len(heard) == 2 {
 		body := heard[1]
-		testing.expect(t, strings.contains(body, `"event": "warn_used"`), body)
+		testing.expect(t, strings.contains(body, `"event": "low_free"`), body)
 		testing.expect(t, strings.contains(body, `"schema": "leita.report/1"`), body)
 		testing.expect(t, strings.contains(body, `"largest_directories": []`), body)
 		testing.expect(t, !strings.contains(body, "big.raw"), "no path inside the place")
@@ -596,7 +604,7 @@ a_monitor_webhook_hears_each_new_alert_and_a_test :: proc(t: ^testing.T) {
 	_, _ = monitor_run_monitor(&b, "webhook", "add", url, "--paths")
 	_, _ = monitor_run_monitor(&b, "add", b.place)
 	_, _ = monitor_run_monitor(&b, "run", "--all")
-	_, _ = monitor_run_monitor(&b, "add", b.place, "--warn-used", "1")
+	_, _ = monitor_run_monitor(&b, "add", b.place, "--min-free", "1000000TB")
 	_, _ = monitor_run_monitor(&b, "run", "--all")
 	heard = monitor_hook_heard(&server)
 	testing.expect_value(t, len(heard), 3)
