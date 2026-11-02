@@ -198,6 +198,31 @@ monitor_a_place_is_added_listed_and_removed :: proc(t: ^testing.T) {
 }
 
 @(test)
+monitor_external_schedule_enables_runs_without_claiming_a_system_job :: proc(t: ^testing.T) {
+	b: Monitor_Bench
+	monitor_bench_open(t, &b)
+	defer os.remove_all(b.dir)
+	b.c.host.system = .External
+	code, out := monitor_run_monitor(&b, "on")
+	testing.expect_value(t, code, 0)
+	testing.expect(t, strings.contains(out, "no scheduler entry was installed"), out)
+	testing.expect(t, strings.contains(out, "crontab -e"), out)
+	testing.expect(t, strings.contains(out, "0 * * * * "), out)
+	testing.expect_value(t, len(b.commands), 0)
+	code, out = monitor_run_monitor(&b, "list")
+	testing.expect_value(t, code, 0)
+	testing.expect(t, strings.contains(out, "external schedule is managed by you"), out)
+	testing.expect(t, !strings.contains(out, "is missing"), out)
+	code, out = monitor_run_monitor(&b, "off")
+	testing.expect_value(t, code, 0)
+	testing.expect(t, strings.contains(out, "remove any external cron entry yourself"), out)
+	code, out = monitor_run_monitor(&b, "run")
+	testing.expect_value(t, code, 0)
+	testing.expect(t, strings.contains(out, "monitoring is off: nothing to do"), out)
+	testing.expect_value(t, len(b.commands), 0)
+}
+
+@(test)
 monitor_on_hands_the_monitor_to_the_scheduler_and_off_takes_it_back :: proc(t: ^testing.T) {
 	b: Monitor_Bench
 	monitor_bench_open(t, &b)

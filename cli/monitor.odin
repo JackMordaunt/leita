@@ -65,6 +65,8 @@ Webhooks
 Monitoring runs only while turned on, through the system's scheduler; nothing stays
 running. Each scan is kept, so change tracking has a steady record, and a limit
 crossed raises an alert, once, as a desktop notification and in list.
+On FreeBSD, on enables runs and prints a user crontab example; you manage the
+external scheduler. Off disables runs but leaves that external entry in place.
 Nothing is sent anywhere unless you add a webhook.
 `
 
@@ -276,7 +278,12 @@ monitor_parse :: proc(
 // open_settings opens readable settings; a command that changes them asks
 // for write and is refused before it can alter a scheduler or send a test.
 @(private)
-monitor_open_settings :: proc(c: Monitor_Context, st: ^settings.Store, w: io.Writer, write := false) -> bool {
+monitor_open_settings :: proc(
+	c: Monitor_Context,
+	st: ^settings.Store,
+	w: io.Writer,
+	write := false,
+) -> bool {
 	if err := settings.open(st, c.paths.settings); err != nil {
 		monitor_errorf(c, w, "cannot open %s: %s", c.paths.settings, history.describe(err))
 		return false
@@ -392,7 +399,27 @@ monitor_switch_on :: proc(c: Monitor_Context, w: io.Writer) -> int {
 		return monitor.EXIT_FAILED
 	}
 	defer settings.close(&st)
-	problem, state := schedule.install(c.host, c.argv)
+	external := c.host.system == .External
+	line: string
+	if external {
+		if c.host.uid == "0" {
+			monitor_errorf(
+				c,
+				w,
+				"cannot schedule monitoring as root: it would be installed for root, not for you",
+			)
+			return monitor.EXIT_FAILED
+		}
+		problem: string
+		line, problem = schedule.external_cron_line(c.argv)
+		if problem != "" {
+			monitor_errorf(c, w, "%s", problem)
+			return monitor.EXIT_FAILED
+		}
+	}
+	problem: string
+	state := schedule.Linger.Unknown
+	if !external {problem, state = schedule.install(c.host, c.argv)}
 	if problem != "" {
 		monitor_errorf(c, w, "cannot add the %s: %s", schedule.describe(c.host), problem)
 		return monitor.EXIT_FAILED
@@ -401,6 +428,16 @@ monitor_switch_on :: proc(c: Monitor_Context, w: io.Writer) -> int {
 		schedule.remove(c.host)
 		monitor_errorf(c, w, "cannot turn monitoring on: %s", history.describe(err))
 		return monitor.EXIT_FAILED
+	}
+	if external {
+		fmt.wprintln(w, "monitoring is on; no scheduler entry was installed")
+		fmt.wprintln(
+			w,
+			"add this hourly entry with crontab -e, using the same user, HOME and XDG_DATA_HOME:",
+		)
+		fmt.wprintln(w, line)
+		fmt.wprintln(w, "cron runs at the next hourly tick; missed hours are not replayed")
+		return 0
 	}
 	fmt.wprintfln(w, "monitoring is on: the %s runs it every hour", schedule.describe(c.host))
 	switch state {
@@ -440,7 +477,11 @@ monitor_switch_off :: proc(c: Monitor_Context, w: io.Writer) -> int {
 		monitor_errorf(c, w, "cannot remove the %s: %s", schedule.describe(c.host), problem)
 		return monitor.EXIT_FAILED
 	}
-	fmt.wprintln(w, "monitoring is off, and nothing is scheduled")
+	if c.host.system == .External {
+		fmt.wprintln(w, "monitoring is off; remove any external cron entry yourself")
+	} else {
+		fmt.wprintln(w, "monitoring is off, and nothing is scheduled")
+	}
 	return 0
 }
 
@@ -456,6 +497,11 @@ monitor_list :: proc(c: Monitor_Context, w: io.Writer) -> int {
 		fmt.wprintln(w, "monitoring is off")
 	case st.read_only:
 		fmt.wprintln(w, "monitoring is paused until settings can be saved")
+	case c.host.system == .External:
+		fmt.wprintln(
+			w,
+			"monitoring is on; the external schedule is managed by you and cannot be checked here",
+		)
 	case !schedule.loaded(c.host):
 		fmt.wprintfln(
 			w,

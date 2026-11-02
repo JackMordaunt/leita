@@ -130,6 +130,8 @@ program :: proc(h: Host, allocator := context.temp_allocator) -> string {
 			return ""
 		}
 		return task_program(r.out, allocator)
+	case .External:
+		return ""
 	case .Launchd:
 		text, err := os.read_entire_file(agent_path(h), context.temp_allocator)
 		if err != nil {
@@ -153,6 +155,8 @@ loaded :: proc(h: Host) -> bool {
 		return h.run({"schtasks", "/Query", "/TN", TASK_NAME}, h.user).ok
 	case .Launchd:
 		return h.run({"launchctl", "print", agent_target(h)}, h.user).ok
+	case .External:
+		return false
 	}
 	return false
 }

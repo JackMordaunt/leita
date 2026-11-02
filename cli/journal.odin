@@ -23,6 +23,7 @@ recorder a scan asks every folder when it last changed. Nothing is recorded unti
 leita journal on. The logs, in /var/lib/leita/journal, hold a hash of each folder
 that changed and when, not its name. btrfs subvolumes are not recorded yet.
 On macOS and Windows the system records changes itself, and this does nothing.
+On FreeBSD native change history is unavailable; every scan reads the whole tree.
 `
 
 journal_command_line :: proc(args: []string) -> int {

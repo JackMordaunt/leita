@@ -379,6 +379,11 @@ apply :: proc(cfg: Config, allocator := context.temp_allocator) -> (r: Result) {
 			"this is a development build, not a release; update replaces releases only",
 		)
 	}
+	// Unsupported platforms must fail before any lock, probe or scratch removal.
+	if cfg.asset == "" {
+		inspect(cfg, &r)
+		return r
+	}
 	exe := cfg.exe
 	if exe == "" {
 		p, err := os.get_executable_path(allocator)

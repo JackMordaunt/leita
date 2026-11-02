@@ -123,6 +123,33 @@ exists :: proc(p: string) -> bool {
 }
 
 @(test)
+an_unpublished_platform_is_refused_before_any_download :: proc(t: ^testing.T) {
+	f := fixture(t, "old build", "new build", "v1.1.0")
+	defer os.remove_all(f.root)
+	cfg := config(&f)
+	cfg.asset = ""
+	cfg.base = "http://127.0.0.1:1/never-contact"
+	scratch := strings.concatenate({f.exe, ".new"}, context.temp_allocator)
+	testing.expect_value(t, os.write_entire_file(scratch, "keep this pending file"), nil)
+	r := check(cfg)
+	testing.expect_value(t, r.outcome, Outcome.Failed)
+	testing.expect_value(t, r.reason, Reason.Unsupported)
+	r = apply(cfg)
+	testing.expect_value(t, r.outcome, Outcome.Failed)
+	testing.expect_value(t, r.reason, Reason.Unsupported)
+	testing.expect_value(t, read(f.exe), "old build")
+	testing.expect_value(t, read(scratch), "keep this pending file")
+	testing.expect(
+		t,
+		!os.exists(strings.concatenate({f.exe, LOCK_SUFFIX}, context.temp_allocator)),
+	)
+	when ODIN_OS == .FreeBSD {
+		testing.expect_value(t, asset(.Command_Line), "")
+		testing.expect_value(t, asset(.Window), "")
+	}
+}
+
+@(test)
 the_same_build_is_current :: proc(t: ^testing.T) {
 	f := fixture(t, "same build", "same build", "v1.0.0")
 	defer os.remove_all(f.root)

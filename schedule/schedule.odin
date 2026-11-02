@@ -35,6 +35,8 @@ System :: enum u8 {
 	Systemd,
 	Task_Scheduler,
 	Launchd,
+	// The administrator schedules monitor run; Leita installs no system job.
+	External,
 }
 
 // Linger is whether a systemd user timer keeps running after the person logs
@@ -51,6 +53,8 @@ when ODIN_OS == .Windows {
 	SYSTEM :: System.Task_Scheduler
 } else when ODIN_OS == .Darwin {
 	SYSTEM :: System.Launchd
+} else when ODIN_OS == .FreeBSD {
+	SYSTEM :: System.External
 } else {
 	SYSTEM :: System.Systemd
 }
@@ -149,14 +153,18 @@ install :: proc(h: Host, argv: []string) -> (problem: string, linger: Linger) {
 		return install_task(h, argv), .Always
 	case .Launchd:
 		return install_agent(h, argv), .Always
+	case .External:
+		return "automatic scheduler installation is unavailable; schedule leita monitor run externally",
+			.Unknown
 	}
 	return
 }
 
 // linger is whether the entry keeps running after the person logs out. It
-// can be asked before install. Anything but a systemd user timer is Always,
-// so no logged-out warning is given for it.
+// can be asked before install. An externally managed schedule is Unknown;
+// the other native schedulers run independently of a login session.
 linger :: proc(h: Host) -> Linger {
+	if h.system == .External {return .Unknown}
 	if h.system != .Systemd {
 		return .Always
 	}
@@ -173,6 +181,8 @@ remove :: proc(h: Host) -> string {
 		return remove_task(h)
 	case .Launchd:
 		return remove_agent(h)
+	case .External:
+		return ""
 	}
 	return ""
 }
@@ -192,6 +202,8 @@ installed :: proc(h: Host) -> bool {
 		return h.run(systemctl("is-active", NAME + ".timer"), h.user).ok
 	case .Task_Scheduler:
 		return h.run({"schtasks", "/Query", "/TN", TASK_NAME}, h.user).ok
+	case .External:
+		return false
 	case .Launchd:
 		if os.exists(agent_path(h)) {
 			return true
@@ -237,6 +249,8 @@ describe :: proc(h: Host, allocator := context.temp_allocator) -> string {
 		return fmt.aprintf("Task Scheduler task %s", TASK_NAME, allocator = allocator)
 	case .Launchd:
 		return fmt.aprintf("launchd agent %s", AGENT_LABEL, allocator = allocator)
+	case .External:
+		return "externally managed schedule"
 	}
 	return ""
 }
