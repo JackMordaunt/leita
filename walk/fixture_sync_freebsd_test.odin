@@ -9,8 +9,8 @@ import "core:time"
 // ZFS can keep st_blocks at its pre-TXG allocation after close and fsync. These
 // physical-size fixtures need committed allocation; production scans never sync.
 @(private)
-fixture_sync_fd :: proc(t: ^testing.T, fd: int, length: int) {
-	posix.sync()
+fixture_sync_fd :: proc(t: ^testing.T, fd: int, length: int, flush := true) {
+	if flush {posix.sync()}
 	start := time.tick_now()
 	for {
 		st: posix.stat_t
@@ -28,11 +28,11 @@ fixture_sync_fd :: proc(t: ^testing.T, fd: int, length: int) {
 }
 
 @(private)
-fixture_sync :: proc(t: ^testing.T, path: string, length: int) {
+fixture_sync :: proc(t: ^testing.T, path: string, length: int, flush := true) {
 	fd := posix.open(strings.clone_to_cstring(path, context.temp_allocator), {.CLOEXEC})
 	if !testing.expect(t, fd >= 0, "cannot open the physical-size fixture") {
 		return
 	}
 	defer posix.close(fd)
-	fixture_sync_fd(t, int(fd), length)
+	fixture_sync_fd(t, int(fd), length, flush)
 }

@@ -4,7 +4,7 @@ package walk
 import "core:testing"
 
 @(private)
-fixture_sync :: proc(t: ^testing.T, path: string, length: int) {}
+fixture_sync :: proc(t: ^testing.T, path: string, length: int, flush := true) {}
 
 @(private)
-fixture_sync_fd :: proc(t: ^testing.T, fd: int, length: int) {}
+fixture_sync_fd :: proc(t: ^testing.T, fd: int, length: int, flush := true) {}

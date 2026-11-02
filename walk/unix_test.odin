@@ -248,14 +248,18 @@ test_a_hard_linked_file_is_charged_once :: proc(t: ^testing.T) {
 	body := fixture_bytes(100_000)
 	shared := fmt.tprintf("%s/shared", root)
 	testing.expect(t, os.write_entire_file(shared, body) == nil, "could not write the file")
-	fixture_sync(t, shared, len(body))
 	for i in 0 ..< DIRS {
 		sub := fmt.tprintf("%s/d%02d", root, i)
 		testing.expect(t, os.make_directory(sub) == nil, "could not make a directory")
 		testing.expect(t, os.link(shared, fmt.tprintf("%s/name", sub)) == nil, "could not link")
 		lone := fmt.tprintf("%s/lone", sub)
 		testing.expect(t, os.write_entire_file(lone, body) == nil, "could not write a lone file")
-		fixture_sync(t, lone, len(body))
+	}
+	// Commit all fixture writes in one transaction-group wait. Each lone file
+	// still proves its allocation settled, without starting another global sync.
+	fixture_sync(t, shared, len(body))
+	for i in 0 ..< DIRS {
+		fixture_sync(t, fmt.tprintf("%s/d%02d/lone", root, i), len(body), flush = false)
 	}
 
 	tree: scan.Tree
