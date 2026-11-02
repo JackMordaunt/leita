@@ -33,22 +33,9 @@ jobs:
           cpu: 4
           prepare: |
             pkg install -y bash curl git gmake just llvm22 python3
-          run: |
-            set -eu
-            # Match .github/actions/setup's compiler pin. The package manager's
-            # Odin can carry a different core/vendor API and is not substituted.
-            git clone --depth 1 --branch brainfold-pin-984eb69e0 https://github.com/JackMordaunt/Odin /opt/leita-odin
-            (cd /opt/leita-odin && LLVM_CONFIG=llvm-config22 gmake release)
-            export ODIN=/opt/leita-odin/odin
-            export PATH=/usr/local/bin:$PATH
-            just check-freebsd
-            python3 -m unittest discover -s tools/freebsd -p 'test_*.py'
-            # Permission fixtures must run as an ordinary user, not the VM's root.
-            pw useradd leita -m -s /bin/sh
-            chown -R leita "$PWD"
-            # Gather filesystem proof from a built CLI even when the unit gate
-            # fails; the combined gate still returns failure for either result.
-            sh tools/freebsd/gates
+          # Return success to the VM action so it copies evidence back even
+          # when setup/tests fail. The host enforces the recorded status below.
+          run: sh tools/freebsd/record-gate build/freebsd/gate-status sh tools/freebsd/vm
       - name: Native CLI candidate and build metadata
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -59,5 +46,9 @@ jobs:
             build/package/*freebsd-amd64.tar.gz.sha256
             build/freebsd/fixtures
             build/freebsd/progress.jsonl
+            build/freebsd/gate-status
           if-no-files-found: warn
           retention-days: 14
+      - name: Enforce native gate result
+        if: always()
+        run: python3 tools/freebsd/check_gate.py build/freebsd/gate-status

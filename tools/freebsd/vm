@@ -1,0 +1,16 @@
+#!/bin/sh
+set -eu
+# Match .github/actions/setup's compiler pin. The package manager's
+# Odin can carry a different core/vendor API and is not substituted.
+git clone --depth 1 --branch brainfold-pin-984eb69e0 https://github.com/JackMordaunt/Odin /opt/leita-odin
+(cd /opt/leita-odin && LLVM_CONFIG=llvm-config22 gmake release)
+export ODIN=/opt/leita-odin/odin
+export PATH=/usr/local/bin:$PATH
+just check-freebsd
+python3 -m unittest discover -s tools/freebsd -p 'test_*.py'
+# Permission fixtures must run as an ordinary user, not the VM's root.
+pw useradd leita -m -s /bin/sh
+chown -R leita "$PWD"
+# Gather filesystem proof from a built CLI even when the unit gate
+# fails; the combined gate still returns failure for either result.
+sh tools/freebsd/gates

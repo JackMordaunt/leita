@@ -1,0 +1,13 @@
+#!/bin/sh
+# Preserve the entire VM command result while allowing the VM action to copy
+# artifacts back. A separate host gate must enforce this status after upload.
+set -u
+status_file=$1
+shift
+mkdir -p "$(dirname "$status_file")" || exit 1
+rm -f "$status_file" || exit 1
+"$@"
+command_status=$?
+printf '%s\n' "$command_status" > "$status_file" || exit 1
+printf 'recorded native VM gate status: %s\n' "$command_status"
+exit 0

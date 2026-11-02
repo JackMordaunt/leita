@@ -2,6 +2,7 @@
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -48,6 +49,38 @@ class GateTests(unittest.TestCase):
 
     def test_missing_binary_preserves_unit_failure(self):
         self.check_gate(7, 0, 7, binary=False)
+
+
+class EvidenceCopybackTests(unittest.TestCase):
+    def test_recorder_allows_copyback_but_host_enforces_original_status(self):
+        recorder = GATES.with_name("record-gate")
+        checker = GATES.with_name("check_gate.py")
+        for status in (0, 1, 2, 7, 143):
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as directory:
+                result_file = Path(directory) / "nested/gate-status"
+                # An independent shell retains errexit even though the recorder
+                # captures its failure: later setup commands must not run.
+                marker = Path(directory) / "should-not-run"
+                script = f'set -eu\n(exit {status})\nprintf bad > "{marker}"\n'
+                command = subprocess.run(["sh", str(recorder), str(result_file), "sh", "-c", script],
+                                         text=True, capture_output=True, timeout=5)
+                self.assertEqual(command.returncode, 0, command.stderr)
+                self.assertEqual(result_file.read_text(), f"{status}\n")
+                self.assertEqual(marker.exists(), status == 0)
+                gate = subprocess.run([sys.executable, str(checker), str(result_file)],
+                                      text=True, capture_output=True, timeout=5)
+                self.assertEqual(gate.returncode, status, gate.stderr)
+
+    def test_host_refuses_missing_or_malformed_status(self):
+        checker = GATES.with_name("check_gate.py")
+        for content in (None, "", "00\n", "256\n", "-1\n", "0\n1\n", "success\n", " 0\n"):
+            with self.subTest(content=content), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "gate-status"
+                if content is not None:
+                    path.write_text(content)
+                result = subprocess.run([sys.executable, str(checker), str(path)],
+                                        text=True, capture_output=True, timeout=5)
+                self.assertEqual(result.returncode, 1)
 
 
 if __name__ == "__main__":
