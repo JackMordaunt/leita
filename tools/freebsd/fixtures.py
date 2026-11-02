@@ -182,8 +182,12 @@ class Harness:
         mount.mkdir()
         # No force flag and no supplied/physical disks: only our fresh vnode.
         self.command(['zpool', 'create', '-o', 'cachefile=none', '-O', 'atime=off',
-                      '-O', 'compression=off', '-m', mount, pool, device])
+                      '-O', 'compression=lz4', '-m', mount, pool, device])
         self.cleanup.append(['zpool', 'destroy', pool])
+        compression = self.command(['zfs', 'get', '-H', '-o', 'value', 'compression', pool]).stdout.strip()
+        self.evidence['zfs'] = dict(dataset=pool, compression=compression)
+        if compression != 'lz4':
+            raise AssertionError(f'ZFS compression is {compression!r}, expected lz4')
         return mount
 
     def prepare(self, mount):
@@ -242,6 +246,16 @@ class Harness:
             boundaries = [boundary]
             self.case(label + '.nullfs', lambda: dict(source=str(outside), target=str(boundary)))
         os.sync()
+        compression = None
+        if label == 'zfs':
+            # Unlike the sparse fixture, this file has no holes: the reduction
+            # proves transparent compression before Leita is asked to measure it.
+            plain = (root / 'plain.bin').lstat()
+            compression = dict(path=str(root / 'plain.bin'), logical=plain.st_size,
+                               allocated=plain.st_blocks * 512)
+            if not 0 < compression['allocated'] < compression['logical']:
+                raise AssertionError(f'ZFS repeated payload did not compress: {compression!r}')
+            self.evidence['zfs']['fixture'] = compression
         expected = self.oracle(root, boundaries)
         result, data = self.scan(root, label + '-allocation')
         sparse = (root / 'sparse.bin').stat()
@@ -280,6 +294,7 @@ class Harness:
         self.command([self.binary, 'monitor', 'run', '--all'], user=True)
         self.command([self.binary, 'monitor', 'off'], user=True)
         return dict(oracle=expected, totals=data['totals'], space=data['space'],
+                    compression=compression,
                     sparse_logical=(root / 'sparse.bin').stat().st_size,
                     sparse_allocated=(root / 'sparse.bin').stat().st_blocks * 512,
                     second_history_totals=history['totals'])

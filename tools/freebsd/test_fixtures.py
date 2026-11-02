@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 
@@ -88,6 +89,33 @@ class AllocationOracleTest(unittest.TestCase):
 
 
 class EvidenceTest(unittest.TestCase):
+    def test_zfs_requires_and_records_the_actual_lz4_property(self):
+        for actual in ['lz4', 'off']:
+            with self.subTest(actual=actual), tempfile.TemporaryDirectory() as directory:
+                harness = object.__new__(fixtures.Harness)
+                harness.stage = Path(directory)
+                harness.cleanup = []
+                harness.evidence = {}
+                commands = []
+
+                def command(argv, **kwargs):
+                    commands.append(list(map(str, argv)))
+                    return SimpleNamespace(returncode=0, stdout=actual if argv[0] == 'zfs' else '')
+
+                harness.command = command
+                harness.vnode = lambda name, size: '/dev/md42'
+                with patch.object(fixtures.shutil, 'which', return_value='/fake/tool'):
+                    if actual == 'lz4':
+                        harness.mount_zfs()
+                        self.assertEqual(harness.evidence['zfs']['compression'], 'lz4')
+                    else:
+                        with self.assertRaisesRegex(AssertionError, 'expected lz4'):
+                            harness.mount_zfs()
+                create = next(c for c in commands if c[:2] == ['zpool', 'create'])
+                self.assertIn('compression=lz4', create)
+                self.assertEqual(create[-1], '/dev/md42')
+                self.assertNotIn('-f', create)
+
     def test_pending_or_skipped_required_cases_do_not_claim_complete_acceptance(self):
         with tempfile.TemporaryDirectory() as directory:
             harness = object.__new__(fixtures.Harness)
