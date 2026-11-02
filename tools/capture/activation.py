@@ -113,9 +113,9 @@ def run_one(bins, out, theme, size, name):
                 ok = ok and 29 <= elapsed < 90
             result = {"case": name, "theme": theme, "size": size, "ok": bool(ok),
                       "posts": len(shop.seen), "stored_line": bool(line), "stored_receipt": bool(receipt),
-                      "elapsed_seconds": round(elapsed, 3), "png": str(png.relative_to(out))}
+                      "elapsed_seconds": round(elapsed, 3), "png": png.relative_to(out).as_posix()}
             if name == "first-run":
-                result["first_scan_png"] = str((dest / "first-scan.png").relative_to(out))
+                result["first_scan_png"] = (dest / "first-scan.png").relative_to(out).as_posix()
             return result
     finally:
         shutil.rmtree(work, ignore_errors=True)
@@ -158,7 +158,7 @@ def render(out, bins):
                         "Each case owns generated files and state; none reads the user's Leita data.",
                         "The timeout uses the real 30 second client deadline. No videos or golden-image comparisons."],
     }
-    document["png_sha256"] = {str(path.relative_to(out)): hashlib.sha256(path.read_bytes()).hexdigest()
+    document["png_sha256"] = {path.relative_to(out).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
                               for path in sorted(out.glob("*/*/*.png"))}
     (out / "manifest.json").write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
     figures = []
