@@ -606,11 +606,22 @@ def cli_tamper_keeps_file(bins):
 def cli_unknown_key_refused(bins):
     work = host.make_work("leita-cli-key-")
     try:
-        env = _cli_env(work, DEAD_ACTIVATE)
-        refused = host.run_cli(bins.cli_eligible, ["licence", "add", "LEITA-SOLD-FIXTURE"], env)
-        path = host.cli_licence_file(work)
-        ok = refused.returncode != 0 and not path.exists() and "a licence key is exchanged" in refused.stderr
-        return ok, f"exit={refused.returncode} no_file={not path.exists()}"
+        # add is an offline line import, even when given a shop key. Only
+        # the explicit activate command may exchange that key over HTTP.
+        shop = fixture.Shop()
+        with fixture.ActivationServer(shop) as server:
+            env = _cli_env(work, server.url)
+            refused = host.run_cli(bins.cli_eligible, ["licence", "add", "LEITA-SOLD-FIXTURE"], env)
+            path = host.cli_licence_file(work)
+            guidance = "leita licence activate KEY" in refused.stderr
+            ok = (
+                refused.returncode != 0
+                and not path.exists()
+                and "not a licence" in refused.stderr
+                and guidance
+                and len(shop.seen) == 0
+            )
+            return ok, f"exit={refused.returncode} no_file={not path.exists()} posts={len(shop.seen)} activate_guidance={guidance}"
     finally:
         finish(work)
 
