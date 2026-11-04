@@ -310,20 +310,18 @@ drops it. A directory that is read emits only the names still on disk.
 @(private)
 payer_copied :: proc(w: ^Worker, was: u32) -> bool {
 	parent := scan.node(w.update.base, was).parent
-	if job_of(w.update, parent) != .Copy || !dir_reached(w, parent) {
+	if job_of(w.update, parent) != .Copy || !dir_copied(w, parent) {
 		return false
 	}
 	return !copy_drops(w, was)
 }
 
-// Whether a directory of the base is opened. A path that cannot be built or asked
-// is treated as reached, so a charge is not taken from a payer this update copies.
+// Whether a directory of the base is reached as a Copy job. A Deep or unread
+// ancestor walks its whole subtree, and a probe may turn a Copy into a List. A
+// path that cannot be built or asked conservatively keeps the original payer.
 @(private)
-dir_reached :: proc(w: ^Worker, dir: u32) -> bool {
+dir_copied :: proc(w: ^Worker, dir: u32) -> bool {
 	base := w.update.base
-	if dir == base.root {
-		return true
-	}
 	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
 	chain := make([dynamic]u32, context.temp_allocator)
 	for at := dir; at != base.root; at = scan.node(base, at).parent {
@@ -335,42 +333,56 @@ dir_reached :: proc(w: ^Worker, dir: u32) -> bool {
 		}
 	}
 	path := scan.name_of(base, base.root)
+	job := job_of(w.update, base.root)
+	if job == .Copy && w.update.probe && changed_since(path, w.update.since) {
+		job = .List
+	}
+	if job == .Walk {
+		return false
+	}
 	#reverse for at in chain {
-		parent := scan.node(base, at).parent
 		next, err := join(path, scan.name_of(base, at), context.temp_allocator)
 		if err != nil {
 			return true
 		}
 		path = next
-		if job_of(w.update, parent) != .Copy && !path_present(path) {
+		if job != .Copy && !directory_present(path, w.follow) {
+			return false
+		}
+		job = job_of(w.update, at)
+		if job == .Copy && w.update.probe && changed_since(path, w.update.since) {
+			job = .List
+		}
+		if job == .Walk {
 			return false
 		}
 	}
-	return true
+	return job == .Copy
 }
 
 // Whether a copy of the base's file `was` drops it: a restat found it gone.
 @(private)
 copy_drops :: proc(w: ^Worker, was: u32) -> bool {
-	when !RESTATS {
+	when RESTATS {
+		u := w.update
+		base := u.base
+		b := scan.node(base, was)
+		name := scan.name_of(base, was)
+		runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+		dir, ok := base_path(base, b.parent, context.temp_allocator)
+		summed := hash.fnv64a(transmute([]byte)dir)
+		if !ok || !restat_due(u, b.disk, summed, name) {
+			return false
+		}
+		path, path_ok := base_path(base, was, context.temp_allocator)
+		if !path_ok {
+			return false
+		}
+		_, verdict := disk_of(path)
+		return verdict == .Gone
+	} else {
 		return false
 	}
-	u := w.update
-	base := u.base
-	b := scan.node(base, was)
-	name := scan.name_of(base, was)
-	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
-	dir, ok := base_path(base, b.parent, context.temp_allocator)
-	summed := hash.fnv64a(transmute([]byte)dir)
-	if !ok || !restat_due(u, b.disk, summed, name) {
-		return false
-	}
-	path, path_ok := base_path(base, was, context.temp_allocator)
-	if !path_ok {
-		return false
-	}
-	_, verdict := disk_of(path)
-	return verdict == .Gone
 }
 
 /*

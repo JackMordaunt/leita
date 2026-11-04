@@ -99,22 +99,24 @@ id_of :: proc(path: string) -> (id: File_Id, known: bool) {
 	return {device = u64(u32(st.st_dev)), inode = u64(st.st_ino)}, true
 }
 
-// Whether `path` is still on disk. False only when lstat finds nothing there, so a
-// path that cannot be asked is treated as present.
+// Whether a listing can still reach `path` as a directory. A missing name, a file,
+// or a link the walk does not follow cannot emit the base's children. A path that
+// cannot be asked is conservatively treated as a directory.
 @(private)
-path_present :: proc(path: string) -> bool {
+directory_present :: proc(path: string, follow: bool) -> bool {
 	buf: Path
 	cpath, terminated := terminate(path, &buf)
 	if !terminated {
 		return true
 	}
 	st: posix.stat_t
-	if posix.lstat(cpath, &st) != .OK {
+	err := posix.stat(cpath, &st) if follow else posix.lstat(cpath, &st)
+	if err != .OK {
 		#partial switch posix.errno() {
 		case .ENOENT, .ENOTDIR:
 			return false
 		}
 		return true
 	}
-	return true
+	return posix.S_ISDIR(st.st_mode)
 }

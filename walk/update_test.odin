@@ -579,9 +579,17 @@ update copies it. The file stays charged once, on the surviving name.
 */
 @(test)
 test_a_deleted_payer_is_charged_on_the_copied_name :: proc(t: ^testing.T) {
+	for replacement in ([]bool{false, true}) {
+		deleted_payer(t, replacement)
+	}
+}
+
+// A file replacing the old directory is just as unreachable as a removed name.
+@(private = "file")
+deleted_payer :: proc(t: ^testing.T, replacement: bool) {
 	dir, dir_err := os.temp_directory(context.temp_allocator)
 	testing.expect(t, dir_err == nil, "no temp directory")
-	root := fmt.tprintf("%s/leita_update_deleted_payer_%d", dir, os.get_pid())
+	root := fmt.tprintf("%s/leita_update_deleted_payer_%d_%v", dir, os.get_pid(), replacement)
 	os.remove_all(root)
 	defer os.remove_all(root)
 	for sub in ([]string{"", "/a", "/b"}) {
@@ -610,6 +618,9 @@ test_a_deleted_payer_is_charged_on_the_copied_name :: proc(t: ^testing.T) {
 	was := scan.node(&base, at(&base, paid, "big")).disk
 	testing.expect(t, was > 0, "the file was not charged")
 	testing.expect(t, os.remove_all(fmt.tprintf("%s/%s", root, paid)) == nil, "payer stayed")
+	if replacement {
+		put(t, fmt.tprintf("%s/%s", root, paid), 0)
+	}
 
 	u := Update {
 		base = &base,
@@ -644,6 +655,78 @@ test_a_deleted_payer_is_charged_on_the_copied_name :: proc(t: ^testing.T) {
 	if len(got.linked) == 1 {
 		testing.expect_value(t, got.linked[0].node, survivor)
 	}
+}
+
+// A Deep ancestor walks the payer's directory even though that directory has no
+// mark of its own. A copied extra must not reserve its charge for that lost name.
+@(test)
+test_a_deleted_payer_below_a_deep_mark_is_charged_once :: proc(t: ^testing.T) {
+	dir, dir_err := os.temp_directory(context.temp_allocator)
+	testing.expect(t, dir_err == nil, "no temp directory")
+	root := fmt.tprintf("%s/leita_update_deep_payer_%d", dir, os.get_pid())
+	os.remove_all(root)
+	defer os.remove_all(root)
+	names := []string{"a", "b", "c", "d"}
+	for sub in names {
+		testing.expect(t, os.make_directory_all(fmt.tprintf("%s/%s/inside", root, sub)) == nil)
+	}
+	big := fmt.tprintf("%s/a/inside/big", root)
+	put(t, big, 1 << 20)
+	for sub in names[1:] {
+		testing.expect(t, os.link(big, fmt.tprintf("%s/%s/inside/big", root, sub)) == nil)
+	}
+	base := read_tree(t, root)
+	defer scan.tree_destroy(&base)
+	if !testing.expect_value(t, len(base.linked), 1) {
+		return
+	}
+	parent := scan.node(&base, base.linked[0].node).parent
+	paid := scan.name_of(&base, scan.node(&base, parent).parent)
+	testing.expect(t, os.remove(fmt.tprintf("%s/%s/inside/big", root, paid)) == nil)
+
+	u := Update {
+		base = &base,
+	}
+	defer delete(u.marks)
+	u.marks[at(&base, paid)] = .Deep
+	got: scan.Tree
+	testing.expect_value(t, scan.tree_init(&got, 4), scan.Error.None)
+	defer scan.tree_destroy(&got)
+	testing.expect_value(t, update(root, &u, &got, Config{workers = 4}), Error.None)
+	testing.expect_value(t, at(&got, paid, "inside", "big"), scan.NO_NODE)
+	survivor := scan.NO_NODE
+	charged := 0
+	for sub in names {
+		if sub == paid {
+			continue
+		}
+		n := at(&got, sub, "inside", "big")
+		if !testing.expect(t, n != scan.NO_NODE, "a remaining name is missing") {
+			continue
+		}
+		if .Extra_Name not_in scan.node_flags(scan.node(&got, n)) {
+			survivor = n
+			charged += 1
+		}
+	}
+	testing.expect_value(t, charged, 1)
+	testing.expect_value(t, charged_total(&got), charged_total(&base))
+	if !update_rereads_fixture(root) {
+		testing.expect_value(t, len(got.linked), 1)
+		if len(got.linked) == 1 {
+			testing.expect_value(t, got.linked[0].node, survivor)
+			testing.expect_value(t, got.linked[0].id, base.linked[0].id)
+		}
+	}
+	// The adopted identity must also keep the charge through another copy.
+	next: scan.Tree
+	testing.expect_value(t, scan.tree_init(&next, 4), scan.Error.None)
+	defer scan.tree_destroy(&next)
+	again := Update {
+		base = &got,
+	}
+	testing.expect_value(t, update(root, &again, &next, Config{workers = 4}), Error.None)
+	testing.expect_value(t, charged_total(&next), charged_total(&base))
 }
 
 // A file the base marks Shared, as a btrfs walk as root marks a reflinked copy, is

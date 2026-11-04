@@ -35,7 +35,7 @@ when ODIN_OS != .Windows {
 	}
 
 	@(private)
-	path_present :: proc(path: string) -> bool {
+	directory_present :: proc(path: string, follow: bool) -> bool {
 		return true
 	}
 }

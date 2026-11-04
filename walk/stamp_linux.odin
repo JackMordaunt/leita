@@ -95,19 +95,24 @@ id_of :: proc(path: string) -> (id: File_Id, known: bool) {
 	return {device = statx_device(st), inode = u64(st.ino)}, true
 }
 
-// Whether `path` is still on disk. False only when statx finds nothing there, so a
-// path that cannot be asked is treated as present.
+// Whether a listing can still reach `path` as a directory. A missing name, a file,
+// or a link the walk does not follow cannot emit the base's children. A path that
+// cannot be asked is conservatively treated as a directory.
 @(private)
-path_present :: proc(path: string) -> bool {
+directory_present :: proc(path: string, follow: bool) -> bool {
 	buf: Path
 	cpath, terminated := terminate(path, &buf)
 	if !terminated {
 		return true
 	}
 	st: linux.Statx
-	#partial switch statx_compat(linux.AT_FDCWD, cpath, {.SYMLINK_NOFOLLOW}, {.INO}, &st) {
+	flags: linux.FD_Flags
+	if !follow {
+		flags += {.SYMLINK_NOFOLLOW}
+	}
+	#partial switch statx_compat(linux.AT_FDCWD, cpath, flags, {.TYPE}, &st) {
 	case .NONE:
-		return true
+		return .TYPE not_in st.mask || linux.S_ISDIR(st.mode)
 	case .ENOENT, .ENOTDIR:
 		return false
 	}

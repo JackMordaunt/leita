@@ -921,11 +921,12 @@ id_of :: proc(path: string) -> (id: File_Id, known: bool) {
 	}, true
 }
 
-// Whether `path` is still on disk. False only when it does not open because it is
-// gone, so a path that cannot be asked is treated as present.
+// Whether a listing can still reach `path` as a directory. A missing name, a file,
+// or a link the walk does not follow cannot emit the base's children. A path that
+// cannot be asked is conservatively treated as a directory.
 @(private)
-path_present :: proc(path: string) -> bool {
-	f, asked := open_by_path(path)
+directory_present :: proc(path: string, follow: bool) -> bool {
+	f, asked := open_by_path(path, follow)
 	if !asked {
 		return true
 	}
@@ -936,18 +937,29 @@ path_present :: proc(path: string) -> bool {
 		}
 		return true
 	}
-	win.CloseHandle(f)
-	return true
+	defer win.CloseHandle(f)
+	info: win.FILE_ATTRIBUTE_TAG_INFO
+	if !win.GetFileInformationByHandleEx(f, .FileAttributeTagInfo, &info, size_of(info)) {
+		return true
+	}
+	if !follow && info.ReparseTag & kstat.IO_REPARSE_TAG_NAME_SURROGATE != 0 {
+		return false
+	}
+	return info.FileAttributes & win.FILE_ATTRIBUTE_DIRECTORY != 0
 }
 
 // `asked` is false when the path cannot be encoded, which is not the file being gone.
 @(private)
-open_by_path :: proc(path: string) -> (handle: win.HANDLE, asked: bool) {
+open_by_path :: proc(path: string, follow := false) -> (handle: win.HANDLE, asked: bool) {
 	buf: [dynamic]u16
 	buf.allocator = context.temp_allocator
 	wide, ok := widen(path, &buf)
 	if !ok {
 		return win.INVALID_HANDLE_VALUE, false
+	}
+	flags := u32(win.FILE_FLAG_BACKUP_SEMANTICS)
+	if !follow {
+		flags |= win.FILE_FLAG_OPEN_REPARSE_POINT
 	}
 	return win.CreateFileW(
 		wide,
@@ -955,7 +967,7 @@ open_by_path :: proc(path: string) -> (handle: win.HANDLE, asked: bool) {
 		win.FILE_SHARE_READ | win.FILE_SHARE_WRITE | win.FILE_SHARE_DELETE,
 		nil,
 		win.OPEN_EXISTING,
-		win.FILE_FLAG_BACKUP_SEMANTICS | win.FILE_FLAG_OPEN_REPARSE_POINT,
+		flags,
 		nil,
 	), true
 }
