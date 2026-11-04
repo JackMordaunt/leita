@@ -357,3 +357,91 @@ the_monitoring_dialog_keeps_the_keyboard_when_the_menu_closes :: proc(t: ^testin
 		said,
 	)
 }
+
+// Recovering an escaped focus must leave existing controls and their nested
+// menus alone. A new answer must not reset the keyboard to the dialog's Close.
+@(test)
+monitoring_keeps_focus_on_its_controls_and_nested_menu :: proc(t: ^testing.T) {
+	s: Monitor_Rig
+	monitor_open(&s)
+	defer monitor_close(&s)
+	p := &s.h.p
+	p.size = {1920, 1080}
+	watched := []query.Watched_Place{{place = "/project", every = .Daily}}
+	monitor_answer(&s, {scheduler = "systemd", watched = watched})
+	ui.probe_advance(p, 30, 1.0 / 60)
+
+	testing.expect(t, ui.probe_click(p, "Place to watch"))
+	ui.probe_type(p, "/next")
+	ui.probe_advance(p, 12, 1.0 / 60)
+	testing.expect_value(t, ui.probe_focus_name(p), "Place to watch")
+	testing.expect_value(t, ui.text_string(&s.m.watch_text), "/next")
+	monitor_answer(&s, {scheduler = "systemd", watched = watched, changed = 1})
+	ui.probe_advance(p, 12, 1.0 / 60)
+	testing.expect_value(t, ui.probe_focus_name(p), "Place to watch")
+
+	testing.expect(t, ui.probe_click_top(p, "How often to scan /project"))
+	ui.probe_advance(p, 12, 1.0 / 60)
+	testing.expect(t, ui.probe_tagged(p, "Every week"), "the select's menu stays open")
+	testing.expect(t, ui.probe_click_top(p, "Every week"))
+	change, changed := sent(p, command.Watch).?
+	testing.expect(t, changed, "a selection still changes the watched schedule")
+	testing.expect_value(t, change.every, u8(query.Frequency.Weekly))
+	testing.expect_value(t, command.text_of(&change.path), "/project")
+	ui.probe_advance(p, 12, 1.0 / 60)
+	testing.expect_value(t, ui.probe_focus_name(p), "How often to scan /project")
+
+	ui.probe_key(p, .Escape)
+	ui.probe_advance(p, 12, 1.0 / 60)
+	testing.expect(t, !s.m.monitor_open, "Escape still closes Monitoring")
+	testing.expect(t, ui.probe_click(p, "Settings"), "the gear works after the modal closes")
+	ui.probe_advance(p, 12, 1.0 / 60)
+	testing.expect(t, s.m.settings_open)
+}
+
+// An answer between a language item's press and release opens Monitoring as
+// that menu closes. Its next frame restores the gear; Monitoring must recover.
+@(test)
+monitoring_takes_focus_when_its_answer_arrives_as_the_language_menu_closes :: proc(t: ^testing.T) {
+	s: Monitor_Rig
+	model_init(&s.m, "/top")
+	s.m.settings_read = true
+	fonts := []ops.Font_Ref {
+		{0, ui.default_font(), 400},
+		{1, ui.default_font(), 500},
+		{2, ui.default_font(), 600},
+		{3, ui.default_font(), 400},
+	}
+	render.headless_init(&s.h, view, &s.m, {1920, 1080}, fonts)
+	defer monitor_close(&s)
+	p := &s.h.p
+	ui.probe_deliver(
+		p,
+		query.Progress{},
+		query.Progress_Result{generation = 1, state = .Scanning, target = "/top"},
+	)
+	ui.probe_deliver(p, query.Licence{}, query.Licence_Result{unlocked = true})
+	ui.probe_frame(p)
+	testing.expect(t, choose(p, &s.m, "Monitoring"))
+	ui.probe_advance(p, 12, 1.0 / 60)
+	testing.expect(t, choose(p, &s.m, "Language"))
+	ui.probe_advance(p, 12, 1.0 / 60)
+	english, found := ui.probe_find_top(p, "English")
+	if !testing.expect(t, found, "the language menu opened before the answer") {return}
+	box := ops.transform_rect(english.transform, ops.shape_bounds(&p.scene, english.shape))
+	at := ops.Point{box.x + box.w / 2, box.y + box.h / 2}
+	ui.router_push(&p.router, {kind = .Move, pos = at})
+	ui.router_push(&p.router, {kind = .Press, pos = at, button = .Left, clicks = 1})
+	ui.probe_frame(p)
+	ui.probe_deliver(p, query.Monitor{}, query.Monitor_Result{scheduler = "systemd"})
+	ui.router_push(&p.router, {kind = .Release, pos = at, button = .Left})
+	ui.probe_frame(p)
+	ui.probe_advance(p, 12, 1.0 / 60)
+	testing.expect(
+		t,
+		!s.m.settings_open && !s.m.language_open,
+		"the language selection closed the menu",
+	)
+	testing.expect(t, s.m.monitor_open, "the answer opened Monitoring")
+	testing.expect_value(t, ui.probe_focus_name(p), "Close")
+}
