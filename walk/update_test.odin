@@ -569,6 +569,83 @@ test_an_update_charges_a_link_once_beside_a_copied_name :: proc(t: ^testing.T) {
 	}
 }
 
+/*
+Deleting the directory that holds the charged name of a hard-linked file leaves
+the bytes on the name that remains. That name's directory did not change, so the
+update copies it. The file stays charged once, on the surviving name.
+
+	<root>/a/big    1 MiB, one name
+	<root>/b/big    the same file
+*/
+@(test)
+test_a_deleted_payer_is_charged_on_the_copied_name :: proc(t: ^testing.T) {
+	dir, dir_err := os.temp_directory(context.temp_allocator)
+	testing.expect(t, dir_err == nil, "no temp directory")
+	root := fmt.tprintf("%s/leita_update_deleted_payer_%d", dir, os.get_pid())
+	os.remove_all(root)
+	defer os.remove_all(root)
+	for sub in ([]string{"", "/a", "/b"}) {
+		testing.expect(t, os.make_directory(fmt.tprintf("%s%s", root, sub)) == nil, "no directory")
+	}
+	big := fmt.tprintf("%s/a/big", root)
+	put(t, big, 1 << 20)
+	testing.expect(t, os.link(big, fmt.tprintf("%s/b/big", root)) == nil, "could not link")
+	base := read_tree(t, root)
+	defer scan.tree_destroy(&base)
+
+	a := at(&base, "a", "big")
+	b := at(&base, "b", "big")
+	testing.expect(t, a != scan.NO_NODE && b != scan.NO_NODE, "a name is missing")
+	if a == scan.NO_NODE || b == scan.NO_NODE {
+		return
+	}
+	a_extra := .Extra_Name in scan.node_flags(scan.node(&base, a))
+	b_extra := .Extra_Name in scan.node_flags(scan.node(&base, b))
+	testing.expect(t, a_extra != b_extra, "the base did not charge the file once")
+	if a_extra == b_extra {
+		return
+	}
+	paid := "b" if a_extra else "a"
+	kept := "a" if a_extra else "b"
+	was := scan.node(&base, at(&base, paid, "big")).disk
+	testing.expect(t, was > 0, "the file was not charged")
+	testing.expect(t, os.remove_all(fmt.tprintf("%s/%s", root, paid)) == nil, "payer stayed")
+
+	u := Update {
+		base = &base,
+	}
+	defer delete(u.marks)
+	u.marks[base.root] = .List
+	got: scan.Tree
+	testing.expect_value(t, scan.tree_init(&got, 2), scan.Error.None)
+	defer scan.tree_destroy(&got)
+	testing.expect_value(t, update(root, &u, &got, Config{workers = 2}), Error.None)
+
+	survivor := at(&got, kept, "big")
+	testing.expect(t, survivor != scan.NO_NODE, "the remaining name is missing")
+	if survivor == scan.NO_NODE {
+		return
+	}
+	testing.expect_value(t, at(&got, paid, "big"), scan.NO_NODE)
+	n := scan.node(&got, survivor)
+	testing.expectf(
+		t,
+		.Extra_Name not_in scan.node_flags(n),
+		"%s/big was copied as an extra name",
+		kept,
+	)
+	testing.expect_value(t, n.disk, was)
+	testing.expect_value(t, charged_total(&got), was)
+	if update_rereads_fixture(root) {
+		return
+	}
+	// The copied name is now the payer, so the next update does not copy a hole.
+	testing.expect_value(t, len(got.linked), 1)
+	if len(got.linked) == 1 {
+		testing.expect_value(t, got.linked[0].node, survivor)
+	}
+}
+
 // A file the base marks Shared, as a btrfs walk as root marks a reflinked copy, is
 // still Shared when an update copies it, with the size the base gave it. Before,
 // the copy dropped the flag, and the file read as one that shares nothing.

@@ -83,6 +83,11 @@ while that name is still there, read or copied, by the file id the base kept for
 unread in the base or new, is an extra. Without that, a name in a directory walked
 again was charged beside the copied one, and the next baseline kept the total that
 much too high. A base that kept no ids keeps its choice for a name a List job reads.
+
+When that charged name is neither copied nor read, one name this update does copy
+takes the charge. Deleting the charged name otherwise drops the file from every
+later total: the copy keeps Extra_Name, and settle, which is what reassigns a
+payer, runs only for a name that is read.
 */
 update :: proc(root: string, u: ^Update, t: ^scan.Tree, cfg := Config{}) -> Error {
 	u.whole = ""
@@ -236,6 +241,20 @@ copy_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 			}
 		}
 
+		paid_id: File_Id
+		paid_here := false
+		if file && .Extra_Name in flags {
+			counted, id, adopt_ok := adopt_copied_extra(w, d.path, name)
+			if !adopt_ok {
+				return nodes, bytes, false
+			}
+			if counted {
+				flags -= {.Extra_Name}
+				paid_id = id
+				paid_here = true
+			}
+		}
+
 		n := scan.node(w.writer.tree, slot)
 		n.parent = d.index
 		n.name = scan.intern(&w.writer, name)
@@ -247,7 +266,12 @@ copy_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 		nodes += 1
 		if file && .Extra_Name not_in flags {
 			bytes += disk
-			if id, linked := u.linked[c]; linked && !keep_paid(w, slot, id) {
+			link := paid_id
+			keep := paid_here
+			if !keep {
+				link, keep = u.linked[c]
+			}
+			if keep && !keep_paid(w, slot, link) {
 				return nodes, bytes, false
 			}
 		}
@@ -263,6 +287,90 @@ copy_dir :: proc(d: Dir, w: ^Worker) -> (nodes, bytes: u64, ok: bool) {
 		slot += 1
 	}
 	return nodes, bytes, true
+}
+
+// Whether a copied extra name pays for its file. False when out of memory.
+@(private)
+adopt_copied_extra :: proc(w: ^Worker, dir, name: string) -> (paid: bool, id: File_Id, ok: bool) {
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	path, err := join(dir, name, context.temp_allocator)
+	if err != nil {
+		w.err = .Out_Of_Memory
+		return false, {}, false
+	}
+	paid, id = claim_copied_extra(w, path)
+	return paid, id, true
+}
+
+/*
+Whether the base's node `was` is copied into this update with its charge. A copied
+directory emits every child the base had, so a deleted file stays until a restat
+drops it. A directory that is read emits only the names still on disk.
+*/
+@(private)
+payer_copied :: proc(w: ^Worker, was: u32) -> bool {
+	parent := scan.node(w.update.base, was).parent
+	if job_of(w.update, parent) != .Copy || !dir_reached(w, parent) {
+		return false
+	}
+	return !copy_drops(w, was)
+}
+
+// Whether a directory of the base is opened. A path that cannot be built or asked
+// is treated as reached, so a charge is not taken from a payer this update copies.
+@(private)
+dir_reached :: proc(w: ^Worker, dir: u32) -> bool {
+	base := w.update.base
+	if dir == base.root {
+		return true
+	}
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	chain := make([dynamic]u32, context.temp_allocator)
+	for at := dir; at != base.root; at = scan.node(base, at).parent {
+		if len(chain) >= MAX_DEPTH {
+			return true
+		}
+		if _, err := append(&chain, at); err != nil {
+			return true
+		}
+	}
+	path := scan.name_of(base, base.root)
+	#reverse for at in chain {
+		parent := scan.node(base, at).parent
+		next, err := join(path, scan.name_of(base, at), context.temp_allocator)
+		if err != nil {
+			return true
+		}
+		path = next
+		if job_of(w.update, parent) != .Copy && !path_present(path) {
+			return false
+		}
+	}
+	return true
+}
+
+// Whether a copy of the base's file `was` drops it: a restat found it gone.
+@(private)
+copy_drops :: proc(w: ^Worker, was: u32) -> bool {
+	when !RESTATS {
+		return false
+	}
+	u := w.update
+	base := u.base
+	b := scan.node(base, was)
+	name := scan.name_of(base, was)
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	dir, ok := base_path(base, b.parent, context.temp_allocator)
+	summed := hash.fnv64a(transmute([]byte)dir)
+	if !ok || !restat_due(u, b.disk, summed, name) {
+		return false
+	}
+	path, path_ok := base_path(base, was, context.temp_allocator)
+	if !path_ok {
+		return false
+	}
+	_, verdict := disk_of(path)
+	return verdict == .Gone
 }
 
 /*

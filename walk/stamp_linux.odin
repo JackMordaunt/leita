@@ -79,3 +79,37 @@ still_names :: proc(path: string, id: File_Id) -> bool {
 	}
 	return true
 }
+
+// The file id a walk would store for `path`, or not known when statx cannot say.
+@(private)
+id_of :: proc(path: string) -> (id: File_Id, known: bool) {
+	buf: Path
+	cpath, terminated := terminate(path, &buf)
+	if !terminated {
+		return {}, false
+	}
+	st: linux.Statx
+	if statx_compat(linux.AT_FDCWD, cpath, {.SYMLINK_NOFOLLOW}, {.INO}, &st) != .NONE {
+		return {}, false
+	}
+	return {device = statx_device(st), inode = u64(st.ino)}, true
+}
+
+// Whether `path` is still on disk. False only when statx finds nothing there, so a
+// path that cannot be asked is treated as present.
+@(private)
+path_present :: proc(path: string) -> bool {
+	buf: Path
+	cpath, terminated := terminate(path, &buf)
+	if !terminated {
+		return true
+	}
+	st: linux.Statx
+	#partial switch statx_compat(linux.AT_FDCWD, cpath, {.SYMLINK_NOFOLLOW}, {.INO}, &st) {
+	case .NONE:
+		return true
+	case .ENOENT, .ENOTDIR:
+		return false
+	}
+	return true
+}

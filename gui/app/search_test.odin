@@ -108,19 +108,29 @@ search_fixture :: proc(t: ^testing.T, name: string) -> string {
 // its search off.
 @(test)
 a_search_answers_ranked_hits_with_what_matched :: proc(t: ^testing.T) {
-	root := search_fixture(t, "ranked")
+	// Heap copies: the temp drop below is the frame freeing its allocator,
+	// and the fixture path has to outlive that.
+	root := strings.clone(search_fixture(t, "ranked"))
+	defer delete(root)
 	defer os.remove_all(root)
+	thumbs := strings.clone(fmt.tprintf("%s-thumbs", root))
+	defer delete(thumbs)
+	defer os.remove_all(thumbs)
 	h: Host
-	init(&h, root, thumbs = fmt.tprintf("%s-thumbs", root))
+	init(&h, root, thumbs = thumbs)
 	defer stop(&h)
-	defer os.remove_all(fmt.tprintf("%s-thumbs", root))
 
 	prog, done := answer_to(&h, ask(&h, query.Progress{}), query.Progress_Result, progress_done)
 	testing.expect(t, done, "the scan finished")
+	generation := prog.generation
 
-	key := ask(&h, query.Search{generation = prog.generation, term = "main"})
+	key := ask(&h, query.Search{generation = generation, term = "main"})
+	// on_need unmarshals the term into the frame's temp allocator, and the
+	// frame frees that before the desk reads it. Drop it before waiting.
+	free_all(context.temp_allocator)
 	r, ok := answer_to(&h, key, query.Search_Result, complete)
 	testing.expect(t, ok, "the search was answered, complete")
+	testing.expect_value(t, r.term, "main")
 	names := make([dynamic]string, context.temp_allocator)
 	for hit in r.hits {
 		append(&names, hit.path[hit.name_at:])
@@ -150,13 +160,13 @@ a_search_answers_ranked_hits_with_what_matched :: proc(t: ^testing.T) {
 	// A term of another scan's generation is answered empty, and complete.
 	stale, stale_ok := answer_to(
 		&h,
-		ask(&h, query.Search{generation = prog.generation + 1, term = "main"}),
+		ask(&h, query.Search{generation = generation + 1, term = "main"}),
 		query.Search_Result,
 		complete,
 	)
 	testing.expect(t, stale_ok && len(stale.hits) == 0, "another generation finds nothing")
 
-	ask(&h, query.Search{generation = prog.generation, term = "main"}, added = false)
+	ask(&h, query.Search{generation = generation, term = "main"}, added = false)
 	time.sleep(50 * time.Millisecond)
 	testing.expect_value(t, len(h.desk.findings), 1)
 }

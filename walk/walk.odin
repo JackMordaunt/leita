@@ -555,6 +555,65 @@ settle :: proc(w: ^Worker, parent: u32, e: Entry) -> (counted, ok: bool) {
 	return gone, true
 }
 
+// Whether a copied extra name pays, because the base's payer is neither copied
+// nor read. One name wins; a later read sees the file already charged.
+@(private)
+claim_copied_extra :: proc(w: ^Worker, path: string) -> (bool, File_Id) {
+	id, known := id_of(path)
+	if !known {
+		return false, {}
+	}
+	payer, found := load_payer(w, id)
+	if !found || payer.base == scan.NO_NODE || payer.present {
+		return false, id
+	}
+	if payer_copied(w, payer.base) || !base_name_gone(w, payer.base, id) {
+		note_payer_remains(w, id, payer)
+		return false, id
+	}
+	return take_payer(w, id, payer), id
+}
+
+@(private)
+load_payer :: proc(w: ^Worker, id: File_Id) -> (payer: Payer, found: bool) {
+	l := w.linked
+	sync.mutex_lock(&l.mutex)
+	defer sync.mutex_unlock(&l.mutex)
+	payer, found = l.payers[id]
+	return
+}
+
+// The base's payer is still the one that pays. Remember that, unless a name read
+// since already took the file.
+@(private)
+note_payer_remains :: proc(w: ^Worker, id: File_Id, payer: Payer) {
+	l := w.linked
+	sync.mutex_lock(&l.mutex)
+	defer sync.mutex_unlock(&l.mutex)
+	if l.payers[id] != payer || payer.base == scan.NO_NODE {
+		return
+	}
+	l.payers[id] = {
+		base    = payer.base,
+		present = true,
+	}
+}
+
+// This copy pays. False when a read, or another copy, took the file first.
+@(private)
+take_payer :: proc(w: ^Worker, id: File_Id, payer: Payer) -> bool {
+	l := w.linked
+	sync.mutex_lock(&l.mutex)
+	defer sync.mutex_unlock(&l.mutex)
+	if l.payers[id] != payer {
+		return false
+	}
+	l.payers[id] = {
+		base = scan.NO_NODE,
+	}
+	return true
+}
+
 // Keep the name at `index` as the one `id` is charged under, in this worker's own
 // list so no lock is held for it, for counts and for a name an update copies.
 @(private)

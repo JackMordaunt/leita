@@ -1,5 +1,6 @@
 package leita_view
 
+import "core:strings"
 import "core:testing"
 
 import "jm:ui"
@@ -301,4 +302,58 @@ webhooks_explanation_names_leita_under_its_heading :: proc(t: ^testing.T) {
 	testing.expect(t, has_heading && has_explained, "the heading and its explanation")
 	testing.expect(t, below(heading, explained), "the explanation is under the heading")
 	testing.expect(t, explained.y - (heading.y + heading.h) <= 4.5, "and close under it")
+}
+
+// The menu is still open when Monitoring's answer arrives, then closes and
+// gives the keyboard back to the gear. The dialog has to end holding it.
+@(test)
+the_monitoring_dialog_keeps_the_keyboard_when_the_menu_closes :: proc(t: ^testing.T) {
+	s: Monitor_Rig
+	model_init(&s.m, "/top")
+	s.m.settings_read = true
+	fonts := []ops.Font_Ref {
+		{0, ui.default_font(), 400},
+		{1, ui.default_font(), 500},
+		{2, ui.default_font(), 600},
+		{3, ui.default_font(), 400},
+	}
+	render.headless_init(&s.h, view, &s.m, {1920, 1080}, fonts)
+	defer monitor_close(&s)
+	p := &s.h.p
+
+	ui.probe_deliver(
+		p,
+		query.Progress{},
+		query.Progress_Result{generation = 1, state = .Scanning, target = "/top"},
+	)
+	ui.probe_frame(p)
+	testing.expect(t, ui.probe_click(p, "Settings"))
+	ui.probe_advance(p, 6, 1.0 / 60)
+	testing.expect(t, ui.probe_click_top(p, "Monitoring"))
+	ui.probe_advance(p, 10, 1.0 / 60)
+	testing.expect(t, s.m.monitor_open, "Monitoring was chosen")
+
+	testing.expect(t, ui.probe_click(p, "Settings"), "the menu opens over the unanswered dialog")
+	ui.probe_advance(p, 6, 1.0 / 60)
+	ui.probe_deliver(p, query.Monitor{}, query.Monitor_Result{on = false, scheduler = "systemd"})
+	ui.probe_frame(p)
+	testing.expect(t, ui.probe_click_top(p, "Language"), "the menu is still the one on top")
+	ui.probe_advance(p, 10, 1.0 / 60)
+	testing.expect(t, ui.probe_click_top(p, "English"))
+	ui.probe_advance(p, 12, 1.0 / 60)
+
+	said := ui.probe_semantics(p, context.temp_allocator)
+	testing.expectf(t, strings.contains(said, `dialog "Monitoring"`), "the dialog is up:\n%s", said)
+	testing.expectf(
+		t,
+		!strings.contains(said, `button "Settings" expandable focused`),
+		"the keyboard left the gear:\n%s",
+		said,
+	)
+	testing.expectf(
+		t,
+		strings.contains(said, `button "Close" focused`),
+		"the dialog took it:\n%s",
+		said,
+	)
 }

@@ -589,6 +589,8 @@ check-licence key=test_licence_key licence="": sqlite
 # runs in a user and mount namespace of its own (unshare -rm), which needs no root
 # and leaves nothing mounted; --sudo runs them as root instead, where sudo asks no
 # password. Skipped where neither can mount. Linux only: just mount-test [--sudo]
+# LEITA_MOUNT_REQUIRED, which CI sets, makes the "no user namespaces" skip exit
+# 1. Unset, that skip exits 0. A Mac always exits 0: the mounts are Linux's.
 mount-test *args:
     #!{{bash}}
     set -euo pipefail
@@ -607,6 +609,11 @@ mount-test *args:
         exit 0
     fi
     echo "mount-test: skipped: no user namespaces here; give --sudo where sudo asks no password"
+    # CI sets this. A developer machine does not, and the skip stays a clean exit.
+    if [ -n "${LEITA_MOUNT_REQUIRED:-}" ]; then
+        echo "mount-test: LEITA_MOUNT_REQUIRED is set, so this skip fails" >&2
+        exit 1
+    fi
 
 # Kills each durable write part way, and fills and freezes real volumes under
 # them (durability/). The kills run everywhere. On Linux a tmpfs of a fixed size
