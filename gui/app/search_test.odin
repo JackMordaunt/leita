@@ -7,13 +7,17 @@ import "core:fmt"
 import "core:os"
 import "core:slice"
 import "core:strings"
+import "core:thread"
 import "core:testing"
 import "core:time"
 
+import "jm:debug"
+import "jm:stream"
 import "jm:ui"
 import bl "jm:ui/blend2d"
 
 import "../../scan"
+import netfault "../../faults/net"
 import "../command"
 import "../msg"
 import "../query"
@@ -169,6 +173,100 @@ a_search_answers_ranked_hits_with_what_matched :: proc(t: ^testing.T) {
 	ask(&h, query.Search{generation = generation, term = "main"}, added = false)
 	time.sleep(50 * time.Millisecond)
 	testing.expect_value(t, len(h.desk.findings), 1)
+}
+
+// A need that cannot enter the pipeline retains no owned term at the sender.
+@(test)
+a_search_refused_by_a_closed_port_keeps_no_term :: proc(t: ^testing.T) {
+	da: debug.Allocator
+	debug.init(&da, context.allocator)
+	defer debug.destroy(&da)
+	context.allocator = debug.allocator(&da)
+	thumbs := strings.clone(search_fixture(t, "closed-search-port"))
+	defer delete(thumbs)
+	defer os.remove_all(thumbs)
+	h: Host
+	init(&h, "", thumbs = thumbs)
+	stream.port_close(h.need_port)
+	before := debug.snapshot(&da)
+	ask(&h, query.Search{term = "main"})
+	stop(&h)
+	testing.expect(t, debug.expect_released(&da, before), "a refused need frees its sender-owned term")
+	testing.expect_value(t, debug.issue_count(&da), 0)
+}
+
+// Stop the pool before adding needs so their ownership is still in the raw
+// inlet when shutdown begins. Add/drop ordering and a term still live at exit
+// must both release their copies, even after the frame storage has been reset.
+@(test)
+queued_search_terms_are_freed_when_the_host_stops :: proc(t: ^testing.T) {
+	da: debug.Allocator
+	debug.init(&da, context.allocator)
+	defer debug.destroy(&da)
+	frame_heap: debug.Allocator
+	debug.init(&frame_heap, context.allocator)
+	defer debug.destroy(&frame_heap)
+	context.allocator = debug.allocator(&da)
+	thumbs := strings.clone(search_fixture(t, "queued-search-stop"))
+	defer delete(thumbs)
+	defer os.remove_all(thumbs)
+	h: Host
+	init(&h, "", thumbs = thumbs)
+	stream.stop(h.p)
+	began := time.tick_now()
+	for !thread.is_done(h.pool) && time.tick_since(began) < 5 * time.Second {
+		thread.yield()
+	}
+	if !testing.expect(t, thread.is_done(h.pool), "the pool stopped before the queued needs") {
+		stop(&h)
+		return
+	}
+	before := debug.snapshot(&da)
+	// The frame's heap may differ from the desk's: needs must use the host's
+	// persistent allocator, not whichever allocator the current frame has.
+	context.allocator = debug.allocator(&frame_heap)
+	ask(&h, query.Search{term = "main"})
+	ask(&h, query.Search{term = "notes"})
+	ask(&h, query.Search{term = "main"}, added = false)
+	context.allocator = debug.allocator(&da)
+	free_all(context.temp_allocator)
+	stop(&h)
+	testing.expect(t, debug.expect_released(&da, before), "queued, dropped and live-at-exit terms are released")
+	testing.expect_value(t, debug.issue_count(&da), 0)
+	testing.expect_value(t, debug.issue_count(&frame_heap), 0)
+}
+
+// The final ownership drain must not start new work after its clients were
+// stopped. Keep the callback's fixture port alive independently, so a restarted
+// client can be detected and joined without using the destroyed host pipeline.
+@(test)
+stopping_with_queued_searches_does_not_start_an_activation :: proc(t: ^testing.T) {
+	srv := netfault.start(.Stall_Head)
+	defer netfault.stop(srv)
+	replies := stream.make_pipeline(context.allocator)
+	defer stream.destroy(replies)
+	_, reply_port := stream.port(replies, Activated, cap = 4)
+	thumbs := strings.clone(search_fixture(t, "search-stop-command"))
+	defer delete(thumbs)
+	defer os.remove_all(thumbs)
+	h: Host
+	init(&h, "", thumbs = thumbs, activate_url = netfault.url(srv, "/activate"))
+	stream.stop(h.p)
+	began := time.tick_now()
+	for !thread.is_done(h.pool) && time.tick_since(began) < 5 * time.Second {
+		thread.yield()
+	}
+	if !testing.expect(t, thread.is_done(h.pool), "the pool stopped before queued input") {
+		stop(&h)
+		return
+	}
+	h.desk.activations = &reply_port
+	ask(&h, query.Search{term = "main"})
+	send(&h, command.Command(command.Add_Licence{text = command.text_make("queued-at-close")}))
+	stop(&h)
+	restarted := h.desk.client != nil
+	licence_stop(&h.desk)
+	testing.expect(t, !restarted, "the ownership drain must not restart the activation client")
 }
 
 // A picture's thumbnail is made off the desk, kept by its path and time, and

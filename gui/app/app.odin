@@ -160,6 +160,7 @@ Scan :: struct {
 Desk :: struct {
 	inbox:               ^ui.Inbox,
 	wake:                proc(),
+	stopping:            ^bool, // the host's flag; the final drain releases needs without starting commands
 	generation:          u32,
 	scan:                ^Scan,
 	made_up:             Maybe(int), // the made-up disk's day to scan in place of any path, nil for real ones
@@ -171,6 +172,7 @@ Desk :: struct {
 	after_list:          proc(path: string, data: rawptr),
 	after_list_data:     rawptr,
 	live:                map[ui.Need_Key]Query,
+	need_allocator:      runtime.Allocator, // owns Search terms from ingress through live-map removal
 	notice:              query.Notice, // its text owned
 	words:               ^msg.Strings, // what the host says, in the window's language (words.odin)
 	// What Reclaim last offered, by node: Clean deletes only these.
@@ -363,6 +365,7 @@ init :: proc(
 	h.desk = {
 		inbox         = &h.inbox,
 		wake          = wake,
+		stopping      = &h.stopping,
 		made_up       = made_up,
 		live          = make(map[ui.Need_Key]Query, allocator),
 		words         = new(msg.Strings, allocator),
@@ -378,6 +381,7 @@ init :: proc(
 		tested        = &h.tested,
 		scratch       = new(search.Scratch, allocator),
 	}
+	h.desk.need_allocator = allocator
 	if len(update_key) == 32 {
 		copy(h.desk.update_key[:], update_key)
 		h.desk.update_key_set = true
@@ -547,7 +551,7 @@ on_need :: proc(user: rawptr, need: ui.Need, added: bool) {
 		// term and zeros for its bytes, and answer no hits.
 		s, ok := ui.need_as(need, query.Search)
 		if added && ok {
-			s.term = strings.clone(s.term)
+			s.term = strings.clone(s.term, h.desk.need_allocator)
 		}
 		q = s
 	case ui.need_is(need, query.Monitor):
@@ -560,7 +564,11 @@ on_need :: proc(user: rawptr, need: ui.Need, added: bool) {
 	case:
 		return
 	}
-	stream.port_send(h.need_port, Need_Event{added, need.key, q})
+	if !stream.port_send(h.need_port, Need_Event{added, need.key, q}) && added {
+		if s, ok := q.(query.Search); ok {
+			delete(s.term, h.desk.need_allocator)
+		}
+	}
 }
 
 // on_command decodes the window's command. A Command holds no pointers, so the
@@ -703,7 +711,7 @@ live_put :: proc(d: ^Desk, key: ui.Need_Key, q: Query) {
 // live_free drops key and frees the Search term stored for it.
 live_free :: proc(d: ^Desk, key: ui.Need_Key) {
 	if s, ok := d.live[key].(query.Search); ok {
-		delete(s.term)
+		delete(s.term, d.need_allocator)
 	}
 	delete_key(&d.live, key)
 }
@@ -712,7 +720,7 @@ live_free :: proc(d: ^Desk, key: ui.Need_Key) {
 live_clear :: proc(d: ^Desk) {
 	for _, q in d.live {
 		if s, ok := q.(query.Search); ok {
-			delete(s.term)
+			delete(s.term, d.need_allocator)
 		}
 	}
 	delete(d.live)
@@ -740,6 +748,9 @@ desk_step :: proc(d: ^Desk, v: Desk_In) {
 		answer(d, e.key, e.q)
 		notify(d)
 	case Sent_Command:
+		if d.stopping != nil && sync.atomic_load(d.stopping) {
+			return
+		}
 		if d.trace {
 			trace(d, "handle", e)
 		}
