@@ -618,8 +618,18 @@ deleted_payer :: proc(t: ^testing.T, replacement: bool) {
 	was := scan.node(&base, at(&base, paid, "big")).disk
 	testing.expect(t, was > 0, "the file was not charged")
 	testing.expect(t, os.remove_all(fmt.tprintf("%s/%s", root, paid)) == nil, "payer stayed")
+	replacement_bytes: u64
 	if replacement {
 		put(t, fmt.tprintf("%s/%s", root, paid), 0)
+		// Empty files can still occupy blocks. Measure this independent of the
+		// update whose transfer of the old hard-link charge is being checked.
+		fresh := read_tree(t, root)
+		defer scan.tree_destroy(&fresh)
+		file := at(&fresh, paid)
+		if !testing.expect(t, file != scan.NO_NODE, "the replacement file is missing") {
+			return
+		}
+		replacement_bytes = scan.node(&fresh, file).disk
 	}
 
 	u := Update {
@@ -646,7 +656,15 @@ deleted_payer :: proc(t: ^testing.T, replacement: bool) {
 		kept,
 	)
 	testing.expect_value(t, n.disk, was)
-	testing.expect_value(t, charged_total(&got), was)
+	if replacement {
+		file := at(&got, paid)
+		if testing.expect(t, file != scan.NO_NODE, "the replacement file is missing") {
+			r := scan.node(&got, file)
+			testing.expect_value(t, r.disk, replacement_bytes)
+			testing.expect(t, scan.node_flags(r) & {.Directory, .Reparse, .Extra_Name} == {})
+		}
+	}
+	testing.expect_value(t, charged_total(&got), was + replacement_bytes)
 	if update_rereads_fixture(root) {
 		return
 	}
