@@ -82,7 +82,12 @@ jobs:
         timeout-minutes: 20
         run: |
           if [ "${{ runner.os }}" = Windows ]; then export SAN=; fi
-          just test
+          # Preserve the active test names if a macOS run reaches the timeout.
+          if [ "${{ runner.os }}" = macOS ]; then
+            just flags="$(just --evaluate flags) -define:ODIN_TEST_LOG_STATE_CHANGES=true" test
+          else
+            just test
+          fi
       # The built command line driven as a process on the made-up disk
       # (journeys/), then the window on the same disk (journeys/gui), on
       # every OS. Windows runs without AddressSanitizer, as the tests do.
