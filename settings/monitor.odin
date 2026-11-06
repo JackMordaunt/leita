@@ -283,8 +283,9 @@ watches_destroy :: proc(ws: []Watch, allocator := context.allocator) {
 	delete(ws, allocator)
 }
 
-// record keeps r as the newest run of its place and forgets the oldest past
-// RUNS_KEPT, and returns its id.
+// record retains the inserted run plus the RUNS_KEPT-1 newest other runs by
+// wall-clock time, and returns its id. A clock rollback cannot immediately
+// prune the row just inserted; runs and last_run keep their time ordering.
 record :: proc(st: ^Store, r: Run) -> (id: i64, err: sqlite3.Error) {
 	if blocked := write_allowed(st); blocked != nil { return {}, blocked }
 	sqlite3.exec_args(
@@ -308,11 +309,13 @@ record :: proc(st: ^Store, r: Run) -> (id: i64, err: sqlite3.Error) {
 	id = sqlite3.last_id(st.db)
 	sqlite3.exec_args(
 		st.db,
-		`DELETE FROM run WHERE place = ? AND id NOT IN
-			(SELECT id FROM run WHERE place = ? ORDER BY started DESC, id DESC LIMIT ?)`,
+		`DELETE FROM run WHERE place = ? AND id <> ? AND id NOT IN
+			(SELECT id FROM run WHERE place = ? AND id <> ? ORDER BY started DESC, id DESC LIMIT ?)`,
 		r.place,
+		id,
 		r.place,
-		i64(RUNS_KEPT),
+		id,
+		i64(RUNS_KEPT - 1),
 	) or_return
 	return
 }

@@ -47,6 +47,29 @@ monitor_metrics :: proc(c: Monitor_Context, args: []string, w: io.Writer) -> int
 	st: settings.Store
 	if !monitor_open_settings(c, &st, w, write = !show) {return monitor.EXIT_FAILED}
 	defer settings.close(&st)
+	// A running monitor owns its destination/cache snapshot until publication.
+	// Serialize mutations with that entire run; inspecting settings stays free.
+	l: monitor.Lock
+	locked := false
+	defer if locked {monitor.unlock(&l)}
+	if !show {
+		result: monitor.Lock_Result
+		l, result = monitor.lock(c.paths.lock)
+		switch result {
+		case .Taken:
+			locked = true
+		case .Held:
+			monitor_errorf(
+				c,
+				w,
+				"a monitoring run is in progress; change metrics after it finishes",
+			)
+			return monitor.EXIT_FAILED
+		case .Failed:
+			monitor_errorf(c, w, "cannot lock monitoring settings at %s", c.paths.lock)
+			return monitor.EXIT_FAILED
+		}
+	}
 	if show {
 		problem: string
 		path, problem = monitor.metrics_setting(&st, monitor.METRICS_PATH_KEY)

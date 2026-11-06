@@ -913,3 +913,93 @@ monitor_metrics_identifies_a_synthetic_scan :: proc(t: ^testing.T) {
 		if strings.has_prefix(line, "leita_monitor_scan_synthetic{") { testing.expect(t, strings.has_suffix(line, " 1"), line) }
 	}
 }
+
+@(test)
+monitor_metrics_keeps_a_rollback_attempt_when_history_is_full :: proc(t: ^testing.T) {
+	for fail in ([]bool{false, true}) {
+		b: Monitor_Bench
+		monitor_bench_open(t, &b)
+		defer os.remove_all(b.dir)
+		path := monitor_join(b.dir, "leita.prom")
+		_, _ = monitor_run_monitor(&b, "add", b.place)
+		_, _ = monitor_run_monitor(&b, "on")
+		_, _ = monitor_run_monitor(&b, "metrics", path)
+		st: settings.Store
+		testing.expect_value(t, settings.open(&st, b.c.paths.settings), nil)
+		for i in 0 ..< settings.RUNS_KEPT {
+			_, err := settings.record(&st, {place = monitor.place_of(b.place), started = 1_800_000_100 + i64(i), bytes = 1})
+			testing.expect_value(t, err, nil)
+		}
+		settings.close(&st)
+		if fail { testing.expect_value(t, os.remove_all(b.place), nil) }
+		code, _ := monitor_run_monitor(&b, "run", "--all")
+		testing.expect_value(t, code, monitor.EXIT_FAILED if fail else 0)
+		// Scheduling still sees the greatest wall-clock time and stands aside.
+		// Metrics must preserve the newer inserted outcome instead of reverting.
+		b.c.now = time.unix(1_800_000_060, 0)
+		out: string
+		code, out = monitor_run_monitor(&b, "run")
+		testing.expect_value(t, code, 0)
+		testing.expect(t, !strings.contains(out, "error: metrics:"), out)
+		raw, err := os.read_entire_file(path, context.temp_allocator)
+		testing.expect_value(t, err, nil)
+		attempts := 0
+		for line in strings.split_lines(string(raw), context.temp_allocator) {
+			if strings.has_prefix(line, "leita_monitor_last_attempt_timestamp_seconds{") {
+				attempts += 1
+				testing.expect(t, strings.has_suffix(line, " 1800000000"), line)
+			}
+			if strings.has_prefix(line, "leita_monitor_scan_success{") {
+				testing.expect(t, strings.has_suffix(line, " 0" if fail else " 1"), line)
+			}
+		}
+		testing.expect_value(t, attempts, 1)
+		testing.expect_value(t, strings.contains(string(raw), "leita_monitor_scan_charged_bytes{place="), !fail)
+	}
+}
+
+@(test)
+monitor_metrics_config_refuses_a_running_monitor_without_changing_state :: proc(t: ^testing.T) {
+	b: Monitor_Bench
+	monitor_bench_open(t, &b)
+	defer os.remove_all(b.dir)
+	path := monitor_join(b.dir, "leita.prom")
+	other := monitor_join(b.dir, "other.prom")
+	_, _ = monitor_run_monitor(&b, "add", b.place)
+	_, _ = monitor_run_monitor(&b, "on")
+	_, _ = monitor_run_monitor(&b, "metrics", path)
+	code, _ := monitor_run_monitor(&b, "run", "--all")
+	testing.expect_value(t, code, 0)
+	before, err := os.read_entire_file(path, context.temp_allocator)
+	testing.expect_value(t, err, nil)
+	st: settings.Store
+	testing.expect_value(t, settings.open(&st, b.c.paths.settings), nil)
+	configured, _ := settings.get(&st, monitor.METRICS_PATH_KEY, context.temp_allocator)
+	cached, _ := settings.get(&st, "monitor_metrics_state", context.temp_allocator)
+	settings.close(&st)
+	l, taken := monitor.lock(b.c.paths.lock)
+	testing.expect_value(t, taken, monitor.Lock_Result.Taken)
+	out: string
+	code, out = monitor_run_monitor(&b, "metrics", other)
+	testing.expect_value(t, code, monitor.EXIT_FAILED)
+	testing.expect(t, strings.contains(out, "monitoring run is in progress"), out)
+	b.c.unlocked = false
+	code, out = monitor_run_monitor(&b, "metrics", "off")
+	testing.expect_value(t, code, monitor.EXIT_FAILED)
+	testing.expect(t, strings.contains(out, "monitoring run is in progress"), out)
+	code, out = monitor_run_monitor(&b, "metrics")
+	testing.expect_value(t, code, 0)
+	testing.expect(t, strings.contains(out, path), out)
+	testing.expect_value(t, settings.open(&st, b.c.paths.settings), nil)
+	kept_path, _ := settings.get(&st, monitor.METRICS_PATH_KEY, context.temp_allocator)
+	kept_cache, _ := settings.get(&st, "monitor_metrics_state", context.temp_allocator)
+	settings.close(&st)
+	testing.expect_value(t, kept_path, configured)
+	testing.expect_value(t, kept_cache, cached)
+	raw, _ := os.read_entire_file(path, context.temp_allocator)
+	testing.expect_value(t, string(raw), string(before))
+	testing.expect(t, !os.exists(other))
+	monitor.unlock(&l)
+	code, _ = monitor_run_monitor(&b, "metrics", "off")
+	testing.expect_value(t, code, 0)
+}

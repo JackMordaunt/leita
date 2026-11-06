@@ -286,3 +286,39 @@ alerts_are_kept_newest_first_up_to_a_limit :: proc(t: ^testing.T) {
 		testing.expect_value(t, a.place, "/srv")
 	}
 }
+
+// Wall-clock ordering remains useful to the scheduler, but a new insertion
+// must survive its own retention pass even when the clock moved backwards.
+@(test)
+record_retains_the_inserted_run_after_a_full_window_clock_rollback :: proc(t: ^testing.T) {
+	st: Store
+	testing.expect_value(t, open(&st, ":memory:"), nil)
+	defer close(&st)
+	for i in 0 ..< RUNS_KEPT {
+		_, err := record(&st, {place = "/srv", started = i64(1000 + i), bytes = u64(i)})
+		testing.expect_value(t, err, nil)
+	}
+	_, _ = record(&st, {place = "/other", started = 1200})
+	inserted, err := record(&st, {place = "/srv", started = 900, problem = "failed after rollback"})
+	testing.expect_value(t, err, nil)
+	rs, read_err := runs(&st, "/srv", allocator = context.temp_allocator)
+	testing.expect_value(t, read_err, nil)
+	testing.expect_value(t, len(rs), RUNS_KEPT)
+	found := false
+	for r in rs {
+		if r.id == inserted {
+			found = true
+			testing.expect_value(t, r.started, i64(900))
+			testing.expect_value(t, r.problem, "failed after rollback")
+		} else {
+			testing.expect(t, r.started > 1000, "only the 49 newest other rows should survive")
+		}
+	}
+	testing.expect(t, found, "the new row must not be pruned immediately")
+	last, has_last := last_run(&st, "/srv", context.temp_allocator)
+	testing.expect(t, has_last)
+	testing.expect_value(t, last.started, i64(1000 + RUNS_KEPT - 1))
+	other, other_err := runs(&st, "/other", allocator = context.temp_allocator)
+	testing.expect_value(t, other_err, nil)
+	testing.expect_value(t, len(other), 1)
+}

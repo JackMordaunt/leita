@@ -13,8 +13,11 @@ and node_exporter can read them. For example, after configuring that directory:
   leita monitor run
 
 The first command saves an absolute destination ending in .prom. It does not
-create output. The next enabled, unlocked monitor run writes the file after its
-scans. Existing monitor on/off and schedule controls still apply. A run with no
+create output. Configuration changes take the monitor run's lock. If a run is
+already in progress, the command reports busy without changing the destination
+or retained samples; inspection still works. The next enabled, unlocked run
+writes the file after its scans. Existing monitor on/off and schedule controls
+still apply. A run with no
 due places republishes retained measurements with their original scan times.
 
   leita monitor metrics off
