@@ -7,7 +7,11 @@ import io
 import json
 import os
 import random
+import signal
+import subprocess
+import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -185,6 +189,34 @@ class Judgement(unittest.TestCase):
             self.assertEqual(result["leita"]["exit"], 7)
             self.assertEqual(result["coverage"], "not-completed")
 
+    def test_nonobject_totals_remain_structured_failed_cases(self):
+        for totals in (None, [], "wrong type"):
+            with self.subTest(totals=totals), tempfile.TemporaryDirectory() as tmp:
+                process = {"exit": 0, "stdout": json.dumps({"schema": "leita.report/1", "totals": totals}), "stderr": ""}
+                with patch.object(truth, "command", return_value=process):
+                    result = truth.run_case(Path(tmp) / "dense", "dense", Path("/fake/leita"), {}, "apfs", random.Random(1))
+                self.assertEqual(result["verdict"], "fail")
+                self.assertEqual(result["coverage"], "not-completed")
+                self.assertEqual(result["report"]["totals"], totals)
+
+    def test_main_retains_nonobject_totals_in_json_and_table(self):
+        for totals in (None, [], "wrong type"):
+            with self.subTest(totals=totals), tempfile.TemporaryDirectory() as tmp:
+                binary = Path(tmp) / "leita"
+                binary.write_text("fixture executable identity only")
+                binary.chmod(0o700)
+                workspace = Path(tmp) / "fresh"
+                process = {"exit": 0, "stdout": json.dumps({"schema": "leita.report/1", "totals": totals}), "stderr": ""}
+                with patch.object(truth, "command", return_value=process), \
+                     patch.object(truth, "filesystem", return_value={"name": "apfs", "evidence": []}), \
+                     contextlib.redirect_stdout(io.StringIO()):
+                    code = truth.main(["--leita", str(binary), "--workspace", str(workspace)])
+                result = json.loads((workspace / "results.json").read_text())
+                self.assertEqual(code, 1)
+                self.assertGreater(result["summary"]["fail"], 0)
+                self.assertEqual(result["cases"][0]["report"]["totals"], totals)
+                self.assertIn("unknown | fail", (workspace / "table.md").read_text())
+
     def test_main_emits_json_and_nonzero_for_wrong_tool_results(self):
         with tempfile.TemporaryDirectory() as tmp:
             binary = Path(tmp) / "leita"
@@ -200,6 +232,86 @@ class Judgement(unittest.TestCase):
             self.assertGreater(result["summary"]["fail"], 0)
             self.assertEqual(result["schema"], truth.SCHEMA)
             self.assertTrue((Path(tmp) / "fresh" / "results.json").exists())
+
+
+@unittest.skipUnless(os.name == "posix", "command pipe selectors and owned process groups are POSIX")
+class Processes(unittest.TestCase):
+    def test_nonzero_exit_retains_stdout_and_stderr(self):
+        result = truth.command([sys.executable, "-c", "import sys; print('output'); sys.stderr.write('diagnostic'); sys.exit(7)"])
+        self.assertEqual(result["exit"], 7)
+        self.assertEqual(result["stdout"], "output\n")
+        self.assertEqual(result["stderr"], "diagnostic")
+        self.assertIsNone(result["error"])
+
+    def test_output_limits_retain_a_bounded_prefix_and_fail(self):
+        for name in ("stdout", "stderr"):
+            with self.subTest(stream=name), patch.object(truth, "STDOUT_LIMIT", 1024), \
+                 patch.object(truth, "STDERR_LIMIT", 1024):
+                result = truth.command([sys.executable, "-c", f"import sys; sys.{name}.write('x'*2048)"])
+            self.assertIsNone(result["exit"])
+            self.assertEqual(result["error"], name + "-limit")
+            self.assertTrue(result[name + "_truncated"])
+            if name == "stdout":
+                self.assertEqual(result[name], "x" * 1024)
+            else:
+                self.assertTrue(result[name].startswith("x" * 1024))
+                self.assertLess(len(result[name]), 1200)
+
+    def test_deadline_stops_a_descendant_that_keeps_pipes_open(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            heartbeat = Path(tmp) / "heartbeat"
+            child = "from pathlib import Path; import sys,time; p=Path(sys.argv[1]);\nwhile True: p.write_text(str(time.time_ns())); time.sleep(.01)"
+            # The parent exits immediately; its child still holds both pipes.
+            parent = "import subprocess,sys; p=subprocess.Popen([sys.executable,'-c',sys.argv[1],sys.argv[2]]); print(p.pid,flush=True)"
+            started = time.monotonic()
+            with patch.object(truth, "COMMAND_TIMEOUT", 0.5):
+                result = truth.command([sys.executable, "-c", parent, child, str(heartbeat)])
+            self.assertLess(time.monotonic() - started, 3)
+            self.assertIsNone(result["exit"])
+            self.assertEqual(result["error"], "timeout")
+            self.assertTrue(heartbeat.exists(), result)
+            value = heartbeat.read_text()
+            time.sleep(0.1)
+            self.assertEqual(heartbeat.read_text(), value, "the descendant stops writing after timeout")
+
+    def test_cancellation_during_pipe_setup_reaps_the_child(self):
+        original = subprocess.Popen
+        started = []
+
+        def launch(*args, **kwargs):
+            process = original(*args, **kwargs)
+            started.append(process)
+            return process
+
+        with patch.object(truth.subprocess, "Popen", side_effect=launch), \
+             patch.object(truth.selectors, "DefaultSelector", side_effect=KeyboardInterrupt):
+            result = truth.command([sys.executable, "-c", "import time; time.sleep(30)"])
+        self.assertEqual(result["error"], "cancelled")
+        self.assertIsNotNone(started[0].poll())
+        self.assertEqual(started[0].returncode, -signal.SIGKILL)
+
+    def test_sigterm_cancels_and_reaps_the_scanner(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pid_file = Path(tmp) / "pid"
+            child = "from pathlib import Path; import os,sys,time; Path(sys.argv[1]).write_text(str(os.getpid())); time.sleep(30)"
+            controller = "import importlib.util,json,sys; s=importlib.util.spec_from_file_location('truth',sys.argv[1]); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); print(json.dumps(m.command([sys.executable,'-c',sys.argv[2],sys.argv[3]])))"
+            process = subprocess.Popen([sys.executable, "-B", "-c", controller, truth.__file__, child, str(pid_file)],
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            try:
+                deadline = time.monotonic() + 3
+                while not pid_file.exists() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                self.assertTrue(pid_file.exists())
+                process.terminate()
+                stdout, stderr = process.communicate(timeout=3)
+                self.assertEqual(process.returncode, 0, stderr)
+                self.assertEqual(json.loads(stdout)["error"], "cancelled")
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(int(pid_file.read_text()), 0)
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                process.communicate(timeout=3)
 
 
 if __name__ == "__main__":

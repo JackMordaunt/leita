@@ -11,16 +11,22 @@ import platform
 import plistlib
 import random
 import re
+import selectors
 import shutil
+import signal
 import stat
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 SCHEMA = "leita.truth/1"
 REPO = Path(__file__).resolve().parents[2]
 PLAIN_FILESYSTEMS = {"apfs", "hfs", "hfs+", "ext2/ext3", "ext4", "tmpfs", "xfs", "ufs", "zfs", "overlayfs"}
+COMMAND_TIMEOUT = 60
+STDOUT_LIMIT = 2 * 1024 * 1024
+STDERR_LIMIT = 128 * 1024
 
 
 def sha256(path: Path) -> str:
@@ -29,11 +35,78 @@ def sha256(path: Path) -> str:
 
 
 def command(argv: list[str], env: dict[str, str] | None = None) -> dict:
+    """Bound process lifetime and output, including descendants holding pipes."""
+    process = None
+    selector = None
+    output = {"stdout": bytearray(), "stderr": bytearray()}
+    limits = {"stdout": STDOUT_LIMIT, "stderr": STDERR_LIMIT}
+    truncated = {"stdout": False, "stderr": False}
+    error = None
+    deadline = time.monotonic() + COMMAND_TIMEOUT
+
+    def cancelled(_signum, _frame):
+        raise KeyboardInterrupt
+
+    previous_term = signal.signal(signal.SIGTERM, cancelled)
     try:
-        r = subprocess.run(argv, env=env, capture_output=True, text=True, errors="replace", timeout=60)
-        return {"argv": argv, "exit": r.returncode, "stdout": r.stdout, "stderr": r.stderr}
-    except (OSError, subprocess.TimeoutExpired) as e:
-        return {"argv": argv, "exit": None, "stdout": "", "stderr": str(e)}
+        process = subprocess.Popen(argv, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   start_new_session=True)
+        selector = selectors.DefaultSelector()
+        for name, stream in (("stdout", process.stdout), ("stderr", process.stderr)):
+            os.set_blocking(stream.fileno(), False)
+            selector.register(stream, selectors.EVENT_READ, name)
+        while selector.get_map() or process.poll() is None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                error = "timeout"
+                break
+            for key, _ in selector.select(min(remaining, 0.05)):
+                chunk = os.read(key.fd, 8192)
+                if not chunk:
+                    selector.unregister(key.fileobj)
+                    key.fileobj.close()
+                    continue
+                name = key.data
+                available = limits[name] - len(output[name])
+                output[name].extend(chunk[:available])
+                if len(chunk) > available:
+                    truncated[name] = True
+                    error = name + "-limit"
+                    break
+            if error:
+                break
+    except KeyboardInterrupt:
+        error = "cancelled"
+    except OSError as exc:
+        error = "process-error: " + str(exc)[:512]
+    finally:
+        # Ignore a second cancellation until the owned group has been reaped.
+        previous_int = signal.signal(signal.SIGINT, signal.SIG_IGN)
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        try:
+            if process is not None:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                try:
+                    process.wait(timeout=1)
+                except subprocess.TimeoutExpired:
+                    error = error or "process-did-not-exit-after-kill"
+                for stream in (process.stdout, process.stderr):
+                    if stream is not None:
+                        stream.close()
+            if selector is not None:
+                selector.close()
+        finally:
+            signal.signal(signal.SIGINT, previous_int)
+            signal.signal(signal.SIGTERM, previous_term)
+    stderr = output["stderr"].decode("utf-8", errors="replace")
+    if error:
+        stderr += "\ntruth-runner: " + error + "\n"
+    return {"argv": argv, "exit": process.returncode if process is not None and not error else None,
+            "stdout": output["stdout"].decode("utf-8", errors="replace"), "stderr": stderr,
+            "error": error, "stdout_truncated": truncated["stdout"], "stderr_truncated": truncated["stderr"]}
 
 
 def create_workspace(path: Path) -> Path:
@@ -275,8 +348,10 @@ def run_case(root: Path, kind: str, binary: Path, env: dict[str, str], fs_name: 
         checks = compare(report, before, fs_name, stable)
         checks.append({"name": "leita-exit", "expected": 0, "actual": process["exit"], "verdict": "pass" if process["exit"] == 0 else "fail"})
         checks.append(compare_du(du, before, stable, fs_name))
-        partial = bool(before["unread_paths"]) or bool(report.get("totals", {}).get("unread"))
-        completed = process["exit"] == 0 and report.get("schema") == "leita.report/1" and isinstance(report.get("totals"), dict)
+        totals = report.get("totals")
+        valid_totals = isinstance(totals, dict)
+        partial = bool(before["unread_paths"]) or (bool(totals.get("unread")) if valid_totals else False)
+        completed = process["exit"] == 0 and report.get("schema") == "leita.report/1" and valid_totals
         coverage = "mutated" if not stable else "not-completed" if not completed else "partial" if partial else "complete"
         return {"case": kind, "verdict": verdict(checks), "coverage": coverage,
                 "features": features, "oracle_before": before, "oracle_after": after, "fixture_stable": stable,
@@ -300,7 +375,8 @@ def markdown(results: dict) -> str:
              "| --- | --- | ---: | ---: | ---: | --- |"]
     for case in results["cases"]:
         oracle = case.get("oracle_before", {})
-        charged = case.get("report", {}).get("totals", {}).get("bytes")
+        totals = case.get("report", {}).get("totals")
+        charged = totals.get("bytes") if isinstance(totals, dict) else None
         values = [case["case"], case.get("coverage", "not-run"), oracle.get("apparent_regular_bytes"),
                   oracle.get("stat_regular_allocated_bytes"), charged, case["verdict"]]
         lines.append("| " + " | ".join("unknown" if x is None else str(x) for x in values) + " |")

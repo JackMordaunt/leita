@@ -41,6 +41,13 @@ stderr with exit 2. A comparable mismatch or failed command/fixture run exits 1.
 Unknown/skipped measurements do not fail by themselves, and must not be presented
 as passing proof.
 
+Each command has a 60-second deadline, including waiting for inherited output
+pipes to close. Capture is limited to 2 MiB of stdout and 128 KiB of stderr;
+an exceeded limit, timeout or cancellation retains the captured prefix, records
+the error/truncation state and fails the command. Cleanup terminates the owned
+POSIX process group and reaps its direct process, including when descendants
+were holding output open.
+
 ## What the fixtures establish
 
 - **Dense:** seeded incompressible bytes around block boundaries, including empty
