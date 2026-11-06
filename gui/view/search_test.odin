@@ -219,6 +219,38 @@ opened :: proc(p: ^ui.Probe) -> (node: u32, ok: bool) {
 }
 
 @(test)
+the_search_pick_leaves_the_keyboard_with_the_toolbar_and_history :: proc(t: ^testing.T) {
+	s: Search_Rig
+	searching_open(&s)
+	defer searching_close(&s)
+	p := &s.h.p
+
+	open_search(&s.m)
+	settle(p)
+	settle(p)
+	ui.probe_type(p, "f")
+	settle(p)
+	ui.probe_deliver(p, query.Search{generation = 1, term = "f"}, many(4))
+	settle(p)
+	press(p, .Down)
+	testing.expect_value(t, ui.probe_focus_name(p), "f0")
+
+	// Tab and pointer choices move the keyboard without changing the pick.
+	press(p, .Tab)
+	testing.expect(t, ui.probe_focus_name(p) != "f0", "Tab leaves the picked result")
+	testing.expect(t, ui.probe_click(p, "Settings"), "the toolbar opens its menu")
+	ui.probe_advance(p, 10, 1.0 / 60)
+	testing.expect(t, ui.probe_click_top(p, "History"), "History is a menu choice")
+	ui.probe_advance(p, 10, 1.0 / 60)
+	testing.expect(t, s.m.record_open, "History opens above the search")
+	testing.expect_value(t, ui.probe_focus_name(p), "Close")
+
+	press(p, .Escape)
+	testing.expect(t, !s.m.record_open, "Escape closes History")
+	testing.expect_value(t, ui.probe_focus_name(p), "Settings")
+}
+
+@(test)
 the_keys_move_through_the_hits_and_return_opens :: proc(t: ^testing.T) {
 	s: Search_Rig
 	searching_open(&s)

@@ -175,6 +175,7 @@ Results :: struct {
 	columns: int, // 1 for a list
 	tile:    f32, // a tile's width
 	page:    int, // how many hits a page moves
+	focus:   bool, // a keyboard move asks its new pick for focus this frame
 }
 
 // search_results is the window's main content while there is a term: what was
@@ -208,6 +209,7 @@ search_results :: proc(gtx: ^ui.Ctx, m: ^Model, term: string) {
 			) {
 				m.search_grid = at == 1
 				m.search_list = {}
+				m.search_move = m.search_keys
 			}
 		}
 	}
@@ -251,7 +253,7 @@ search_results :: proc(gtx: ^ui.Ctx, m: ^Model, term: string) {
 	}
 	results.page = max(int(m.search_view / row), 1) * results.columns
 	rows := (len(r.hits) + results.columns - 1) / results.columns
-	pick_follow(gtx, m, r, results.columns, row)
+	results.focus = pick_follow(gtx, m, r, results.columns, row)
 	dims: ui.Dims
 	if m.search_grid {
 		dims = ui.list(gtx, &m.search_list, rows, tile_row, &results)
@@ -264,10 +266,18 @@ search_results :: proc(gtx: ^ui.Ctx, m: ^Model, term: string) {
 /*
 pick_follow keeps the pick to the hits there are: the best when the keys have
 just moved into them, or Return was pressed in the field with none picked. It
-opens the pick on Return, and scrolls it into view when it has moved.
+opens the pick on Return, and scrolls it into view when it has moved. Only
+that move asks for focus: a retained pick must let Tab, a toolbar control,
+or an open dialog keep the keyboard.
 */
 @(private)
-pick_follow :: proc(gtx: ^ui.Ctx, m: ^Model, r: ^query.Search_Result, columns: int, row: f32) {
+pick_follow :: proc(
+	gtx: ^ui.Ctx,
+	m: ^Model,
+	r: ^query.Search_Result,
+	columns: int,
+	row: f32,
+) -> bool {
 	at := hit_index(r, m.search_pick)
 	if at < 0 && (m.search_keys || m.search_go) {
 		at, m.search_pick, m.search_move = 0, r.hits[0].node, true
@@ -286,7 +296,9 @@ pick_follow :: proc(gtx: ^ui.Ctx, m: ^Model, r: ^query.Search_Result, columns: i
 		} else if m.search_view > 0 && top + row > m.search_list.offset + m.search_view {
 			m.search_list.offset = top + row - m.search_view
 		}
+		return true
 	}
+	return false
 }
 
 // hit_index is where node is among r's hits, or -1.
@@ -511,7 +523,13 @@ hit_close :: proc(
 	m := res.m
 	h := res.r.hits[at]
 	picked := h.node == m.search_pick
-	if picked && m.search_keys && !c.focused {
+	if picked &&
+	   res.focus &&
+	   m.search_keys &&
+	   !c.focused &&
+	   !dialog_open(m) &&
+	   !m.settings_open &&
+	   m.settings_dialog == .None {
 		ui.focus_request(gtx, p.id)
 	}
 	design.listen(gtx, c.st, p.id, box, design.CLICK_KINDS + {.Text}, .Pointer)
