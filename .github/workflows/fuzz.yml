@@ -35,9 +35,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # macos-14 is the oldest macOS GitHub hosts, macos-latest the newest.
+        # macos-15 is the oldest currently supported hosted macOS label;
+        # macos-latest retains coverage of the newest hosted image.
         # The tree suite builds its specs on APFS disk images there.
-        os: [ubuntu-latest, macos-14, macos-latest]
+        os: [ubuntu-latest, macos-15, macos-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 240
     defaults:
