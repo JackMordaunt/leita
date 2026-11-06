@@ -1,0 +1,196 @@
+Leita threshold checks for RMM tools and system schedulers
+
+These adapters run one filesystem scan. They never install/update Leita,
+enable its monitor, clean a disk, register a task, send a webhook or call an
+RMM vendor API. Provision an appropriate Leita CLI and Python 3.10+ first.
+Python is a prerequisite on Windows as well as Linux/macOS; these scripts
+do not assume it came with the machine. PowerShell is a wrapper around the
+same Python validator, not an independent JSON implementation.
+
+Keep check.py beside check.sh and check.ps1. Use the installed command-line
+executable, leita/leita.exe, at an explicit absolute path. The target must
+also be absolute: /srv/Client Data, C:\, or \\server\share. Relative paths,
+drive-relative C:, disk images and non-UTF-8 target names are outside this
+adapter's contract. Spaces, Unicode, newlines and shell punctuation are
+passed as one argument, not evaluated as commands. The wrappers and core
+do not use eval, Invoke-Expression, a shell command string, or a PATH lookup
+to find Leita.
+
+One manual invocation on Linux/macOS:
+
+  LEITA_RMM_PYTHON=/usr/bin/python3 /bin/bash '/opt/Leita RMM/check.sh' \
+    --leita /usr/local/bin/leita --target '/srv/Client Data' \
+    --warn-used 80 --fail-used 95 --min-free-bytes 20000000000 \
+    --timeout-seconds 300
+
+Use the real absolute Python path on that host; /usr/bin/python3 is only
+an example. LEITA_RMM_PYTHON defaults to python3 when omitted. On Windows,
+use the organization's existing trusted PowerShell execution policy and
+script-signing process; this recipe does not change or bypass it:
+
+  & 'C:\ProgramData\Leita RMM\check.ps1' `
+    -PythonPath 'C:\Program Files\Python313\python.exe' `
+    -LeitaPath 'C:\Program Files\Leita\leita.exe' `
+    -Target 'D:\Client Data' -WarnUsed 80 -FailUsed 95 `
+    -MinFreeBytes 20000000000 -TimeoutSeconds 300
+  exit $LASTEXITCODE
+
+Percentage limits are 0 (disabled) through 100; warn must not exceed fail
+when both are enabled. MinFreeBytes is a nonnegative integer, at most 2^53.
+20 GB is 20000000000 bytes; 20 GiB is 21474836480. At least one limit must
+be enabled. The defaults are warn 80%, fail 95%, no minimum-free limit and
+a 300-second timeout. TimeoutSeconds must be positive and at most 86400.
+
+The actual scanner arguments are target, --whole, --no-history, --report -,
+--format json, --top 1, --color never and the configured threshold flags.
+LEITA_SYNTHETIC is removed from the child environment so a demonstration
+setting cannot silently replace the real filesystem. Other Leita settings,
+including normal local licence/trial handling, retain their CLI behavior.
+--no-history avoids recording/reusing snapshots; this is not a promise
+that the CLI never touches its normal local licence/trial state.
+
+The scan is read-only with respect to the target. Basic current-scan JSON
+and manual threshold checks are Free, including organizational use. Leita's
+built-in scheduled monitor, recurring history comparisons and alerts are
+Pro. An external RMM or OS scheduler can invoke the same Free manual CLI
+check; these scripts do not enable Pro monitor behavior or bypass its gate.
+
+Result and exit contract
+
+Stdout contains one compact JSON object, schema leita.rmm/1. It never prints
+the raw report, filenames beneath the target, or the report's licence identity.
+The requested target is JSON-escaped and limited to 512 characters, with
+target_truncated indicating truncation; the actual scan always receives the
+entire target. Successful results include:
+
+  schema                 leita.rmm/1
+  outcome                ok, warn, fail, or error
+  coverage               no_unread_directories, partial, or unknown
+  leita_exit             original scanner exit code, or null if not started
+  requested_target       requested target, escaped and bounded as above
+  target_truncated       whether the summary target was shortened
+  charged_bytes          allocation charged to files/directories scanned
+  unread_directories     folders the scan could not read
+  volume_total_bytes     volume capacity
+  volume_free_bytes      volume free space, not inferred from file totals
+  used_percent           (volume total minus free) / total * 100
+  error                  diagnostic on failure, otherwise null
+
+Exit 0 means a valid result below all configured limits. Exit 2 means a
+valid warning, and exit 3 a valid failure threshold. Exit 1 means execution,
+configuration, report validation or coverage error. Missing Python or an
+invalid adapter invocation can have no JSON result and still exits 1.
+Treat missing/invalid result JSON as an error, never as healthy.
+
+The adapter checks the leita.report/1 operational fields it consumes:
+generator, target/engine, timestamps/duration, every totals counter, volume
+capacity, configured limits, used percentage, verdict and exit-code
+agreement. It is not a general validator for all report sections. A wrong
+target, unsupported schema, unknown capacity, synthetic engine, malformed
+JSON or unread directories cannot become an ok result. Even a scanner exit
+0 becomes adapter exit 1 when coverage is partial; leita_exit keeps that 0
+so the distinction is visible. Report bytes above 1 MiB or stderr above
+64 KiB stop the scanner and produce an error.
+
+no_unread_directories means exactly that the finished report says unread=0.
+The report schema has no complete/atomic filesystem-snapshot bit. This does
+not prove that files stayed unchanged during the scan, that every file was
+accessible, or that all other accounting limitations disappeared. A charged
+allocation is not a deletion-savings estimate. Snapshots, clones and hard
+links can retain data; these recipes never propose deletion or sum charged
+bytes as reclaimable space.
+
+Scanner stderr is forwarded separately, up to its first 4096 bytes with a
+truncation notice. It may contain target paths: protect RMM diagnostic logs
+accordingly. Timeout or Ctrl+C cancels the scanner; on POSIX, SIGTERM also
+cancels its owned process group. Windows timeout kills the directly invoked
+CLI process. The wrappers start no shell around Leita. Configure an outer
+RMM job deadline longer than the adapter timeout and normal cleanup time.
+
+NinjaOne, Datto RMM and ConnectWise
+
+Provision these three files and explicit Python/Leita paths using the
+organization's normal software-management process. No winget, Scoop, apt
+or other published package channel is assumed to exist.
+
+For a Windows script job/component in NinjaOne, use the PowerShell invocation
+above as the script body and supply the target and thresholds for that
+device. Keep exit $LASTEXITCODE: do not replace it with exit 0. For Linux or
+macOS script jobs, use the Bash invocation above as the body.
+
+For a Datto RMM Windows component, use that same PowerShell script body;
+for a Unix component, use the Bash invocation. The stdout object is the
+component's machine-readable result and stderr is its diagnostics.
+
+For a ConnectWise script/monitor that runs a process, use this concrete
+Windows command (replace all three installed paths before scheduling):
+
+  powershell.exe -NoProfile -NonInteractive -File "C:\ProgramData\Leita RMM\check.ps1" -PythonPath "C:\Program Files\Python313\python.exe" -LeitaPath "C:\Program Files\Leita\leita.exe" -Target "C:\" -WarnUsed 80 -FailUsed 95 -TimeoutSeconds 300
+
+Map the captured result consistently in each console:
+
+  outcome=ok    and exit=0 : healthy capacity check
+  outcome=warn  and exit=2 : warning threshold crossed
+  outcome=fail  and exit=3 : critical capacity threshold crossed
+  outcome=error or exit=1 : scanner/configuration/coverage error
+  no result or job timeout: operational error
+
+Some consoles classify every nonzero code as a failed script job. Preserve
+the adapter's code and outcome JSON, then configure the console's own alert
+mapping to distinguish capacity thresholds from scanner errors. A generic
+failed-job indicator alone cannot distinguish those states. There are no
+vendor-specific custom-field writes, API calls, UI-label assumptions or
+claimed end-to-end console tests in this deliverable. Native alert screenshots
+and each account's monitor mapping remain separate acceptance work.
+
+cron example (review before adding it; scripts register nothing)
+
+Create the log directory first with appropriate ownership. Add a line to
+the intended user's crontab, using that user's absolute paths:
+
+  0 * * * * LEITA_RMM_PYTHON=/usr/bin/python3 /bin/bash '/opt/Leita RMM/check.sh' --leita /usr/local/bin/leita --target '/srv/Client Data' --warn-used 80 --fail-used 95 --timeout-seconds 300 >>/home/operator/log/leita-check.jsonl 2>>/home/operator/log/leita-check.err
+
+Cron alone does not raise an alert for a nonzero exit. Feed outcome JSON and
+job failures into the intended monitor, and rotate both logs. Ensure a scan
+normally finishes before the next scheduled run; the explicit timeout bounds
+each scan. This independent check does not install leita monitor on.
+
+Task Scheduler example (commands are examples, not executed by this recipe)
+
+Run these only in the intended user's administrative context after reviewing
+paths, access rights, account/logon policy and script signing. Python and Leita
+must be accessible to the task's identity. This example creates one daily job;
+it does not log stdout automatically, so use RMM collection or a separately
+configured, access-controlled result log if you need retained measurements.
+
+  $command = '-NoProfile -NonInteractive -File "C:\ProgramData\Leita RMM\check.ps1" -PythonPath "C:\Program Files\Python313\python.exe" -LeitaPath "C:\Program Files\Leita\leita.exe" -Target "C:\" -WarnUsed 80 -FailUsed 95 -TimeoutSeconds 300'
+  $action = New-ScheduledTaskAction -Execute 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -Argument $command
+  $trigger = New-ScheduledTaskTrigger -Daily -At '09:00'
+  $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 6) -MultipleInstances IgnoreNew
+  Register-ScheduledTask -TaskName 'Leita capacity check' -Action $action -Trigger $trigger -Settings $settings -Description 'One read-only Leita threshold scan'
+
+LastTaskResult 0x0/0x2/0x3 reflects the scan outcomes above; 0x1 is an adapter
+error. Scheduler startup/account errors can have other codes and are errors,
+not capacity results. Task Scheduler's result field is not an alert service.
+Microsoft's cmdlet references describe these action, settings and registration
+parameters; this is syntax/documentation verification, not a native task run:
+
+  https://learn.microsoft.com/en-us/powershell/module/scheduledtasks/new-scheduledtaskaction
+  https://learn.microsoft.com/en-us/powershell/module/scheduledtasks/new-scheduledtasksettingsset
+  https://learn.microsoft.com/en-us/powershell/module/scheduledtasks/register-scheduledtask
+
+Verification and remaining acceptance
+
+Run from the repository root:
+
+  python3 -W error -m unittest discover -s tools/rmm -p 'test_*.py' -v
+  bash -n tools/rmm/check.sh
+
+Tests execute Bash and a fake Leita process in disposable directories. They
+cover codes 0/1/2/3, schema/required-field checks, partial scans, target mismatch,
+argument quoting, stderr, missing executable, limits, timeout and cancellation.
+The PowerShell fixture test runs only when pwsh/powershell is installed; a
+skip is not Windows or PowerShell runtime proof. Tests send no RMM requests,
+register no scheduler tasks and scan no real user data. Native PowerShell,
+vendor console mapping/screenshots and real package-channel installation
+remain to be verified on suitable machines/accounts.

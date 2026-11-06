@@ -372,6 +372,9 @@ leita D: --warn-used 80 --fail-used 95 --min-free 20GB
 | 2 | A `--warn-used` limit was crossed |
 | 3 | A `--fail-used` or `--min-free` limit was crossed |
 
+The [RMM recipes](tools/rmm/USAGE.txt) wrap this scan contract for Bash and
+PowerShell, with fixture-tested exit handling, JSON validation and a timeout.
+
 `leita monitor run` exits 0 when monitoring is off, or when another run holds
 the lock and this one stands aside. It exits 1 when a place could not be
 scanned or kept, or the command could not do what it was asked. Its codes are
