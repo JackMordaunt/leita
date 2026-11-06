@@ -248,6 +248,11 @@ the_search_pick_leaves_the_keyboard_with_the_toolbar_and_history :: proc(t: ^tes
 	press(p, .Escape)
 	testing.expect(t, !s.m.record_open, "Escape closes History")
 	testing.expect_value(t, ui.probe_focus_name(p), "Settings")
+
+	testing.expect(t, ui.probe_click(p, "Grid"), "the layout control changes the results")
+	ui.probe_advance(p, 4, 1.0 / 60)
+	testing.expect(t, s.m.search_grid)
+	testing.expect_value(t, ui.probe_focus_name(p), "Grid")
 }
 
 @(test)

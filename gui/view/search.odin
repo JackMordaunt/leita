@@ -209,7 +209,6 @@ search_results :: proc(gtx: ^ui.Ctx, m: ^Model, term: string) {
 			) {
 				m.search_grid = at == 1
 				m.search_list = {}
-				m.search_move = m.search_keys
 			}
 		}
 	}
