@@ -147,28 +147,36 @@ Moment :: struct {
 	iso:  string,
 }
 
-// MOMENTS are instants around changes of the clock, each with its local time as
-// the zone database gives it (python's zoneinfo, 2026-10-25).
+// MOMENTS are instants around changes of the clock, including the exact
+// transition second and its neighbors (Python zoneinfo, 2026-11-06).
 @(private = "file", rodata)
 MOMENTS := [?]Moment {
-	// London sets the clock back at 01:00 UTC: 01:30 happens twice.
-	{"Europe/London", 1792888200, "2026-10-25T01:30:00+01:00"},
-	{"Europe/London", 1792891800, "2026-10-25T01:30:00+00:00"},
-	// ...and forward an hour later in the spring: 01:00 to 02:00 is missing.
 	{"Europe/London", 1774745999, "2026-03-29T00:59:59+00:00"},
-	// One second past each change into summer time: at the very second the zone
-	// database's reader still gives the old offset (see the draft card).
+	{"Europe/London", 1774746000, "2026-03-29T02:00:00+01:00"},
 	{"Europe/London", 1774746001, "2026-03-29T02:00:01+01:00"},
+	{"Europe/London", 1792888200, "2026-10-25T01:30:00+01:00"},
+	{"Europe/London", 1792889999, "2026-10-25T01:59:59+01:00"},
+	{"Europe/London", 1792890000, "2026-10-25T01:00:00+00:00"},
+	{"Europe/London", 1792890001, "2026-10-25T01:00:01+00:00"},
+	{"Europe/London", 1792891800, "2026-10-25T01:30:00+00:00"},
 	{"America/New_York", 1772953199, "2026-03-08T01:59:59-05:00"},
+	{"America/New_York", 1772953200, "2026-03-08T03:00:00-04:00"},
 	{"America/New_York", 1772953201, "2026-03-08T03:00:01-04:00"},
 	{"America/New_York", 1793511000, "2026-11-01T01:30:00-04:00"},
+	{"America/New_York", 1793512799, "2026-11-01T01:59:59-04:00"},
+	{"America/New_York", 1793512800, "2026-11-01T01:00:00-05:00"},
+	{"America/New_York", 1793512801, "2026-11-01T01:00:01-05:00"},
 	{"America/New_York", 1793514600, "2026-11-01T01:30:00-05:00"},
-	// Lord Howe Island moves its clock half an hour: +11:00 and +10:30.
 	{"Australia/Lord_Howe", 1775313900, "2026-04-05T01:45:00+11:00"},
+	{"Australia/Lord_Howe", 1775314799, "2026-04-05T01:59:59+11:00"},
+	{"Australia/Lord_Howe", 1775314800, "2026-04-05T01:30:00+10:30"},
+	{"Australia/Lord_Howe", 1775314801, "2026-04-05T01:30:01+10:30"},
 	{"Australia/Lord_Howe", 1775315700, "2026-04-05T01:45:00+10:30"},
 	{"Australia/Lord_Howe", 1791040500, "2026-10-04T01:45:00+10:30"},
+	{"Australia/Lord_Howe", 1791041399, "2026-10-04T01:59:59+10:30"},
+	{"Australia/Lord_Howe", 1791041400, "2026-10-04T02:30:00+11:00"},
+	{"Australia/Lord_Howe", 1791041401, "2026-10-04T02:30:01+11:00"},
 	{"Australia/Lord_Howe", 1791042300, "2026-10-04T02:45:00+11:00"},
-	// Far and odd offsets, no change of clock.
 	{"Asia/Kolkata", 1800014400, "2027-01-15T17:30:00+05:30"},
 	{"Asia/Kathmandu", 1800014400, "2027-01-15T17:45:00+05:45"},
 	{"Pacific/Kiritimati", 1800014400, "2027-01-16T02:00:00+14:00"},
