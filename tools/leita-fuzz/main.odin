@@ -155,15 +155,14 @@ run_suites :: proc(allocator := context.allocator) -> int {
 	failed := false
 	for r in pick(wanted[:]) {
 		suite_opts := opts
+		owned_corpus := ""
+		defer delete(owned_corpus)
 		switch {
 		case no_corpus:
 			suite_opts.corpus_dir = ""
 		case corpus_root != "":
-			dir := make([]byte, len(corpus_root) + 1 + len(r.name))
-			copy(dir, corpus_root)
-			dir[len(corpus_root)] = '/'
-			copy(dir[len(corpus_root) + 1:], r.name)
-			suite_opts.corpus_dir = string(dir)
+			owned_corpus = strings.concatenate({corpus_root, "/", r.name})
+			suite_opts.corpus_dir = owned_corpus
 		case:
 			suite_opts.corpus_dir = r.corpus
 		}
