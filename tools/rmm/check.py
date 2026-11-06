@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime
 import json
 import math
@@ -127,7 +128,6 @@ class Capture:
         self.stream, self.limit, self.overflow = stream, limit, overflow
         self.data = bytearray()
         self.thread = threading.Thread(target=self.read, daemon=True)
-        self.thread.start()
 
     def read(self) -> None:
         try:
@@ -155,6 +155,21 @@ def stop(process: subprocess.Popen) -> None:
         pass
 
 
+@contextlib.contextmanager
+def cleanup_signals():
+    # A second scheduler cancellation must not interrupt reaping the owned
+    # scanner or replace an already established timeout/overflow result.
+    saved = {}
+    if threading.current_thread() is threading.main_thread():
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            saved[sig] = signal.signal(sig, signal.SIG_IGN)
+    try:
+        yield
+    finally:
+        for sig, handler in saved.items():
+            signal.signal(sig, handler)
+
+
 def scan(args: argparse.Namespace) -> tuple[int | None, bytes, bytes, str]:
     command = [args.leita, args.target, "--whole", "--no-history", "--report", "-",
                "--format", "json", "--top", "1", "--color", "never"]
@@ -164,17 +179,20 @@ def scan(args: argparse.Namespace) -> tuple[int | None, bytes, bytes, str]:
             command += [flag, str(value)]
     environment = dict(os.environ)
     environment.pop("LEITA_SYNTHETIC", None)
+    process = None
+    captures = []
+    overflow = threading.Event()
+    reason = ""
     try:
         process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                    env=environment, start_new_session=os.name == "posix")
-    except (OSError, ValueError) as exc:
-        return None, b"", b"", f"cannot start Leita: {getattr(exc, 'strerror', None) or type(exc).__name__}"
-    overflow = threading.Event()
-    output = Capture(process.stdout, REPORT_LIMIT, overflow)
-    errors = Capture(process.stderr, STDERR_LIMIT, overflow)
-    reason = ""
-    deadline = time.monotonic() + args.timeout_seconds
-    try:
+        for stream, limit in ((process.stdout, REPORT_LIMIT), (process.stderr, STDERR_LIMIT)):
+            capture = Capture(stream, limit, overflow)
+            # Retain ownership before starting the reader: cancellation can
+            # happen inside thread.start as well as during Capture construction.
+            captures.append(capture)
+            capture.thread.start()
+        deadline = time.monotonic() + args.timeout_seconds
         while process.poll() is None:
             if overflow.is_set():
                 reason = "scan output exceeded the report or diagnostic limit"
@@ -183,18 +201,34 @@ def scan(args: argparse.Namespace) -> tuple[int | None, bytes, bytes, str]:
                 reason = "scan timed out"
                 break
             time.sleep(0.02)
+        if not reason:
+            for capture in captures:
+                capture.thread.join(timeout=1)
+            if any(c.thread.is_alive() for c in captures):
+                reason = "scan output remained open after the scanner exited"
     except KeyboardInterrupt:
-        reason = "scan cancelled"
-    if reason:
-        stop(process)
-    for capture in (output, errors):
-        capture.thread.join(timeout=1)
-    if any(c.thread.is_alive() for c in (output, errors)):
-        stop(process)
-        reason = reason or "scan output remained open after the scanner exited"
+        reason = reason or "scan cancelled"
+    except (OSError, ValueError, RuntimeError) as exc:
+        action = "cannot start Leita" if process is None else "cannot capture Leita output"
+        reason = reason or f"{action}: {getattr(exc, 'strerror', None) or type(exc).__name__}"
+    finally:
+        if process is not None:
+            with cleanup_signals():
+                if reason:
+                    stop(process)
+                for capture in captures:
+                    if capture.thread.ident is not None:
+                        capture.thread.join(timeout=1)
+                # Readers close the pipes they own. A cancellation before a
+                # reader starts leaves its pipe for this cleanup to close.
+                for stream in (process.stdout, process.stderr):
+                    if not any(c.stream is stream and c.thread.is_alive() for c in captures):
+                        stream.close()
     if overflow.is_set():
         reason = reason or "scan output exceeded the report or diagnostic limit"
-    return process.returncode, bytes(output.data), bytes(errors.data), reason
+    output = bytes(captures[0].data) if captures else b""
+    errors = bytes(captures[1].data) if len(captures) > 1 else b""
+    return process.returncode if process is not None else None, output, errors, reason
 
 
 def main(argv: list[str] | None = None) -> int:

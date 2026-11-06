@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import argparse
+import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -12,6 +15,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import MagicMock, patch
 
 ROOT = Path(__file__).resolve().parent
 BASH = shutil.which("bash")
@@ -30,6 +34,96 @@ def report(code=0):
                            "used_percent": (1000 - free) / 10,
                            "verdict": {0: "ok", 1: "ok", 2: "warn", 3: "fail"}[code],
                            "reasons": []}}
+
+
+SPEC = importlib.util.spec_from_file_location("rmm_check", ROOT / "check.py")
+assert SPEC and SPEC.loader
+CHECK = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(CHECK)
+
+
+class CaptureCancellation(unittest.TestCase):
+    def arguments(self):
+        return argparse.Namespace(leita="/fixture/leita", target="/fixture/target", warn_used=80,
+                                  fail_used=95, min_free_bytes=0, timeout_seconds=1)
+
+    def child(self):
+        child = MagicMock()
+        child.stdout, child.stderr = io.BytesIO(), io.BytesIO()
+        child.returncode = -9
+        child.poll.return_value = 0
+        return child
+
+    def test_cancellation_during_capture_setup_stops_the_owned_scanner(self):
+        child = self.child()
+        with patch.object(CHECK.subprocess, "Popen", return_value=child), \
+             patch.object(CHECK, "Capture", side_effect=KeyboardInterrupt), \
+             patch.object(CHECK, "stop") as stop:
+            code, output, errors, reason = CHECK.scan(self.arguments())
+        stop.assert_called_once_with(child)
+        self.assertEqual((code, output, errors, reason), (-9, b"", b"", "scan cancelled"))
+        self.assertTrue(child.stdout.closed)
+        self.assertTrue(child.stderr.closed)
+
+    def test_cancellation_during_capture_join_still_stops_and_closes(self):
+        child = self.child()
+        captures = []
+        for stream in (child.stdout, child.stderr):
+            capture = MagicMock()
+            capture.stream, capture.data = stream, bytearray()
+            capture.thread.ident = 123
+            capture.thread.is_alive.return_value = False
+            captures.append(capture)
+        captures[0].thread.join.side_effect = [KeyboardInterrupt, None]
+        with patch.object(CHECK.subprocess, "Popen", return_value=child), \
+             patch.object(CHECK, "Capture", side_effect=captures), \
+             patch.object(CHECK, "stop") as stop:
+            _, _, _, reason = CHECK.scan(self.arguments())
+        self.assertEqual(reason, "scan cancelled")
+        stop.assert_called_once_with(child)
+        self.assertEqual(captures[0].thread.join.call_count, 2)
+        self.assertTrue(child.stdout.closed)
+        self.assertTrue(child.stderr.closed)
+
+    def test_capture_start_error_stops_the_owned_scanner(self):
+        child = self.child()
+        capture = MagicMock()
+        capture.stream, capture.data = child.stdout, bytearray()
+        capture.thread.start.side_effect = RuntimeError("reader unavailable")
+        capture.thread.ident = None
+        capture.thread.is_alive.return_value = False
+        with patch.object(CHECK.subprocess, "Popen", return_value=child), \
+             patch.object(CHECK, "Capture", return_value=capture), \
+             patch.object(CHECK, "stop") as stop:
+            _, _, _, reason = CHECK.scan(self.arguments())
+        self.assertIn("cannot capture Leita output", reason)
+        stop.assert_called_once_with(child)
+        self.assertTrue(child.stderr.closed)
+
+    def test_second_signal_during_cleanup_preserves_timeout_status(self):
+        child = self.child()
+        child.poll.return_value = None
+        captures = []
+        for stream in (child.stdout, child.stderr):
+            capture = MagicMock()
+            capture.stream, capture.data = stream, bytearray()
+            capture.thread.ident = 123
+            capture.thread.is_alive.return_value = False
+            captures.append(capture)
+        with patch.object(CHECK.subprocess, "Popen", return_value=child), \
+             patch.object(CHECK, "Capture", side_effect=captures), \
+             patch.object(CHECK.time, "monotonic", side_effect=[100, 101]), \
+             patch.object(CHECK, "stop", side_effect=lambda _child: signal.raise_signal(signal.SIGTERM)):
+            _, _, _, reason = CHECK.scan(self.arguments())
+        self.assertEqual(reason, "scan timed out")
+
+    def test_cleanup_defers_second_signal_and_restores_handlers(self):
+        original = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
+        with CHECK.cleanup_signals():
+            for sig in original:
+                self.assertEqual(signal.getsignal(sig), signal.SIG_IGN)
+        for sig, handler in original.items():
+            self.assertEqual(signal.getsignal(sig), handler)
 
 
 @unittest.skipUnless(os.name == "posix" and BASH, "process fixtures require POSIX executable scripts and Bash")
