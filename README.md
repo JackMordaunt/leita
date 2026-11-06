@@ -294,8 +294,9 @@ one), requires the signature of `sha256sums.txt` to verify, checks the
 download against the sha256 that file names, and replaces the program; run it
 again to use the new one. The updater locks the installation, keeps the old
 program beside it as `leita.old` (`leita.exe.old` on Windows), and replaces
-the executable in one filesystem operation. An interruption before replacement
-leaves the installed program in place. In the window, About has Check for updates; a
+the executable in one filesystem operation. An empty `<program>.update.lock`
+stays beside it so later updates lock the same file. An interruption before
+replacement leaves the installed program in place. In the window, About has Check for updates; a
 newer release is offered as Update, which replaces the window the same way,
 or as Download, the release page, for a copy that is not replaced in place.
 
