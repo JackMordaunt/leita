@@ -125,7 +125,7 @@ component's machine-readable result and stderr is its diagnostics.
 For a ConnectWise script/monitor that runs a process, use this concrete
 Windows command (replace all three installed paths before scheduling):
 
-  powershell.exe -NoProfile -NonInteractive -File "C:\ProgramData\Leita RMM\check.ps1" -PythonPath "C:\Program Files\Python313\python.exe" -LeitaPath "C:\Program Files\Leita\leita.exe" -Target "C:\" -WarnUsed 80 -FailUsed 95 -TimeoutSeconds 300
+  powershell.exe -NoProfile -NonInteractive -File "C:\ProgramData\Leita RMM\check.ps1" -PythonPath "C:\Program Files\Python313\python.exe" -LeitaPath "C:\Program Files\Leita\leita.exe" -Target C:\ -WarnUsed 80 -FailUsed 95 -TimeoutSeconds 300
 
 Map the captured result consistently in each console:
 
@@ -163,7 +163,7 @@ must be accessible to the task's identity. This example creates one daily job;
 it does not log stdout automatically, so use RMM collection or a separately
 configured, access-controlled result log if you need retained measurements.
 
-  $command = '-NoProfile -NonInteractive -File "C:\ProgramData\Leita RMM\check.ps1" -PythonPath "C:\Program Files\Python313\python.exe" -LeitaPath "C:\Program Files\Leita\leita.exe" -Target "C:\" -WarnUsed 80 -FailUsed 95 -TimeoutSeconds 300'
+  $command = '-NoProfile -NonInteractive -File "C:\ProgramData\Leita RMM\check.ps1" -PythonPath "C:\Program Files\Python313\python.exe" -LeitaPath "C:\Program Files\Leita\leita.exe" -Target C:\ -WarnUsed 80 -FailUsed 95 -TimeoutSeconds 300'
   $action = New-ScheduledTaskAction -Execute 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -Argument $command
   $trigger = New-ScheduledTaskTrigger -Daily -At '09:00'
   $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 6) -MultipleInstances IgnoreNew
