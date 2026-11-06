@@ -159,6 +159,13 @@ The body's members are described in [webhook/event.odin](webhook/event.odin).
 Scheduled scans, their alerts and webhooks need Pro, with the same 30-day
 evaluation. Turning them off, and removing a place or a webhook, does not.
 
+For an existing Prometheus node_exporter textfile collector, opt in with
+`leita monitor metrics /path/to/textfile/leita.prom`. Scheduled runs then
+write bounded scan and volume gauges, with measurement timestamps and
+explicit partial/estimated-accounting indicators. `leita monitor metrics off`
+stops writing. The [metrics guide and sample Grafana dashboard](tools/metrics/README.txt)
+explain permissions, path labels, limits and freshness checks.
+
 ## Free up space, safely
 
 Reclaim lists a folder only when a rule proves what it is and that it will be
