@@ -297,16 +297,53 @@ sys.exit(fixture.get('code', 0))
 
     @unittest.skipUnless(POWERSHELL, "PowerShell runtime not installed")
     def test_powershell_preserves_arguments_and_exit_codes(self):
+        # These fixtures need no network. Configure the runtime before it starts,
+        # rather than letting unrelated telemetry/update checks obscure a stall.
+        # https://learn.microsoft.com/powershell/module/microsoft.powershell.core/about/about_environment_variables
+        environment = dict(self.environment, POWERSHELL_TELEMETRY_OPTOUT="1",
+                           POWERSHELL_UPDATECHECK="Off")
+
+        def run_stage(stage, arguments):
+            started = time.monotonic()
+            try:
+                completed = subprocess.run([POWERSHELL, "-NoProfile", "-NonInteractive", *arguments],
+                                           env=environment, capture_output=True, text=True, timeout=10)
+            except subprocess.TimeoutExpired as exc:
+                self.fail(f"PowerShell {stage} exceeded 10s; "
+                          f"scanner_started={self.pid_file.exists()}, "
+                          f"arguments_written={self.arguments.exists()}; "
+                          f"stdout={(exc.stdout or b'')[:4096]!r}; "
+                          f"stderr={(exc.stderr or b'')[:4096]!r}")
+            print(f"PowerShell fixture {stage}: {time.monotonic() - started:.3f}s, "
+                  f"exit={completed.returncode}, scanner_started={self.pid_file.exists()}, "
+                  f"arguments_written={self.arguments.exists()}", file=sys.stderr)
+            return completed
+
+        # Keep cold-runtime failure separate from the wrapper and fake scanner.
+        # This is a real bounded native check, not a retry or a larger deadline.
+        startup = run_stage("startup", ["-Command", "[Console]::WriteLine($PSVersionTable.PSVersion.ToString())"])
+        self.assertEqual(startup.returncode, 0, startup.stderr)
+        self.assertRegex(startup.stdout.strip(), r"^\d+\.\d+\.\d+(?:\.\d+)?(?:[-+].*)?$")
+        print(f"PowerShell fixture runtime version: {startup.stdout.strip()}", file=sys.stderr)
         for code in (0, 1, 2, 3):
-            self.fixture.write_text(json.dumps({"report": report(code), "code": code,
-                                                "stderr": "fixture diagnostic\n"}))
-            completed = subprocess.run([POWERSHELL, "-NoProfile", "-NonInteractive", "-File",
-                                        str(ROOT / "check.ps1"), "-PythonPath", sys.executable,
-                                        "-LeitaPath", str(self.leita), "-Target", self.target],
-                                       env=self.environment, capture_output=True, text=True, timeout=10)
-            self.assertEqual(completed.returncode, code, completed.stderr)
-            self.assertEqual(json.loads(self.arguments.read_text())[0], self.target)
-            self.assertEqual(self.result(completed)["leita_exit"], code)
+            with self.subTest(code=code):
+                self.arguments.unlink(missing_ok=True)
+                self.pid_file.unlink(missing_ok=True)
+                self.fixture.write_text(json.dumps({"report": report(code), "code": code,
+                                                    "stderr": "fixture diagnostic\n"}))
+                completed = run_stage(f"wrapper scan exit {code}", [
+                    "-File", str(ROOT / "check.ps1"), "-PythonPath", sys.executable,
+                    "-LeitaPath", str(self.leita), "-Target", self.target,
+                    "-TimeoutSeconds", "2"])
+                self.assertEqual(completed.returncode, code, completed.stderr)
+                self.assertEqual(json.loads(self.arguments.read_text()), [self.target,
+                                 "--whole", "--no-history", "--report", "-", "--format", "json",
+                                 "--top", "1", "--color", "never", "--warn-used", "80", "--fail-used", "95"])
+                result = self.result(completed)
+                self.assertEqual(result["leita_exit"], code)
+                self.assertEqual(result["requested_target"], self.target)
+                self.assertEqual(result["outcome"], {0: "ok", 1: "error", 2: "warn", 3: "fail"}[code])
+                self.assertIn("fixture diagnostic", completed.stderr)
 
 
 if __name__ == "__main__":
