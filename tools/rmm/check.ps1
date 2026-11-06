@@ -11,7 +11,15 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 try {
-    if (-not [System.IO.Path]::IsPathRooted($PythonPath) -or
+    $pythonRoot = [System.IO.Path]::GetPathRoot($PythonPath)
+    $isAbsolute = [System.IO.Path]::IsPathRooted($PythonPath)
+    if ([System.IO.Path]::DirectorySeparatorChar -eq [char]92) {
+        # Windows drive-relative C:python.exe and root-relative \python.exe
+        # are rooted, but depend on the task's current drive/directory.
+        # GetPathRoot works on Windows PowerShell 5.1/.NET Framework too.
+        $isAbsolute = $isAbsolute -and $pythonRoot.Length -gt 2
+    }
+    if (-not $isAbsolute -or
         -not (Test-Path -LiteralPath $PythonPath -PathType Leaf)) {
         throw 'PythonPath must name an existing absolute Python 3.10+ executable'
     }

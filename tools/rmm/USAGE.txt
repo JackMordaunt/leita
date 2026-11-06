@@ -25,8 +25,11 @@ One manual invocation on Linux/macOS:
 
 Use the real absolute Python path on that host; /usr/bin/python3 is only
 an example. LEITA_RMM_PYTHON defaults to python3 when omitted. On Windows,
-use the organization's existing trusted PowerShell execution policy and
-script-signing process; this recipe does not change or bypass it:
+use a fully qualified PythonPath and the organization's existing trusted
+PowerShell execution policy and script-signing process. Drive-relative
+C:python.exe and current-drive-relative \python.exe are refused; drive-root
+and UNC absolute paths are permitted. This recipe does not change or bypass
+execution policy:
 
   & 'C:\ProgramData\Leita RMM\check.ps1' `
     -PythonPath 'C:\Program Files\Python313\python.exe' `
