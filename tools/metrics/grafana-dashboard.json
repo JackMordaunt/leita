@@ -1,0 +1,238 @@
+{
+  "title": "Leita scheduled scans",
+  "uid": "leita-scheduled-scans",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "tags": [
+    "leita",
+    "node_exporter"
+  ],
+  "timezone": "browser",
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "refresh": "5m",
+  "description": "Recorded scheduled-scan measurements. Adjust maximum age to each watched cadence; file generation time is not scan freshness. Charged bytes are not deletion savings. Directory and volume totals can overlap.",
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Prometheus",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {}
+      },
+      {
+        "name": "max_age_seconds",
+        "label": "Maximum scan age (seconds)",
+        "type": "textbox",
+        "query": "691200",
+        "current": {
+          "text": "691200",
+          "value": "691200"
+        },
+        "description": "Default 8 days permits weekly scans. Use a tighter value for hourly/daily schedules."
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Charged allocation (successful, complete, recent scans)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "leita_monitor_scan_charged_bytes and on(job, instance, place) ((leita_monitor_scan_success == 1) and on(job, instance, place) (leita_monitor_scan_complete == 1) and on(job, instance, place) (leita_monitor_scan_synthetic == 0) and on(job, instance, place) (leita_monitor_scan_accounting_known == 1) and on(job, instance, place) (leita_monitor_scan_logical == 0) and on(job, instance, place) (leita_monitor_scan_order == 0) and on(job, instance, place) (((time() - leita_monitor_last_attempt_timestamp_seconds) >= 0) and on(job, instance, place) ((time() - leita_monitor_last_attempt_timestamp_seconds) < ${max_age_seconds:raw})))",
+          "legendFormat": "{{instance}} {{place}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Volume free bytes (repeated across places sharing a volume)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "leita_monitor_volume_free_bytes and on(job, instance, place) ((leita_monitor_scan_success == 1) and on(job, instance, place) (leita_monitor_scan_complete == 1) and on(job, instance, place) (leita_monitor_scan_synthetic == 0) and on(job, instance, place) (leita_monitor_scan_accounting_known == 1) and on(job, instance, place) (leita_monitor_scan_logical == 0) and on(job, instance, place) (leita_monitor_scan_order == 0) and on(job, instance, place) (((time() - leita_monitor_last_attempt_timestamp_seconds) >= 0) and on(job, instance, place) ((time() - leita_monitor_last_attempt_timestamp_seconds) < ${max_age_seconds:raw}))) and on(job, instance, place) (leita_monitor_volume_capacity_known == 1)",
+          "legendFormat": "{{instance}} {{place}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Largest selected directories (overlapping; do not sum)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 24,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "topk(10, leita_monitor_directory_charged_bytes and on(job, instance, place) ((leita_monitor_scan_success == 1) and on(job, instance, place) (leita_monitor_scan_complete == 1) and on(job, instance, place) (leita_monitor_scan_synthetic == 0) and on(job, instance, place) (leita_monitor_scan_accounting_known == 1) and on(job, instance, place) (leita_monitor_scan_logical == 0) and on(job, instance, place) (leita_monitor_scan_order == 0) and on(job, instance, place) (((time() - leita_monitor_last_attempt_timestamp_seconds) >= 0) and on(job, instance, place) ((time() - leita_monitor_last_attempt_timestamp_seconds) < ${max_age_seconds:raw}))))",
+          "legendFormat": "{{instance}} {{place}} / {{path}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Age of last recorded attempt",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 12,
+        "h": 7
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(time() - leita_monitor_last_attempt_timestamp_seconds) and on(job, instance, place) (leita_monitor_last_attempt_timestamp_seconds > 0)",
+          "legendFormat": "{{instance}} {{place}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Last recorded attempt succeeded (not live service health)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 16,
+        "w": 12,
+        "h": 7
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bool"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "leita_monitor_scan_success",
+          "legendFormat": "{{instance}} {{place}}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Unread directories (partial scans)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 23,
+        "w": 12,
+        "h": 7
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "leita_monitor_scan_unread_directories",
+          "legendFormat": "{{instance}} {{place}}"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Watched places omitted by output bounds",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 23,
+        "w": 12,
+        "h": 7
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "leita_metrics_watches_omitted",
+          "legendFormat": "{{instance}}"
+        }
+      ]
+    }
+  ]
+}

@@ -48,6 +48,12 @@ Watch
 Run
   leita monitor on          turn monitoring on: hand it to the system's scheduler
   leita monitor off         turn monitoring off: remove it from the scheduler
+Metrics
+  leita monitor metrics PATH.prom
+                            write bounded Prometheus textfile metrics after scheduled scans;
+                            includes local path labels, only when explicitly configured
+  leita monitor metrics     show the configured output path
+  leita monitor metrics off stop writing metrics; the last file remains until you remove it
 Webhooks
   leita monitor webhook add URL [--paths]
                             send each new alert, with a summary of the scan, to URL
@@ -209,6 +215,8 @@ monitor_dispatch :: proc(c: Monitor_Context, args: []string, w: io.Writer) -> in
 		return monitor_switch_on(c, w)
 	case "off":
 		return monitor_switch_off(c, w)
+	case "metrics":
+		return monitor_metrics(c, rest, w)
 	case "webhook":
 		return monitor_webhook(c, rest, w)
 	case "-h", "--help", "help":

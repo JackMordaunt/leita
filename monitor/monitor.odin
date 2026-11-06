@@ -134,12 +134,35 @@ run :: proc(opt: Options, w: io.Writer) -> int {
 	msg.init(english, .English)
 	hooks, _ := settings.hooks(&st, context.temp_allocator)
 	code := 0
+	metrics_path, metrics_problem := metrics_setting(&st, METRICS_PATH_KEY)
+	metrics: Metrics_State
+	if metrics_path != "" && metrics_problem == "" {
+		metrics, metrics_problem = metrics_prepare(&st, watches)
+	}
+	if metrics_problem != "" {
+		fmt.wprintfln(w, "error: metrics: %s", metrics_problem)
+		code = EXIT_FAILED
+	}
 	for watch in watches {
 		last, has_last := settings.last_run(&st, watch.place, context.temp_allocator)
+		metric := -1
+		if metrics_path != "" && metrics_problem == "" {
+			if label, ok := metrics_label(watch.place); ok {
+				metric = metrics_find(metrics.samples, label)
+			}
+			if metric >= 0 {
+				latest, found, last_success, problem := metrics_last_record(&st, watch.place)
+				if problem != "" {
+					fmt.wprintfln(w, "error: metrics: %s", problem)
+					metrics_problem, code = problem, EXIT_FAILED
+					metric = -1
+				} else { metrics_observe_record(&metrics.samples[metric], latest, found, last_success) }
+			}
+		}
 		if !opt.all && !due(watch.every, last.started if has_last else 0, now) {
 			continue
 		}
-		r, alerts, summaries := scan_one(opt, watch, len(hooks) > 0)
+		r, alerts, summaries, measurement := scan_one(opt, watch, len(hooks) > 0, metric >= 0)
 		// What was wrong last run is not news; what is wrong now and was not
 		// is raised, once, until it goes and comes back.
 		before := alert.conditions_of(last.firing) if has_last else {}
@@ -148,7 +171,11 @@ run :: proc(opt: Options, w: io.Writer) -> int {
 			firing = before + {.Scan_Failed}
 		}
 		r.firing = alert.keys(firing)
-		if _, rerr := settings.record(&st, r); rerr != nil {
+		recorded := true
+		id, rerr := settings.record(&st, r)
+		r.id = id
+		if rerr != nil {
+			recorded = false
 			fmt.wprintfln(
 				w,
 				"error: cannot record the run of %s: %s",
@@ -157,6 +184,7 @@ run :: proc(opt: Options, w: io.Writer) -> int {
 			)
 			code = EXIT_FAILED
 		}
+		if metric >= 0 { metrics_finish(&metrics.samples[metric], r, measurement, recorded) }
 		if r.problem != "" {
 			fmt.wprintfln(w, "%s: failed: %s", watch.place, r.problem)
 			code = EXIT_FAILED
@@ -214,6 +242,12 @@ run :: proc(opt: Options, w: io.Writer) -> int {
 			)
 		}
 	}
+	if metrics_path != "" && metrics_problem == "" {
+		if problem := metrics_publish(&st, metrics_path, metrics, len(watches), now); problem != "" {
+			fmt.wprintfln(w, "error: metrics: %s", problem)
+			code = EXIT_FAILED
+		}
+	}
 	return code
 }
 
@@ -232,11 +266,12 @@ a webhook carries it, in the temp allocator.
 scan_one :: proc(
 	opt: Options,
 	watch: settings.Watch,
-	want_summaries: bool,
+	want_summaries, want_metrics: bool,
 ) -> (
 	r: settings.Run,
 	alerts: []alert.Alert,
 	summaries: Summaries,
+	measurement: Metrics_Sample,
 ) {
 	r.place = watch.place
 	r.started = time.to_unix_seconds(opt.now)
@@ -262,7 +297,7 @@ scan_one :: proc(
 	if r.problem == "" {
 		alerts = alert.check(rules_of(watch.limits), snapshots)
 	}
-	if want_summaries && r.problem == "" && len(alerts) > 0 {
+	if r.problem == "" && (want_metrics || want_summaries && len(alerts) > 0) {
 		facts := report.Facts {
 			target   = s.fill.target,
 			engine   = s.engine,
@@ -276,7 +311,10 @@ scan_one :: proc(
 			min_free  = watch.limits.min_free,
 		}
 		summary := report.build(&s.tree, &s.roll, facts, limits, context.temp_allocator)
-		summaries = {webhook.summary(&summary, true), webhook.summary(&summary, false)}
+		if want_summaries && len(alerts) > 0 {
+			summaries = {webhook.summary(&summary, true), webhook.summary(&summary, false)}
+		}
+		if want_metrics { measurement = metrics_measurement(&summary, s) }
 	}
 	return
 }

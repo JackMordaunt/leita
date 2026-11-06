@@ -14,6 +14,7 @@ import "core:time"
 
 import "jm:http/loopback"
 
+import "../faults"
 import "../history"
 import "../monitor"
 import "../scan"
@@ -690,5 +691,225 @@ when ODIN_OS != .Windows {
 		testing.expect_value(t, read_file(t, b.c.paths.lock), "")
 		testing.expect(t, !os.exists(b.c.paths.history), "the refused run did not scan or save history")
 		testing.expect_value(t, read_file(t, b.c.paths.settings), original)
+	}
+}
+
+// The full monitor command path, using only each test's data directory and
+// fake scheduler. No node_exporter installation or host schedule is changed.
+@(test)
+monitor_metrics_is_opt_in_and_off_and_inspection_stay_free :: proc(t: ^testing.T) {
+	b: Monitor_Bench
+	monitor_bench_open(t, &b)
+	defer os.remove_all(b.dir)
+	path := monitor_join(b.dir, "leita.prom")
+	code, out := monitor_run_monitor(&b, "add", b.place)
+	testing.expect_value(t, code, 0)
+	code, _ = monitor_run_monitor(&b, "on")
+	testing.expect_value(t, code, 0)
+	code, _ = monitor_run_monitor(&b, "run", "--all")
+	testing.expect_value(t, code, 0)
+	testing.expect(t, !os.exists(path), "disabled by default")
+	code, _ = monitor_run_monitor(&b, "metrics", path)
+	testing.expect_value(t, code, 0)
+	testing.expect(t, !os.exists(path), "configuration must not write an output file")
+	b.c.unlocked = false
+	code, out = monitor_run_monitor(&b, "metrics")
+	testing.expect_value(t, code, 0)
+	testing.expect(t, strings.contains(out, path), out)
+	code, _ = monitor_run_monitor(&b, "metrics", monitor_join(b.dir, "other.prom"))
+	testing.expect_value(t, code, monitor.EXIT_FAILED)
+	code, _ = monitor_run_monitor(&b, "run", "--all")
+	testing.expect_value(t, code, monitor.EXIT_FAILED)
+	testing.expect(t, !os.exists(path), "a locked run must not write output")
+	code, _ = monitor_run_monitor(&b, "metrics", "off")
+	testing.expect_value(t, code, 0)
+	b.c.unlocked = true
+	code, _ = monitor_run_monitor(&b, "run", "--all")
+	testing.expect_value(t, code, 0)
+	testing.expect(t, !os.exists(path), "disabled output stays absent")
+	code, _ = monitor_run_monitor(&b, "metrics", "bad.txt")
+	testing.expect_value(t, code, monitor.EXIT_FAILED)
+}
+
+@(test)
+monitor_metrics_keeps_not_due_times_and_reports_a_failed_place :: proc(t: ^testing.T) {
+	b: Monitor_Bench
+	monitor_bench_open(t, &b)
+	defer os.remove_all(b.dir)
+	path := monitor_join(b.dir, "leita.prom")
+	_, _ = monitor_run_monitor(&b, "add", b.place)
+	_, _ = monitor_run_monitor(&b, "on")
+	_, _ = monitor_run_monitor(&b, "metrics", path)
+	code, out := monitor_run_monitor(&b, "run")
+	testing.expect_value(t, code, 0)
+	testing.expect(t, !strings.contains(out, "error: metrics:"), out)
+	first, err := os.read_entire_file(path, context.temp_allocator)
+	testing.expect_value(t, err, nil)
+	testing.expect(t, strings.contains(string(first), "leita_monitor_scan_measurement_known{place="), string(first))
+	b.c.now = time.time_add(b.c.now, 3600 * time.Second)
+	code, _ = monitor_run_monitor(&b, "run")
+	testing.expect_value(t, code, 0)
+	not_due, _ := os.read_entire_file(path, context.temp_allocator)
+	testing.expect(t, strings.contains(string(not_due), "} 1800000000\n"), string(not_due))
+	testing.expect(t, strings.contains(string(not_due), "leita_metrics_generated_timestamp_seconds 1800003600\n"), string(not_due))
+	testing.expect(t, strings.contains(string(not_due), "leita_monitor_scan_charged_bytes{place="), string(not_due))
+	testing.expect_value(t, os.remove_all(b.place), nil)
+	code, out = monitor_run_monitor(&b, "run", "--all")
+	testing.expect_value(t, code, monitor.EXIT_FAILED)
+	failed, _ := os.read_entire_file(path, context.temp_allocator)
+	testing.expect(t, strings.contains(string(failed), "leita_monitor_scan_success{place="), string(failed))
+	testing.expect(t, !strings.contains(string(failed), "leita_monitor_scan_charged_bytes{place="), "failed attempt must remove old quantities")
+	testing.expect(t, strings.contains(string(failed), "} 1800000000\n"), "last success stays at the original scan")
+}
+
+@(test)
+monitor_metrics_output_failure_is_visible_without_losing_the_scan :: proc(t: ^testing.T) {
+	b: Monitor_Bench
+	monitor_bench_open(t, &b)
+	defer os.remove_all(b.dir)
+	path := monitor_join(b.dir, "leita.prom")
+	_, _ = monitor_run_monitor(&b, "add", b.place)
+	_, _ = monitor_run_monitor(&b, "on")
+	_, _ = monitor_run_monitor(&b, "metrics", path)
+	testing.expect_value(t, os.write_entire_file(path, string("old_metric 1\n")), nil)
+	faults.arm({op = .Rename, fault = .Denied, path = "leita.prom.partial-"})
+	code, out := monitor_run_monitor(&b, "run", "--all")
+	faults.disarm()
+	testing.expect_value(t, code, monitor.EXIT_FAILED)
+	testing.expect(t, strings.contains(out, "error: metrics: cannot replace metrics file"), out)
+	testing.expect_value(t, monitor_snapshot_count(t, &b), 1)
+	raw, _ := os.read_entire_file(path, context.temp_allocator)
+	testing.expect_value(t, string(raw), "old_metric 1\n")
+	_, _ = monitor_run_monitor(&b, "off")
+	code, _ = monitor_run_monitor(&b, "run", "--all")
+	testing.expect_value(t, code, 0)
+	raw, _ = os.read_entire_file(path, context.temp_allocator)
+	testing.expect_value(t, string(raw), "old_metric 1\n")
+}
+
+@(test)
+monitor_metrics_invalid_cache_does_not_stop_ordinary_scanning :: proc(t: ^testing.T) {
+	b: Monitor_Bench
+	monitor_bench_open(t, &b)
+	defer os.remove_all(b.dir)
+	path := monitor_join(b.dir, "leita.prom")
+	_, _ = monitor_run_monitor(&b, "add", b.place)
+	_, _ = monitor_run_monitor(&b, "on")
+	_, _ = monitor_run_monitor(&b, "metrics", path)
+	st: settings.Store
+	testing.expect_value(t, settings.open(&st, b.c.paths.settings), nil)
+	testing.expect_value(t, settings.set(&st, "monitor_metrics_state", `{"version":99,"samples":[]}`), nil)
+	settings.close(&st)
+	testing.expect_value(t, os.write_entire_file(path, string("old_metric 1\n")), nil)
+	code, out := monitor_run_monitor(&b, "run", "--all")
+	testing.expect_value(t, code, monitor.EXIT_FAILED)
+	testing.expect(t, strings.contains(out, "unsupported version"), out)
+	testing.expect_value(t, monitor_snapshot_count(t, &b), 1)
+	raw, _ := os.read_entire_file(path, context.temp_allocator)
+	testing.expect_value(t, string(raw), "old_metric 1\n")
+}
+
+@(test)
+monitor_metrics_bounds_directory_series_to_two_levels :: proc(t: ^testing.T) {
+	b: Monitor_Bench
+	monitor_bench_open(t, &b)
+	defer os.remove_all(b.dir)
+	path := monitor_join(b.dir, "leita.prom")
+	for i in 0 ..< 15 {
+		dir := monitor_join(b.place, fmt.tprintf("folder-%02d", i), "second", "deep-third")
+		testing.expect_value(t, os.make_directory_all(dir), nil)
+		write_payload(t, monitor_join(dir, "data"), 4096 + i * 4096)
+	}
+	_, _ = monitor_run_monitor(&b, "add", b.place)
+	_, _ = monitor_run_monitor(&b, "on")
+	_, _ = monitor_run_monitor(&b, "metrics", path)
+	code, out := monitor_run_monitor(&b, "run", "--all")
+	testing.expect_value(t, code, 0)
+	testing.expect(t, !strings.contains(out, "error: metrics:"), out)
+	raw, err := os.read_entire_file(path, context.temp_allocator)
+	testing.expect_value(t, err, nil)
+	count := 0
+	for line in strings.split_lines(string(raw), context.temp_allocator) {
+		if strings.has_prefix(line, "leita_monitor_directory_charged_bytes{") {
+			count += 1
+			testing.expect(t, !strings.contains(line, "deep-third"), "third-level folders are not individual metric series")
+		}
+	}
+	testing.expect_value(t, count, monitor.METRICS_DIRECTORY_LIMIT)
+	testing.expect(t, strings.contains(string(raw), "leita_monitor_directories_omitted{place="), string(raw))
+}
+
+@(test)
+monitor_metrics_does_not_reuse_a_same_second_run :: proc(t: ^testing.T) {
+	for fail in ([]bool{false, true}) {
+		b: Monitor_Bench
+		monitor_bench_open(t, &b)
+		defer os.remove_all(b.dir)
+		path := monitor_join(b.dir, "leita.prom")
+		_, _ = monitor_run_monitor(&b, "add", b.place)
+		_, _ = monitor_run_monitor(&b, "on")
+		_, _ = monitor_run_monitor(&b, "metrics", path)
+		code, _ := monitor_run_monitor(&b, "run", "--all")
+		testing.expect_value(t, code, 0)
+		_, _ = monitor_run_monitor(&b, "metrics", "off")
+		if fail {
+			testing.expect_value(t, os.remove_all(b.place), nil)
+		} else { write_payload(t, monitor_join(b.place, "new.bin"), 3 << 20) }
+		code, _ = monitor_run_monitor(&b, "run", "--all")
+		testing.expect_value(t, code, monitor.EXIT_FAILED if fail else 0)
+		_, _ = monitor_run_monitor(&b, "metrics", path)
+		out: string
+		code, out = monitor_run_monitor(&b, "run")
+		testing.expect_value(t, code, 0)
+		raw, err := os.read_entire_file(path, context.temp_allocator)
+		testing.expect_value(t, err, nil)
+		testing.expect(t, !strings.contains(string(raw), "leita_monitor_scan_charged_bytes{place="), "a different run in the same second has no cached quantity")
+		testing.expect(t, !strings.contains(out, "error: metrics:"), out)
+	}
+}
+
+@(test)
+monitor_metrics_clock_rollback_keeps_the_newest_inserted_attempt :: proc(t: ^testing.T) {
+	b: Monitor_Bench
+	monitor_bench_open(t, &b)
+	defer os.remove_all(b.dir)
+	path := monitor_join(b.dir, "leita.prom")
+	_, _ = monitor_run_monitor(&b, "add", b.place)
+	_, _ = monitor_run_monitor(&b, "on")
+	_, _ = monitor_run_monitor(&b, "metrics", path)
+	code, _ := monitor_run_monitor(&b, "run", "--all")
+	testing.expect_value(t, code, 0)
+	b.c.now = time.unix(1799999900, 0)
+	code, _ = monitor_run_monitor(&b, "run", "--all")
+	testing.expect_value(t, code, 0)
+	code, _ = monitor_run_monitor(&b, "run")
+	testing.expect_value(t, code, 0)
+	raw, err := os.read_entire_file(path, context.temp_allocator)
+	testing.expect_value(t, err, nil)
+	for line in strings.split_lines(string(raw), context.temp_allocator) {
+		if strings.has_prefix(line, "leita_monitor_last_attempt_timestamp_seconds{") {
+			testing.expect(t, strings.has_suffix(line, " 1799999900"), line)
+		}
+	}
+	testing.expect(t, strings.contains(string(raw), "leita_monitor_scan_charged_bytes{place="), "the newest capture survives republishing")
+}
+
+@(test)
+monitor_metrics_identifies_a_synthetic_scan :: proc(t: ^testing.T) {
+	b: Monitor_Bench
+	monitor_bench_open(t, &b)
+	defer os.remove_all(b.dir)
+	path := monitor_join(b.dir, "leita.prom")
+	_, _ = monitor_run_monitor(&b, "add", b.place)
+	_, _ = monitor_run_monitor(&b, "on")
+	_, _ = monitor_run_monitor(&b, "metrics", path)
+	b.c.made_up = 0
+	code, out := monitor_run_monitor(&b, "run", "--all")
+	testing.expect_value(t, code, 0)
+	testing.expect(t, !strings.contains(out, "error: metrics:"), out)
+	raw, err := os.read_entire_file(path, context.temp_allocator)
+	testing.expect_value(t, err, nil)
+	for line in strings.split_lines(string(raw), context.temp_allocator) {
+		if strings.has_prefix(line, "leita_monitor_scan_synthetic{") { testing.expect(t, strings.has_suffix(line, " 1"), line) }
 	}
 }
