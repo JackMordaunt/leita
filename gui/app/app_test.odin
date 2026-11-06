@@ -180,17 +180,11 @@ hand_on :: proc(r: ^Rig) {
 	ui.data_after_frame(&r.data, &r.needs, &r.p.router)
 }
 
-/*
-take_answers drains the host's answers into the probe and lays out a frame on
-them, and then the frame that layout asks for at once, as the window draws it
-straight after. A flex jm:ui lays out for the first time shares a weighted child
-out from estimates when an unweighted one follows it, and asks for the next
-frame (ui.flexible). primer.banner is such a flex, its body weighted and Dismiss
-after it, and leita cannot reorder it: on the frame the trial banner first
-appears its Dismiss sits 36 px right of where every later frame draws it, so a
-click aimed from that frame lands where the button no longer is (card 814). A
-spinner asks for every frame, so one more frame at most.
-*/
+// take_answers drains the host's answers into the probe and lays out their
+// frame, then at most one immediate frame requested by the layout. Some
+// weighted rows still need that frame to account for a later rigid child;
+// Primer banners reserve their controls before the first layout. Match the
+// window's immediate redraw without looping forever on a spinner.
 @(private = "file")
 take_answers :: proc(r: ^Rig) {
 	ui.inbox_drain(&r.h.inbox, &r.p.layout)
