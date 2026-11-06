@@ -6,9 +6,8 @@ pkgbase = leita-bin
 	arch = x86_64
 	arch = aarch64
 	license = LicenseRef-proprietary
-	depends = glibc>=2.39
-	depends = gcc-libs
-	optdepends = curl: activate a licence
+	depends = glibc>=2.34
+	optdepends = curl: licence activation, webhooks and updates
 	provides = leita
 	conflicts = leita
 	options = !strip

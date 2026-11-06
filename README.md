@@ -202,10 +202,10 @@ writes it for a program.
   sends nothing. Last, each webhook you add receives the alerts you chose it
   for, and a test when you ask, at the address you gave and nowhere else. The
   source is published, so you can check.
-- **No account.** On Linux the release needs glibc 2.39 or newer and
-  libstdc++. The window carries SDL3. libcurl is opened only for that POST,
-  for webhooks and for update checks and downloads, and leita runs without it. Windows's zip carries `SDL3.dll` and
-  `accesskit.dll` beside the window.
+- **No account.** Linux builds carry SDL3 and their C++ runtime. libcurl
+  is opened only for that POST, for webhooks and for update checks and
+  downloads, and leita runs without it. Windows's zip carries `SDL3.dll`
+  and `accesskit.dll` beside the window.
 - **Your data stays with you.** Scans, settings and the deletion record stay
   on your machine. A webhook carries the folder paths inside a place only if
   you allow it.
@@ -216,10 +216,27 @@ Open **Leita** and pick a drive or folder. On Windows, running as an
 administrator lets a scan of an NTFS volume read the Master File Table, which
 is faster. Without that, leita walks the volume.
 
-**Linux.** The release is built on Ubuntu 24.04. It needs glibc 2.39 or newer
-and libstdc++, so it runs on Ubuntu 24.04 and Fedora 40 and later. Debian 12
-has glibc 2.36 and Ubuntu 22.04 has 2.35. `<version>` below is the tag, such
-as `v1.2.0`. `<arch>` is `amd64` or `arm64`.
+**Linux.** Release builds use glibc, on `amd64` and `arm64`. The command
+line is built against glibc 2.17 and the window against 2.35. The
+[ABI gate](tools/abi-gate/floors.conf) limits their required GLIBC symbols
+to 2.17 and 2.34 respectively. SDL3 and the C++ runtime are included;
+libcurl is optional and is needed for activation, webhooks and updates.
+A musl-only system, such as an unmodified Alpine installation, cannot run
+these glibc binaries.
+
+These build limits do not establish runtime support on every distribution
+or kernel. The amd64 command line has run on a CentOS 7.9 guest with glibc
+2.17 and Linux 3.10; the arm64 command line has not been validated on a
+2.17 userspace. Linux candidate validation includes Ubuntu 22.04 and
+Debian 12 userspaces. The window built at the current release floor has
+no runtime validation below glibc 2.35, and linking AccessKit does not
+establish spoken screen-reader behavior. The [release dry run](https://github.com/JackMordaunt/leita/actions/runs/39844489678)
+records the Linux builds and enforced ABI checks; it published no release.
+Compatibility does not establish that a distribution still receives
+security updates.
+
+`<version>` below is the tag, such as `v1.2.0`. `<arch>` is `amd64` or
+`arm64`.
 
 - `leita-<version>-linux-<arch>.tar.zst` holds `leita`, the window `Leita` in
   `app/`, `LICENSE.md` and `THIRD_PARTY.md`.

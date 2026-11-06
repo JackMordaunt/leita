@@ -10,7 +10,7 @@ Each release is one section.
 
 - The window and the `leita` command, also installed as `le`, scan a drive or a folder and draw it as a sunburst, a treemap or an icicle while the scan is still running.
 - A finished scan can be saved as a PDF, HTML, CSV or JSON report, and the text of a PDF can be searched.
-- A licence is checked on the machine, and the only network use is sending a key once to fetch it.
+- Licences are verified offline. Activation exchanges a receipt key for a signed licence; update checks and configured webhooks also use the network.
 - Reclaim lists build output, downloaded packages, application caches and the Trash that can be removed and made again, including the usual caches on a Mac, and logs each deletion; History in the window's settings menu and `leita history` list that log, newest first.
 - Every finished scan is kept, and scanning the same place again marks what grew and what shrank and reads only what changed.
 - On macOS and Windows a second scan uses the system's change journal, and on Linux it uses each folder's modification time.
@@ -22,7 +22,7 @@ Each release is one section.
 - `--warn-used`, `--fail-used` and `--min-free` make leita exit with a code a script can act on.
 - `LEITA_SYNTHETIC` scans a made-up disk, so a demo shows no one's real files.
 - On Windows, an elevated scan reads the Master File Table.
-- `leita update` finds and installs a newer release when you ask, and `leita update --check` says whether there is one; About has Check for updates, with Update or Download beside the result. Nothing checks on its own, and the only request is the download.
+- `leita update` finds and installs a newer release when you ask, and `leita update --check` says whether there is one; About has Check for updates, with Update or Download beside the result. Automatic checks are off by default; enabling them checks once at startup and once a day while the window stays open. Installing an update always requires an explicit action.
 - On macOS 11 or later, Leita comes as Leita.app in a disk image, signed and notarised, with the `leita` command inside it.
 
 **Changed**

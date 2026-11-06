@@ -14,11 +14,11 @@ pkgdesc='See what is filling a drive, and report on it'
 arch=('x86_64' 'aarch64')
 url='https://mordaunt.dev/leita'
 license=('LicenseRef-proprietary')
-# The release is built on ubuntu-24.04 and needs glibc 2.39 (release.yml).
-depends=('glibc>=2.39' 'gcc-libs')
-# libcurl is opened only to activate a licence, so it is optional, as the
-# .deb recommends it rather than depending on it.
-optdepends=('curl: activate a licence')
+# Both executables ship here. The window sets the higher GLIBC symbol
+# ceiling, 2.34, in tools/abi-gate/floors.conf; its C++ runtime is included.
+depends=('glibc>=2.34')
+# Network operations open libcurl on demand; scanning works without it.
+optdepends=('curl: licence activation, webhooks and updates')
 provides=('leita')
 conflicts=('leita')
 # Prebuilt binaries. strip would rewrite a binary this package did not link,
