@@ -668,6 +668,18 @@ sqlite: floor-jm
     set -euo pipefail
     if [ -n "{{floor}}" ]; then {{floor_env}}; fi
     if [ "{{jm}}" = "{{root}}/jm" ] && [ ! -e jm/.git ]; then git submodule update --init jm; fi
+    # The submodule must be at the commit leita pins, else the build reads jm
+    # source this tree was not written against. JM=<path> opts out.
+    if [ "{{jm}}" = "{{root}}/jm" ] && [ -z "{{floor}}" ]; then
+        pin=$(git ls-files -s jm | awk '{print $2}')
+        have=$(git -C jm rev-parse HEAD)
+        if [ -n "$pin" ] && [ "$pin" != "$have" ]; then
+            echo "jm is at ${have:0:8} but leita pins ${pin:0:8}." >&2
+            echo "  to build the pin:      git submodule update jm" >&2
+            echo "  to keep jm's commit:   git add jm  (commit the new pin), or JM=<path> just ..." >&2
+            exit 1
+        fi
+    fi
     cd "{{jm}}"
     ls sqlite3/lib/sqlite3.* >/dev/null 2>&1 || just sqlite
     ls zstd/lib/zstd.* >/dev/null 2>&1 || just zstd
